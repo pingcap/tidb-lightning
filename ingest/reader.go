@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	_ "path/filepath"
 	"regexp"
 	"strings"
 
@@ -181,9 +182,13 @@ func (r *MDDataReader) Read(maxSize int64) ([]byte, error) {
 		front = append(buffer, ' ')
 	*/
 
+	// fname := filepath.Base(r.file)
+	// log.Warnf("[%s] start read file at offset = %d", fname, beginPos)
+
 	// 1. read data in block
 	data := make([]byte, maxSize)
 	nbytes, err := fd.Read(data)
+	// log.Warnf("[%s] readed data size = %d", fname, nbytes)
 	if err == io.EOF {
 		return []byte{}, err
 	}
@@ -208,6 +213,7 @@ func (r *MDDataReader) Read(maxSize int64) ([]byte, error) {
 		}
 
 	} else {
+		// log.Warnf("[%s] to the end (file_size = %d)", fname, r.fsize)
 		data = data[:nbytes]
 	}
 
@@ -217,6 +223,8 @@ func (r *MDDataReader) Read(maxSize int64) ([]byte, error) {
 		return []byte{}, nil
 	}
 	fd.Seek(beginPos+int64(size), io.SeekStart)
+
+	// log.Warnf("[%s] seek to ---> %d", fname, beginPos+int64(size))
 
 	// 2. Convert data into valid sql statment
 	sql := bytes.TrimSpace(data)

@@ -221,6 +221,15 @@ func (fpg *TableFileProgress) Update(stage string, offset int64, maxRowID int64)
 	return nil
 }
 
+func (fpg *TableFileProgress) CheckStage(pos int64) string {
+	for stage, region := range fpg.regions {
+		if region.Cover(pos) {
+			return stage
+		}
+	}
+	return ""
+}
+
 func (fpg *TableFileProgress) Locate(stage string) (int64, int64) {
 	region, ok := fpg.regions[stage]
 	if !ok {

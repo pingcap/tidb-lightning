@@ -14,21 +14,19 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"golang.org/x/net/context"
-
-	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 
 const (
-	kvFlushLimit int = 100000
-
 	defBlockSize int64 = 1024 * 32 // TODO ... config
 )
 
+var (
+	errCtxAborted = errors.New("context aborted error")
+)
+
 type RestoreControlloer struct {
-	mux      sync.RWMutex
-	wg       sync.WaitGroup
-	ctx      context.Context
-	shutdown context.CancelFunc
+	mux sync.RWMutex
+	wg  sync.WaitGroup
 
 	cfg     *Config
 	dbMeta  *MDDatabaseMeta
@@ -41,8 +39,6 @@ type RestoreControlloer struct {
 }
 
 func NewRestoreControlloer(dbMeta *MDDatabaseMeta, cfg *Config) *RestoreControlloer {
-	ctx, shutdown := context.WithCancel(context.Background())
-
 	tidbMgr, err := NewTiDBManager(cfg.PdAddr)
 	if err != nil {
 		log.Errorf("init tidb manager failed : %v", err)
@@ -53,52 +49,43 @@ func NewRestoreControlloer(dbMeta *MDDatabaseMeta, cfg *Config) *RestoreControll
 	statDB := ConnectDB(store.Host, store.Port, store.User, store.Psw)
 	statDbms := NewProgressDBMS(statDB, store.Database)
 
-	rc := &RestoreControlloer{
-		ctx:      ctx,
-		shutdown: shutdown,
+	return &RestoreControlloer{
 		cfg:      cfg,
-		//
-		dbMeta:  dbMeta,
-		tidbMgr: tidbMgr,
-		// progress mark
+		dbMeta:   dbMeta,
+		tidbMgr:  tidbMgr,
 		statDB:   statDB,
 		statDbms: statDbms,
 	}
-	rc.start()
-	return rc
 }
 
 func (rc *RestoreControlloer) Close() {
-	rc.shutdown()
-	rc.wg.Wait()
-
 	rc.tidbMgr.Close()
 	rc.statDB.Close()
 }
 
-func (rc *RestoreControlloer) start() {
-	rc.wg.Add(1)
-	go func() {
-		rc.run()
-		rc.wg.Done()
-		log.Info("restore controlloer end !")
-	}()
-}
-
-func (rc *RestoreControlloer) run() {
+func (rc *RestoreControlloer) Run(ctx context.Context) {
 	log.Info("restore controlloer start running !")
 
-	// TODO : handle errors from each step
+	opts := []func(context.Context) error{
+		rc.restoreSchema,
+		rc.recoverProgress,
+		rc.restoreTables,
+	}
 
-	rc.restoreSchema()
-	rc.recoverProgress()
-	rc.restoreTablesData()
-	rc.verify(rc.ctx)
+	for _, process := range opts {
+		err := process(ctx)
+		if err == errCtxAborted {
+			break
+		}
+		if err != nil {
+			log.Errorf("")
+		}
+	}
 
 	return
 }
 
-func (rc *RestoreControlloer) recoverProgress() {
+func (rc *RestoreControlloer) recoverProgress(ctx context.Context) error {
 	log.Info("Try to recover progress from store.")
 
 	database := rc.dbMeta.Name
@@ -111,7 +98,7 @@ func (rc *RestoreControlloer) recoverProgress() {
 	tablesProgress := rc.statDbms.LoadAllProgress(database, tables)
 	if len(tablesProgress) == 0 {
 		rc.refreshProgress()
-		return
+		return nil
 	}
 
 	if len(tablesProgress) != tableCount {
@@ -121,7 +108,7 @@ func (rc *RestoreControlloer) recoverProgress() {
 
 	// TODO ...
 
-	return
+	return nil
 }
 
 func (rc *RestoreControlloer) refreshProgress() {
@@ -148,7 +135,7 @@ func (rc *RestoreControlloer) refreshProgress() {
 	return
 }
 
-func (rc *RestoreControlloer) restoreSchema() {
+func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 	log.Info("Restore db/table scheam ~")
 
 	database := rc.dbMeta.Name
@@ -160,11 +147,12 @@ func (rc *RestoreControlloer) restoreSchema() {
 	err := rc.tidbMgr.InitSchema(database, tablesSchema)
 	if err != nil {
 		log.Errorf("restore schema failed : %v", err)
+		return err
 	}
 
 	rc.dbInfo = rc.syncSchema()
 
-	return
+	return nil
 }
 
 func (rc *RestoreControlloer) syncSchema() *TidbDBInfo {
@@ -186,20 +174,18 @@ func (rc *RestoreControlloer) syncSchema() *TidbDBInfo {
 		break
 	}
 
-	dbInfo := rc.tidbMgr.LoadSchemaInfo(database)
-	log.Infof("Database (%s) ID ====> %d", database, dbInfo.ID)
-	for tbl, tblInfo := range dbInfo.Tables {
-		log.Infof("Table (%s) ID ====> %d", tbl, tblInfo.ID)
-	}
-	time.Sleep(time.Second * 5)
-
-	return dbInfo
+	return rc.tidbMgr.LoadSchemaInfo(database)
 }
 
-func (rc *RestoreControlloer) restoreTablesData() {
+func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 	var wg sync.WaitGroup
-
 	for table, tableMeta := range rc.dbMeta.Tables {
+		select {
+		case <-ctx.Done():
+			return errCtxAborted
+		default:
+		}
+
 		tableInfo, exists := rc.dbInfo.Tables[table]
 		if !exists {
 			log.Errorf("Incredible ! Table info not found : %s", table)
@@ -212,7 +198,8 @@ func (rc *RestoreControlloer) restoreTablesData() {
 			continue
 		}
 
-		tblExc, err := NewTableRestoreExecutor(tableMeta, rc.dbInfo, tableInfo, progress, rc.cfg)
+		tblExc, err := NewTableRestoreExecutor(
+			ctx, tableMeta, rc.dbInfo, tableInfo, progress, rc.cfg)
 		if err != nil {
 			log.Errorf("Table (%s) executor init failed  : %s", table, err.Error())
 			continue
@@ -221,25 +208,29 @@ func (rc *RestoreControlloer) restoreTablesData() {
 		wg.Add(1)
 		go func(exc *TableRestoreExecutor) {
 			defer wg.Done()
-			if err := exc.Run(rc.ctx); err != nil {
-				log.Errorf("Table (%s) executor run cause error : %s",
+			err := exc.Run()
+			if err != nil && err != errCtxAborted {
+				log.Errorf("Table executor (%s) running causes error : %s",
 					exc.tableMeta.Name, err.Error())
 			}
 		}(tblExc)
 	}
-
 	wg.Wait()
-	return
+
+	return nil
 }
 
-func (rc *RestoreControlloer) verify(ctx context.Context) {
-	// TODO
-	log.Warnf("Please add tables' data verification !")
-}
+// func (rc *RestoreControlloer) verify(ctx context.Context) error {
+// 	log.Warnf("Please add tables' data verification !")
+//
+// 	return nil
+// }
 
-////////////////////////////////////////////////////////////////
-
+/*
+	Handle 1 table restoring execution
+*/
 type TableRestoreExecutor struct {
+	ctx context.Context
 	cfg *Config
 
 	/*
@@ -260,6 +251,7 @@ type TableRestoreExecutor struct {
 }
 
 func NewTableRestoreExecutor(
+	ctx context.Context,
 	tableMeta *MDTableMeta,
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
@@ -267,7 +259,7 @@ func NewTableRestoreExecutor(
 	cfg *Config) (*TableRestoreExecutor, error) {
 
 	uuid := adjustUUID(fmt.Sprintf("%s_%s", dbInfo.Name, tableInfo.Name), 16)
-	kvDeliver, err := NewKVDeliver(uuid, cfg.KvDeliverAddr, cfg.PdAddr)
+	kvDeliver, err := NewKVDeliver(ctx, uuid, cfg.KvDeliverAddr, cfg.PdAddr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -277,6 +269,7 @@ func NewTableRestoreExecutor(
 		dbInfo.Name, dbInfo.ID, tableInfo.Name, tableInfo.ID, tableSchema, 0)
 
 	exc := &TableRestoreExecutor{
+		ctx:       ctx,
 		cfg:       cfg,
 		dbInfo:    dbInfo,
 		tableInfo: tableInfo,
@@ -291,12 +284,6 @@ func NewTableRestoreExecutor(
 	return exc, nil
 }
 
-func (exc *TableRestoreExecutor) Close() {
-	if err := exc.kvDeliver.Close(); err != nil {
-		log.Errorf("kv deliver close error : %s", err.Error())
-	}
-}
-
 func adjustUUID(uuid string, length int) string {
 	size := len(uuid)
 	if size > length {
@@ -307,45 +294,82 @@ func adjustUUID(uuid string, length int) string {
 	return uuid
 }
 
-func (exc *TableRestoreExecutor) Run(ctx context.Context) error {
-	exc.execute(ctx)
-	// TODO : sum up rows id & set meta key !
-	exc.verifyTables(ctx)
-	return nil
+func (exc *TableRestoreExecutor) Close() {
+	if err := exc.kvDeliver.Close(); err != nil {
+		log.Errorf("kv deliver close error : %s", err.Error())
+	}
 }
 
-func (exc *TableRestoreExecutor) execute(ctx context.Context) {
-	log.Infof("Table resotre executor [%s] start ~", exc.tableMeta.Name)
+func (exc *TableRestoreExecutor) Run() error {
+	ctx := exc.ctx
+	err := exc.restore(ctx)
+
+	if err == nil {
+		log.Infof("Start to verify table [%s]", exc.tableInfo.Name)
+		err = exc.verify(ctx)
+	}
+
+	return err
+}
+
+func (exc *TableRestoreExecutor) restore(ctx context.Context) error {
+	log.Infof("[%s] Start table resotre", exc.tableMeta.Name)
+	table := exc.tableMeta.Name
+	progress := exc.progress
 
 	// ps : As we only ingest table data row by row ,
-	//	so it's very important to keep source ql files in order  ~
+	//		so it's very important to keep source ql files in order  ~
 	dataFiles := exc.tableMeta.DataFiles
 	sort.Strings(dataFiles)
 
-	// convert
-	tableProgres := exc.progress
+	// 1. restore row datas
+	if err := exc.restoreDataFiles(ctx, dataFiles, progress); err != nil {
+		return err
+	}
+
+	if !exc.checkAllLoaded(dataFiles, progress) {
+		err := errors.Errorf("[%s] Table data loaded incompleted !", table)
+		log.Errorf(err.Error())
+		return err
+	}
+
+	// 2. restore meta data of table
+	if err := exc.restoreMeta(); err != nil {
+		log.Errorf("[%s] table meta restore failed !", table, err.Error())
+		return err
+	}
+
+	// 3. flush table restoring
+	if err := exc.flush(); err != nil {
+		log.Errorf("[%s] table restore flush error = %s", table, err.Error())
+		return err
+	}
+
+	progress.SetComplete()
+	return nil
+}
+
+func (exc *TableRestoreExecutor) restoreDataFiles(
+	ctx context.Context,
+	dataFiles []string,
+	tableProgress *TableProgress) error {
+
 	kvEncoer := exc.kvEncoder
 	kvDeliver := exc.kvDeliver
-	defer func() {
-		if err := kvDeliver.Flush(ctx); err != nil {
-			log.Errorf("kv deliver flush error = %v", err)
-		} else {
-			// ps : so far we flush all after all table's data loaed !
-			tableProgres.SetComplete()
-		}
-	}()
 
+	// convert
 	for _, file := range dataFiles {
 		select {
 		case <-ctx.Done():
 			// TODO ... record progress
-			return
+			return errCtxAborted
 		default:
 		}
 
 		fileName := filepath.Base(file)
-		fileProgress, ok := tableProgres.FilesPrgoress[fileName]
+		fileProgress, ok := tableProgress.FilesPrgoress[fileName]
 		if !ok {
+			// TODO ... return error ?
 			log.Errorf("table file [%s] corresponding progress not found !", fileName)
 			continue
 		}
@@ -359,12 +383,14 @@ func (exc *TableRestoreExecutor) execute(ctx context.Context) {
 		// TODO : offset recover ~
 		err := exc.restoreFile(ctx, file, fileProgress, kvEncoer, kvDeliver)
 		if err != nil {
-			log.Errorf("[%s] file restore cause error : %s", file, err.Error())
-			return
+			if err != errCtxAborted {
+				log.Errorf("[%s] file restore cause error : %s", file, err.Error())
+			}
+			return err
 		}
 	}
 
-	return
+	return nil
 }
 
 func (exc *TableRestoreExecutor) restoreFile(
@@ -394,31 +420,29 @@ func (exc *TableRestoreExecutor) restoreFile(
 	for {
 		select {
 		case <-ctx.Done():
-			// TODO ... record progress
-			return nil
+			return errCtxAborted
 		default:
 		}
 
 		sqlData, err = reader.Read(defBlockSize)
 		if err == io.EOF {
-			log.Infof("file [%s] restore finsh !", file)
+			log.Infof("file [%s] restore finish !", file)
 			break
 		}
 
 		// TODO : optimize strings operation
 		sql := string(sqlData)
-		parts := strings.Split(sql, ";")
-		for _, subSql := range parts {
-			subSql = strings.TrimSpace(subSql)
-			if len(subSql) == 0 {
+		for _, statment := range strings.Split(sql, ";") {
+			statment = strings.TrimSpace(statment)
+			if len(statment) == 0 {
 				continue
 			}
 
-			kvs, _ := kvEncoder.Sql2KV(subSql)
-			// table := exc.tableMeta.Name
-			// countKey(table, kvs, rows)
+			// sql -> kv
+			kvs, _ := kvEncoder.Sql2KV(statment)
 
-			if err = kvDeliver.Put(ctx, kvs); err != nil {
+			// kv -> deliver ( -> tikv )
+			if err = kvDeliver.Put(kvs); err != nil {
 				// TODO : retry ~
 				log.Errorf("deliver kv failed = %s\n", err.Error())
 			}
@@ -432,74 +456,62 @@ func (exc *TableRestoreExecutor) restoreFile(
 	return nil
 }
 
-func (exc *TableRestoreExecutor) verifyTables(ctx context.Context) {
-	// TODO : execute sql -- "admin check table" & "count(*)""
-	log.Warnf("Please add tables verify !")
+func (exc *TableRestoreExecutor) restoreMeta() error {
+	// var rowID int64
+	// for file, progress := range exc.progress.FilesPrgoress {
+	// 	// TODO ...
+	// }
+
+	return nil
 }
 
-func countKey(table string, kvs []kvec.KvPair, rows uint64) {
-	stats := make(map[byte]int)
-	for _, p := range kvs {
-		switch p.Key[0] {
-		case 'm':
-			stats[p.Key[0]]++
-		case 't':
-			stats[p.Key[10]]++
-		default:
-			stats[p.Key[0]]++
+func (exc *TableRestoreExecutor) flush() error {
+	table := exc.tableInfo.Name
+	start := time.Now()
+
+	log.Infof("[%s] table data restoring start to flush !", table)
+	defer func() {
+		log.Infof(" [%s] finished flushing table restoring data (cost = %.2f sec) !",
+			table, time.Since(start).Seconds())
+	}()
+
+	return exc.kvDeliver.Flush()
+}
+
+func (exc *TableRestoreExecutor) checkAllLoaded(dataFiles []string, progress *TableProgress) bool {
+	finished := true
+	for _, file := range dataFiles {
+		fileName := filepath.Base(file)
+		fileProgress, ok := progress.FilesPrgoress[fileName]
+		if !ok {
+			log.Warnf("[%s] miss file progress.", fileName)
+			finished = false
+			break
+		}
+		if !isFileAllLoaded(file, fileProgress) {
+			log.Warnf("[%s] table file not finished.", fileName)
+			finished = false
+			break
 		}
 	}
 
-	log.Warnf("(%s) sql rows = %d", table, rows)
-	for k, cnt := range stats {
-		key := string([]byte{k})
-		log.Warnf("(%s) [%s] = %d", table, key, cnt)
-	}
-
-	return
+	return finished
 }
 
-//////////////////////////////////////////////////
-
-type autoFlushKvDeliver struct {
-	kvDeliver      *KVDeliver
-	batchSizeLimit int
-	sizeCounter    int
+func isFileAllLoaded(file string, progress *TableFileProgress) bool {
+	fileSize := GetFileSize(file)
+	stage := progress.CheckStage(fileSize - 1)
+	return stage == StageLoaded || stage == StageFlushed
 }
 
-func newAutoFlushKvDeliver(kvDeliver *KVDeliver, batchSizeLimit int) *autoFlushKvDeliver {
-	return &autoFlushKvDeliver{
-		kvDeliver:      kvDeliver,
-		batchSizeLimit: batchSizeLimit,
-		sizeCounter:    0,
-	}
-}
+func (exc *TableRestoreExecutor) verify(ctx context.Context) error {
+	dsn := exc.cfg.TiDB
+	tidb := ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	defer tidb.Close()
 
-func (f *autoFlushKvDeliver) Put(ctx context.Context, kvs []kvec.KvPair) error {
-	err := f.kvDeliver.Put(ctx, kvs)
-
-	f.sizeCounter += len(kvs)
-	if f.sizeCounter >= f.batchSizeLimit {
-		f.doFlush(ctx)
-		f.sizeCounter = 0
-	}
+	// TODO : compare executed rows == count(*)
+	tidb.Exec("USE " + exc.tableMeta.DB)
+	_, err := tidb.Exec("ADMIN CHECK TABLE " + exc.tableMeta.Name)
 
 	return err
-}
-
-func (f *autoFlushKvDeliver) Flush(ctx context.Context) error {
-	log.Warnf("Call flush !!!")
-
-	err := f.kvDeliver.Flush(ctx)
-	f.sizeCounter = 0
-	return err
-}
-
-func (f *autoFlushKvDeliver) doFlush(ctx context.Context) {
-	log.Warnf("Auto do flush !!!")
-
-	err := f.kvDeliver.Flush(ctx) // TODO : retry ~
-	if err != nil {
-		log.Errorf("real kv deliver flush error : %s\n", err.Error())
-	}
 }

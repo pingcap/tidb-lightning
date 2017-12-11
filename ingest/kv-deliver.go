@@ -29,6 +29,7 @@ func newImportClient(addr string) (importpb.ImportKVClient, error) {
 }
 
 type KVDeliver struct {
+	ctx     context.Context
 	backend string
 	pdAddr  string
 
@@ -37,7 +38,7 @@ type KVDeliver struct {
 	cli  importpb.ImportKVClient
 }
 
-func NewKVDeliver(uuid string, backend string, pdAddr string) (*KVDeliver, error) {
+func NewKVDeliver(ctx context.Context, uuid string, backend string, pdAddr string) (*KVDeliver, error) {
 	if len(uuid) != 16 {
 		return nil, errInvalidUUID
 	}
@@ -50,6 +51,7 @@ func NewKVDeliver(uuid string, backend string, pdAddr string) (*KVDeliver, error
 	}
 
 	dlv := &KVDeliver{
+		ctx:     ctx,
 		uuid:    []byte(uuid),
 		pdAddr:  pdAddr,
 		backend: backend,
@@ -67,8 +69,12 @@ func (d *KVDeliver) Close() error {
 	return nil
 }
 
-func (dlv *KVDeliver) Put(ctx context.Context, kvs []kvec.KvPair) error {
-	stream, err := dlv.cli.Write(ctx)
+func (dlv *KVDeliver) Put(kvs []kvec.KvPair) error {
+	/*
+		TODO : reusing streaming connection in a session !
+	*/
+
+	stream, err := dlv.cli.Write(dlv.ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -114,12 +120,12 @@ func (dlv *KVDeliver) Put(ctx context.Context, kvs []kvec.KvPair) error {
 	return nil
 }
 
-func (dlv *KVDeliver) Flush(ctx context.Context) error {
+func (dlv *KVDeliver) Flush() error {
 	flush := &importpb.FlushRequest{
 		Uuid:    dlv.uuid,
 		Address: dlv.pdAddr,
 	}
 
-	_, err := dlv.cli.Flush(ctx, flush)
+	_, err := dlv.cli.Flush(dlv.ctx, flush)
 	return err
 }

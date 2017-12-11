@@ -63,13 +63,11 @@ func (kvcodec *TableKVEncoder) NextRowID() int64 {
 }
 
 func (kvcodec *TableKVEncoder) Sql2KV(sql string) ([]kvec.KvPair, uint64) {
-	// start := time.Now()
 	kvPairs, rowsAffected, err := kvcodec.encoder.Encode(sql, kvcodec.tableID)
 	if err != nil {
 		log.Errorf("sql2kv execute error = %v", err)
 		return []kvec.KvPair{}, 0
 	}
-	// fmt.Printf("2kv finish (const = %.2f)\n", time.Since(start).Seconds())
 
 	return kvPairs, rowsAffected
 }

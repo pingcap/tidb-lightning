@@ -1,4 +1,4 @@
-### Makefile for tidb
+### Makefile for tidb-lightning
 
 GOPATH ?= $(shell go env GOPATH)
 
@@ -24,14 +24,9 @@ PACKAGES  := $$(go list ./...| grep -vE "vendor")
 FILES     := $$(find . -name "*.go" | grep -vE "vendor")
 TOPDIRS   := $$(ls -d */ | grep -vE "vendor")
 
-LDFLAGS += -X "github.com/pingcap/tidb/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
-
 TARGET = ""
 
-.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist
+.PHONY: all build update parser clean test gotest parserlib
 
 default: ingest buildsucc
 
@@ -69,4 +64,4 @@ ifeq ("$(WITH_RACE)", "1")
 endif
 
 ingest: parserlib
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o bin/ingest cmd/main.go
+	$(GOBUILD) $(RACE_FLAG) -o bin/ingest cmd/main.go
