@@ -65,7 +65,7 @@ func onExitSignal() {
 func main() {
 	flag.Parse()
 
-	cfg, err := ingest.LoadConfig("./cqc-conf.toml") // (*cfgFile)
+	cfg, err := ingest.LoadConfig(*cfgFile)
 	if err != nil {
 		log.Errorf("load config failed (%s) : %s", *cfgFile, err.Error())
 		return

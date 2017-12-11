@@ -170,30 +170,16 @@ func extractInsertFront(file string) []byte {
 	return []byte(front)
 }
 
-func (r *MDDataReader) Read(maxSize int64) ([]byte, error) {
-	fd := r.fd
+func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
 	beginPos := r.currOffset()
-	// log.Infof("begin pos - %d", beginPos)
-
-	/*
-		buffer := make([]byte, maxSize+len(r.sqlFront)+1)
-		// 0. "INSERT INTO xx VALUES" + " "
-		front := append(buffer[:0], r.sqlFront...)
-		front = append(buffer, ' ')
-	*/
-
-	// fname := filepath.Base(r.file)
-	// log.Warnf("[%s] start read file at offset = %d", fname, beginPos)
+	fd := r.fd
 
 	// 1. read data in block
-	data := make([]byte, maxSize)
+	data := make([]byte, maxSize) // TODO : buffer it ?
 	nbytes, err := fd.Read(data)
-	// log.Warnf("[%s] readed data size = %d", fname, nbytes)
 	if err == io.EOF {
-		return []byte{}, err
+		return [][]byte{}, err
 	}
-
-	// log.Infof("pos - %d", r.currOffset())
 
 	if r.currOffset() != r.fsize {
 		// ps :
@@ -203,7 +189,7 @@ func (r *MDDataReader) Read(maxSize int64) ([]byte, error) {
 		if idx < 0 {
 			// might be end of file ?
 			log.Errorf("Opps ! Not found a line ending (pos = %d / size = %d) !", beginPos, maxSize)
-			return []byte{}, nil
+			return [][]byte{}, nil
 		}
 
 		data = data[:idx]
@@ -211,20 +197,16 @@ func (r *MDDataReader) Read(maxSize int64) ([]byte, error) {
 			idx = bytes.LastIndex(data, r.sqlFront)
 			data = data[:idx]
 		}
-
 	} else {
-		// log.Warnf("[%s] to the end (file_size = %d)", fname, r.fsize)
 		data = data[:nbytes]
 	}
 
 	size := len(data)
 	if size == 0 {
 		// ps : maybe maxsize too small to extract any row data ~
-		return []byte{}, nil
+		return [][]byte{}, nil
 	}
 	fd.Seek(beginPos+int64(size), io.SeekStart)
-
-	// log.Warnf("[%s] seek to ---> %d", fname, beginPos+int64(size))
 
 	// 2. Convert data into valid sql statment
 	sql := bytes.TrimSpace(data)
@@ -234,27 +216,42 @@ func (r *MDDataReader) Read(maxSize int64) ([]byte, error) {
 			sql[sqlLen-1] = ';'
 		} else {
 			str := string(sql)
-			log.Infof("<%s>", str)
-
 			log.Errorf("Opps ! Unexpect data ending : '%s',,'%s' (pos = %d / size = %d) !",
-				str[:32], str[len(str)-20:], beginPos, maxSize)
-			// TODO ............ fd.Seek() !!!!!!!!!!!!!!!!!
-			return []byte{}, nil
+				str[:32], str[len(str)-32:], beginPos, maxSize)
+			// TODO : f.seek()
+			return [][]byte{}, nil
 		}
 	}
 
-	/*
-		TODO .... if contains multi insert statment ????
-	*/
+	// 3. The whole sql might contains multi statment,
+	//	  split it into couple of statments ~
+	sep := r.sqlFront // TODO : or []byte(");\n") ?
+	statments := make([][]byte, 0, 1)
+	for data := sql; ; {
+		e := bytes.Index(data[1:], sep)
+		if e < 0 {
+			statments = append(statments, data)
+			break
+		}
 
-	if bytes.HasPrefix(sql, r.sqlFront) {
-		return sql, nil
-	} else {
-		completeSql := make([]byte, 0, len(sql)+len(r.sqlFront)+1)
-		completeSql = append(completeSql, r.sqlFront...)
-		completeSql = append(completeSql, ' ')
-		completeSql = append(completeSql, sql...)
+		stmt := bytes.TrimSpace(data[:e])
+		if len(stmt) > 0 {
+			statments = append(statments, stmt)
+		}
 
-		return completeSql, nil
+		data = data[e:]
 	}
+
+	if len(statments) > 0 {
+		stmt := statments[0]
+		if !bytes.HasPrefix(stmt, r.sqlFront) {
+			fixStmt := make([]byte, 0, len(stmt)+len(r.sqlFront)+1)
+			fixStmt = append(fixStmt, r.sqlFront...)
+			fixStmt = append(fixStmt, ' ')
+			fixStmt = append(fixStmt, stmt...)
+			statments[0] = fixStmt
+		}
+	}
+
+	return statments, nil
 }

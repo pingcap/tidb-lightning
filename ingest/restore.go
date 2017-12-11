@@ -415,8 +415,6 @@ func (exc *TableRestoreExecutor) restoreFile(
 	reader, _ := NewMDDataReader(file, offset)
 	defer reader.Close()
 
-	var sqlData []byte
-	var err error
 	for {
 		select {
 		case <-ctx.Done():
@@ -424,22 +422,16 @@ func (exc *TableRestoreExecutor) restoreFile(
 		default:
 		}
 
-		sqlData, err = reader.Read(defBlockSize)
+		sqls, err := reader.Read(defBlockSize)
 		if err == io.EOF {
 			log.Infof("file [%s] restore finish !", file)
 			break
 		}
 
 		// TODO : optimize strings operation
-		sql := string(sqlData)
-		for _, statment := range strings.Split(sql, ";") {
-			statment = strings.TrimSpace(statment)
-			if len(statment) == 0 {
-				continue
-			}
-
+		for _, stmt := range sqls {
 			// sql -> kv
-			kvs, _ := kvEncoder.Sql2KV(statment)
+			kvs, _ := kvEncoder.Sql2KV(string(stmt))
 
 			// kv -> deliver ( -> tikv )
 			if err = kvDeliver.Put(kvs); err != nil {
