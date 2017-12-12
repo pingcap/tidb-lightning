@@ -88,7 +88,6 @@ func NewMDDataReader(file string, offset int64) (*MDDataReader, error) {
 	}
 
 	mdr.skipAnnotation()
-
 	return mdr, nil
 }
 
@@ -112,7 +111,7 @@ func (r *MDDataReader) skipAnnotation() int64 {
 	for skipSize := 0; ; {
 		line, err := br.ReadString('\n')
 		if err == io.EOF {
-			break // TODO ..................... len(line) > 0 ??????????
+			break
 		}
 
 		size := len(line)
@@ -124,8 +123,6 @@ func (r *MDDataReader) skipAnnotation() int64 {
 		}
 		skipSize += size
 	}
-
-	// log.Infof("after skip = %d", r.currOffset())
 
 	return r.currOffset()
 }
@@ -228,6 +225,7 @@ func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
 	sep := r.sqlFront // TODO : or []byte(");\n") ?
 	statments := make([][]byte, 0, 1)
 	for data := sql; ; {
+		data = bytes.TrimSpace(data)
 		e := bytes.Index(data[1:], sep)
 		if e < 0 {
 			statments = append(statments, data)
@@ -238,7 +236,6 @@ func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
 		if len(stmt) > 0 {
 			statments = append(statments, stmt)
 		}
-
 		data = data[e:]
 	}
 

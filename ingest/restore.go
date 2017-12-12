@@ -428,7 +428,6 @@ func (exc *TableRestoreExecutor) restoreFile(
 			break
 		}
 
-		// TODO : optimize strings operation
 		for _, stmt := range sqls {
 			// sql -> kv
 			kvs, _ := kvEncoder.Sql2KV(string(stmt))
