@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb"
@@ -147,4 +148,26 @@ func (timgr *TiDBManager) LoadSchemaInfo(database string) *TidbDBInfo {
 	}
 
 	return dbInfo
+}
+
+func (timgr *TiDBManager) SyncSchema(database string) *TidbDBInfo {
+	// TODO : change to timeout ~
+	for i := 0; i < 100; i++ {
+		done := true
+		dbInfo := timgr.LoadSchemaInfo(database)
+		for _, tblInfo := range dbInfo.Tables {
+			if !tblInfo.Available {
+				done = false
+				break
+			}
+		}
+		if !done {
+			log.Warnf("Not all tables ready yet")
+			time.Sleep(time.Second * 5)
+			continue
+		}
+		break
+	}
+
+	return timgr.LoadSchemaInfo(database)
 }

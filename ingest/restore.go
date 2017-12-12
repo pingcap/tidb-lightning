@@ -22,6 +22,7 @@ const (
 
 var (
 	errCtxAborted = errors.New("context aborted error")
+	metrics       = NewMetrics()
 )
 
 type RestoreControlloer struct {
@@ -39,12 +40,6 @@ type RestoreControlloer struct {
 }
 
 func NewRestoreControlloer(dbMeta *MDDatabaseMeta, cfg *Config) *RestoreControlloer {
-	tidbMgr, err := NewTiDBManager(cfg.PdAddr)
-	if err != nil {
-		log.Errorf("init tidb manager failed : %v", err)
-		return nil
-	}
-
 	store := cfg.ProgressStore
 	statDB := ConnectDB(store.Host, store.Port, store.User, store.Psw)
 	statDbms := NewProgressDBMS(statDB, store.Database)
@@ -52,14 +47,12 @@ func NewRestoreControlloer(dbMeta *MDDatabaseMeta, cfg *Config) *RestoreControll
 	return &RestoreControlloer{
 		cfg:      cfg,
 		dbMeta:   dbMeta,
-		tidbMgr:  tidbMgr,
 		statDB:   statDB,
 		statDbms: statDbms,
 	}
 }
 
 func (rc *RestoreControlloer) Close() {
-	rc.tidbMgr.Close()
 	rc.statDB.Close()
 }
 
@@ -81,6 +74,9 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 			log.Errorf("")
 		}
 	}
+
+	// show metrics
+	log.Warnf("Timing statistic :\n%s", metrics.DumpTiming())
 
 	return
 }
@@ -137,6 +133,14 @@ func (rc *RestoreControlloer) refreshProgress() {
 
 func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 	log.Info("Restore db/table scheam ~")
+	// tidbMgr := rc.tidbMgr
+
+	tidbMgr, err := NewTiDBManager(rc.cfg.PdAddr)
+	if err != nil {
+		log.Errorf("create tidb manager failed : %v", err)
+		return err
+	}
+	defer tidbMgr.Close()
 
 	database := rc.dbMeta.Name
 	tablesSchema := make(map[string]string)
@@ -144,37 +148,15 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 		tablesSchema[tbl] = tblMeta.GetSchema()
 	}
 
-	err := rc.tidbMgr.InitSchema(database, tablesSchema)
+	err = tidbMgr.InitSchema(database, tablesSchema)
 	if err != nil {
 		log.Errorf("restore schema failed : %v", err)
 		return err
 	}
 
-	rc.dbInfo = rc.syncSchema()
+	rc.dbInfo = tidbMgr.SyncSchema(database)
 
 	return nil
-}
-
-func (rc *RestoreControlloer) syncSchema() *TidbDBInfo {
-	database := rc.dbMeta.Name
-	for i := 0; i < 100; i++ { // TODO ... max wait time ~
-		done := true
-		dbInfo := rc.tidbMgr.LoadSchemaInfo(database)
-		for _, tblInfo := range dbInfo.Tables {
-			if !tblInfo.Available {
-				done = false
-				break
-			}
-		}
-		if !done {
-			log.Warnf("Not all tables ready yet")
-			time.Sleep(time.Second * 5)
-			continue
-		}
-		break
-	}
-
-	return rc.tidbMgr.LoadSchemaInfo(database)
 }
 
 func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
@@ -306,7 +288,11 @@ func (exc *TableRestoreExecutor) Run() error {
 
 	if err == nil {
 		log.Infof("Start to verify table [%s]", exc.tableInfo.Name)
+
+		s := time.Now()
 		err = exc.verify(ctx)
+		mark := fmt.Sprintf("[%s]_verify", exc.tableInfo.Name)
+		metrics.TimeCostNS(mark, time.Since(s).Nanoseconds())
 	}
 
 	return err
@@ -358,6 +344,7 @@ func (exc *TableRestoreExecutor) restoreDataFiles(
 	kvDeliver := exc.kvDeliver
 
 	// convert
+	s := time.Now()
 	for _, file := range dataFiles {
 		select {
 		case <-ctx.Done():
@@ -389,6 +376,8 @@ func (exc *TableRestoreExecutor) restoreDataFiles(
 			return err
 		}
 	}
+	mark := fmt.Sprintf("[%s]_restore_row_datas", exc.tableInfo.Name)
+	metrics.TimeCostNS(mark, time.Since(s).Nanoseconds())
 
 	return nil
 }
@@ -401,9 +390,9 @@ func (exc *TableRestoreExecutor) restoreFile(
 	kvDeliver *KVDeliver) error {
 
 	// recover from progress
-	offset, rowID := progress.Locate(StageLoaded)
+	offset, maxRowID := progress.Locate(StageLoaded)
 	if offset > 0 {
-		kvEncoder.RebaseRowID(rowID)
+		kvEncoder.RebaseRowID(maxRowID)
 	}
 
 	// 	Flows :
@@ -411,38 +400,58 @@ func (exc *TableRestoreExecutor) restoreFile(
 	//		2. sql -> kvs
 	//		3. load kvs data (into kv deliver server)
 	//		4. flush kvs data (into tikv node)
-
 	reader, _ := NewMDDataReader(file, offset)
 	defer reader.Close()
 
-	for {
+	var (
+		table       string = exc.tableInfo.Name
+		markRead    string = fmt.Sprintf("[%s]_read_file", table)
+		mark2KV     string = fmt.Sprintf("[%s]_sql_2_kv", table)
+		markDeliver string = fmt.Sprintf("[%s]_kv_deliver", table)
+		start       time.Time
+	)
+
+	for blocks := 0; ; blocks++ {
 		select {
 		case <-ctx.Done():
 			return errCtxAborted
 		default:
 		}
 
+		start = time.Now()
 		sqls, err := reader.Read(defBlockSize)
 		if err == io.EOF {
 			log.Infof("file [%s] restore finish !", file)
 			break
 		}
+		metrics.TimeCostNS(markRead, time.Since(start).Nanoseconds())
 
 		for _, stmt := range sqls {
 			// sql -> kv
+			start = time.Now()
 			kvs, _ := kvEncoder.Sql2KV(string(stmt))
+			metrics.TimeCostNS(mark2KV, time.Since(start).Nanoseconds())
 
 			// kv -> deliver ( -> tikv )
+			start = time.Now()
 			if err = kvDeliver.Put(kvs); err != nil {
 				// TODO : retry ~
 				log.Errorf("deliver kv failed = %s\n", err.Error())
 			}
+			metrics.TimeCostNS(markDeliver, time.Since(start).Nanoseconds())
 		}
 
-		offset := reader.Tell()
-		maxRowID := kvEncoder.NextRowID()
-		progress.Update(StageLoaded, offset, maxRowID)
+		if 0 == blocks%1000 {
+			// PS : so far, choose not to update in real time but batch ~
+			offset = reader.Tell()
+			maxRowID = kvEncoder.NextRowID()
+			progress.Update(StageLoaded, offset, maxRowID)
+		}
 	}
+
+	offset = reader.Tell()
+	maxRowID = kvEncoder.NextRowID()
+	progress.Update(StageLoaded, offset, maxRowID)
 
 	return nil
 }
@@ -466,7 +475,11 @@ func (exc *TableRestoreExecutor) flush() error {
 			table, time.Since(start).Seconds())
 	}()
 
-	return exc.kvDeliver.Flush()
+	s := time.Now()
+	err := exc.kvDeliver.Flush()
+	mark := fmt.Sprintf("[%s]_flush_all", exc.tableInfo.Name)
+	metrics.TimeCostNS(mark, time.Since(s).Nanoseconds())
+	return err
 }
 
 func (exc *TableRestoreExecutor) checkAllLoaded(dataFiles []string, progress *TableProgress) bool {

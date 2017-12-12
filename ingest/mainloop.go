@@ -1,9 +1,9 @@
 package ingest
 
 import (
+	"runtime"
 	"sync"
 
-	"github.com/ngaut/log"
 	"golang.org/x/net/context"
 
 	_ "github.com/pingcap/tidb/util/kvencoder"
@@ -29,6 +29,8 @@ func Mainloop(cfg *Config) *mainloop {
 }
 
 func (m *mainloop) Run() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	m.wg.Add(1)
 	go m.run()
 	m.wg.Wait()
@@ -50,38 +52,3 @@ func (m *mainloop) Stop() {
 	m.shutdown()
 	m.wg.Wait()
 }
-
-///////////////////////////////////////////////////////////////
-
-func RunMainLoop() {
-	cfg := GetCQCConfig()
-	mdl := NewMyDumpLoader(cfg)
-	dbMeta := mdl.GetTree()
-
-	restore := NewRestoreControlloer(dbMeta, cfg)
-	defer restore.Close()
-	restore.wg.Wait()
-
-	log.Info("Mainloop end !")
-	return
-}
-
-/*
-	cfg := &Config{
-		Source: DataSource{
-			Type: "mydumper",
-			URL:  "/home/pingcap/cenqichao/big-sysbench-datas",
-		},
-
-		PdAddr:        "172.16.10.2:10101",
-		KvDeliverAddr: "172.16.10.2:10309",
-
-		ProgressStore: DBStore{
-			Host:     "172.16.10.2",
-			Port:     10201,
-			User:     "root",
-			Psw:      "",
-			Database: "tidb_ingest",
-		},
-	}
-*/

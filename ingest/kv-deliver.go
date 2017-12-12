@@ -35,7 +35,9 @@ type KVDeliver struct {
 
 	uuid []byte
 	ts   uint64
-	cli  importpb.ImportKVClient
+
+	cli     importpb.ImportKVClient
+	wstream importpb.ImportKV_WriteClient
 }
 
 func NewKVDeliver(ctx context.Context, uuid string, backend string, pdAddr string) (*KVDeliver, error) {
@@ -43,7 +45,7 @@ func NewKVDeliver(ctx context.Context, uuid string, backend string, pdAddr strin
 		return nil, errInvalidUUID
 	}
 
-	log.Infof("KV deliver [%s] ~", uuid)
+	log.Infof("KV deliver handle UUID = [%s]", uuid)
 
 	rpcCli, err := newImportClient(backend) // goruntine safe ???
 	if err != nil {
@@ -59,13 +61,50 @@ func NewKVDeliver(ctx context.Context, uuid string, backend string, pdAddr strin
 		ts:      uint64(time.Now().Unix()), // TODO ... set outside ? from pd ?
 	}
 
+	dlv.wstream, err = dlv.newWriteStream(uuid)
+	if err != nil {
+		return nil, err
+	}
+
 	return dlv, nil
 }
 
+func (d *KVDeliver) newWriteStream(uuid string) (importpb.ImportKV_WriteClient, error) {
+	wstream, err := d.cli.Write(d.ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Bind uuid for this write request
+	req := &importpb.WriteRequest{
+		Head: &importpb.WriteRequest_Head{
+			Uuid: []byte(uuid),
+		},
+	}
+	if err = wstream.Send(req); err != nil {
+		wstream.CloseAndRecv()
+		return nil, err
+	}
+
+	return wstream, nil
+}
+
 func (d *KVDeliver) Close() error {
-	// TODO :
-	//	* to close rpc connection ?
-	//	* to release client ?
+	return d.closeWriteStream()
+}
+
+func (d *KVDeliver) closeWriteStream() error {
+	if d.wstream == nil {
+		return nil
+	}
+	defer func() {
+		d.wstream = nil
+	}()
+
+	if _, err := d.wstream.CloseAndRecv(); err != nil {
+		log.Errorf("close write stream cause failed : %v", err)
+		return err
+	}
 	return nil
 }
 
@@ -74,22 +113,7 @@ func (dlv *KVDeliver) Put(kvs []kvec.KvPair) error {
 		TODO : reusing streaming connection in a session !
 	*/
 
-	stream, err := dlv.cli.Write(dlv.ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// 1. bind uuid for this write request
-	wreq := &importpb.WriteRequest{
-		Head: &importpb.WriteRequest_Head{
-			Uuid: dlv.uuid,
-		},
-	}
-	if err := stream.Send(wreq); err != nil {
-		return errors.Trace(err)
-	}
-
-	// 2. send kv paris as write request content
+	// Send kv paris as write request content
 	// TODO :
 	//		* too many to seperate batch ??
 	//		* buffer pool []*importpb.Mutation
@@ -110,10 +134,7 @@ func (dlv *KVDeliver) Put(kvs []kvec.KvPair) error {
 			Mutations: mutations,
 		},
 	}
-	if err := stream.Send(write); err != nil {
-		return errors.Trace(err)
-	}
-	if _, err := stream.CloseAndRecv(); err != nil {
+	if err := dlv.wstream.Send(write); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -121,6 +142,8 @@ func (dlv *KVDeliver) Put(kvs []kvec.KvPair) error {
 }
 
 func (dlv *KVDeliver) Flush() error {
+	dlv.closeWriteStream()
+
 	flush := &importpb.FlushRequest{
 		Uuid:    dlv.uuid,
 		Address: dlv.pdAddr,
