@@ -1,0 +1,29 @@
+### tidb-lighting configuartion
+
+#
+dir = "."
+
+# 
+data_source_dir = ""
+
+# 
+kv_import_backend = ""
+
+# 
+pd_backend = ""
+
+# 
+[tidb]
+host = "localhost"
+port = 4000
+user = "root"
+password = ""
+database = "test"
+
+# 
+[progress_store]
+host = "localhost"
+port = 3306
+user = "root"
+password = ""
+database = "_ingest_stat"
