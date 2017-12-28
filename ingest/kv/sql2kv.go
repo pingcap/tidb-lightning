@@ -20,15 +20,14 @@ type TableKVEncoder struct {
 func NewTableKVEncoder(
 	db string, dbID int64,
 	table string, tableID int64,
-	tableSchema string) *TableKVEncoder {
+	tableSchema string) (*TableKVEncoder, error) {
 
 	idAllocator := kvec.NewAllocator()
 	idAllocator.Rebase(tableID, 0, false)
-
 	kvEncoder, err := kvec.New(db, idAllocator)
 	if err != nil {
 		log.Errorf("[sql2kv] kv encoder create failed : %v", err)
-		return nil
+		return nil, err
 	}
 
 	kvcodec := &TableKVEncoder{
@@ -41,44 +40,48 @@ func NewTableKVEncoder(
 		ddl:         tableSchema,
 	}
 
-	return kvcodec.init()
+	if err = kvcodec.init(); err != nil {
+		kvcodec.Close()
+		return nil, err
+	}
+
+	return kvcodec, nil
 }
 
-func (kvcodec *TableKVEncoder) init() *TableKVEncoder {
-	if len(kvcodec.ddl) > 0 {
-		if err := kvcodec.encoder.ExecDDLSQL(kvcodec.ddl); err != nil {
-			log.Errorf("[sql2kv] ddl execute failed : %v", err)
-		}
+func (kvcodec *TableKVEncoder) init() error {
+	if err := kvcodec.encoder.ExecDDLSQL(kvcodec.ddl); err != nil {
+		log.Errorf("[sql2kv] ddl execute failed : %v", err)
+		return err
 	}
-	return kvcodec
+	return nil
 }
 
 func (kvcodec *TableKVEncoder) RebaseRowID(rowID int64) {
 	kvcodec.idAllocator.Rebase(kvcodec.tableID, rowID, false)
 }
 
-func (kvcodec *TableKVEncoder) Close() {
-	kvcodec.encoder.Close()
+func (kvcodec *TableKVEncoder) Close() error {
+	return kvcodec.encoder.Close()
 }
 
 func (kvcodec *TableKVEncoder) NextRowID() int64 {
 	return kvcodec.idAllocator.Base()
 }
 
-func (kvcodec *TableKVEncoder) BuildMetaKvs(rowID int64) []kvec.KvPair {
+func (kvcodec *TableKVEncoder) BuildMetaKvs(rowID int64) ([]kvec.KvPair, error) {
 	kv, err := kvcodec.encoder.EncodeMetaAutoID(kvcodec.dbID, kvcodec.tableID, rowID)
 	if err != nil {
 		log.Errorf("[sql2kv] build auot_id meta key error = %v", err)
 	}
-	return []kvec.KvPair{kv}
+	return []kvec.KvPair{kv}, nil
 }
 
-func (kvcodec *TableKVEncoder) Sql2KV(sql string) ([]kvec.KvPair, uint64) {
+func (kvcodec *TableKVEncoder) Sql2KV(sql string) ([]kvec.KvPair, uint64, error) {
 	kvPairs, rowsAffected, err := kvcodec.encoder.Encode(sql, kvcodec.tableID)
 	if err != nil {
 		log.Errorf("[sql2kv] execute error = %v", err)
-		return []kvec.KvPair{}, 0
+		return nil, 0, err
 	}
 
-	return kvPairs, rowsAffected
+	return kvPairs, rowsAffected, nil
 }

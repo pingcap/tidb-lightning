@@ -1,7 +1,6 @@
 package kv
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,12 +15,13 @@ import (
 )
 
 var (
-	errInvalidUUID error = fmt.Errorf("uuid length must be 16")
+	errInvalidUUID error = errors.New("uuid length must be 16")
 )
 
 const (
 	_G             uint64 = 1 << 30
 	flushSizeLimit uint64 = 1 * _G
+	maxRetryTimes  int    = 3
 )
 
 type KVDeliver interface {
@@ -82,11 +82,12 @@ func NewPipeKvDeliver(uuid string, backend string, pdAddr string) (*PipeKvDelive
 }
 
 func (p *PipeKvDeliver) Close() error {
-	p.closeAndWait()
-	return nil
+	p.shutdown()
+	p.wg.Wait()
+	return p.deliver.Close()
 }
 
-func (p *PipeKvDeliver) closeAndWait() {
+func (p *PipeKvDeliver) CloseAndWait() error {
 	p.shutdown()
 	p.wg.Wait()
 
@@ -98,8 +99,7 @@ func (p *PipeKvDeliver) closeAndWait() {
 		}
 	}
 
-	p.deliver.Close()
-	return
+	return p.deliver.Close()
 }
 
 func (p *PipeKvDeliver) Put(kvs []kvec.KvPair) error {
@@ -141,7 +141,7 @@ func (p *PipeKvDeliver) run(ctx context.Context) {
 		case task = <-p.tasks:
 			if err = p.handle(task); err != nil {
 				log.Warnf("[%s] Deliver task failed (retry = %d) : %s", p.uuid, err.Error())
-				if task.retry > 3 {
+				if task.retry > maxRetryTimes {
 					break // TODO ...
 				}
 				go func() {
@@ -304,7 +304,7 @@ func (c *KVDeliverClient) closeWriteStream() error {
 func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 	if c.wstream == nil {
 		if wstream, err := c.newWriteStream(); err != nil {
-			return nil
+			return err
 		} else {
 			c.wstream = wstream
 		}

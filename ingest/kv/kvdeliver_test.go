@@ -7,7 +7,7 @@ import (
 	"golang.org/x/net/context"
 
 	. "github.com/pingcap/tidb-lightning/ingest/kv"
-	. "github.com/pingcap/tidb-lightning/ingest/kvec"
+	. "github.com/pingcap/tidb/util/kvencoder"
 )
 
 const (
