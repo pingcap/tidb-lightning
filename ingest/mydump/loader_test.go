@@ -20,10 +20,15 @@ func (s *testMydumpLoaderSuite) SetUpSuite(c *C)    {}
 func (s *testMydumpLoaderSuite) TearDownSuite(c *C) {}
 
 func (s *testMydumpLoaderSuite) TestLoader(c *C) {
-	cfg := &config.Config{SourceDir: "./examples"}
-	mdl := md.NewMyDumpLoader(cfg)
-	dbMeta := mdl.GetDatabase()
+	cfg := &config.Config{SourceDir: "./not-exists"}
+	mdl, err := md.NewMyDumpLoader(cfg)
+	c.Assert(err, NotNil)
 
+	cfg = &config.Config{SourceDir: "./examples"}
+	mdl, err = md.NewMyDumpLoader(cfg)
+	c.Assert(err, IsNil)
+
+	dbMeta := mdl.GetDatabase()
 	c.Assert(dbMeta.Name, Equals, "mocker_test")
 	c.Assert(len(dbMeta.Tables), Equals, 2)
 

@@ -60,18 +60,18 @@ type MDLoader struct {
 	dbs map[string]*MDDatabaseMeta
 }
 
-func NewMyDumpLoader(cfg *config.Config) *MDLoader {
+func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	mdl := &MDLoader{
 		dir: cfg.SourceDir,
 		dbs: make(map[string]*MDDatabaseMeta),
 	}
 
 	if err := mdl.setup(mdl.dir); err != nil {
-		log.Errorf("init mydumper loader failed : %s\n", err.Error())
-		return nil
+		// log.Errorf("init mydumper loader failed : %s\n", err.Error())
+		return nil, err
 	}
 
-	return mdl
+	return mdl, nil
 }
 
 func (l *MDLoader) setup(dir string) error {

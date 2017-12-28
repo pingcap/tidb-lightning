@@ -28,7 +28,7 @@ func (s *testMydumpRegionSuite) TearDownSuite(c *C) {}
 */
 func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	cfg := &config.Config{SourceDir: "./examples"}
-	loader := NewMyDumpLoader(cfg)
+	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabase()
 	founder := NewRegionFounder(defMinRegionSize)
 
@@ -82,7 +82,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 
 func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
 	cfg := &config.Config{SourceDir: "./examples"}
-	loader := NewMyDumpLoader(cfg)
+	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabase()
 	founder := NewRegionFounder(defMinRegionSize)
 

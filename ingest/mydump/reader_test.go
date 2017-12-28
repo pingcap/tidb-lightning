@@ -109,7 +109,7 @@ func (s *testMydumpReaderSuite) TestReader(c *C) {
 	fmt.Println("Testing mydump reader ...")
 
 	cfg := &config.Config{SourceDir: utestDataSrouce}
-	mdl := NewMyDumpLoader(cfg)
+	mdl, _ := NewMyDumpLoader(cfg)
 	dbMeta := mdl.GetDatabase()
 
 	var minSize int64 = 512
