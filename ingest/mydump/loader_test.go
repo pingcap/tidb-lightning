@@ -10,7 +10,7 @@ import (
 
 var _ = Suite(&testMydumpLoaderSuite{})
 
-func TestLoader(t *testing.T) {
+func TestMydumps(t *testing.T) {
 	TestingT(t)
 }
 

@@ -4,7 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"testing"
+	_ "testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/ingest/common"
@@ -56,10 +57,6 @@ func (d *dbManager) close() {
 
 var _ = Suite(&testMydumpReaderSuite{})
 
-func TestReader(t *testing.T) {
-	TestingT(t)
-}
-
 type testMydumpReaderSuite struct{}
 
 func (s *testMydumpReaderSuite) SetUpSuite(c *C)    {}
@@ -81,6 +78,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, maxBlockSize int64) {
 	defer dbMgr.clear().close()
 
 	db := dbMgr.db
+	dbMgr.clear()
 	for _, tblMeta := range dbMeta.Tables {
 		sqlCreteTable, _ := ExportStatment(tblMeta.SchemaFile)
 		dbMgr.init(string(sqlCreteTable))
@@ -114,10 +112,12 @@ func (s *testMydumpReaderSuite) TestReader(c *C) {
 	mdl := NewMyDumpLoader(cfg)
 	dbMeta := mdl.GetTree()
 
-	var minSize int64 = 1024
-	var maxSize int64 = 1024 * 64
-	for blockSize := minSize; blockSize <= maxSize; blockSize += 1024 {
-		// fmt.Printf("block size = %d\n", blockSize)
+	var minSize int64 = 512
+	var maxSize int64 = 1024 * 128
+
+	start := time.Now()
+	for blockSize := minSize; blockSize <= maxSize; blockSize += 512 {
 		mydump2mysql(c, dbMeta, blockSize)
 	}
+	fmt.Printf("tol cost = %.2f sec\n", time.Since(start).Seconds())
 }

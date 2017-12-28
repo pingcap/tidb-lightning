@@ -2,7 +2,7 @@ package mydump_test
 
 import (
 	_ "path/filepath"
-	"testing"
+	_ "testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/ingest/config"
@@ -10,10 +10,6 @@ import (
 )
 
 var _ = Suite(&testMydumpRegionSuite{})
-
-func TestRegion(t *testing.T) {
-	TestingT(t)
-}
 
 type testMydumpRegionSuite struct{}
 
