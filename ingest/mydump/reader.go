@@ -12,15 +12,22 @@ import (
 	"github.com/ngaut/log"
 )
 
+var (
+	insStmtRegex = regexp.MustCompile(`INSERT INTO .* VALUES`)
+)
+
 func ExportStatment(sqlFile string) ([]byte, error) {
-	fp, err := os.Open(sqlFile)
+	fd, err := os.Open(sqlFile)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer fp.Close()
+	defer fd.Close()
 
-	br := bufio.NewReader(fp)
-	f, _ := os.Stat(sqlFile)
+	br := bufio.NewReader(fd)
+	f, err := os.Stat(sqlFile)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	data := make([]byte, 0, f.Size()+1)
 	buffer := make([]byte, 0, f.Size()+1)
@@ -51,16 +58,15 @@ func ExportStatment(sqlFile string) ([]byte, error) {
 }
 
 type MDDataReader struct {
-	fd    *os.File
-	file  string
-	fsize int64
-	start int64
-
-	sqlFront []byte
+	fd         *os.File
+	file       string
+	fsize      int64
+	start      int64
+	stmtHeader []byte
 
 	bufferSize int64
-	readBuffer []byte
 	buffer     *bufio.Reader
+	// readBuffer []byte
 }
 
 func NewMDDataReader(file string, offset int64) (*MDDataReader, error) {
@@ -68,22 +74,27 @@ func NewMDDataReader(file string, offset int64) (*MDDataReader, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	if _, err := fd.Seek(offset, io.SeekStart); err != nil {
 		fd.Close()
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
-	fstat, _ := fd.Stat()
+	fstat, err := fd.Stat()
+	if err != nil {
+		fd.Close()
+		return nil, errors.Trace(err)
+	}
 
 	mdr := &MDDataReader{
-		fd:       fd,
-		fsize:    fstat.Size(),
-		file:     file,
-		start:    offset,
-		sqlFront: extractInsertFront(file),
+		fd:         fd,
+		fsize:      fstat.Size(),
+		file:       file,
+		start:      offset,
+		stmtHeader: getInsertStatmentHeader(file),
 	}
 
-	if len(mdr.sqlFront) == 0 {
+	if len(mdr.stmtHeader) == 0 {
 		return nil, errors.New("can not find any insert statment !")
 	}
 
@@ -97,7 +108,6 @@ func (r *MDDataReader) Close() error {
 			return errors.Trace(err)
 		}
 	}
-	r.readBuffer = nil
 	r.buffer = nil
 	r.bufferSize = 0
 	return nil
@@ -137,7 +147,7 @@ func (r *MDDataReader) currOffset() int64 {
 	}
 }
 
-func extractInsertFront(file string) []byte {
+func getInsertStatmentHeader(file string) []byte {
 	f, err := os.Open(file)
 	if err != nil {
 		log.Errorf("open file failed (%s) : %v", file, err)
@@ -145,23 +155,30 @@ func extractInsertFront(file string) []byte {
 	}
 	defer f.Close()
 
-	front := ""
-	br := bufio.NewReaderSize(f, 16*1024)
-	reg := regexp.MustCompile(`INSERT INTO .* VALUES`)
-	for l := 0; l < 100; l++ {
+	header := ""
+	br := bufio.NewReaderSize(f, int(defReadBlockSize))
+	for {
 		line, err := br.ReadString('\n')
 		if err == io.EOF {
 			break
 		}
 
 		data := strings.ToUpper(line)
-		if loc := reg.FindStringIndex(data); len(loc) > 0 {
-			front = line[loc[0]:loc[1]]
+		if loc := insStmtRegex.FindStringIndex(data); len(loc) > 0 {
+			header = line[loc[0]:loc[1]]
 			break
 		}
 	}
 
-	return []byte(front)
+	return []byte(header)
+}
+
+func (r *MDDataReader) acquireBuffer(fd *os.File, size int64) *bufio.Reader {
+	if size > r.bufferSize {
+		r.buffer = bufio.NewReaderSize(fd, int(size))
+		r.bufferSize = size
+	}
+	return r.buffer
 }
 
 func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
@@ -170,9 +187,10 @@ func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
 		return nil, io.EOF
 	}
 
-	var stmts [][]byte = make([][]byte, 0, 8)      // TODO ... init cap !
-	var statment []byte = make([]byte, 0, maxSize) // TODO ... init cap !
+	buffer := r.acquireBuffer(fd, maxSize)
+	defer buffer.Reset(fd)
 
+	var stmts [][]byte = make([][]byte, 0, 8)
 	appendSQL := func(sql []byte) {
 		sql = bytes.TrimSpace(sql)
 		sqlLen := len(sql)
@@ -181,12 +199,12 @@ func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
 		}
 
 		// prefix
-		if !bytes.HasPrefix(sql, r.sqlFront) {
-			log.Errorf("Unexpect sql starting : '%s ..'", string(sql)[:20])
+		if !bytes.HasPrefix(sql, r.stmtHeader) {
+			log.Errorf("Unexpect sql starting : '%s ..'", string(sql)[:10])
 			return
 		}
-		// empty sql statment without any actual values ~
-		if sqlLen == len(r.sqlFront) {
+		if sqlLen == len(r.stmtHeader) {
+			// empty sql statment without any actual values ~
 			return
 		}
 
@@ -195,7 +213,7 @@ func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
 			if bytes.HasSuffix(sql, []byte(",")) {
 				sql[sqlLen-1] = ';'
 			} else {
-				log.Errorf("Unexpect data ending : '.. %s'", string(sql)[len(sql)-20:])
+				log.Errorf("Unexpect sql ending : '.. %s'", string(sql)[sqlLen-10:])
 				return
 			}
 		}
@@ -203,51 +221,41 @@ func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
 		stmts = append(stmts, sql)
 	}
 
-	// TODO ... what if huge line ?
-	if maxSize > r.bufferSize {
-		r.buffer = bufio.NewReaderSize(fd, int(maxSize))
-		r.bufferSize = maxSize
-	}
-	buffer := r.buffer
-	defer r.buffer.Reset(fd)
-
+	var statment []byte = make([]byte, 0, maxSize)
 	var readSize, lineSize int64
 	var line []byte
 	var err error
 
-	for {
+	for end := false; !end; {
 		line, err = buffer.ReadBytes('\n')
-		if err == io.EOF {
-			break
-		}
+		end = (err == io.EOF)
 
 		lineSize = int64(len(line))
 		if readSize+lineSize > maxSize {
 			fd.Seek(beginPos+readSize, io.SeekStart)
 			break
 		}
-
 		readSize += lineSize
+
+		// TODO : what if huge line ?
+		// TODO : "... );INSERT INTO ..."
+
 		line = bytes.TrimSpace(line)
 		if len(line) > 0 {
-			if len(statment) == 0 && !bytes.HasPrefix(line, r.sqlFront) {
-				statment = append(statment, r.sqlFront...)
+			if len(statment) == 0 && !bytes.HasPrefix(line, r.stmtHeader) {
+				statment = append(statment, r.stmtHeader...)
 			}
 			statment = append(statment, line...)
 
 			if statment[len(statment)-1] == ';' {
-				// TODO : check  "/* xxx */;"
-				// TODO : index "INSERT INTO"
-				appendSQL(statment)
+				appendSQL(statment) // TODO : check  "/* xxx */;"
 				statment = make([]byte, 0, maxSize)
 			}
 		}
 	}
 
 	if len(statment) > 0 {
-		// TODO : check  "/* xxx */;"
-		// TODO : index "INSERT INTO"
-		appendSQL(statment)
+		appendSQL(statment) // TODO : check  "/* xxx */;"
 	}
 
 	return stmts, nil
@@ -281,8 +289,8 @@ func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
 // 		}
 
 // 		data = data[:idx]
-// 		if bytes.HasSuffix(data, r.sqlFront) {
-// 			idx = bytes.LastIndex(data, r.sqlFront)
+// 		if bytes.HasSuffix(data, r.stmtHeader) {
+// 			idx = bytes.LastIndex(data, r.stmtHeader)
 // 			data = data[:idx]
 // 		} else {
 // 			data = append(data, '\n')
@@ -315,7 +323,7 @@ func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
 
 // 	// 3. The whole sql might contains multi statment,
 // 	//	  split it into couple of statments ~
-// 	sep := r.sqlFront // TODO : or []byte(");\n") ?
+// 	sep := r.stmtHeader // TODO : or []byte(");\n") ?
 // 	statments := make([][]byte, 0, 1)
 // 	for content := sql; ; {
 // 		content = bytes.TrimSpace(content)
@@ -334,9 +342,9 @@ func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
 
 // 	if len(statments) > 0 {
 // 		stmt := statments[0]
-// 		if !bytes.HasPrefix(stmt, r.sqlFront) {
-// 			fixStmt := make([]byte, 0, len(stmt)+len(r.sqlFront)+1)
-// 			fixStmt = append(fixStmt, r.sqlFront...)
+// 		if !bytes.HasPrefix(stmt, r.stmtHeader) {
+// 			fixStmt := make([]byte, 0, len(stmt)+len(r.stmtHeader)+1)
+// 			fixStmt = append(fixStmt, r.stmtHeader...)
 // 			fixStmt = append(fixStmt, ' ')
 // 			fixStmt = append(fixStmt, stmt...)
 // 			statments[0] = fixStmt
@@ -356,20 +364,16 @@ type RegionReader struct {
 }
 
 func NewRegionReader(file string, offset int64, size int64) (*RegionReader, error) {
-	log.Infof("[%s] offset = %d / size = %d", file, offset, size)
-
 	fileReader, err := NewMDDataReader(file, offset)
 	if err != nil {
 		return nil, err
 	}
 
-	offset = fileReader.Tell()
-
 	return &RegionReader{
 		fileReader: fileReader,
 		size:       size,
 		offset:     offset,
-		pos:        offset,
+		pos:        fileReader.Tell(),
 	}, nil
 }
 
@@ -389,6 +393,6 @@ func (r *RegionReader) Read(maxBlockSize int64) ([][]byte, error) {
 	return datas, err
 }
 
-func (r *RegionReader) Close() {
-	r.fileReader.Close()
+func (r *RegionReader) Close() error {
+	return r.fileReader.Close()
 }

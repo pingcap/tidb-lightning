@@ -30,6 +30,7 @@ type MDDatabaseMeta struct {
 func (m *MDDatabaseMeta) GetSchema() string {
 	schema, err := ExportStatment(m.SchemaFile)
 	if err != nil {
+		log.Errorf("failed to extract database schema (%s) : %s", m.SchemaFile, err.Error())
 		return ""
 	}
 	return string(schema)
@@ -45,6 +46,7 @@ type MDTableMeta struct {
 func (m *MDTableMeta) GetSchema() string {
 	schema, err := ExportStatment(m.SchemaFile)
 	if err != nil {
+		log.Errorf("failed to extract table schema (%s) : %s", m.SchemaFile, err.Error())
 		return ""
 	}
 	return string(schema)
@@ -217,9 +219,8 @@ func (l *MDLoader) countTableFileRows(file string) int {
 	defer reader.Close()
 
 	var rows int
-	var blockSize int64 = 1024 * 64
 	for {
-		statments, err := reader.Read(blockSize)
+		statments, err := reader.Read(defReadBlockSize)
 		if err == io.EOF {
 			break
 		}
@@ -231,7 +232,7 @@ func (l *MDLoader) countTableFileRows(file string) int {
 	return rows
 }
 
-func (l *MDLoader) GetTree() *MDDatabaseMeta {
+func (l *MDLoader) GetDatabase() *MDDatabaseMeta {
 	for db := range l.dbs {
 		return l.dbs[db]
 	}

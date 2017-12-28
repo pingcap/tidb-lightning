@@ -10,12 +10,6 @@ import (
 	"github.com/ngaut/log"
 )
 
-const (
-	// TODO ....
-	fuzzyRegionSize int64 = 1024 * 64
-	// fuzzyRegionSize int64 = 1024 * 1024 * 256
-)
-
 type TableRegion struct {
 	ID int
 
@@ -53,10 +47,11 @@ func (rs regionSlice) Less(i, j int) bool {
 ////////////////////////////////////////////////////////////////
 
 type RegionFounder struct {
-	processors chan int
+	processors    chan int
+	minRegionSize int64
 }
 
-func NewRegionFounder() *RegionFounder {
+func NewRegionFounder(minRegionSize int64) *RegionFounder {
 	concurrency := runtime.NumCPU() / 4
 	if concurrency == 0 {
 		concurrency = 1
@@ -68,7 +63,8 @@ func NewRegionFounder() *RegionFounder {
 	}
 
 	return &RegionFounder{
-		processors: processors,
+		processors:    processors,
+		minRegionSize: minRegionSize,
 	}
 }
 
@@ -79,13 +75,14 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 	db := meta.DB
 	table := meta.Name
 	processors := f.processors
+	minRegionSize := f.minRegionSize
 
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
 	for _, file := range meta.DataFiles {
 		wg.Add(1)
 		go func(pid int, f string) {
-			log.Infof("[%s] loading file's region (%s) ...", table, f)
-			regions := makeFileRegions(db, table, f)
+			log.Debugf("[%s] loading file's region (%s) ...", table, f)
+			regions := makeFileRegions(db, table, f, minRegionSize)
 
 			lock.Lock()
 			filesRegions = append(filesRegions, regions...)
@@ -100,24 +97,25 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 	sort.Sort(filesRegions)
 
 	var tableRows int64 = 0
-	tableRegions := make([]*TableRegion, 0, len(filesRegions))
 	for i, region := range filesRegions {
 		region.ID = i
 		region.BeginRowID = tableRows + 1
 		tableRows += region.Rows
-		tableRegions = append(tableRegions, region)
 	}
 
-	return tableRegions
+	return filesRegions
 }
 
-func makeFileRegions(db string, table string, file string) []*TableRegion {
-	reader, _ := NewMDDataReader(file, 0) // TODO ... error
+func makeFileRegions(db string, table string, file string, minRegionSize int64) []*TableRegion {
+	reader, err := NewMDDataReader(file, 0)
+	if err != nil {
+		log.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
+		return nil
+	}
 	defer reader.Close()
 
-	var offset int64 = reader.Tell()
+	var offset int64
 	var readSize int64
-	var blockSize int64 = 1024 * 8 // TODO ...
 
 	newRegion := func(off int64) *TableRegion {
 		return &TableRegion{
@@ -132,8 +130,13 @@ func makeFileRegions(db string, table string, file string) []*TableRegion {
 		}
 	}
 
+	blockSize := defReadBlockSize
+	if blockSize > minRegionSize {
+		blockSize = minRegionSize
+	}
+
 	regions := make([]*TableRegion, 0)
-	region := newRegion(offset)
+	region := newRegion(0)
 	for {
 		// read file content
 		statments, err := reader.Read(blockSize)
@@ -150,7 +153,7 @@ func makeFileRegions(db string, table string, file string) []*TableRegion {
 		}
 
 		// generate new region once is necessary ~
-		if region.Size >= fuzzyRegionSize {
+		if region.Size >= minRegionSize {
 			regions = append(regions, region)
 			region = newRegion(offset)
 		}

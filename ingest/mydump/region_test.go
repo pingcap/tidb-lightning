@@ -1,12 +1,19 @@
 package mydump_test
 
 import (
+	"bytes"
+	_ "fmt"
 	_ "path/filepath"
 	_ "testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb-lightning/ingest/common"
 	"github.com/pingcap/tidb-lightning/ingest/config"
 	. "github.com/pingcap/tidb-lightning/ingest/mydump"
+)
+
+const (
+	defMinRegionSize int64 = 1024 * 4
 )
 
 var _ = Suite(&testMydumpRegionSuite{})
@@ -22,35 +29,30 @@ func (s *testMydumpRegionSuite) TearDownSuite(c *C) {}
 func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	cfg := &config.Config{SourceDir: "./examples"}
 	loader := NewMyDumpLoader(cfg)
-	dbMeta := loader.GetTree()
-
-	founder := NewRegionFounder()
+	dbMeta := loader.GetDatabase()
+	founder := NewRegionFounder(defMinRegionSize)
 
 	for _, meta := range dbMeta.Tables {
 		regions := founder.MakeTableRegions(meta)
 
-		/*
-			table := meta.Name
-			fmt.Printf("[%s] region count ===============> %d\n", table, len(regions))
-			for _, region := range regions {
-				fname := filepath.Base(region.File)
-				fmt.Printf("[%s] rowID = %5d / rows = %5d / offset = %10d / size = %10d \n",
-					fname, region.BeginRowID, region.Rows, region.Offset, region.Size)
-			}
-		*/
+		// table := meta.Name
+		// fmt.Printf("[%s] region count ===============> %d\n", table, len(regions))
+		// for _, region := range regions {
+		// 	fname := filepath.Base(region.File)
+		// 	fmt.Printf("[%s] rowID = %5d / rows = %5d / offset = %10d / size = %10d \n",
+		// 		fname, region.BeginRowID, region.Rows, region.Offset, region.Size)
+		// }
 
 		// check - region-size vs file-size
-		/*
-			var tolFileSize int64 = 0
-			var tolRegionSize int64 = 0
-			for _, file := range meta.DataFiles {
-				tolFileSize += GetFileSize(file)
-			}
-			for _, region := range regions {
-				tolRegionSize += region.Size
-			}
-			c.Assert(tolFileSize, Equals, tolRegionSize)
-		*/
+		var tolFileSize int64 = 0
+		var tolRegionSize int64 = 0
+		for _, file := range meta.DataFiles {
+			tolFileSize += common.GetFileSize(file)
+		}
+		for _, region := range regions {
+			tolRegionSize += region.Size
+		}
+		c.Assert(tolRegionSize, Equals, tolFileSize)
 
 		// check - rows num
 		var tolRows int64 = 0
@@ -74,4 +76,31 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 			preReg = reg
 		}
 	}
+
+	return
+}
+
+func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
+	cfg := &config.Config{SourceDir: "./examples"}
+	loader := NewMyDumpLoader(cfg)
+	dbMeta := loader.GetDatabase()
+	founder := NewRegionFounder(defMinRegionSize)
+
+	for _, meta := range dbMeta.Tables {
+		regions := founder.MakeTableRegions(meta)
+
+		tolValTuples := 0
+		for _, reg := range regions {
+			regReader, _ := NewRegionReader(reg.File, reg.Offset, reg.Size)
+			stmts, _ := regReader.Read(reg.Size)
+			for _, stmt := range stmts {
+				parts := bytes.Split(stmt, []byte("),"))
+				tolValTuples += len(parts)
+			}
+		}
+
+		c.Assert(tolValTuples, Equals, 10000)
+	}
+
+	return
 }

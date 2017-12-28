@@ -18,6 +18,8 @@ const (
 	utestDataSrouce string = "./examples"
 )
 
+var _ = Suite(&testMydumpReaderSuite{})
+
 ////////////////////////////
 type dbManager struct {
 	database string
@@ -54,8 +56,6 @@ func (d *dbManager) close() {
 }
 
 //////////////////////////////////////////////////////////
-
-var _ = Suite(&testMydumpReaderSuite{})
 
 type testMydumpReaderSuite struct{}
 
@@ -110,7 +110,7 @@ func (s *testMydumpReaderSuite) TestReader(c *C) {
 
 	cfg := &config.Config{SourceDir: utestDataSrouce}
 	mdl := NewMyDumpLoader(cfg)
-	dbMeta := mdl.GetTree()
+	dbMeta := mdl.GetDatabase()
 
 	var minSize int64 = 512
 	var maxSize int64 = 1024 * 128

@@ -22,7 +22,7 @@ func (s *testMydumpLoaderSuite) TearDownSuite(c *C) {}
 func (s *testMydumpLoaderSuite) TestLoader(c *C) {
 	cfg := &config.Config{SourceDir: "./examples"}
 	mdl := md.NewMyDumpLoader(cfg)
-	dbMeta := mdl.GetTree()
+	dbMeta := mdl.GetDatabase()
 
 	c.Assert(dbMeta.Name, Equals, "mocker_test")
 	c.Assert(len(dbMeta.Tables), Equals, 2)
