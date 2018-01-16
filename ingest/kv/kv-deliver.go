@@ -8,10 +8,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/importpb"
+	kvec "github.com/pingcap/tidb/util/kvencoder"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
-
-	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 
 var (
@@ -301,13 +300,22 @@ func (c *KVDeliverClient) closeWriteStream() error {
 	return nil
 }
 
-func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
+func (c *KVDeliverClient) getWriteStream() (importpb.ImportKV_WriteClient, error) {
 	if c.wstream == nil {
-		if wstream, err := c.newWriteStream(); err != nil {
-			return err
-		} else {
-			c.wstream = wstream
+		wstream, err := c.newWriteStream()
+		if err != nil {
+			log.Errorf("[kv-deliver] failed to build write stream : %s", err.Error())
+			return nil, err
 		}
+		c.wstream = wstream
+	}
+	return c.wstream, nil
+}
+
+func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
+	wstream, err := c.getWriteStream()
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	// Send kv paris as write request content
@@ -332,7 +340,8 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 		},
 	}
 
-	if err := c.wstream.Send(write); err != nil {
+	if err := wstream.Send(write); err != nil {
+		log.Errorf("[kv-deliver] write stream failed to send : %s", err.Error())
 		c.closeWriteStream()
 		return errors.Trace(err)
 	}
@@ -343,28 +352,46 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 func (c *KVDeliverClient) Cleanup() error {
 	c.closeWriteStream()
 
-	req := &importpb.CleanupRequest{Uuid: c.uuid}
-	_, err := c.cli.Cleanup(c.ctx, req)
+	req := &importpb.DeleteRequest{Uuid: c.uuid}
+	_, err := c.cli.Delete(c.ctx, req)
 	return err
 }
 
 func (c *KVDeliverClient) Flush() error {
 	c.closeWriteStream()
 
-	// TODO ...
-
-	ops := []func() error{c.callFlush, c.callImport}
-	for _, fn := range ops {
+	ops := []func() error{c.callFlush, c.callClose, c.callImport}
+	for step, fn := range ops {
 		if err := fn(); err != nil {
-			return err
+			log.Errorf("[kv-deliver] flush stage with error (step = %d) : %s", step, err.Error())
+			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
 func (c *KVDeliverClient) callFlush() error {
-	req := &importpb.FlushRequest{Uuid: c.uuid}
-	_, err := c.cli.Flush(c.ctx, req)
+	wstream, err := c.getWriteStream()
+	if err != nil {
+		return err
+	}
+	defer c.closeWriteStream()
+
+	write := &importpb.WriteRequest{
+		Batch: &importpb.WriteBatch{
+			CommitTs:  c.ts,
+			Mutations: []*importpb.Mutation{},
+		},
+		// flush to flush
+		Options: &importpb.WriteOptions{Flush: true},
+	}
+
+	return wstream.Send(write)
+}
+
+func (c *KVDeliverClient) callClose() error {
+	req := &importpb.CloseRequest{Uuid: c.uuid}
+	_, err := c.cli.Close(c.ctx, req)
 	return err
 }
 
