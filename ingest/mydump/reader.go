@@ -173,7 +173,7 @@ func getInsertStatmentHeader(file string) []byte {
 	return []byte(header)
 }
 
-func (r *MDDataReader) acquireBuffer(fd *os.File, size int64) *bufio.Reader {
+func (r *MDDataReader) acquireBufferReader(fd *os.File, size int64) *bufio.Reader {
 	if size > r.bufferSize {
 		r.buffer = bufio.NewReaderSize(fd, int(size))
 		r.bufferSize = size
@@ -181,81 +181,99 @@ func (r *MDDataReader) acquireBuffer(fd *os.File, size int64) *bufio.Reader {
 	return r.buffer
 }
 
-func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
+func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 	fd, beginPos := r.fd, r.currOffset()
 	if beginPos >= r.fsize {
 		return nil, io.EOF
 	}
 
-	buffer := r.acquireBuffer(fd, maxSize)
-	defer buffer.Reset(fd)
+	reader := r.acquireBufferReader(fd, minSize<<1)
+	defer reader.Reset(fd)
 
+	// split file's content into multi sql statement
 	var stmts [][]byte = make([][]byte, 0, 8)
 	appendSQL := func(sql []byte) {
 		sql = bytes.TrimSpace(sql)
 		sqlLen := len(sql)
-		if sqlLen == 0 {
-			return
-		}
+		if sqlLen != 0 {
+			// TODO : check  "/* xxx */;"
 
-		// prefix
-		if !bytes.HasPrefix(sql, r.stmtHeader) {
-			log.Errorf("Unexpect sql starting : '%s ..'", string(sql)[:10])
-			return
-		}
-		if sqlLen == len(r.stmtHeader) {
-			// empty sql statment without any actual values ~
-			return
-		}
-
-		// suffix
-		if !bytes.HasSuffix(sql, []byte(";")) {
-			if bytes.HasSuffix(sql, []byte(",")) {
-				sql[sqlLen-1] = ';'
-			} else {
-				log.Errorf("Unexpect sql ending : '.. %s'", string(sql)[sqlLen-10:])
+			// check prefix
+			if !bytes.HasPrefix(sql, r.stmtHeader) {
+				log.Errorf("Unexpect sql starting : '%s ..'", string(sql)[:10])
 				return
 			}
-		}
+			if sqlLen == len(r.stmtHeader) {
+				return // ps : empty sql statment without any actual values ~
+			}
 
-		stmts = append(stmts, sql)
+			// check suffix
+			if !bytes.HasSuffix(sql, []byte(";")) {
+				if bytes.HasSuffix(sql, []byte(",")) {
+					sql[sqlLen-1] = ';'
+				} else {
+					log.Errorf("Unexpect sql ending : '.. %s'", string(sql)[sqlLen-10:])
+					return
+				}
+			}
+
+			stmts = append(stmts, sql)
+		}
 	}
 
-	var statment []byte = make([]byte, 0, maxSize)
+	/*
+		Read file in specified format like :
+		'''
+			INSERT INTO xxx VALUES
+			(...),
+			(...),
+			(...);
+		'''
+	*/
+	var statment []byte = make([]byte, 0, minSize+4096)
 	var readSize, lineSize int64
 	var line []byte
 	var err error
 
+	/*
+		TODO :
+			1. "(...);INSERT INTO .."
+			2. huge line
+	*/
 	for end := false; !end; {
-		line, err = buffer.ReadBytes('\n')
-		end = (err == io.EOF)
-
+		line, err = reader.ReadBytes('\n')
 		lineSize = int64(len(line))
-		if readSize+lineSize > maxSize {
-			fd.Seek(beginPos+readSize, io.SeekStart)
-			break
-		}
-		readSize += lineSize
-
-		// TODO : what if huge line ?
-		// TODO : "... );INSERT INTO ..."
+		end = (err == io.EOF)
 
 		line = bytes.TrimSpace(line)
 		if len(line) > 0 {
+			if line[0] == '/' &&
+				bytes.HasPrefix(line, []byte("/*")) && bytes.HasSuffix(line, []byte("*/")) {
+				// ps : is a comment, ignored it
+				// TODO : what if comment with span on multi lines ?
+				continue
+			}
+
 			if len(statment) == 0 && !bytes.HasPrefix(line, r.stmtHeader) {
 				statment = append(statment, r.stmtHeader...)
 			}
 			statment = append(statment, line...)
 
 			if statment[len(statment)-1] == ';' {
-				appendSQL(statment) // TODO : check  "/* xxx */;"
-				statment = make([]byte, 0, maxSize)
+				appendSQL(statment)
+				statment = make([]byte, 0, minSize+4096)
 			}
+		}
+
+		readSize += lineSize
+		if readSize >= minSize {
+			fd.Seek(beginPos+readSize, io.SeekStart) // ps : as buffer reader over readed !
+			break
 		}
 	}
 
 	if len(statment) > 0 {
-		appendSQL(statment) // TODO : check  "/* xxx */;"
+		appendSQL(statment)
 	}
 
 	return stmts, nil

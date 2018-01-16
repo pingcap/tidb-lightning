@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	_ "testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -73,7 +72,7 @@ func checkTableData(c *C, db *sql.DB) {
 	c.Assert(count, Equals, 10000)
 }
 
-func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, maxBlockSize int64) {
+func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 	dbMgr := newDBManager()
 	defer dbMgr.clear().close()
 
@@ -88,7 +87,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, maxBlockSize int64) {
 			defer reader.Close()
 
 			for {
-				statments, err := reader.Read(maxBlockSize)
+				statments, err := reader.Read(minBlockSize)
 				if err == io.EOF {
 					break
 				}
