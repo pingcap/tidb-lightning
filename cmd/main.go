@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path"
@@ -11,6 +13,7 @@ import (
 	"github.com/ngaut/log"
 
 	"github.com/pingcap/tidb-lightning/ingest"
+	"github.com/pingcap/tidb-lightning/ingest/common"
 	"github.com/pingcap/tidb-lightning/ingest/config"
 )
 
@@ -19,15 +22,14 @@ var (
 )
 
 func initEnv(cfg *config.Config) error {
-	if err := os.MkdirAll(cfg.Dir, os.ModePerm); err != nil {
-		return err
-	}
+	common.EnsureDir(cfg.Dir)
+	// initLogger(cfg.Dir)
 
-	/*
-		if err := initLogger(cfg.Dir); err != nil {
-			return errors.Trace(err)
-		}
-	*/
+	if cfg.EnableProfile {
+		go func() { // TODO : config to enable it in debug mode
+			log.Info(http.ListenAndServe(":7777", nil))
+		}()
+	}
 
 	return nil
 }
@@ -77,8 +79,7 @@ func main() {
 	mainloop := ingest.Mainloop(cfg)
 	mainloop.Run()
 
-	// onExitSignal()
-	// mainloop.Stop()
+	// TODO : onExitSignal() --> mainloop.Stop()
 
 	log.Info("tidb ingest exit.")
 	return

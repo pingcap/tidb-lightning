@@ -8,6 +8,8 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/ingest/config"
+	"github.com/pingcap/tidb-lightning/ingest/mydump"
+	"github.com/pingcap/tidb-lightning/ingest/restore"
 )
 
 type mainloop struct {
@@ -37,7 +39,20 @@ func (m *mainloop) Run() {
 }
 
 func (m *mainloop) run() {
-	log.Info("mainloop running ~")
+	mdl, err := mydump.NewMyDumpLoader(m.cfg)
+	if err != nil {
+		log.Errorf("failed to load mydumper source : %s", err.Error())
+		return
+	}
+
+	dbMeta := mdl.GetDatabase()
+	procedure := restore.NewRestoreControlloer(dbMeta, m.cfg)
+	defer func() {
+		procedure.Close()
+		m.wg.Done()
+	}()
+
+	procedure.Run(m.ctx)
 	return
 }
 
