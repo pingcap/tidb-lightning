@@ -8,14 +8,11 @@ import (
 	"sync"
 	"time"
 
-	_ "database/sql"
-	_ "path/filepath"
-
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"golang.org/x/net/context"
 
-	. "github.com/pingcap/tidb-lightning/ingest/common"
+	"github.com/pingcap/tidb-lightning/ingest/common"
 	"github.com/pingcap/tidb-lightning/ingest/config"
 	"github.com/pingcap/tidb-lightning/ingest/kv"
 	"github.com/pingcap/tidb-lightning/ingest/mydump"
@@ -24,7 +21,7 @@ import (
 
 var (
 	errCtxAborted = errors.New("context aborted error")
-	metrics       = NewMetrics()
+	metrics       = common.NewMetrics()
 	concurrency   = 1
 )
 
@@ -52,7 +49,7 @@ type RestoreControlloer struct {
 
 func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *RestoreControlloer {
 	// store := cfg.ProgressStore
-	// statDB := ConnectDB(store.Host, store.Port, store.User, store.Psw)
+	// statDB := ConnectDB(store.Host, store.Port, store.User, store.Pwd)
 	// statDbms := NewProgressDBMS(statDB, store.Database)
 
 	return &RestoreControlloer{
@@ -156,6 +153,8 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 
 	go func() {
 		ticker := time.NewTicker(time.Minute * 5)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ticker.C:
@@ -250,7 +249,7 @@ type restoreCallback func(int, int64, error) // ps : regionID , maxRowID , error
 type regionRestoreTask struct {
 	status   string
 	region   *mydump.TableRegion
-	excutor  *RegionRestoreExectuor
+	executor *RegionRestoreExectuor
 	encoders *kvEncoderPool
 	delivers *kv.KVDeliverKeeper
 	// TODO : progress ...
@@ -259,7 +258,7 @@ type regionRestoreTask struct {
 
 func newRegionRestoreTask(
 	region *mydump.TableRegion,
-	excutor *RegionRestoreExectuor,
+	executor *RegionRestoreExectuor,
 	encoders *kvEncoderPool,
 	delivers *kv.KVDeliverKeeper,
 	callback restoreCallback) *regionRestoreTask {
@@ -267,7 +266,7 @@ func newRegionRestoreTask(
 	return &regionRestoreTask{
 		status:   statPending,
 		region:   region,
-		excutor:  excutor,
+		executor: executor,
 		delivers: delivers,
 		encoders: encoders,
 		callback: callback,
@@ -295,12 +294,12 @@ func (t *regionRestoreTask) run(ctx context.Context) (int64, error) {
 	kvEncoder := t.encoders.Apply()
 	defer t.encoders.Recycle(kvEncoder)
 
-	// kvDeliver := t.delivers.AcquireClient(t.excutor.dbInfo.Name, t.excutor.tableInfo.Name) // TODO ...
+	// kvDeliver := t.delivers.AcquireClient(t.executor.dbInfo.Name, t.executor.tableInfo.Name) // TODO ...
 	// defer t.delivers.RecycleClient(kvDeliver)
-	kvDeliver, _ := makeKVDeliver(ctx, t.excutor.cfg, t.excutor.dbInfo, t.excutor.tableInfo)
+	kvDeliver, _ := makeKVDeliver(ctx, t.executor.cfg, t.executor.dbInfo, t.executor.tableInfo)
 	defer kvDeliver.Close()
 
-	return t.excutor.Run(ctx, t.region, kvEncoder, kvDeliver)
+	return t.executor.Run(ctx, t.region, kvEncoder, kvDeliver)
 }
 
 ////////////////////////////////////////////////////////////////
@@ -325,13 +324,14 @@ func newKvEncoderPool(
 	}
 }
 
-func (p *kvEncoderPool) init(size int) {
+func (p *kvEncoderPool) init(size int) *kvEncoderPool {
 	p.mux.Lock()
 	defer p.mux.Unlock()
 
 	p.encoders = make([]*kv.TableKVEncoder, 0, size)
 
 	var wg sync.WaitGroup
+	defer wg.Wait()
 	for i := 0; i < size; i++ {
 		wg.Add(1)
 		go func() {
@@ -345,7 +345,8 @@ func (p *kvEncoderPool) init(size int) {
 			}
 		}()
 	}
-	wg.Wait()
+
+	return p
 }
 
 func (p *kvEncoderPool) Apply() *kv.TableKVEncoder {
@@ -387,7 +388,7 @@ func (p *kvEncoderPool) Clear() {
 	for _, encoder := range p.encoders {
 		encoder.Close()
 	}
-	p.encoders = []*kv.TableKVEncoder{}
+	p.encoders = p.encoders[:0]
 }
 
 ////////////////////////////////////////////////////////////////
@@ -423,12 +424,10 @@ func NewTableRestore(
 		dbInfo:         dbInfo,
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
-		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta),
+		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta).init(concurrency),
 		deliversMgr:    kv.NewKVDeliverKeeper(cfg.KvDeliverAddr),
 		handledRegions: make(map[int]int64),
 	}
-
-	tr.encoders.init(concurrency)
 
 	s := time.Now()
 	tr.loadRegions()
@@ -450,7 +449,7 @@ func (tr *TableRestore) loadRegions() {
 
 	// ps : Important, assigned by rows id !
 
-	founder := mydump.NewRegionFounder(minRegionSize)
+	founder := mydump.NewRegionFounder(defMinRegionSize)
 	regions := founder.MakeTableRegions(tr.tableMeta)
 
 	table := tr.tableMeta.Name
@@ -465,8 +464,8 @@ func (tr *TableRestore) loadRegions() {
 
 	tasks := make([]*regionRestoreTask, 0, len(regions))
 	for _, region := range regions {
-		excutor := NewRegionRestoreExectuor(tr.cfg, tr.dbInfo, tr.tableInfo, tr.tableMeta)
-		task := newRegionRestoreTask(region, excutor, tr.encoders, tr.deliversMgr, tr.onRegionFinished)
+		executor := NewRegionRestoreExectuor(tr.cfg, tr.dbInfo, tr.tableInfo, tr.tableMeta)
+		task := newRegionRestoreTask(region, executor, tr.encoders, tr.deliversMgr, tr.onRegionFinished)
 		tasks = append(tasks, task)
 	}
 
@@ -492,7 +491,7 @@ func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, err error) {
 
 	total := len(tr.regions)
 	handled := len(tr.handledRegions)
-	log.Infof("[%s] handled region count = %d (%s)", table, handled, Percent(handled, total))
+	log.Infof("[%s] handled region count = %d (%s)", table, handled, common.Percent(handled, total))
 
 	if handled == len(tr.tasks) {
 		tr.onFinished()
@@ -593,7 +592,7 @@ func (tr *TableRestore) verifyTable() error {
 
 	/*{
 		dsn := tr.cfg.TiDB
-		tidb := ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+		tidb := ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Pwd)
 		defer tidb.Close()
 
 		tidb.Exec("USE " + tr.tableMeta.DB)

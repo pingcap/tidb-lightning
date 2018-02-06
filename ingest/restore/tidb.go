@@ -90,12 +90,14 @@ func (timgr *TiDBManager) Close() {
 }
 
 func (timgr *TiDBManager) InitSchema(database string, tablesSchema map[string]string) error {
-	se, _ := tidb.CreateSession(timgr.store)
+	se, err := tidb.CreateSession(timgr.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer se.Close()
 
 	// TODO : all execute in one transaction ?
 
-	var err error
 	ctx := goctx.Background()
 
 	_, err = se.Execute(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database))

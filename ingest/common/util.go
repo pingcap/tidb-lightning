@@ -27,15 +27,19 @@ func ConnectDB(host string, port int, user string, psw string) *sql.DB {
 	return db
 }
 
-func GetFileSize(file string) int64 {
+func GetFileSize(file string) (int64, error) {
 	fd, err := os.Open(file)
 	if err != nil {
-		return -1
+		return -1, err
 	}
 	defer fd.Close()
 
-	fstat, _ := fd.Stat()
-	return fstat.Size()
+	fstat, err := fd.Stat()
+	if err != nil {
+		return -1, err
+	}
+
+	return fstat.Size(), nil
 }
 
 func FileExists(file string) bool {
@@ -43,25 +47,13 @@ func FileExists(file string) bool {
 	return err == nil
 }
 
-func IsFileExists(name string) bool {
-	f, err := os.Stat(name)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false
-		}
-	}
-	return !f.IsDir()
-}
-
 // IsDirExists checks if dir exists.
 func IsDirExists(name string) bool {
 	f, err := os.Stat(name)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false
-		}
+		return false
 	}
-	return f.IsDir()
+	return f != nil && f.IsDir()
 }
 
 func EnsureDir(dir string) error {
