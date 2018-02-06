@@ -340,36 +340,36 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 // 	}
 
 // 	// 3. The whole sql might contains multi statment,
-// 	//	  split it into couple of statments ~
+// 	//	  split it into couple of statements ~
 // 	sep := r.stmtHeader // TODO : or []byte(");\n") ?
-// 	statments := make([][]byte, 0, 1)
+// 	statements := make([][]byte, 0, 1)
 // 	for content := sql; ; {
 // 		content = bytes.TrimSpace(content)
 // 		end := bytes.Index(content[1:], sep)
 // 		if end < 0 {
-// 			statments = append(statments, content)
+// 			statements = append(statements, content)
 // 			break
 // 		}
 
 // 		stmt := bytes.TrimSpace(content[:end])
 // 		if len(stmt) > 0 {
-// 			statments = append(statments, stmt)
+// 			statements = append(statements, stmt)
 // 		}
 // 		content = content[end:]
 // 	}
 
-// 	if len(statments) > 0 {
-// 		stmt := statments[0]
+// 	if len(statements) > 0 {
+// 		stmt := statements[0]
 // 		if !bytes.HasPrefix(stmt, r.stmtHeader) {
 // 			fixStmt := make([]byte, 0, len(stmt)+len(r.stmtHeader)+1)
 // 			fixStmt = append(fixStmt, r.stmtHeader...)
 // 			fixStmt = append(fixStmt, ' ')
 // 			fixStmt = append(fixStmt, stmt...)
-// 			statments[0] = fixStmt
+// 			statements[0] = fixStmt
 // 		}
 // 	}
 
-// 	return statments, nil
+// 	return statements, nil
 // }
 
 /////////////////////////////////////////////////////////////////////////

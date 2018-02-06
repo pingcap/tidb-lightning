@@ -79,7 +79,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 	db := dbMgr.db
 	dbMgr.clear()
 	for _, tblMeta := range dbMeta.Tables {
-		sqlCreteTable, _ := ExportStatment(tblMeta.SchemaFile)
+		sqlCreteTable, _ := ExportStatement(tblMeta.SchemaFile)
 		dbMgr.init(string(sqlCreteTable))
 
 		for _, file := range tblMeta.DataFiles {
@@ -87,11 +87,11 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 			defer reader.Close()
 
 			for {
-				statments, err := reader.Read(minBlockSize)
+				statements, err := reader.Read(minBlockSize)
 				if err == io.EOF {
 					break
 				}
-				for _, stmt := range statments {
+				for _, stmt := range statements {
 					_, err = db.Exec(string(stmt))
 					c.Assert(err, IsNil)
 				}

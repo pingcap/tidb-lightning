@@ -139,7 +139,7 @@ func makeFileRegions(db string, table string, file string, minRegionSize int64) 
 	region := newRegion(0)
 	for {
 		// read file content
-		statments, err := reader.Read(blockSize)
+		statements, err := reader.Read(blockSize)
 		if err == io.EOF {
 			break
 		}
@@ -148,7 +148,7 @@ func makeFileRegions(db string, table string, file string, minRegionSize int64) 
 
 		// update region status
 		region.Size += readSize
-		for _, stmt := range statments {
+		for _, stmt := range statements {
 			region.Rows += int64(countValues(stmt))
 		}
 

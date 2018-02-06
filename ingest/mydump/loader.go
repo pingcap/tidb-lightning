@@ -10,7 +10,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 
-	. "github.com/pingcap/tidb-lightning/ingest/common"
+	"github.com/pingcap/tidb-lightning/ingest/common"
 	"github.com/pingcap/tidb-lightning/ingest/config"
 )
 
@@ -68,7 +68,7 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 
 	if err := mdl.setup(mdl.dir); err != nil {
 		// log.Errorf("init mydumper loader failed : %s\n", err.Error())
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	return mdl, nil
@@ -81,11 +81,11 @@ func (l *MDLoader) setup(dir string) error {
 			table —— {db}.{table}-schema.sql
 			sql   —— {db}.{table}.{part}.sql / {db}.{table}.sql
 	*/
-	if !IsDirExists(dir) {
+	if !common.IsDirExists(dir) {
 		return errMDEmpty
 	}
 
-	files := ListFiles(dir)
+	files := common.ListFiles(dir)
 	metaFile := filepath.Join(dir, "metadata")
 	if _, exists := files[metaFile]; !exists {
 		return errMDInvalid
@@ -95,12 +95,12 @@ func (l *MDLoader) setup(dir string) error {
 
 	// DB : [table , table ...]
 	if err := l.setupDBs(files); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	// Table : create table ~
 	if err := l.setupTables(files); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	// Sql file for restore data
@@ -220,12 +220,12 @@ func (l *MDLoader) countTableFileRows(file string) int {
 
 	var rows int
 	for {
-		statments, err := reader.Read(defReadBlockSize)
+		statements, err := reader.Read(defReadBlockSize)
 		if err == io.EOF {
 			break
 		}
 
-		for _, stmt := range statments {
+		for _, stmt := range statements {
 			rows += countValues(stmt)
 		}
 	}
