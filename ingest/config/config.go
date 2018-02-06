@@ -27,7 +27,7 @@ type Config struct {
 	KvDeliverAddr string  `toml:"kv_import_backend"`
 	TiDB          DBStore `toml:"tidb"`
 
-	EnableProfile bool    `toml:"pprof"`
+	ProfilePort   string  `toml:"pprof_port"`
 	ProgressStore DBStore `toml:"progress_store"`
 
 	Mydump MydumperRuntime  `toml:"mydumper"`

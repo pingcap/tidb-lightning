@@ -1,5 +1,7 @@
 ### tidb-lighting configuartion
 
+pprof_port = ""
+
 #
 data_source_dir = ""
 

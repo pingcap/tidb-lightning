@@ -69,6 +69,7 @@ func ListFiles(dir string) map[string]string {
 	files := make(map[string]string)
 	filepath.Walk(dir, func(path string, f os.FileInfo, err error) error {
 		if err != nil {
+			log.Errorf("list file failed : %s", err.Error())
 			return nil
 		}
 

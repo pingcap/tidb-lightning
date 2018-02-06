@@ -25,9 +25,9 @@ func initEnv(cfg *config.Config) error {
 	common.EnsureDir(cfg.Dir)
 	// initLogger(cfg.Dir)
 
-	if cfg.EnableProfile {
+	if len(cfg.ProfilePort) > 0 {
 		go func() { // TODO : config to enable it in debug mode
-			log.Info(http.ListenAndServe(":7777", nil))
+			log.Info(http.ListenAndServe(":"+cfg.ProfilePort, nil))
 		}()
 	}
 
