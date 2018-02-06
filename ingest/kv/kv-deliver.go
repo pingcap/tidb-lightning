@@ -49,7 +49,6 @@ type deliverTask struct {
 
 type PipeKvDeliver struct {
 	wg       sync.WaitGroup
-	mux      sync.Mutex
 	ctx      context.Context
 	shutdown context.CancelFunc
 
@@ -163,7 +162,7 @@ func (p *PipeKvDeliver) handle(task *deliverTask) error {
 	var err error
 	switch task.op {
 	case opPut:
-		var dataSize int = 0
+		var dataSize int
 		for _, pair := range task.kvs {
 			dataSize += len(pair.Key) + len(pair.Val)
 		}
@@ -192,7 +191,7 @@ func (p *PipeKvDeliver) handle(task *deliverTask) error {
 	default:
 	}
 
-	return err
+	return errors.Trace(err)
 }
 
 func (p *PipeKvDeliver) doFlush() error {
@@ -268,7 +267,7 @@ func (c *KVDeliverClient) Close() error {
 func (c *KVDeliverClient) newWriteStream() (importpb.ImportKV_WriteClient, error) {
 	wstream, err := c.cli.Write(c.ctx)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	// Bind uuid for this write request
@@ -279,7 +278,7 @@ func (c *KVDeliverClient) newWriteStream() (importpb.ImportKV_WriteClient, error
 	}
 	if err = wstream.Send(req); err != nil {
 		wstream.CloseAndRecv()
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	return wstream, nil
@@ -295,7 +294,7 @@ func (c *KVDeliverClient) closeWriteStream() error {
 
 	if _, err := c.wstream.CloseAndRecv(); err != nil {
 		log.Errorf("close write stream cause failed : %v", err)
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -305,7 +304,7 @@ func (c *KVDeliverClient) getWriteStream() (importpb.ImportKV_WriteClient, error
 		wstream, err := c.newWriteStream()
 		if err != nil {
 			log.Errorf("[kv-deliver] failed to build write stream : %s", err.Error())
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		c.wstream = wstream
 	}
@@ -354,7 +353,7 @@ func (c *KVDeliverClient) Cleanup() error {
 
 	req := &importpb.DeleteRequest{Uuid: c.uuid}
 	_, err := c.cli.Delete(c.ctx, req)
-	return err
+	return errors.Trace(err)
 }
 
 func (c *KVDeliverClient) Flush() error {
@@ -373,7 +372,7 @@ func (c *KVDeliverClient) Flush() error {
 func (c *KVDeliverClient) callFlush() error {
 	wstream, err := c.getWriteStream()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer c.closeWriteStream()
 
@@ -392,11 +391,11 @@ func (c *KVDeliverClient) callFlush() error {
 func (c *KVDeliverClient) callClose() error {
 	req := &importpb.CloseRequest{Uuid: c.uuid}
 	_, err := c.cli.Close(c.ctx, req)
-	return err
+	return errors.Trace(err)
 }
 
 func (c *KVDeliverClient) callImport() error {
 	req := &importpb.ImportRequest{Uuid: c.uuid}
 	_, err := c.cli.Import(c.ctx, req)
-	return err
+	return errors.Trace(err)
 }

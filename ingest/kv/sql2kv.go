@@ -48,7 +48,7 @@ func NewTableKVEncoder(
 	kvEncoder, err := kvec.New(db, idAllocator)
 	if err != nil {
 		log.Errorf("[sql2kv] kv encoder create failed : %v", err)
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	kvcodec := &TableKVEncoder{
@@ -73,7 +73,7 @@ func NewTableKVEncoder(
 func (kvcodec *TableKVEncoder) init() error {
 	if err := kvcodec.encoder.ExecDDLSQL(kvcodec.ddl); err != nil {
 		log.Errorf("[sql2kv] ddl execute failed : %v", err)
-		return err
+		return errors.Trace(err)
 	}
 
 	if PrepareStmtMode {
@@ -82,7 +82,7 @@ func (kvcodec *TableKVEncoder) init() error {
 
 		stmtIds, err := kvcodec.makeStatments(encodeBatchRows)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		kvcodec.stmtIds = stmtIds
 	}
@@ -95,7 +95,7 @@ func (kvcodec *TableKVEncoder) makeStatments(maxRows int) ([]uint32, error) {
 	for rows := 1; rows <= maxRows; rows++ {
 		stmtID, err := kvcodec.prepareStatment(rows)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		stmtIds[rows] = stmtID
 	}
@@ -138,7 +138,7 @@ func (kvcodec *TableKVEncoder) Sql2KV(sql []byte) ([]kvec.KvPair, uint64, error)
 	kvPairs, rowsAffected, err := kvcodec.encoder.Encode(string(sql), kvcodec.tableID)
 	if err != nil {
 		log.Errorf("[sql2kv] sql encode error = %v", err)
-		return nil, 0, err
+		return nil, 0, errors.Trace(err)
 	}
 
 	return kvPairs, rowsAffected, nil
@@ -153,7 +153,7 @@ func (kvcodec *TableKVEncoder) encodeViaPstmt(sql []byte) ([]kvec.KvPair, uint64
 	err := sqltool.ParseInsertStmt(sql, &values)
 	if err != nil {
 		log.Errorf("[sql->kv] stmt mode encode failed : %s", err.Error())
-		return nil, 0, err
+		return nil, 0, errors.Trace(err)
 	}
 
 	cols := kvcodec.columns
@@ -162,7 +162,7 @@ func (kvcodec *TableKVEncoder) encodeViaPstmt(sql []byte) ([]kvec.KvPair, uint64
 		err = errors.Errorf("[sql->kv] stmt values num not match (%d %% %d = %d) !",
 			len(values), cols, len(values)%cols)
 		log.Errorf(err.Error())
-		return nil, 0, err
+		return nil, 0, errors.Trace(err)
 	}
 
 	size := rows * cols
@@ -181,12 +181,12 @@ func (kvcodec *TableKVEncoder) encodeViaPstmt(sql []byte) ([]kvec.KvPair, uint64
 
 		stmtID, err := kvcodec.applyStmtID(batchRows)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, errors.Trace(err)
 		}
 
 		kvs, affected, err := encoder.EncodePrepareStmt(tableID, stmtID, vals...)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, errors.Trace(err)
 		}
 
 		kvPairs = append(kvPairs, kvs...)
@@ -210,7 +210,7 @@ func (kvcodec *TableKVEncoder) prepareStatment(rows int) (uint32, error) {
 	stmtID, err := kvcodec.encoder.PrepareStmt(stmt)
 	if err != nil {
 		log.Errorf("[sql2kv] prepare stmt failed : %s", err.Error())
-		return stmtID, err
+		return stmtID, errors.Trace(err)
 	}
 
 	return stmtID, nil
