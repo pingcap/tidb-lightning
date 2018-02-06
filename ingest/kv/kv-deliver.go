@@ -202,7 +202,7 @@ func (p *PipeKvDeliver) doFlush() error {
 		log.Errorf("kv deliver manager flush failed : %s", err.Error())
 	}
 
-	return err
+	return errors.Trace(err)
 }
 
 /////////////////////// KV Deliver Handler ///////////////////////
