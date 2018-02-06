@@ -16,7 +16,7 @@ var (
 	insStmtRegex = regexp.MustCompile(`INSERT INTO .* VALUES`)
 )
 
-func ExportStatment(sqlFile string) ([]byte, error) {
+func ExportStatement(sqlFile string) ([]byte, error) {
 	fd, err := os.Open(sqlFile)
 	if err != nil {
 		return nil, errors.Trace(err)

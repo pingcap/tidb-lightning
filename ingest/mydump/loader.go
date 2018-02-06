@@ -28,7 +28,7 @@ type MDDatabaseMeta struct {
 }
 
 func (m *MDDatabaseMeta) GetSchema() string {
-	schema, err := ExportStatment(m.SchemaFile)
+	schema, err := ExportStatement(m.SchemaFile)
 	if err != nil {
 		log.Errorf("failed to extract database schema (%s) : %s", m.SchemaFile, err.Error())
 		return ""
@@ -44,7 +44,7 @@ type MDTableMeta struct {
 }
 
 func (m *MDTableMeta) GetSchema() string {
-	schema, err := ExportStatment(m.SchemaFile)
+	schema, err := ExportStatement(m.SchemaFile)
 	if err != nil {
 		log.Errorf("failed to extract table schema (%s) : %s", m.SchemaFile, err.Error())
 		return ""
