@@ -296,7 +296,12 @@ func (t *regionRestoreTask) run(ctx context.Context) (int64, error) {
 
 	// kvDeliver := t.delivers.AcquireClient(t.executor.dbInfo.Name, t.executor.tableInfo.Name) // TODO ...
 	// defer t.delivers.RecycleClient(kvDeliver)
-	kvDeliver, _ := makeKVDeliver(ctx, t.executor.cfg, t.executor.dbInfo, t.executor.tableInfo)
+	kvDeliver, err := makeKVDeliver(ctx, t.executor.cfg, t.executor.dbInfo, t.executor.tableInfo)
+	if err != nil {
+		log.Errorf("Failed to make kv deliver for region (%s) : err = %s",
+			t.region.Name(), err.Error())
+		return errors.Trace(err)
+	}
 	defer kvDeliver.Close()
 
 	return t.executor.Run(ctx, t.region, kvEncoder, kvDeliver)
