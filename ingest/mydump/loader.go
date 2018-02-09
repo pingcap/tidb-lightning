@@ -184,7 +184,7 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 		idx := strings.Index(fname, ".sql")
 		name := fname[:idx]
 		fields := strings.Split(name, ".")
-		if !(len(fields) == 2 || len(fields) == 3) {
+		if len(fields) < 2 {
 			log.Warnf("invalid db table sql file - %s", fpath)
 			continue
 		}
@@ -240,17 +240,21 @@ func (l *MDLoader) GetDatabase() *MDDatabaseMeta {
 }
 
 func countValues(sqlText []byte) int {
+	/*
+		ps : Count num of tuples (/values) appears within sql statement like :
+				"INSERT INTO `table` VALUES (..), (..), (..);"
+	*/
 	var textLen int = len(sqlText)
 	var slice []byte
-	var rows int = 0
+	var tuplesNum int = 0
 
-	for i, c1 := range sqlText {
-		if c1 == ')' && i < textLen-1 {
+	for i, chr := range sqlText {
+		if chr == ')' && i < textLen-1 {
 			slice = bytes.TrimSpace(sqlText[i+1:])
 			if len(slice) > 0 && (slice[0] == ',' || slice[0] == ';') {
-				rows += 1
+				tuplesNum += 1
 			}
 		}
 	}
-	return rows
+	return tuplesNum
 }
