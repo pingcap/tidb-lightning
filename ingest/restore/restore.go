@@ -294,15 +294,8 @@ func (t *regionRestoreTask) run(ctx context.Context) (int64, error) {
 	kvEncoder := t.encoders.Apply()
 	defer t.encoders.Recycle(kvEncoder)
 
-	// kvDeliver := t.delivers.AcquireClient(t.executor.dbInfo.Name, t.executor.tableInfo.Name) // TODO ...
-	// defer t.delivers.RecycleClient(kvDeliver)
-	kvDeliver, err := makeKVDeliver(ctx, t.executor.cfg, t.executor.dbInfo, t.executor.tableInfo)
-	if err != nil {
-		log.Errorf("Failed to make kv deliver for region (%s) : err = %s",
-			t.region.Name(), err.Error())
-		return errors.Trace(err)
-	}
-	defer kvDeliver.Close()
+	kvDeliver := t.delivers.AcquireClient(t.executor.dbInfo.Name, t.executor.tableInfo.Name)
+	defer t.delivers.RecycleClient(kvDeliver)
 
 	return t.executor.Run(ctx, t.region, kvEncoder, kvDeliver)
 }
@@ -536,13 +529,13 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 	table := tr.tableInfo.Name
 	log.Infof("[%s] restore table meta (row_id = %d)", table, rowID)
 
-	kvDeliver, err := tr.makeKVDeliver()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer kvDeliver.Close()
-	// kvDeliver := tr.deliversMgr.AcquireClient(tr.dbInfo.Name, table)
-	// defer tr.deliversMgr.RecycleClient(kvDeliver)
+	// kvDeliver, err := tr.makeKVDeliver()
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+	// defer kvDeliver.Close()
+	kvDeliver := tr.deliversMgr.AcquireClient(tr.dbInfo.Name, table)
+	defer tr.deliversMgr.RecycleClient(kvDeliver)
 
 	kvs, err := encoder.BuildMetaKvs(rowID)
 	if err != nil {
@@ -577,7 +570,10 @@ func (tr *TableRestore) ingestKV() error {
 		return err
 	}
 
-	// kvDeliver.Cleanup()
+	if err := kvDeliver.Compact(); err != nil {
+		log.Errorf("[%s] falied to compact kvs : %s", table, err.Error())
+		return err
+	}
 
 	return nil
 }
