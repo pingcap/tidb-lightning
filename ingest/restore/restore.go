@@ -430,7 +430,7 @@ func NewTableRestore(
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
 		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta).init(concurrency),
-		deliversMgr:    kv.NewKVDeliverKeeper(cfg.KvDeliverAddr),
+		deliversMgr:    kv.NewKVDeliverKeeper(cfg.KvIngest.Backend),
 		handledRegions: make(map[int]int64),
 	}
 
