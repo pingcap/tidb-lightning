@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/tidb-lightning/ingest/log"
 )
 
 type DataSource struct {
@@ -23,15 +24,18 @@ type Config struct {
 	Dir       string `toml:"dir"`
 	SourceDir string `toml:"data_source_dir"`
 
-	PdAddr        string  `toml:"pd_backend"`
-	KvDeliverAddr string  `toml:"kv_import_backend"`
-	TiDB          DBStore `toml:"tidb"`
+	PdAddr string  `toml:"pd_backend"`
+	TiDB   DBStore `toml:"tidb"`
+
+	Log log.LogConfig `toml:"log"`
 
 	ProfilePort   string  `toml:"pprof_port"`
 	ProgressStore DBStore `toml:"progress_store"`
 
-	Mydump MydumperRuntime  `toml:"mydumper"`
-	KvDev  KVDeliverRuntime `toml:"kv-ingest"`
+	Mydump   MydumperRuntime `toml:"mydumper"`
+	KvIngest KVIngest        `toml:"kv-ingest"`
+
+	Verfiy Verification `toml:"verify"`
 }
 
 type MydumperRuntime struct {
@@ -39,8 +43,14 @@ type MydumperRuntime struct {
 	MinRegionSize int64 `toml:"region-min-size"`
 }
 
-type KVDeliverRuntime struct {
-	MaxFlushSize int64 `toml:"max-flush-size"`
+type KVIngest struct {
+	// KvDeliverAddr string  `toml:"kv_import_backend"`
+	Backend   string `toml:"backend"`
+	BatchSize int64  `toml:"batch_size"`
+}
+
+type Verification struct {
+	RunCheckTable bool `toml:"run_check_table"`
 }
 
 func LoadConfig(file string) (*Config, error) {
@@ -54,10 +64,18 @@ func LoadConfig(file string) (*Config, error) {
 		return nil, err
 	}
 
-	// TODO ... adjust
-	// cfg.Mydump.MinRegionSize = MinRegionSize
-	// cfg.Mydump.ReadBlockSize = ReadBlockSize
-	cfg.KvDev.MaxFlushSize = MaxFlushSize
+	// handle mydumper
+	if cfg.Mydump.MinRegionSize <= 0 {
+		cfg.Mydump.MinRegionSize = MinRegionSize
+	}
+	if cfg.Mydump.ReadBlockSize <= 0 {
+		cfg.Mydump.ReadBlockSize = ReadBlockSize
+	}
+
+	// hendle kv ingest
+	if cfg.KvIngest.BatchSize <= 0 {
+		cfg.KvIngest.BatchSize = KVMaxBatchSize
+	}
 
 	return cfg, nil
 }
