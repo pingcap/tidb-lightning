@@ -1,0 +1,180 @@
+syntax = "proto3";
+
+package importpb;
+
+import "metapb.proto";
+import "errorpb.proto";
+import "kvrpcpb.proto";
+import "gogoproto/gogo.proto";
+
+option (gogoproto.sizer_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+
+option java_package = "com.pingcap.tikv.kvproto";
+
+// ImportKV provides a service to import key-value pairs to TiKV.
+//
+// In order to import key-value pairs to TiKV, the user should:
+// 1. Open an engine identified by an UUID.
+// 2. Open write streams to write key-value batch to the opened engine.
+//    Different streams/clients can write to the same engine concurrently.
+// 3. Close the engine after all write batches are finished. An engine can only
+//    be closed when all write streams are closed. An engine can only be closed
+//    once, and it can not be opened again once it is closed.
+// 4. Import the data in the engine to TiKV. Note that the import process is not
+//    atomic, it requires the data to be idempotent on retry. An engine can only
+//    be imported after it is closed. An engine can be imported multiple times,
+//    but can not be imported concurrently.
+// 5. Clean up the engine after it is imported. Delete all data in the engine.
+//    An engine can not be cleaned up when it is writing or importing.
+// 6. Compact the imported range in TiKV stores for better initial performance.
+//    This is OPTIONAL, and it will take a while to finish the compaction.
+service ImportKV {
+    // Open an engine.
+    rpc Open(OpenRequest) returns (OpenResponse) {}
+    // Open a write stream to the engine.
+    rpc Write(stream WriteRequest) returns (WriteResponse) {}
+    // Close the engine.
+    rpc Close(CloseRequest) returns (CloseResponse) {}
+    // Import the data in the engine to TiKV.
+    rpc Import(ImportRequest) returns (ImportResponse) {}
+    // Clean up the engine.
+    rpc Cleanup(CleanupRequest) returns (CleanupResponse) {}
+    // Compact TiKV stores.
+    rpc Compact(CompactRequest) returns (CompactResponse) {}
+}
+
+message OpenRequest {
+    bytes uuid = 1;
+}
+
+message OpenResponse {
+}
+
+message Mutation {
+    enum OP {
+        Put = 0;
+    }
+    OP op = 1;
+    bytes key = 2;
+    bytes value = 3;
+}
+
+message WriteBatch {
+    uint64 commit_ts = 1;
+    repeated Mutation mutations = 2;
+}
+
+message WriteOptions {
+    // Flush the write batch (and all previous write batch) to the disk.
+    // For better performance, write batches are not flushed to the disk by
+    // default, use this option to make sure that write batches are persisted.
+    bool flush = 1;
+}
+
+message WriteRequest {
+    message Head {
+        bytes uuid = 1;
+    }
+    Head head = 1;
+    WriteBatch batch = 2;
+    WriteOptions options = 3;
+}
+
+message WriteResponse {
+    Error error = 1;
+}
+
+message CloseRequest {
+    bytes uuid = 1;
+}
+
+message CloseResponse {
+    Error error = 1;
+}
+
+message ImportRequest {
+    bytes uuid = 1;
+}
+
+message ImportResponse {
+}
+
+message CleanupRequest {
+    bytes uuid = 1;
+}
+
+message CleanupResponse {
+}
+
+message CompactRequest {
+}
+
+message CompactResponse {
+}
+
+message Error {
+    message EngineNotFound {
+        bytes uuid = 1;
+    }
+    // This can happen if the client hasn't opened the engine, or the server
+    // restarts while the client is writing or closing. An unclosed engine will
+    // be removed on server restart, so the client should not continue but
+    // restart the previous job in that case.
+    EngineNotFound engine_not_found = 1;
+}
+
+// ImportSST provides a service to import a generated SST file to a region in TiKV.
+//
+// In order to import an SST file to a region, the user should:
+// 1. Retrieve the meta of the region according to the SST file's range.
+// 2. Upload the SST file to the servers where the region's peers locate in.
+// 3. Issue an ingest request to the region's leader with the SST file's metadata.
+//
+// It's the user's responsibility to make sure that the SST file is uploaded to
+// the servers where the region's peers locate in, before issue the ingest
+// request to the region's leader. However, the region can be scheduled (so the
+// location of the region's peers will be changed) or split/merged (so the range
+// of the region will be changed), after the SST file is uploaded, but before
+// the SST file is ingested. So, the region's epoch is provided in the SST
+// file's metadata, to guarantee that the region's epoch must be the same
+// between the SST file is uploaded and ingested later.
+service ImportSST {
+    // Upload an SST file to a server.
+    rpc Upload(stream UploadRequest) returns (UploadResponse) {}
+    // Ingest an uploaded SST file to a region.
+    rpc Ingest(IngestRequest) returns (IngestResponse) {}
+}
+
+message Range {
+    bytes start = 1;
+    bytes end = 2;
+}
+
+message SSTMeta {
+    bytes uuid = 1;
+    Range range = 2;
+    uint32 crc32 = 3;
+    uint64 length = 4;
+    string cf_name = 5;
+    uint64 region_id = 6;
+    metapb.RegionEpoch region_epoch = 7;
+}
+
+message UploadRequest {
+    SSTMeta meta = 1;
+    bytes data = 2;
+}
+
+message UploadResponse {
+}
+
+message IngestRequest {
+    kvrpcpb.Context context = 1;
+    SSTMeta sst = 2;
+}
+
+message IngestResponse {
+    errorpb.Error error = 1;
+}
