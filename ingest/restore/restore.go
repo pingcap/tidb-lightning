@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/ingest/common"
@@ -109,11 +109,11 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 
 	err = tidbMgr.InitSchema(database, tablesSchema)
 	if err != nil {
-		log.Errorf("restore schema failed : %v", err)
-		return err
+		return errors.Errorf("db schema failed to init : %v", err)
 	}
-
+	// TODO : check tables' schema
 	rc.dbInfo = tidbMgr.SyncSchema(database)
+
 	return nil
 }
 
@@ -206,7 +206,7 @@ func makeKVDeliver(
 	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
 
 	uuid := adjustUUID(fmt.Sprintf("%s_%s", dbInfo.Name, tableInfo.Name), 16)
-	return kv.NewKVDeliverClient(ctx, uuid, cfg.KvDeliverAddr)
+	return kv.NewKVDeliverClient(ctx, uuid, cfg.KvIngest.Backend)
 }
 
 ////////////////////////////////////////////////////////////////
@@ -430,7 +430,7 @@ func NewTableRestore(
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
 		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta).init(concurrency),
-		deliversMgr:    kv.NewKVDeliverKeeper(cfg.KvDeliverAddr),
+		deliversMgr:    kv.NewKVDeliverKeeper(cfg.KvIngest.Backend),
 		handledRegions: make(map[int]int64),
 	}
 

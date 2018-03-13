@@ -6,9 +6,9 @@ const (
 	_G = _M << 10
 
 	// mydumper
-	// ReadBlockSize int64 = 32 * _K
-	// MinRegionSize int64 = 256 * _M
+	ReadBlockSize int64 = 32 * _K
+	MinRegionSize int64 = 256 * _M
 
-	// // kv-deliver
-	MaxFlushSize int64 = 200 * _G
+	// kv ingest
+	KVMaxBatchSize int64 = 200 * _G
 )
