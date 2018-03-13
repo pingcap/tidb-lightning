@@ -1,26 +1,26 @@
-### tidb-lighting configuartion
+### tidb-lightning configuartion
 
 # mydumper local source data directory
 data_source_dir = "./"
 
 # PD Server of target cluster
-pd_backend = "127.0.0.1:8801"
+pd_backend = "127.0.0.1:2380"
 
 [kv-ingest]
 # kv ingest server
-backend = "127.0.0.1:8809"
+backend = "127.0.0.1:8808"
 # size of batch to execute kv ingest into TiKV : xxx (GB)
 batch_size = 30 # GB
 
 [mydumper]
 # block size of file reading
 read-block-size = 4096 # Byte (default = 4 KB)
-# split source data file into multi region/chunk to execute restoring in parallel
+# split source data file into multiple region/chunk to execute restoring in parallel
 region-min-size = 268435456 # Byte (default = 256 MB)
 
 [tidb]
 host = "127.0.0.1"
-port = 8802
+port = 4000
 user = "root"
 password = ""
 
@@ -32,8 +32,7 @@ max-days = 28
 max-backups = 14
 
 [verify]
-# wether to run `admin check table` as part of verification,
-# this might cost a severe long time especially for table contains so much index
+# wether to run `admin check table` (this might take long time to verify)
 run_check_table = false
 
 # background profile for debuging, empty to disable

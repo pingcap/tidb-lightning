@@ -90,10 +90,6 @@ func (f *SimpleTextFormater) Format(entry *log.Entry) ([]byte, error) {
 
 	b.WriteByte('\n')
 
-	// if f.EnableColors {
-	// b.WriteString("\033[0m")
-	// }
-
 	return b.Bytes(), nil
 }
 

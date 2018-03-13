@@ -32,10 +32,10 @@ type Config struct {
 	ProfilePort   string  `toml:"pprof_port"`
 	ProgressStore DBStore `toml:"progress_store"`
 
-	Mydump   MydumperRuntime `toml:"mydumper"`
+	Mydumper MydumperRuntime `toml:"mydumper"`
 	KvIngest KVIngest        `toml:"kv-ingest"`
 
-	Verfiy Verification `toml:"verify"`
+	Verify Verification `toml:"verify"`
 }
 
 type MydumperRuntime struct {
@@ -44,7 +44,6 @@ type MydumperRuntime struct {
 }
 
 type KVIngest struct {
-	// KvDeliverAddr string  `toml:"kv_import_backend"`
 	Backend   string `toml:"backend"`
 	BatchSize int64  `toml:"batch_size"`
 }
@@ -65,11 +64,11 @@ func LoadConfig(file string) (*Config, error) {
 	}
 
 	// handle mydumper
-	if cfg.Mydump.MinRegionSize <= 0 {
-		cfg.Mydump.MinRegionSize = MinRegionSize
+	if cfg.Mydumper.MinRegionSize <= 0 {
+		cfg.Mydumper.MinRegionSize = MinRegionSize
 	}
-	if cfg.Mydump.ReadBlockSize <= 0 {
-		cfg.Mydump.ReadBlockSize = ReadBlockSize
+	if cfg.Mydumper.ReadBlockSize <= 0 {
+		cfg.Mydumper.ReadBlockSize = ReadBlockSize
 	}
 
 	// hendle kv ingest

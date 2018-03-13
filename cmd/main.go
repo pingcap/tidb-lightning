@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	cfgFile = flag.String("c", "tidb-lightning.toml", "tidb-lighting configuration file")
+	cfgFile = flag.String("c", "tidb-lightning.toml", "tidb-lightning configuration file")
 )
 
 func initEnv(cfg *config.Config) error {
