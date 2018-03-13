@@ -593,14 +593,14 @@ func (tr *TableRestore) verifyTable(rows uint64) error {
 	}()
 
 	if err := tr.verifyQuantity(rows); err != nil {
-		log.Errorf("[%s] verfiy quantity failed : %s", table, err.Error())
+		log.Errorf("[%s] verify quantity failed : %s", table, err.Error())
 		return err
 	}
 	log.Infof("[%s] owns %d rows integrallty !", table, rows)
 
-	if tr.cfg.Verfiy.RunCheckTable {
+	if tr.cfg.Verify.RunCheckTable {
 		if err := tr.excCheckTable(); err != nil {
-			log.Errorf("[%s] verfiy check table failed : %s", table, err.Error())
+			log.Errorf("[%s] verify check table failed : %s", table, err.Error())
 			return err
 		}
 	}
