@@ -614,15 +614,10 @@ func (tr *TableRestore) verifyQuantity(expectRows uint64) error {
 	defer db.Close()
 
 	rows := uint64(0)
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s", tr.tableMeta.DB, tr.tableInfo.Name)
-	if rs, err := db.Query(query); err != nil {
+	r := db.QueryRow(
+		fmt.Sprintf("SELECT COUNT(*) FROM `%s.%s`", tr.tableMeta.DB, tr.tableInfo.Name))
+	if err := r.Scan(&rows); err != nil {
 		return err
-	} else {
-		defer rs.Close()
-		rs.Next()
-		if err := rs.Scan(&rows); err != nil {
-			return err
-		}
 	}
 
 	if rows != expectRows {
@@ -640,8 +635,8 @@ func (tr *TableRestore) excCheckTable() error {
 	defer db.Close()
 
 	// verify datas completion via command "admin check table"
-	db.Exec("USE " + tr.tableMeta.DB)
-	_, err := db.Exec("ADMIN CHECK TABLE " + tr.tableMeta.Name)
+	_, err := db.Exec(
+		fmt.Sprintf("ADMIN CHECK TABLE `%s.%s`", tr.tableMeta.DB, tr.tableMeta.Name))
 	return err
 }
 
