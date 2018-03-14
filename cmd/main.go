@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb-lightning/ingest"
 	"github.com/pingcap/tidb-lightning/ingest/common"
 	"github.com/pingcap/tidb-lightning/ingest/config"
+	"github.com/pingcap/tidb-lightning/ingest/kv"
 	applog "github.com/pingcap/tidb-lightning/ingest/log"
 )
 
@@ -23,6 +24,8 @@ var (
 func initEnv(cfg *config.Config) error {
 	common.EnsureDir(cfg.Dir)
 	applog.InitLogger(&cfg.Log)
+
+	kv.ConfigDeliverTxnBatchSize(cfg.KvIngest.BatchSize)
 
 	if len(cfg.ProfilePort) > 0 {
 		go func() { // TODO : config to enable it in debug mode

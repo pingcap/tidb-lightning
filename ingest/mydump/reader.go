@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -108,6 +108,7 @@ func (r *MDDataReader) Close() error {
 			return errors.Trace(err)
 		}
 	}
+
 	r.buffer = nil
 	r.bufferSize = 0
 	return nil
@@ -132,6 +133,10 @@ func (r *MDDataReader) skipAnnotation(offset int64) int64 {
 	}
 
 	return r.currOffset()
+}
+
+func (r *MDDataReader) Seek(offset int64) int64 {
+	return r.skipAnnotation(offset)
 }
 
 func (r *MDDataReader) Tell() int64 {
@@ -279,99 +284,6 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 	return stmts, nil
 }
 
-// func (r *MDDataReader) Read(maxSize int64) ([][]byte, error) {
-// 	beginPos := r.currOffset()
-// 	fd := r.fd
-
-// 	if maxSize > r.bufferSize {
-// 		r.readBuffer = make([]byte, maxSize, maxSize+maxSize>>1)
-// 		r.bufferSize = maxSize
-// 	}
-
-// 	// 1. read data in block
-// 	data := r.readBuffer[:maxSize]
-// 	nbytes, err := fd.Read(data)
-// 	if err == io.EOF {
-// 		return [][]byte{}, err
-// 	}
-
-// 	if r.currOffset() != r.fsize {
-// 		// ps :
-// 		//		As we treat rows sperated by lines,
-// 		// 		So if not end of file, should seek the last ending of line as the split mark ~
-// 		idx := bytes.LastIndex(data, []byte{'\n'})
-// 		if idx < 0 {
-// 			// might be end of file ?
-// 			log.Errorf("Opps ! Not found a line ending (pos = %d / size = %d) !", beginPos, maxSize)
-// 			return [][]byte{}, nil
-// 		}
-
-// 		data = data[:idx]
-// 		if bytes.HasSuffix(data, r.stmtHeader) {
-// 			idx = bytes.LastIndex(data, r.stmtHeader)
-// 			data = data[:idx]
-// 		} else {
-// 			data = append(data, '\n')
-// 		}
-// 	} else {
-// 		data = data[:nbytes]
-// 	}
-
-// 	size := len(data)
-// 	if size == 0 {
-// 		// ps : maybe maxsize too small to extract any row data ~
-// 		return [][]byte{}, nil
-// 	}
-// 	fd.Seek(beginPos+int64(size), io.SeekStart)
-
-// 	// 2. Convert data into valid sql statment
-// 	sql := bytes.TrimSpace(data)
-// 	sqlLen := len(sql)
-// 	if !bytes.HasSuffix(sql, []byte(");")) {
-// 		if bytes.HasSuffix(sql, []byte("),")) {
-// 			sql[sqlLen-1] = ';'
-// 		} else {
-// 			str := string(sql)
-// 			log.Errorf("Opps ! Unexpect data ending : '%s' (pos = %d / size = %d) !",
-// 				str, beginPos, maxSize)
-// 			// TODO : f.seek()
-// 			return [][]byte{}, nil
-// 		}
-// 	}
-
-// 	// 3. The whole sql might contains multi statment,
-// 	//	  split it into couple of statements ~
-// 	sep := r.stmtHeader // TODO : or []byte(");\n") ?
-// 	statements := make([][]byte, 0, 1)
-// 	for content := sql; ; {
-// 		content = bytes.TrimSpace(content)
-// 		end := bytes.Index(content[1:], sep)
-// 		if end < 0 {
-// 			statements = append(statements, content)
-// 			break
-// 		}
-
-// 		stmt := bytes.TrimSpace(content[:end])
-// 		if len(stmt) > 0 {
-// 			statements = append(statements, stmt)
-// 		}
-// 		content = content[end:]
-// 	}
-
-// 	if len(statements) > 0 {
-// 		stmt := statements[0]
-// 		if !bytes.HasPrefix(stmt, r.stmtHeader) {
-// 			fixStmt := make([]byte, 0, len(stmt)+len(r.stmtHeader)+1)
-// 			fixStmt = append(fixStmt, r.stmtHeader...)
-// 			fixStmt = append(fixStmt, ' ')
-// 			fixStmt = append(fixStmt, stmt...)
-// 			statements[0] = fixStmt
-// 		}
-// 	}
-
-// 	return statements, nil
-// }
-
 /////////////////////////////////////////////////////////////////////////
 
 type RegionReader struct {
@@ -382,6 +294,8 @@ type RegionReader struct {
 }
 
 func NewRegionReader(file string, offset int64, size int64) (*RegionReader, error) {
+	log.Debugf("[%s] offset = %d / size = %d", file, offset, size)
+
 	fileReader, err := NewMDDataReader(file, offset)
 	if err != nil {
 		return nil, err

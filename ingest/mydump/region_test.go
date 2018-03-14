@@ -2,9 +2,6 @@ package mydump_test
 
 import (
 	"bytes"
-	_ "fmt"
-	_ "path/filepath"
-	_ "testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/ingest/common"

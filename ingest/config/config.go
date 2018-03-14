@@ -16,7 +16,7 @@ type DBStore struct {
 	Host     string `toml:"host"`
 	Port     int    `toml:"port"`
 	User     string `toml:"user"`
-	Pwd      string `toml:"password"`
+	Psw      string `toml:"password"`
 	Database string `toml:"database"`
 }
 
