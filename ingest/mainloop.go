@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/ngaut/log"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/ingest/config"
@@ -34,7 +34,10 @@ func (m *mainloop) Run() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	m.wg.Add(1)
-	go m.run()
+	go func() {
+		defer m.wg.Done()
+		m.run()
+	}()
 	m.wg.Wait()
 }
 
@@ -47,10 +50,7 @@ func (m *mainloop) run() {
 
 	dbMeta := mdl.GetDatabase()
 	procedure := restore.NewRestoreControlloer(dbMeta, m.cfg)
-	defer func() {
-		procedure.Close()
-		m.wg.Done()
-	}()
+	defer procedure.Close()
 
 	procedure.Run(m.ctx)
 	return

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/ingest/common"
@@ -109,11 +109,11 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 
 	err = tidbMgr.InitSchema(database, tablesSchema)
 	if err != nil {
-		log.Errorf("restore schema failed : %v", err)
-		return err
+		return errors.Errorf("db schema failed to init : %v", err)
 	}
-
+	// TODO : check tables' schema
 	rc.dbInfo = tidbMgr.SyncSchema(database)
+
 	return nil
 }
 
@@ -206,7 +206,7 @@ func makeKVDeliver(
 	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
 
 	uuid := adjustUUID(fmt.Sprintf("%s_%s", dbInfo.Name, tableInfo.Name), 16)
-	return kv.NewKVDeliverClient(ctx, uuid, cfg.KvDeliverAddr)
+	return kv.NewKVDeliverClient(ctx, uuid, cfg.KvIngest.Backend)
 }
 
 ////////////////////////////////////////////////////////////////
@@ -435,7 +435,7 @@ func NewTableRestore(
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
 		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta).init(concurrency),
-		deliversMgr:    kv.NewKVDeliverKeeper(cfg.KvDeliverAddr),
+		deliversMgr:    kv.NewKVDeliverKeeper(cfg.KvIngest.Backend),
 		handledRegions: make(map[int]*regionStat),
 	}
 
@@ -534,7 +534,7 @@ func (tr *TableRestore) onFinished() {
 	tr.ingestKV()
 
 	// verify table data
-	tr.verifyTable()
+	tr.verifyTable(tableRows)
 
 	return
 }
@@ -592,30 +592,62 @@ func (tr *TableRestore) ingestKV() error {
 	return nil
 }
 
-func (tr *TableRestore) verifyTable() error {
+func (tr *TableRestore) verifyTable(rows uint64) error {
 	table := tr.tableInfo.Name
 	log.Infof("[%s] verifying table ...", table)
 
 	start := time.Now()
 	defer func() {
 		metrics.MarkTiming(fmt.Sprintf("[%s]_verify", table), start)
+		log.Infof("[%s] finish verification", table)
 	}()
 
-	/*
-		TODO : compare executed rows == count(*)
-	*/
-
-	/*{
-		dsn := tr.cfg.TiDB
-		tidb := ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Pwd)
-		defer tidb.Close()
-
-		tidb.Exec("USE " + tr.tableMeta.DB)
-		_, err := tidb.Exec("ADMIN CHECK TABLE " + tr.tableMeta.Name)
+	if err := tr.verifyQuantity(rows); err != nil {
+		log.Errorf("[%s] verify quantity failed : %s", table, err.Error())
 		return err
-	}*/
+	}
+	log.Infof("[%s] owns %d rows integrallty !", table, rows)
+
+	if tr.cfg.Verify.RunCheckTable {
+		if err := tr.excCheckTable(); err != nil {
+			log.Errorf("[%s] verify check table failed : %s", table, err.Error())
+			return err
+		}
+	}
 
 	return nil
+}
+
+func (tr *TableRestore) verifyQuantity(expectRows uint64) error {
+	dsn := tr.cfg.TiDB
+	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Pwd)
+	defer db.Close()
+
+	rows := uint64(0)
+	r := db.QueryRow(
+		fmt.Sprintf("SELECT COUNT(*) FROM `%s.%s`", tr.tableMeta.DB, tr.tableInfo.Name))
+	if err := r.Scan(&rows); err != nil {
+		return err
+	}
+
+	if rows != expectRows {
+		return errors.Errorf("[verify] Rows num not equal %d (expect = %d)", rows, expectRows)
+	}
+
+	return nil
+}
+
+func (tr *TableRestore) excCheckTable() error {
+	log.Infof("Verify by execute `admin check table` : %s", tr.tableMeta.Name)
+
+	dsn := tr.cfg.TiDB
+	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Pwd)
+	defer db.Close()
+
+	// verify datas completion via command "admin check table"
+	_, err := db.Exec(
+		fmt.Sprintf("ADMIN CHECK TABLE `%s.%s`", tr.tableMeta.DB, tr.tableMeta.Name))
+	return err
 }
 
 ////////////////////////////////////////////////////////////////
