@@ -598,25 +598,26 @@ func (tr *TableRestore) verifyTable(rows uint64) error {
 	}()
 
 	// total num
+	log.Infof("[%s] to verify row num (expect=%d) ...", table, rows)
 	if err := tr.verifyQuantity(rows); err != nil {
 		log.Errorf("[%s] verify quantity failed : %s", table, err.Error())
 		return err
 	}
 	log.Infof("[%s] owns %d rows integrallty !", table, rows)
 
-	// admin check table
-	if tr.cfg.Verify.RunCheckTable {
-		if err := tr.excCheckTable(); err != nil {
-			log.Errorf("[%s] verify check table failed : %s", table, err.Error())
+	// command - admin checksum table
+	if tr.cfg.Verify.RunChecksumTable {
+		log.Infof("[%s] to verify checksum (expect=%d) ...", table, checksum.Sum())
+		if err := tr.verifyChecksum(checksum); err != nil {
+			log.Errorf("[%s] verfiy checksum failed : %s", table, err.Error())
 			return err
 		}
 	}
 
-	// admin checksum table
-	if tr.cfg.Verify.RunChecksumTable {
-		log.Infof("[%s] to verify checksum (=%d) ...", table, checksum.Sum())
-		if err := tr.verifyChecksum(checksum); err != nil {
-			log.Errorf("[%s] verfiy checksum failed : %s", table, err.Error())
+	// command - admin check table
+	if tr.cfg.Verify.RunCheckTable {
+		if err := tr.excCheckTable(); err != nil {
+			log.Errorf("[%s] verify check table failed : %s", table, err.Error())
 			return err
 		}
 	}
