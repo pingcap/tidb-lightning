@@ -529,11 +529,6 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 	table := tr.tableInfo.Name
 	log.Infof("[%s] restore table meta (row_id = %d)", table, rowID)
 
-	// kvDeliver, err := tr.makeKVDeliver()
-	// if err != nil {
-	// 	return errors.Trace(err)
-	// }
-	// defer kvDeliver.Close()
 	kvDeliver := tr.deliversMgr.AcquireClient(tr.dbInfo.Name, table)
 	defer tr.deliversMgr.RecycleClient(kvDeliver)
 
@@ -567,12 +562,12 @@ func (tr *TableRestore) ingestKV() error {
 
 	if err := kvDeliver.Flush(); err != nil {
 		log.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
-		return err
+		return errors.Trace(err)
 	}
 
 	if err := kvDeliver.Compact(); err != nil {
 		log.Errorf("[%s] falied to compact kvs : %s", table, err.Error())
-		return err
+		return errors.Trace(err)
 	}
 
 	return nil

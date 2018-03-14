@@ -234,7 +234,7 @@ const (
 )
 
 type deliverTxn struct {
-	mux     sync.Mutex
+	mux     sync.RWMutex
 	uuid    string
 	stat    int
 	kvSize  int64
@@ -258,9 +258,9 @@ func (txn *deliverTxn) update(kvSize int, kvPairs int) {
 }
 
 func (txn *deliverTxn) isOverLimit(kvSizeLimit int64, kvPairsLimit int64) bool {
-	txn.mux.Lock()
+	txn.mux.RLock()
 	over := (txn.kvSize >= kvSizeLimit) || (txn.kvPairs >= kvPairsLimit)
-	txn.mux.Unlock()
+	txn.mux.RUnlock()
 	return over
 }
 
@@ -271,9 +271,9 @@ func (txn *deliverTxn) updateStatus(stat int) {
 }
 
 func (txn *deliverTxn) inStatus(stat int) bool {
-	txn.mux.Lock()
+	txn.mux.RLock()
 	res := (txn.stat == stat)
-	txn.mux.Unlock()
+	txn.mux.RUnlock()
 	return res
 }
 
