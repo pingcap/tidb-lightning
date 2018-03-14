@@ -652,7 +652,7 @@ func (tr *TableRestore) verifyChecksum(expect *KVChecksum) error {
 		return err
 	}
 
-	if checksum != expect.Sum() {
+	if checksum != expect.Sum() || kvs != expect.SumKVS() || bytes != expect.SumSize() {
 		return errors.Errorf("checksum mismatch (%d vs %d) (kvs : %d vs %d) (size : %d vs %d)",
 			checksum, expect.Sum(), kvs, expect.SumKVS(), bytes, expect.SumSize())
 	}
