@@ -49,7 +49,8 @@ type KVIngest struct {
 }
 
 type Verification struct {
-	RunCheckTable bool `toml:"run_check_table"`
+	RunChecksumTable bool `toml:"run_checksum_table"`
+	RunCheckTable    bool `toml:"run_check_table"`
 }
 
 func LoadConfig(file string) (*Config, error) {

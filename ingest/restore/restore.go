@@ -613,10 +613,12 @@ func (tr *TableRestore) verifyTable(rows uint64) error {
 	}
 
 	// admin checksum table
-	log.Infof("[%s] to verify checksum (=%d) ...", table, checksum.Sum())
-	if err := tr.verifyChecksum(checksum); err != nil {
-		log.Errorf("[%s] verfiy checksum failed : %s", table, err.Error())
-		return err
+	if tr.cfg.Verify.RunChecksumTable {
+		log.Infof("[%s] to verify checksum (=%d) ...", table, checksum.Sum())
+		if err := tr.verifyChecksum(checksum); err != nil {
+			log.Errorf("[%s] verfiy checksum failed : %s", table, err.Error())
+			return err
+		}
 	}
 
 	return nil

@@ -6,6 +6,9 @@ data_source_dir = "./"
 # PD Server of target cluster
 pd_backend = "127.0.0.1:2380"
 
+# background profile for debuging, empty to disable
+pprof_port = ""
+
 [kv-ingest]
 # kv ingest server
 backend = "127.0.0.1:8808"
@@ -32,8 +35,7 @@ max-days = 28
 max-backups = 14
 
 [verify]
+run_checksum_table = false
+
 # wether to run `admin check table` (this might take long time to verify)
 run_check_table = false
-
-# background profile for debuging, empty to disable
-pprof_port = ""
