@@ -238,7 +238,7 @@ func (tbl *TidbTableInfo) WithAutoIncrPrimaryKey() bool {
 
 func ObtainGCLifeTime(db *sql.DB) (gcLifeTime string, err error) {
 	r := db.QueryRow(
-		"SELECT VARIABLE_VALUE FROM `mysql.tidb` WHERE VARIABLE_NAME = 'tikv_gc_last_run_time'")
+		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'")
 	if err = r.Scan(&gcLifeTime); err != nil {
 		return
 	}
@@ -247,6 +247,6 @@ func ObtainGCLifeTime(db *sql.DB) (gcLifeTime string, err error) {
 
 func UpdateGCLifeTime(db *sql.DB, gcLifeTime string) error {
 	_, err := db.Exec(fmt.Sprintf(
-		"UPDATE `mysql.tidb` SET VARIABLE_VALUE = 'tikv_gc_last_run_time' WHERE VARIABLE_NAME = '%s'", gcLifeTime))
+		"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'", gcLifeTime))
 	return err
 }
