@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"database/sql"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
@@ -232,4 +234,19 @@ func (tbl *TidbTableInfo) WithAutoIncrPrimaryKey() bool {
 		}
 	}
 	return false
+}
+
+func ObtainGCLifeTime(db *sql.DB) (gcLifeTime string, err error) {
+	r := db.QueryRow(
+		"SELECT VARIABLE_VALUE FROM `mysql.tidb` WHERE VARIABLE_NAME = 'tikv_gc_last_run_time'")
+	if err = r.Scan(&gcLifeTime); err != nil {
+		return
+	}
+	return
+}
+
+func UpdateGCLifeTime(db *sql.DB, gcLifeTime string) error {
+	_, err := db.Exec(fmt.Sprintf(
+		"UPDATE `mysql.tidb` SET VARIABLE_VALUE = 'tikv_gc_last_run_time' WHERE VARIABLE_NAME = '%s'", gcLifeTime))
+	return err
 }

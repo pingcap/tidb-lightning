@@ -244,7 +244,7 @@ const (
 	statFailed   string = "failed"
 )
 
-type restoreCallback func(int, int64, error) // ps : regionID , maxRowID , error
+type restoreCallback func(regionID int, maxRowID int64, rows uint64, checksum *KVChecksum, err error)
 
 type regionRestoreTask struct {
 	status   string
@@ -278,19 +278,19 @@ func (t *regionRestoreTask) Run(ctx context.Context) {
 	log.Infof("Start restore region : [%s] ...", t.region.Name())
 
 	t.status = statRunning
-	maxRowID, rows, err := t.run(ctx)
+	maxRowID, rows, checksum, err := t.run(ctx)
 	if err != nil {
 		log.Errorf("Table region (%s) restore failed : %s", region.Name(), err.Error())
 	}
 
 	log.Infof("Finished restore region : [%s]", region.Name())
-	t.callback(region.ID, maxRowID, rows, err)
+	t.callback(region.ID, maxRowID, rows, checksum, err)
 	t.status = statFinished
 
 	return
 }
 
-func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, error) {
+func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *KVChecksum, error) {
 	kvEncoder := t.encoders.Apply()
 	defer t.encoders.Recycle(kvEncoder)
 
@@ -412,6 +412,7 @@ type TableRestore struct {
 type regionStat struct {
 	maxRowID int64
 	rows     uint64
+	checksum *KVChecksum
 }
 
 func NewTableRestore(
@@ -477,7 +478,7 @@ func (tr *TableRestore) loadRegions() {
 	return
 }
 
-func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, err error) {
+func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, checksum *KVChecksum, err error) {
 	table := tr.tableInfo.Name
 	tr.mux.Lock()
 	defer tr.mux.Unlock()
@@ -492,6 +493,7 @@ func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, er
 	tr.handledRegions[id] = &regionStat{
 		maxRowID: maxRowID,
 		rows:     rows,
+		checksum: checksum,
 	}
 
 	total := len(tr.regions)
@@ -511,14 +513,16 @@ func (tr *TableRestore) makeKVDeliver() (kv.KVDeliver, error) {
 func (tr *TableRestore) onFinished() {
 	// generate meta kv
 	var (
-		tableMaxRowID int64  = 0
-		tableRows     uint64 = 0
+		tableMaxRowID int64       = 0
+		tableRows     uint64      = 0
+		checksum      *KVChecksum = NewKVChecksum(0)
 	)
 	for _, regStat := range tr.handledRegions {
 		tableRows += regStat.rows
 		if regStat.maxRowID > tableMaxRowID {
 			tableMaxRowID = regStat.maxRowID
 		}
+		checksum.Add(regStat.checksum)
 	}
 
 	tr.restoreTableMeta(tableMaxRowID)
@@ -527,7 +531,7 @@ func (tr *TableRestore) onFinished() {
 	tr.ingestKV()
 
 	// verify table data
-	tr.verifyTable(tableRows)
+	tr.verifyTable(tableRows, checksum)
 
 	return
 }
@@ -593,17 +597,62 @@ func (tr *TableRestore) verifyTable(rows uint64) error {
 		log.Infof("[%s] finish verification", table)
 	}()
 
+	// total num
 	if err := tr.verifyQuantity(rows); err != nil {
 		log.Errorf("[%s] verify quantity failed : %s", table, err.Error())
 		return err
 	}
 	log.Infof("[%s] owns %d rows integrallty !", table, rows)
 
+	// admin check table
 	if tr.cfg.Verify.RunCheckTable {
 		if err := tr.excCheckTable(); err != nil {
 			log.Errorf("[%s] verify check table failed : %s", table, err.Error())
 			return err
 		}
+	}
+
+	// admin checksum table
+	log.Infof("[%s] to verify checksum (=%d) ...", table, checksum.Sum())
+	if err := tr.verifyChecksum(checksum); err != nil {
+		log.Errorf("[%s] verfiy checksum failed : %s", table, err.Error())
+		return err
+	}
+
+	return nil
+}
+
+func (tr *TableRestore) verifyChecksum(expect *KVChecksum) error {
+	dsn := tr.cfg.TiDB
+	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	defer db.Close()
+
+	// ps : checksum command usually take long time to execute,
+	//		so here need to expand the gcLifeTime for single transaction.
+	oriGCLifeTime, gcErr := ObtainGCLifeTime(db)
+	if gcErr == nil {
+		gcErr = UpdateGCLifeTime(db, "100h")
+	}
+	defer func() {
+		if gcErr == nil {
+			UpdateGCLifeTime(db, oriGCLifeTime)
+		}
+	}()
+
+	// ps : speed up executing checksum temporarily
+	db.Exec("set session tidb_checksum_table_concurrency = 32")
+
+	var checksum, kvs, bytes uint64
+	var flag string
+	r := db.QueryRow(
+		fmt.Sprintf("ADMIN CHECKSUM TABLE %s.%s", tr.tableMeta.DB, tr.tableInfo.Name))
+	if err := r.Scan(&flag, &flag, &checksum, &kvs, &bytes); err != nil {
+		return err
+	}
+
+	if checksum != expect.Sum() {
+		return errors.Errorf("checksum mismatch (%d vs %d) (kvs : %d vs %d) (size : %d vs %d)",
+			checksum, expect.Sum(), kvs, expect.SumKVS(), bytes, expect.SumSize())
 	}
 
 	return nil
@@ -671,7 +720,7 @@ func (exc *RegionRestoreExectuor) Run(
 	ctx context.Context,
 	region *mydump.TableRegion,
 	kvEncoder *kv.TableKVEncoder,
-	kvDeliver kv.KVDeliver) (int64, uint64, error) {
+	kvDeliver kv.KVDeliver) (int64, uint64, *KVChecksum, error) {
 
 	/*
 		Flows :
@@ -689,13 +738,15 @@ func (exc *RegionRestoreExectuor) Run(
 	deliverMark := fmt.Sprintf("[%s]_deliver_write", table)
 
 	rows := uint64(0)
+	checksum := NewKVChecksum(0)
+
 	if region.BeginRowID >= 0 {
 		kvEncoder.RebaseRowID(region.BeginRowID)
 	}
 	for {
 		select {
 		case <-ctx.Done():
-			return kvEncoder.NextRowID(), rows, errCtxAborted
+			return kvEncoder.NextRowID(), rows, checksum, errCtxAborted
 		default:
 		}
 
@@ -714,7 +765,7 @@ func (exc *RegionRestoreExectuor) Run(
 
 			if err != nil {
 				log.Errorf("kv encode failed = %s\n", err.Error())
-				return kvEncoder.NextRowID(), rows, errors.Trace(err)
+				return kvEncoder.NextRowID(), rows, checksum, errors.Trace(err)
 			}
 
 			// kv -> deliver ( -> tikv )
@@ -725,9 +776,10 @@ func (exc *RegionRestoreExectuor) Run(
 			if err != nil {
 				// TODO : retry ~
 				log.Errorf("kv deliver failed = %s\n", err.Error())
-				return kvEncoder.NextRowID(), rows, errors.Trace(err)
+				return kvEncoder.NextRowID(), rows, checksum, errors.Trace(err)
 			}
 
+			checksum.Update(kvs)
 			rows += affectedRows
 		}
 		// TODO .. record progress on this region
@@ -736,5 +788,5 @@ func (exc *RegionRestoreExectuor) Run(
 	// TODO :
 	//		It's really necessary to statistic total num of kv pairs for debug tracing !!!
 
-	return kvEncoder.NextRowID(), rows, nil
+	return kvEncoder.NextRowID(), rows, checksum, nil
 }
