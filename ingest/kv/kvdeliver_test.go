@@ -19,7 +19,7 @@ const (
 func TestWriteFlush(t *testing.T) {
 	ctx := context.Background()
 
-	c, _ := NewKVDeliverClient(ctx, uuid, backend, pdAddr)
+	c, _ := NewKVDeliverClient(ctx, uuid, backend)
 	defer c.Close()
 
 	kvs := make([]KvPair, 0, 0)
@@ -42,7 +42,7 @@ func TestWriteFlush(t *testing.T) {
 }
 
 func TestManager(t *testing.T) {
-	p, _ := NewPipeKvDeliver(uuid, backend, pdAddr)
+	p, _ := NewPipeKvDeliver(uuid, backend)
 	defer p.Close()
 
 	datas := make([][]KvPair, 0)
