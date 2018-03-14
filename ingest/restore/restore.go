@@ -278,19 +278,19 @@ func (t *regionRestoreTask) Run(ctx context.Context) {
 	log.Infof("Start restore region : [%s] ...", t.region.Name())
 
 	t.status = statRunning
-	maxRowID, err := t.run(ctx)
+	maxRowID, rows, err := t.run(ctx)
 	if err != nil {
 		log.Errorf("Table region (%s) restore failed : %s", region.Name(), err.Error())
 	}
 
 	log.Infof("Finished restore region : [%s]", region.Name())
-	t.callback(region.ID, maxRowID, err)
+	t.callback(region.ID, maxRowID, rows, err)
 	t.status = statFinished
 
 	return
 }
 
-func (t *regionRestoreTask) run(ctx context.Context) (int64, error) {
+func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, error) {
 	kvEncoder := t.encoders.Apply()
 	defer t.encoders.Recycle(kvEncoder)
 
@@ -406,7 +406,12 @@ type TableRestore struct {
 	regions        []*mydump.TableRegion
 	id2regions     map[int]*mydump.TableRegion
 	tasks          []*regionRestoreTask
-	handledRegions map[int]int64
+	handledRegions map[int]*regionStat
+}
+
+type regionStat struct {
+	maxRowID int64
+	rows     uint64
 }
 
 func NewTableRestore(
@@ -424,7 +429,7 @@ func NewTableRestore(
 		tableMeta:      tableMeta,
 		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta).init(concurrency),
 		deliversMgr:    kv.NewKVDeliverKeeper(cfg.KvIngest.Backend),
-		handledRegions: make(map[int]int64),
+		handledRegions: make(map[int]*regionStat),
 	}
 
 	s := time.Now()
@@ -445,10 +450,9 @@ func (tr *TableRestore) loadRegions() {
 
 	// TODO : regionProgress & !regionProgress.Finished()
 
-	// ps : Important, assigned by rows id !
-
-	founder := mydump.NewRegionFounder(defMinRegionSize)
-	regions := founder.MakeTableRegions(tr.tableMeta)
+	preAllocateRowsID := !tr.tableInfo.WithIntegerPrimaryKey()
+	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
+	regions := founder.MakeTableRegions(tr.tableMeta, preAllocateRowsID)
 
 	table := tr.tableMeta.Name
 	for _, region := range regions {
@@ -473,7 +477,7 @@ func (tr *TableRestore) loadRegions() {
 	return
 }
 
-func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, err error) {
+func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, err error) {
 	table := tr.tableInfo.Name
 	tr.mux.Lock()
 	defer tr.mux.Unlock()
@@ -485,12 +489,14 @@ func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, err error) {
 		return
 	}
 
-	tr.handledRegions[id] = maxRowID
+	tr.handledRegions[id] = &regionStat{
+		maxRowID: maxRowID,
+		rows:     rows,
+	}
 
 	total := len(tr.regions)
 	handled := len(tr.handledRegions)
 	log.Infof("[%s] handled region count = %d (%s)", table, handled, common.Percent(handled, total))
-
 	if handled == len(tr.tasks) {
 		tr.onFinished()
 	}
@@ -504,10 +510,14 @@ func (tr *TableRestore) makeKVDeliver() (kv.KVDeliver, error) {
 
 func (tr *TableRestore) onFinished() {
 	// generate meta kv
-	var tableMaxRowID int64 = 0
-	for _, rowID := range tr.handledRegions {
-		if rowID > tableMaxRowID {
-			tableMaxRowID = rowID
+	var (
+		tableMaxRowID int64  = 0
+		tableRows     uint64 = 0
+	)
+	for _, regStat := range tr.handledRegions {
+		tableRows += regStat.rows
+		if regStat.maxRowID > tableMaxRowID {
+			tableMaxRowID = regStat.maxRowID
 		}
 	}
 
@@ -661,10 +671,7 @@ func (exc *RegionRestoreExectuor) Run(
 	ctx context.Context,
 	region *mydump.TableRegion,
 	kvEncoder *kv.TableKVEncoder,
-	kvDeliver kv.KVDeliver) (int64, error) {
-
-	// kvDeliver, _ := makeKVDeliver(ctx, exc.cfg, exc.dbInfo, exc.tableInfo)
-	// defer kvDeliver.Close()
+	kvDeliver kv.KVDeliver) (int64, uint64, error) {
 
 	/*
 		Flows :
@@ -681,11 +688,14 @@ func (exc *RegionRestoreExectuor) Run(
 	encodeMark := fmt.Sprintf("[%s]_sql_2_kv", table)
 	deliverMark := fmt.Sprintf("[%s]_deliver_write", table)
 
-	kvEncoder.RebaseRowID(region.BeginRowID)
+	rows := uint64(0)
+	if region.BeginRowID >= 0 {
+		kvEncoder.RebaseRowID(region.BeginRowID)
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return kvEncoder.NextRowID(), errCtxAborted
+			return kvEncoder.NextRowID(), rows, errCtxAborted
 		default:
 		}
 
@@ -699,12 +709,12 @@ func (exc *RegionRestoreExectuor) Run(
 		for _, stmt := range sqls {
 			// sql -> kv
 			start = time.Now()
-			kvs, _, err := kvEncoder.Sql2KV(stmt)
+			kvs, affectedRows, err := kvEncoder.Sql2KV(stmt)
 			metrics.MarkTiming(encodeMark, start)
 
 			if err != nil {
 				log.Errorf("kv encode failed = %s\n", err.Error())
-				return kvEncoder.NextRowID(), errors.Trace(err)
+				return kvEncoder.NextRowID(), rows, errors.Trace(err)
 			}
 
 			// kv -> deliver ( -> tikv )
@@ -715,12 +725,16 @@ func (exc *RegionRestoreExectuor) Run(
 			if err != nil {
 				// TODO : retry ~
 				log.Errorf("kv deliver failed = %s\n", err.Error())
-				return kvEncoder.NextRowID(), errors.Trace(err)
+				return kvEncoder.NextRowID(), rows, errors.Trace(err)
 			}
-		}
 
+			rows += affectedRows
+		}
 		// TODO .. record progress on this region
 	}
 
-	return kvEncoder.NextRowID(), nil
+	// TODO :
+	//		It's really necessary to statistic total num of kv pairs for debug tracing !!!
+
+	return kvEncoder.NextRowID(), rows, nil
 }

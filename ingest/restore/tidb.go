@@ -2,6 +2,7 @@ package restore
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -9,6 +10,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
 
 	log "github.com/sirupsen/logrus"
@@ -68,6 +70,8 @@ type TidbTableInfo struct {
 	Columns   int
 	Indices   int
 	Available bool
+
+	core *model.TableInfo
 }
 
 func NewTiDBManager(pdAddr string) (*TiDBManager, error) {
@@ -107,11 +111,34 @@ func (timgr *TiDBManager) InitSchema(database string, tablesSchema map[string]st
 	}
 
 	for _, sqlCreateTable := range tablesSchema {
-		if _, err = se.Execute(ctx, sqlCreateTable); err != nil {
+		// if _, err = se.Execute(ctx, sqlCreateTable); err != nil {
+		if err = safeCreateTable(ctx, se, sqlCreateTable); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
+	return nil
+}
+
+func toCreateTableIfNotExists(createTable string) string {
+	upCreateTable := strings.ToUpper(createTable)
+	if strings.Index(upCreateTable, "CREATE TABLE IF NOT EXISTS") < 0 {
+		substrs := strings.SplitN(upCreateTable, "CREATE TABLE", 2)
+		if len(substrs) == 2 {
+			prefix := substrs[0] // ps : annotation might be
+			schema := substrs[1] // ps : schema definition in detail
+			createTable = prefix + "CREATE TABLE IF NOT EXISTS " + createTable[len(createTable)-len(schema):]
+		}
+	}
+
+	return createTable
+}
+
+func safeCreateTable(ctx goctx.Context, se tidb.Session, createTable string) error {
+	createTable = toCreateTableIfNotExists(createTable)
+	if _, err := se.Execute(ctx, createTable); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -148,6 +175,7 @@ func (timgr *TiDBManager) LoadSchemaInfo(database string) *TidbDBInfo {
 				Columns:   len(tbl.Columns),
 				Indices:   len(tbl.Indices),
 				Available: tbl.State == model.StatePublic,
+				core:      tbl,
 			}
 			dbInfo.Tables[tableName] = tableInfo
 
@@ -181,4 +209,27 @@ func (timgr *TiDBManager) SyncSchema(database string) *TidbDBInfo {
 	}
 
 	return timgr.LoadSchemaInfo(database)
+}
+
+func (tbl *TidbTableInfo) WithExplicitPrimaryKey() bool {
+	// TODO : need to check `tableInfo.PKIsHandle` ??
+	for _, col := range tbl.core.Columns {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			return true
+		}
+	}
+	return false
+}
+
+func (tbl *TidbTableInfo) WithIntegerPrimaryKey() bool {
+	return tbl.core.PKIsHandle
+}
+
+func (tbl *TidbTableInfo) WithAutoIncrPrimaryKey() bool {
+	for _, col := range tbl.core.Columns {
+		if mysql.HasPriKeyFlag(col.Flag) && mysql.HasAutoIncrementFlag(col.Flag) {
+			return true
+		}
+	}
+	return false
 }
