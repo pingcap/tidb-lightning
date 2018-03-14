@@ -49,7 +49,7 @@ type RestoreControlloer struct {
 
 func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *RestoreControlloer {
 	// store := cfg.ProgressStore
-	// statDB := ConnectDB(store.Host, store.Port, store.User, store.Pwd)
+	// statDB := ConnectDB(store.Host, store.Port, store.User, store.Psw)
 	// statDbms := NewProgressDBMS(statDB, store.Database)
 
 	return &RestoreControlloer{
@@ -611,7 +611,7 @@ func (tr *TableRestore) verifyTable(rows uint64) error {
 
 func (tr *TableRestore) verifyQuantity(expectRows uint64) error {
 	dsn := tr.cfg.TiDB
-	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Pwd)
+	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	defer db.Close()
 
 	rows := uint64(0)
@@ -632,7 +632,7 @@ func (tr *TableRestore) excCheckTable() error {
 	log.Infof("Verify by execute `admin check table` : %s", tr.tableMeta.Name)
 
 	dsn := tr.cfg.TiDB
-	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Pwd)
+	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	defer db.Close()
 
 	// verify datas completion via command "admin check table"

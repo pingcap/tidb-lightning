@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/ingest/common"
@@ -16,8 +15,6 @@ const (
 	utestDB         string = "_mydump_reader_utest_"
 	utestDataSrouce string = "./examples"
 )
-
-var _ = Suite(&testMydumpReaderSuite{})
 
 ////////////////////////////
 type dbManager struct {
@@ -56,6 +53,8 @@ func (d *dbManager) close() {
 
 //////////////////////////////////////////////////////////
 
+var _ = Suite(&testMydumpReaderSuite{})
+
 type testMydumpReaderSuite struct{}
 
 func (s *testMydumpReaderSuite) SetUpSuite(c *C)    {}
@@ -74,12 +73,13 @@ func checkTableData(c *C, db *sql.DB) {
 
 func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 	dbMgr := newDBManager()
-	defer dbMgr.clear().close()
+	defer func() {
+		dbMgr.clear().close()
+	}()
 
 	db := dbMgr.db
-	dbMgr.clear()
 	for _, tblMeta := range dbMeta.Tables {
-		sqlCreteTable, _ := ExportStatement(tblMeta.SchemaFile)
+		sqlCreteTable, _ := ExportStatment(tblMeta.SchemaFile)
 		dbMgr.init(string(sqlCreteTable))
 
 		for _, file := range tblMeta.DataFiles {
@@ -108,15 +108,14 @@ func (s *testMydumpReaderSuite) TestReader(c *C) {
 	fmt.Println("Testing mydump reader ...")
 
 	cfg := &config.Config{SourceDir: utestDataSrouce}
-	mdl, _ := NewMyDumpLoader(cfg)
+
+	mdl, err := NewMyDumpLoader(cfg)
+	c.Assert(err, IsNil)
 	dbMeta := mdl.GetDatabase()
 
 	var minSize int64 = 512
 	var maxSize int64 = 1024 * 128
-
-	start := time.Now()
 	for blockSize := minSize; blockSize <= maxSize; blockSize += 512 {
 		mydump2mysql(c, dbMeta, blockSize)
 	}
-	fmt.Printf("tol cost = %.2f sec\n", time.Since(start).Seconds())
 }

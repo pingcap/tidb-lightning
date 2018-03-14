@@ -2,8 +2,8 @@ package kv
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/meta/autoid"
+	log "github.com/sirupsen/logrus"
 
 	sqltool "github.com/pingcap/tidb-lightning/ingest/sql"
 	"github.com/pingcap/tidb/kv"

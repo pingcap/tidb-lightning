@@ -7,7 +7,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/ngaut/log"
+	log "github.com/sirupsen/logrus"
 )
 
 type TableRegion struct {
@@ -52,7 +52,7 @@ type RegionFounder struct {
 }
 
 func NewRegionFounder(minRegionSize int64) *RegionFounder {
-	concurrency := runtime.NumCPU() / 4
+	concurrency := runtime.NumCPU() >> 1
 	if concurrency == 0 {
 		concurrency = 1
 	}
@@ -68,7 +68,7 @@ func NewRegionFounder(minRegionSize int64) *RegionFounder {
 	}
 }
 
-func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
+func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, allocateRowID bool) []*TableRegion {
 	var lock sync.Mutex
 	var wg sync.WaitGroup
 
@@ -77,12 +77,19 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 	processors := f.processors
 	minRegionSize := f.minRegionSize
 
+	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
-	for _, file := range meta.DataFiles {
+	for _, dataFile := range meta.DataFiles {
 		wg.Add(1)
-		go func(pid int, f string) {
-			log.Debugf("[%s] loading file's region (%s) ...", table, f)
-			regions := makeFileRegions(db, table, f, minRegionSize)
+		go func(pid int, file string) {
+			log.Debugf("[%s] loading file's region (%s) ...", table, file)
+
+			var regions []*TableRegion
+			if allocateRowID {
+				regions = splitExactRegion(db, table, file, minRegionSize)
+			} else {
+				regions = splitFuzzyRegion(db, table, file, minRegionSize)
+			}
 
 			lock.Lock()
 			filesRegions = append(filesRegions, regions...)
@@ -90,23 +97,31 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 
 			processors <- pid
 			wg.Done()
-		}(<-processors, file)
+		}(<-processors, dataFile)
 	}
-
 	wg.Wait()
-	sort.Sort(filesRegions)
 
-	var tableRows int64 = 0
+	// Setup files' regions
+	sort.Sort(filesRegions) // ps : sort region by - (fileName, fileOffset)
 	for i, region := range filesRegions {
 		region.ID = i
-		region.BeginRowID = tableRows + 1
-		tableRows += region.Rows
+		region.BeginRowID = -1
+	}
+
+	var tableRows int64 = 0
+	for _, region := range filesRegions {
+		if allocateRowID {
+			region.BeginRowID = tableRows + 1
+			tableRows += region.Rows
+		} else {
+			region.BeginRowID = -1
+		}
 	}
 
 	return filesRegions
 }
 
-func makeFileRegions(db string, table string, file string, minRegionSize int64) []*TableRegion {
+func splitFuzzyRegion(db string, table string, file string, minRegionSize int64) []*TableRegion {
 	reader, err := NewMDDataReader(file, 0)
 	if err != nil {
 		log.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
@@ -114,8 +129,51 @@ func makeFileRegions(db string, table string, file string, minRegionSize int64) 
 	}
 	defer reader.Close()
 
+	newRegion := func(off int64) *TableRegion {
+		return &TableRegion{
+			ID:         -1,
+			DB:         db,
+			Table:      table,
+			File:       file,
+			Offset:     off,
+			BeginRowID: 0,
+			Size:       0,
+			Rows:       0,
+		}
+	}
+
+	regions := make([]*TableRegion, 0)
+
+	var extendSize = int64(4 << 10) // 4 K
 	var offset int64
-	var readSize int64
+	for {
+		reader.Seek(offset + minRegionSize)
+		_, err := reader.Read(extendSize)
+		pos := reader.Tell()
+
+		region := newRegion(offset)
+		region.Size = pos - offset
+		region.Rows = -1
+		if region.Size > 0 {
+			regions = append(regions, region)
+		}
+
+		if err == io.EOF {
+			break
+		}
+		offset = pos
+	}
+
+	return regions
+}
+
+func splitExactRegion(db string, table string, file string, minRegionSize int64) []*TableRegion {
+	reader, err := NewMDDataReader(file, 0)
+	if err != nil {
+		log.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
+		return nil
+	}
+	defer reader.Close()
 
 	newRegion := func(off int64) *TableRegion {
 		return &TableRegion{
@@ -137,6 +195,9 @@ func makeFileRegions(db string, table string, file string, minRegionSize int64) 
 
 	regions := make([]*TableRegion, 0)
 	region := newRegion(0)
+
+	var offset int64
+	var readSize int64
 	for {
 		// read file content
 		statements, err := reader.Read(blockSize)
