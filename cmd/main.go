@@ -6,45 +6,28 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
-	"path"
 	"syscall"
 
-	"github.com/ngaut/log"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/pingcap/tidb-lightning/ingest"
 	"github.com/pingcap/tidb-lightning/ingest/common"
 	"github.com/pingcap/tidb-lightning/ingest/config"
+	applog "github.com/pingcap/tidb-lightning/ingest/log"
 )
 
 var (
-	cfgFile = flag.String("c", "tidb-lighting.toml", "tidb-lighting configuration file")
+	cfgFile = flag.String("c", "tidb-lightning.toml", "tidb-lightning configuration file")
 )
 
 func initEnv(cfg *config.Config) error {
 	common.EnsureDir(cfg.Dir)
-	// initLogger(cfg.Dir)
+	applog.InitLogger(&cfg.Log)
 
 	if len(cfg.ProfilePort) > 0 {
 		go func() { // TODO : config to enable it in debug mode
 			log.Info(http.ListenAndServe(":"+cfg.ProfilePort, nil))
 		}()
-	}
-
-	return nil
-}
-
-func initLogger(dir string) error {
-	logDir := path.Join(dir, "log")
-	logFile := path.Join(logDir, "ingest.log")
-	if err := os.MkdirAll(logDir, os.ModePerm); err != nil {
-		return err
-	}
-
-	log.SetRotateByDay()
-	log.SetHighlighting(false)
-	log.SetLevel(log.LOG_LEVEL_WARN)
-	if err := log.SetOutputByName(logFile); err != nil {
-		return err
 	}
 
 	return nil

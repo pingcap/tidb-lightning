@@ -13,7 +13,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
 
-	"github.com/ngaut/log"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
