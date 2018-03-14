@@ -120,16 +120,22 @@ func (timgr *TiDBManager) InitSchema(database string, tablesSchema map[string]st
 	return nil
 }
 
-func safeCreateTable(ctx goctx.Context, se tidb.Session, createTable string) error {
+func toCreateTableIfNotExists(createTable string) string {
 	upCreateTable := strings.ToUpper(createTable)
 	if strings.Index(upCreateTable, "CREATE TABLE IF NOT EXISTS") < 0 {
 		substrs := strings.SplitN(upCreateTable, "CREATE TABLE", 2)
 		if len(substrs) == 2 {
-			prefix := substrs[0]
-			createTable = prefix + " IF NOT EXISTS " + createTable[len(prefix):]
+			prefix := substrs[0] // ps : annotation might be
+			schema := substrs[1] // ps : schema definition in detail
+			createTable = prefix + "CREATE TABLE IF NOT EXISTS " + createTable[len(createTable)-len(schema):]
 		}
 	}
 
+	return createTable
+}
+
+func safeCreateTable(ctx goctx.Context, se tidb.Session, createTable string) error {
+	createTable = toCreateTableIfNotExists(createTable)
 	if _, err := se.Execute(ctx, createTable); err != nil {
 		return errors.Trace(err)
 	}
