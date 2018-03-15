@@ -29,7 +29,7 @@ type Config struct {
 
 	Log log.LogConfig `toml:"log"`
 
-	ProfilePort   string  `toml:"pprof_port"`
+	ProfilePort   int     `toml:"pprof_port"`
 	ProgressStore DBStore `toml:"progress_store"`
 
 	Mydumper MydumperRuntime `toml:"mydumper"`
@@ -49,7 +49,8 @@ type KVIngest struct {
 }
 
 type Verification struct {
-	RunCheckTable bool `toml:"run_check_table"`
+	RunChecksumTable bool `toml:"run_checksum_table"`
+	RunCheckTable    bool `toml:"run_check_table"`
 }
 
 func LoadConfig(file string) (*Config, error) {

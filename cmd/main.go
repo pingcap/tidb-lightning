@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -27,9 +28,9 @@ func initEnv(cfg *config.Config) error {
 
 	kv.ConfigDeliverTxnBatchSize(cfg.KvIngest.BatchSize)
 
-	if len(cfg.ProfilePort) > 0 {
+	if cfg.ProfilePort > 0 {
 		go func() { // TODO : config to enable it in debug mode
-			log.Info(http.ListenAndServe(":"+cfg.ProfilePort, nil))
+			log.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.ProfilePort), nil))
 		}()
 	}
 
