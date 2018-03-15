@@ -587,7 +587,7 @@ func (tr *TableRestore) ingestKV() error {
 	return nil
 }
 
-func (tr *TableRestore) verifyTable(rows uint64) error {
+func (tr *TableRestore) verifyTable(rows uint64, checksum *KVChecksum) error {
 	table := tr.tableInfo.Name
 	log.Infof("[%s] verifying table ...", table)
 
