@@ -1,4 +1,4 @@
-package restore
+package verification
 
 import (
 	"hash/crc64"

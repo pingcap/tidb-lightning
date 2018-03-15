@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb-lightning/ingest/config"
 	"github.com/pingcap/tidb-lightning/ingest/kv"
 	"github.com/pingcap/tidb-lightning/ingest/mydump"
+	verify "github.com/pingcap/tidb-lightning/ingest/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 )
 
@@ -244,7 +245,7 @@ const (
 	statFailed   string = "failed"
 )
 
-type restoreCallback func(regionID int, maxRowID int64, rows uint64, checksum *KVChecksum, err error)
+type restoreCallback func(regionID int, maxRowID int64, rows uint64, checksum *verify.KVChecksum, err error)
 
 type regionRestoreTask struct {
 	status   string
@@ -290,7 +291,7 @@ func (t *regionRestoreTask) Run(ctx context.Context) {
 	return
 }
 
-func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *KVChecksum, error) {
+func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVChecksum, error) {
 	kvEncoder := t.encoders.Apply()
 	defer t.encoders.Recycle(kvEncoder)
 
@@ -412,7 +413,7 @@ type TableRestore struct {
 type regionStat struct {
 	maxRowID int64
 	rows     uint64
-	checksum *KVChecksum
+	checksum *verify.KVChecksum
 }
 
 func NewTableRestore(
@@ -478,7 +479,7 @@ func (tr *TableRestore) loadRegions() {
 	return
 }
 
-func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, checksum *KVChecksum, err error) {
+func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, checksum *verify.KVChecksum, err error) {
 	table := tr.tableInfo.Name
 	tr.mux.Lock()
 	defer tr.mux.Unlock()
@@ -513,9 +514,9 @@ func (tr *TableRestore) makeKVDeliver() (kv.KVDeliver, error) {
 func (tr *TableRestore) onFinished() {
 	// generate meta kv
 	var (
-		tableMaxRowID int64       = 0
-		tableRows     uint64      = 0
-		checksum      *KVChecksum = NewKVChecksum(0)
+		tableMaxRowID int64
+		tableRows     uint64
+		checksum      *verify.KVChecksum = verify.NewKVChecksum(0)
 	)
 	for _, regStat := range tr.handledRegions {
 		tableRows += regStat.rows
@@ -587,7 +588,7 @@ func (tr *TableRestore) ingestKV() error {
 	return nil
 }
 
-func (tr *TableRestore) verifyTable(rows uint64, checksum *KVChecksum) error {
+func (tr *TableRestore) verifyTable(rows uint64, checksum *verify.KVChecksum) error {
 	table := tr.tableInfo.Name
 	log.Infof("[%s] verifying table ...", table)
 
@@ -625,7 +626,7 @@ func (tr *TableRestore) verifyTable(rows uint64, checksum *KVChecksum) error {
 	return nil
 }
 
-func (tr *TableRestore) verifyChecksum(expect *KVChecksum) error {
+func (tr *TableRestore) verifyChecksum(expect *verify.KVChecksum) error {
 	dsn := tr.cfg.TiDB
 	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	defer db.Close()
@@ -636,14 +637,17 @@ func (tr *TableRestore) verifyChecksum(expect *KVChecksum) error {
 	if gcErr == nil {
 		gcErr = UpdateGCLifeTime(db, "100h")
 	}
-	defer func() {
-		if gcErr == nil {
-			UpdateGCLifeTime(db, oriGCLifeTime)
-		}
-	}()
+	if gcErr != nil {
+		log.Errorf("Abort checksum verify for GCLifeTime setting failed : %s", gcErr.Error())
+		return errors.Trace(gcErr)
+	}
+	defer UpdateGCLifeTime(db, oriGCLifeTime)
 
 	// ps : speed up executing checksum temporarily
-	db.Exec("set session tidb_checksum_table_concurrency = 32")
+	_, err := db.Exec("set session tidb_checksum_table_concurrency = 32")
+	if err != nil {
+		log.Warnf("session var (checksum_concurrency) setting failed : %s", err.Error())
+	}
 
 	var checksum, kvs, bytes uint64
 	var flag string
@@ -723,7 +727,7 @@ func (exc *RegionRestoreExectuor) Run(
 	ctx context.Context,
 	region *mydump.TableRegion,
 	kvEncoder *kv.TableKVEncoder,
-	kvDeliver kv.KVDeliver) (int64, uint64, *KVChecksum, error) {
+	kvDeliver kv.KVDeliver) (int64, uint64, *verify.KVChecksum, error) {
 
 	/*
 		Flows :
@@ -741,7 +745,14 @@ func (exc *RegionRestoreExectuor) Run(
 	deliverMark := fmt.Sprintf("[%s]_deliver_write", table)
 
 	rows := uint64(0)
-	checksum := NewKVChecksum(0)
+	checksum := verify.NewKVChecksum(0)
+	/*
+		TODO :
+			So far, since checksum can not recompute on the same key-value pair,
+			otherwise this would leds to an incorrect checksum value finally.
+			So it's important to gaurnate that do checksum on kvs correctly
+			no matter what happens during process of restore ( eg. safe point / error retry ... )
+	*/
 
 	if region.BeginRowID >= 0 {
 		kvEncoder.RebaseRowID(region.BeginRowID)
