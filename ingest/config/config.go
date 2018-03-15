@@ -29,7 +29,7 @@ type Config struct {
 
 	Log log.LogConfig `toml:"log"`
 
-	ProfilePort   string  `toml:"pprof_port"`
+	ProfilePort   int     `toml:"pprof_port"`
 	ProgressStore DBStore `toml:"progress_store"`
 
 	Mydumper MydumperRuntime `toml:"mydumper"`

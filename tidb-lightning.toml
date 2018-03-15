@@ -6,8 +6,8 @@ data_source_dir = "./"
 # PD Server of target cluster
 pd_backend = "127.0.0.1:2380"
 
-# background profile for debuging, empty to disable
-pprof_port = ""
+# background profile for debuging ( 0 to disable )
+pprof_port = 0
 
 [kv-ingest]
 # kv ingest server
