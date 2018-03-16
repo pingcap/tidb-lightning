@@ -7,6 +7,8 @@ ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
 
+LIGHTNING_BIN := bin/tidb-lightning
+
 TIDBDIR := $(GOPATH)/src/github.com/pingcap/tidb/
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
@@ -28,13 +30,20 @@ TARGET = ""
 
 .PHONY: all build parser clean parserlib
 
-default: lightning buildsucc
+default: clean lightning checksuccess
 
 build:
 	$(GOBUILD)
 
-buildsucc:
-	@echo Build Lightning Successfully!
+clean:
+	$(GO) clean -i ./...
+	rm -f $(LIGHTNING_BIN)
+
+checksuccess:
+	@if [ -f $(LIGHTNING_BIN) ]; \
+	then \
+		echo "Lightning build successfully :-) !" ; \
+	fi
 
 goyacc:
 	$(GOBUILD) -o $(TIDBDIR)/bin/goyacc $(TIDBDIR)/parser/goyacc/main.go
@@ -60,11 +69,13 @@ parserlib: parser/parser.go
 parser/parser.go: $(TIDBDIR)/parser/parser.y
 	make parser
 
-RACE_FLAG = 
+RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
 	GOBUILD   = GOPATH=$(TIDBDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
 lightning: parserlib
-	$(GOBUILD) $(RACE_FLAG) -o bin/tidb-lightning cmd/main.go
+	@mv $(TIDBDIR)/vendor/golang.org/x/net/trace $(TIDBDIR)/vendor/golang.org/x/net/_trace
+	-$(GOBUILD) $(RACE_FLAG) -o $(LIGHTNING_BIN) cmd/main.go
+	@mv $(TIDBDIR)/vendor/golang.org/x/net/_trace $(TIDBDIR)/vendor/golang.org/x/net/trace
