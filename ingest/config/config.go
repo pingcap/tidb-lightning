@@ -46,11 +46,12 @@ type MydumperRuntime struct {
 type KVIngest struct {
 	Backend   string `toml:"backend"`
 	BatchSize int64  `toml:"batch_size"`
+	Compact   bool   `toml:"compact"`
 }
 
 type Verification struct {
 	RunChecksumTable bool `toml:"run_checksum_table"`
-	RunCheckTable    bool `toml:"run_check_table"`
+	CheckRowsCount   bool `toml:"check_rows_count"`
 }
 
 func LoadConfig(file string) (*Config, error) {

@@ -580,9 +580,11 @@ func (tr *TableRestore) ingestKV() error {
 		return errors.Trace(err)
 	}
 
-	if err := kvDeliver.Compact(); err != nil {
-		log.Errorf("[%s] falied to compact kvs : %s", table, err.Error())
-		return errors.Trace(err)
+	if tr.cfg.KvIngest.Compact {
+		if err := kvDeliver.Compact(); err != nil {
+			log.Errorf("[%s] falied to compact kvs : %s", table, err.Error())
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
@@ -598,29 +600,23 @@ func (tr *TableRestore) verifyTable(rows uint64, checksum *verify.KVChecksum) er
 		log.Infof("[%s] finish verification", table)
 	}()
 
-	// total num
-	log.Infof("[%s] to verify row num (expect=%d) ...", table, rows)
-	if err := tr.verifyQuantity(rows); err != nil {
-		log.Errorf("[%s] verify quantity failed : %s", table, err.Error())
-		return err
-	}
-	log.Infof("[%s] owns %d rows integrallty !", table, rows)
-
 	// command - admin checksum table
 	if tr.cfg.Verify.RunChecksumTable {
-		log.Infof("[%s] to verify checksum (expect=%d) ...", table, checksum.Sum())
+		log.Infof("[%s] to verify checksum (%s) ...", table, checksum.String())
 		if err := tr.verifyChecksum(checksum); err != nil {
 			log.Errorf("[%s] verfiy checksum failed : %s", table, err.Error())
 			return err
 		}
 	}
 
-	// command - admin check table
-	if tr.cfg.Verify.RunCheckTable {
-		if err := tr.excCheckTable(); err != nil {
-			log.Errorf("[%s] verify check table failed : %s", table, err.Error())
+	// total num
+	if tr.cfg.Verify.CheckRowsCount {
+		log.Infof("[%s] to verify row count (expect = %d) ...", table, rows)
+		if err := tr.verifyQuantity(rows); err != nil {
+			log.Errorf("[%s] verify quantity failed : %s", table, err.Error())
 			return err
 		}
+		log.Infof("[%s] owns %d rows integrallty !", table, rows)
 	}
 
 	return nil
