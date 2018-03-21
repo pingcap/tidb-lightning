@@ -12,20 +12,20 @@ import (
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	log "github.com/sirupsen/logrus"
 
+	"github.com/satori/go.uuid"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
 var (
 	errInvalidUUID error = errors.New("uuid length must be 16")
+	invalidUUID          = uuid.Nil
 )
 
 const (
 	_G             uint64 = 1 << 30
 	flushSizeLimit uint64 = 1 * _G
 	maxRetryTimes  int    = 3
-
-	invalidUUID = "_BAD_ID_"
 )
 
 var (
@@ -71,7 +71,7 @@ type PipeKvDeliver struct {
 	ctx      context.Context
 	shutdown context.CancelFunc
 
-	uuid    string
+	uuid    uuid.UUID
 	deliver *KVDeliverClient
 	tasks   chan *deliverTask
 
@@ -79,7 +79,7 @@ type PipeKvDeliver struct {
 	sumKVSize uint64
 }
 
-func NewPipeKvDeliver(uuid string, backend string) (*PipeKvDeliver, error) {
+func NewPipeKvDeliver(uuid uuid.UUID, backend string) (*PipeKvDeliver, error) {
 	ctx, shutdown := context.WithCancel(context.Background())
 
 	deliver, err := NewKVDeliverClient(context.Background(), uuid, backend)
@@ -235,13 +235,13 @@ const (
 
 type deliverTxn struct {
 	mux     sync.RWMutex
-	uuid    string
+	uuid    uuid.UUID
 	stat    int
 	kvSize  int64
 	kvPairs int64
 }
 
-func newDeliverTxn(uuid string) *deliverTxn {
+func newDeliverTxn(uuid uuid.UUID) *deliverTxn {
 	return &deliverTxn{
 		uuid:    uuid,
 		stat:    txnPutting,
@@ -289,7 +289,7 @@ type KVDeliverKeeper struct {
 	clientsPool []*KVDeliverClient // aka. connection pool
 
 	txnIdCounter int // TODO : need to update to another algorithm
-	txnBoard     map[string]*txnInfo
+	txnBoard     map[uuid.UUID]*txnInfo
 	txns         map[string][]*deliverTxn // map[tag]{*txn, *txn, *txn ...}
 
 	flushWg       sync.WaitGroup
@@ -315,7 +315,7 @@ func NewKVDeliverKeeper(backend string) *KVDeliverKeeper {
 
 		txnIdCounter:  0, // TODO : need to update to another algorithm
 		txns:          make(map[string][]*deliverTxn),
-		txnBoard:      make(map[string]*txnInfo),
+		txnBoard:      make(map[uuid.UUID]*txnInfo),
 		txnFlushQueue: make(chan *deliverTxn, 64),
 	}
 
@@ -352,7 +352,7 @@ func (k *KVDeliverKeeper) validate(txn *deliverTxn) bool {
 
 func (k *KVDeliverKeeper) newTxn(db string, table string) *deliverTxn {
 	k.txnIdCounter += 1
-	uuid := fmt.Sprintf("%016d", k.txnIdCounter)
+	uuid := uuid.Must(uuid.NewV4())
 
 	tag := buildTag(db, table)
 	txn := newDeliverTxn(uuid)
@@ -453,7 +453,7 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 }
 
 func (k *KVDeliverKeeper) Compact() error {
-	cli, err := NewKVDeliverClient(k.ctx, "", k.backend)
+	cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.backend)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -573,12 +573,7 @@ func newImportClient(addr string) (*grpc.ClientConn, importpb.ImportKVClient, er
 	return conn, importpb.NewImportKVClient(conn), nil
 }
 
-func NewKVDeliverClient(ctx context.Context, uuid string, backend string) (*KVDeliverClient, error) {
-	log.Infof("KV deliver handle UUID = [%s]", uuid)
-	if len(uuid) != 16 {
-		return nil, errInvalidUUID
-	}
-
+func NewKVDeliverClient(ctx context.Context, uuid uuid.UUID, backend string) (*KVDeliverClient, error) {
 	conn, rpcCli, err := newImportClient(backend) // goruntine safe ???
 	if err != nil {
 		return nil, err
@@ -621,9 +616,9 @@ func (c *KVDeliverClient) exitTxn() {
 	return
 }
 
-func (c *KVDeliverClient) open(uuid string) error {
+func (c *KVDeliverClient) open(uuid uuid.UUID) error {
 	openRequest := &importpb.OpenRequest{
-		Uuid: []byte(c.txn.uuid),
+		Uuid: c.txn.uuid.Bytes(),
 	}
 
 	_, err := c.cli.Open(c.ctx, openRequest)
@@ -647,7 +642,7 @@ func (c *KVDeliverClient) newWriteStream() (importpb.ImportKV_WriteClient, error
 	// Bind uuid for this write request
 	req := &importpb.WriteRequest{
 		Head: &importpb.WriteRequest_Head{
-			Uuid: []byte(c.txn.uuid),
+			Uuid: c.txn.uuid.Bytes(),
 		},
 	}
 	if err = wstream.Send(req); err != nil {
@@ -731,7 +726,7 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 func (c *KVDeliverClient) Cleanup() error {
 	c.closeWriteStream()
 
-	req := &importpb.CleanupRequest{Uuid: []byte(c.txn.uuid)}
+	req := &importpb.CleanupRequest{Uuid: c.txn.uuid.Bytes()}
 	_, err := c.cli.Cleanup(c.ctx, req)
 	return errors.Trace(err)
 }
@@ -785,7 +780,7 @@ func (c *KVDeliverClient) callCompact() error {
 
 func (c *KVDeliverClient) callClose() error {
 	log.Infof("call close ...")
-	req := &importpb.CloseRequest{Uuid: []byte(c.txn.uuid)}
+	req := &importpb.CloseRequest{Uuid: c.txn.uuid.Bytes()}
 	_, err := c.cli.Close(c.ctx, req)
 	log.Infof("finish call close !")
 
@@ -795,7 +790,7 @@ func (c *KVDeliverClient) callClose() error {
 func (c *KVDeliverClient) callImport() error {
 	// TODO ... no matter what, to enusure available to import, call close first !
 	log.Infof("call import ...")
-	req := &importpb.ImportRequest{Uuid: []byte(c.txn.uuid)}
+	req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes()}
 	_, err := c.cli.Import(c.ctx, req)
 	log.Infof("finish call import !")
 
