@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/satori/go.uuid"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
@@ -206,7 +207,7 @@ func makeKVDeliver(
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
 
-	uuid := adjustUUID(fmt.Sprintf("%s_%s", dbInfo.Name, tableInfo.Name), 16)
+	uuid := uuid.Must(uuid.NewV4())
 	return kv.NewKVDeliverClient(ctx, uuid, cfg.KvIngest.Backend)
 }
 
