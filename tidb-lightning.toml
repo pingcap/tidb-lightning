@@ -42,5 +42,6 @@ max-backups = 14
 [verify]
 run_checksum_table = false
 
-# wether to count rows as part of verification
+# whether to count rows as part of verification 
+# (ps : in general, rows counting checking is uncessary while `checksum_table` is configured to executed.)
 # check_rows_count = false
