@@ -580,9 +580,11 @@ func (tr *TableRestore) ingestKV() error {
 		return errors.Trace(err)
 	}
 
-	if err := kvDeliver.Compact(); err != nil {
-		log.Errorf("[%s] falied to compact kvs : %s", table, err.Error())
-		return errors.Trace(err)
+	if tr.cfg.KvIngest.Compact {
+		if err := kvDeliver.Compact(); err != nil {
+			log.Errorf("[%s] falied to compact kvs : %s", table, err.Error())
+			return errors.Trace(err)
+		}
 	}
 
 	return nil

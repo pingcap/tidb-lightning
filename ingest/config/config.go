@@ -46,6 +46,7 @@ type MydumperRuntime struct {
 type KVIngest struct {
 	Backend   string `toml:"backend"`
 	BatchSize int64  `toml:"batch_size"`
+	Compact   bool   `toml:"compact"`
 }
 
 type Verification struct {

@@ -14,6 +14,8 @@ pprof_port = 0
 backend = "127.0.0.1:8808"
 # size of batch to execute kv ingest into TiKV : xxx (GB)
 batch_size = 30 # GB
+# call compact after finishing ingesting all kv data into cluster
+compact = true
 
 [mydumper]
 # block size of file reading
