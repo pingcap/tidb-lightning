@@ -73,6 +73,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 		rc.restoreSchema,
 		// rc.recoverProgress,
 		rc.restoreTables,
+		rc.compaction,
 	}
 
 	for _, process := range opts {
@@ -186,6 +187,21 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 	wg.Wait() // TODO ... ctx abroted
 
 	return nil
+}
+
+func (rc *RestoreControlloer) compaction(ctx context.Context) error {
+	if !rc.cfg.KvIngest.Compact {
+		log.Warnf("Skip compaction !")
+		return nil
+	}
+
+	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.KvIngest.Backend)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cli.Close()
+
+	return errors.Trace(cli.Compact())
 }
 
 ////////////////////////////////////////////////////////////////
@@ -579,13 +595,6 @@ func (tr *TableRestore) ingestKV() error {
 	if err := kvDeliver.Flush(); err != nil {
 		log.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
 		return errors.Trace(err)
-	}
-
-	if tr.cfg.KvIngest.Compact {
-		if err := kvDeliver.Compact(); err != nil {
-			log.Errorf("[%s] falied to compact kvs : %s", table, err.Error())
-			return errors.Trace(err)
-		}
 	}
 
 	return nil
