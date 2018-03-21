@@ -3,7 +3,6 @@ package mydump
 import (
 	"bytes"
 	"io"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -86,10 +85,12 @@ func (l *MDLoader) setup(dir string) error {
 	}
 
 	files := common.ListFiles(dir)
-	metaFile := filepath.Join(dir, "metadata")
-	if _, exists := files[metaFile]; !exists {
-		return errMDInvalid
-	}
+
+	// ps : skip checking it as no denpendcy on it so far
+	// metaFile := filepath.Join(dir, "metadata")
+	// if _, exists := files[metaFile]; !exists {
+	// 	return errMDInvalid
+	// }
 
 	log.Debugf("Files detected : %+v", files)
 

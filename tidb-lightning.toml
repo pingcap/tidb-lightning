@@ -37,5 +37,5 @@ max-backups = 14
 [verify]
 run_checksum_table = false
 
-# wether to run `admin check table` (this might take long time to verify)
-run_check_table = false
+# wether to count rows as part of verification
+# check_rows_count = false

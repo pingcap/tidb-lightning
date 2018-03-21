@@ -129,7 +129,7 @@ func toCreateTableIfNotExists(createTable string) string {
 		if len(substrs) == 2 {
 			prefix := substrs[0] // ps : annotation might be
 			schema := substrs[1] // ps : schema definition in detail
-			createTable = prefix + "CREATE TABLE IF NOT EXISTS " + createTable[len(createTable)-len(schema):]
+			createTable = prefix + " CREATE TABLE IF NOT EXISTS " + createTable[len(createTable)-len(schema):]
 		}
 	}
 
