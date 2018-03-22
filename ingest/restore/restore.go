@@ -191,7 +191,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 
 func (rc *RestoreControlloer) compaction(ctx context.Context) error {
 	if !rc.cfg.KvIngest.Compact {
-		log.Warnf("Skip compaction !")
+		log.Warn("Skip compaction !")
 		return nil
 	}
 
