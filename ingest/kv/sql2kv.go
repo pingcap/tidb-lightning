@@ -41,7 +41,7 @@ type TableKVEncoder struct {
 func NewTableKVEncoder(
 	db string, dbID int64,
 	table string, tableID int64,
-	columns int, tableSchema string) (*TableKVEncoder, error) {
+	columns int, tableSchema string, sqlMode string) (*TableKVEncoder, error) {
 
 	idAllocator := kvec.NewAllocator()
 	idAllocator.Rebase(tableID, 0, false)
@@ -50,6 +50,12 @@ func NewTableKVEncoder(
 		log.Errorf("[sql2kv] kv encoder create failed : %v", err)
 		return nil, errors.Trace(err)
 	}
+
+	err = kvEncoder.SetSystemVariable("sql_mode", sqlMode)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	log.Infof("set sql_mode=%s", sqlMode)
 
 	kvcodec := &TableKVEncoder{
 		db:          db,
