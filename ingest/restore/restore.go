@@ -44,6 +44,8 @@ type RestoreControlloer struct {
 	dbMeta *mydump.MDDatabaseMeta
 	dbInfo *TidbDBInfo
 
+	localChecksums map[string]*verify.KVChecksum
+
 	// statDB         *sql.DB
 	// statDbms       *ProgressDBMS
 	// tablesProgress map[string]*TableProgress
@@ -55,8 +57,9 @@ func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *R
 	// statDbms := NewProgressDBMS(statDB, store.Database)
 
 	return &RestoreControlloer{
-		cfg:    cfg,
-		dbMeta: dbMeta,
+		cfg:            cfg,
+		dbMeta:         dbMeta,
+		localChecksums: make(map[string]*verify.KVChecksum),
 		// statDB: statDB,
 		// statDbms: statDbms,
 	}
@@ -74,6 +77,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 		// rc.recoverProgress,
 		rc.restoreTables,
 		rc.compaction,
+		rc.checksum,
 	}
 
 	for _, process := range opts {
@@ -140,7 +144,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 		}
 
 		tablesRestoring = append(tablesRestoring, NewTableRestore(
-			ctx, dbInfo, tableInfo, tableMeta, rc.cfg,
+			ctx, dbInfo, tableInfo, tableMeta, rc.cfg, rc.localChecksums,
 		))
 	}
 
@@ -189,6 +193,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 	return nil
 }
 
+// do compaction for the whole data.
 func (rc *RestoreControlloer) compaction(ctx context.Context) error {
 	if !rc.cfg.KvIngest.Compact {
 		log.Warn("Skip compaction !")
@@ -202,6 +207,49 @@ func (rc *RestoreControlloer) compaction(ctx context.Context) error {
 	defer cli.Close()
 
 	return errors.Trace(cli.Compact())
+}
+
+// do checksum for each table.
+func (rc *RestoreControlloer) checksum(ctx context.Context) error {
+	if !rc.cfg.Verify.RunChecksumTable {
+		log.Warn("Skip checksum !")
+		return nil
+	}
+
+	tables := make([]string, 0, len(rc.dbMeta.Tables))
+	dbInfo := rc.dbInfo
+	for tbl := range rc.dbMeta.Tables {
+		// FIXME: it seems a little bit of redundance. Simplify it in the future.  @chendahui
+		_, ok := dbInfo.Tables[tbl]
+		if !ok {
+			log.Warnf("table info not found : %s", tbl)
+			continue
+		}
+		tables = append(tables, fmt.Sprintf("%s.%s", dbInfo.Name, tbl))
+	}
+
+	remoteChecksums, err := DoChecksum(rc.cfg.TiDB, tables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, remoteChecksum := range remoteChecksums {
+		table := fmt.Sprintf("%s.%s", remoteChecksum.Schema, remoteChecksum.Table)
+		localChecksum, ok := rc.localChecksums[table]
+		if !ok {
+			log.Warnf("not found local checksum for table %s", table)
+			continue
+		}
+
+		if remoteChecksum.Checksum != localChecksum.Sum() || remoteChecksum.TotalKVs != localChecksum.SumKVS() || remoteChecksum.TotalBytes != localChecksum.SumSize() {
+			log.Errorf("table %s checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
+				table, remoteChecksum.Checksum, localChecksum.Sum(), remoteChecksum.TotalKVs, localChecksum.SumKVS(), remoteChecksum.TotalBytes, localChecksum.SumSize())
+		}
+
+		log.Infof("table %s checksum identical", table)
+	}
+
+	return nil
 }
 
 ////////////////////////////////////////////////////////////////
@@ -425,6 +473,7 @@ type TableRestore struct {
 	id2regions     map[int]*mydump.TableRegion
 	tasks          []*regionRestoreTask
 	handledRegions map[int]*regionStat
+	localChecksums map[string]*verify.KVChecksum
 }
 
 type regionStat struct {
@@ -438,7 +487,8 @@ func NewTableRestore(
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
 	tableMeta *mydump.MDTableMeta,
-	cfg *config.Config) *TableRestore {
+	cfg *config.Config,
+	localChecksums map[string]*verify.KVChecksum) *TableRestore {
 
 	tr := &TableRestore{
 		ctx:            ctx,
@@ -449,6 +499,7 @@ func NewTableRestore(
 		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta).init(concurrency),
 		deliversMgr:    kv.NewKVDeliverKeeper(cfg.KvIngest.Backend),
 		handledRegions: make(map[int]*regionStat),
+		localChecksums: localChecksums,
 	}
 
 	s := time.Now()
@@ -533,7 +584,7 @@ func (tr *TableRestore) onFinished() {
 	var (
 		tableMaxRowID int64
 		tableRows     uint64
-		checksum      *verify.KVChecksum = verify.NewKVChecksum(0)
+		checksum      = verify.NewKVChecksum(0)
 	)
 	for _, regStat := range tr.handledRegions {
 		tableRows += regStat.rows
@@ -542,6 +593,9 @@ func (tr *TableRestore) onFinished() {
 		}
 		checksum.Add(regStat.checksum)
 	}
+	table := fmt.Sprintf("%s.%s", tr.tableMeta.DB, tr.tableMeta.Name)
+	log.Infof("table %s.%s self-calculated checksum %s", table, checksum)
+	tr.localChecksums[table] = checksum
 
 	tr.restoreTableMeta(tableMaxRowID)
 
@@ -549,7 +603,7 @@ func (tr *TableRestore) onFinished() {
 	tr.ingestKV()
 
 	// verify table data
-	tr.verifyTable(tableRows, checksum)
+	tr.verifyTable(tableRows)
 
 	return
 }
@@ -600,7 +654,7 @@ func (tr *TableRestore) ingestKV() error {
 	return nil
 }
 
-func (tr *TableRestore) verifyTable(rows uint64, checksum *verify.KVChecksum) error {
+func (tr *TableRestore) verifyTable(rows uint64) error {
 	table := tr.tableInfo.Name
 	log.Infof("[%s] verifying table ...", table)
 
@@ -609,15 +663,6 @@ func (tr *TableRestore) verifyTable(rows uint64, checksum *verify.KVChecksum) er
 		metrics.MarkTiming(fmt.Sprintf("[%s]_verify", table), start)
 		log.Infof("[%s] finish verification", table)
 	}()
-
-	// command - admin checksum table
-	if tr.cfg.Verify.RunChecksumTable {
-		log.Infof("[%s] to verify checksum (%s) ...", table, checksum.String())
-		if err := tr.verifyChecksum(checksum); err != nil {
-			log.Errorf("[%s] verfiy checksum failed : %s", table, err.Error())
-			return err
-		}
-	}
 
 	// total num
 	if tr.cfg.Verify.CheckRowsCount {
@@ -632,8 +677,18 @@ func (tr *TableRestore) verifyTable(rows uint64, checksum *verify.KVChecksum) er
 	return nil
 }
 
-func (tr *TableRestore) verifyChecksum(expect *verify.KVChecksum) error {
-	dsn := tr.cfg.TiDB
+// RemoteChecksum represents a checksum result got from tidb.
+type RemoteChecksum struct {
+	Schema     string
+	Table      string
+	Checksum   uint64
+	TotalKVs   uint64
+	TotalBytes uint64
+}
+
+// DoChecksum do checksum for tables.
+// table should be in <db>.<table>, format.  e.g. foo.bar
+func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) {
 	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	defer db.Close()
 
@@ -645,30 +700,47 @@ func (tr *TableRestore) verifyChecksum(expect *verify.KVChecksum) error {
 	}
 	if gcErr != nil {
 		log.Errorf("Abort checksum verify for GCLifeTime setting failed : %s", gcErr.Error())
-		return errors.Trace(gcErr)
+		return nil, errors.Trace(gcErr)
 	}
 	defer UpdateGCLifeTime(db, oriGCLifeTime)
 
 	// ps : speed up executing checksum temporarily
 	_, err := db.Exec("set session tidb_checksum_table_concurrency = 32")
 	if err != nil {
-		log.Warnf("session var (checksum_concurrency) setting failed : %s", err.Error())
+		log.Warnf("failed to set variable @tidb_checksum_table_concurrency: %s", err.Error())
 	}
 
-	var checksum, kvs, bytes uint64
-	var flag string
-	r := db.QueryRow(
-		fmt.Sprintf("ADMIN CHECKSUM TABLE %s.%s", tr.tableMeta.DB, tr.tableInfo.Name))
-	if err := r.Scan(&flag, &flag, &checksum, &kvs, &bytes); err != nil {
-		return err
+	// ADMIN CHECKSUM TABLE <table>,<table>  example.
+	// 	mysql> admin checksum table test.t;
+	// +---------+------------+---------------------+-----------+-------------+
+	// | Db_name | Table_name | Checksum_crc64_xor  | Total_kvs | Total_bytes |
+	// +---------+------------+---------------------+-----------+-------------+
+	// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
+	// +---------+------------+---------------------+-----------+-------------+
+
+	tbls := strings.Join(tables, ",")
+	log.Infof("doing checksum for tables %s", tbls)
+
+	rows, err := db.Query(fmt.Sprintf("ADMIN CHECKSUM TABLE %s", tbls))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	checksums := make([]*RemoteChecksum, 0, len(tables))
+	for rows.Next() {
+		cs := RemoteChecksum{}
+		err = rows.Scan(&cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		checksums = append(checksums, &cs)
+	}
+	if err := rows.Err(); err != nil {
+		return checksums, errors.Trace(err)
 	}
 
-	if checksum != expect.Sum() || kvs != expect.SumKVS() || bytes != expect.SumSize() {
-		return errors.Errorf("checksum mismatch (%d vs %d) (kvs : %d vs %d) (size : %d vs %d)",
-			checksum, expect.Sum(), kvs, expect.SumKVS(), bytes, expect.SumSize())
-	}
-
-	return nil
+	return checksums, nil
 }
 
 func (tr *TableRestore) verifyQuantity(expectRows uint64) error {
@@ -780,7 +852,7 @@ func (exc *RegionRestoreExectuor) Run(
 		for _, stmt := range sqls {
 			// sql -> kv
 			start = time.Now()
-			kvs, affectedRows, err := kvEncoder.Sql2KV(stmt)
+			kvs, affectedRows, err := kvEncoder.SQL2KV(stmt)
 			metrics.MarkTiming(encodeMark, start)
 
 			if err != nil {

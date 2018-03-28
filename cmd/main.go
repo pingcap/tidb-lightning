@@ -1,41 +1,17 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/juju/errors"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/pingcap/tidb-lightning/ingest"
-	"github.com/pingcap/tidb-lightning/ingest/common"
 	"github.com/pingcap/tidb-lightning/ingest/config"
-	"github.com/pingcap/tidb-lightning/ingest/kv"
-	applog "github.com/pingcap/tidb-lightning/ingest/log"
 )
-
-var (
-	cfgFile = flag.String("c", "tidb-lightning.toml", "tidb-lightning configuration file")
-)
-
-func initEnv(cfg *config.Config) error {
-	common.EnsureDir(cfg.Dir)
-	applog.InitLogger(&cfg.Log)
-
-	kv.ConfigDeliverTxnBatchSize(cfg.KvIngest.BatchSize)
-
-	if cfg.ProfilePort > 0 {
-		go func() { // TODO : config to enable it in debug mode
-			log.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.ProfilePort), nil))
-		}()
-	}
-
-	return nil
-}
 
 func onExitSignal() {
 	sc := make(chan os.Signal, 1)
@@ -52,17 +28,13 @@ func onExitSignal() {
 }
 
 func main() {
-	flag.Parse()
-
-	cfg, err := config.LoadConfig(*cfgFile)
+	cfg, err := config.LoadConfig(os.Args[1:])
 	if err != nil {
-		log.Errorf("load config failed (%s) : %s", *cfgFile, err.Error())
+		log.Errorf("load config failed: %s", errors.ErrorStack(err))
 		return
 	}
 
-	initEnv(cfg)
-
-	mainloop := ingest.Mainloop(cfg)
+	mainloop := ingest.NewMainLoop(cfg)
 	mainloop.Run()
 
 	// TODO : onExitSignal() --> mainloop.Stop()

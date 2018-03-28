@@ -1,9 +1,11 @@
 package config
 
 import (
+	"flag"
 	"io/ioutil"
 
 	"github.com/BurntSushi/toml"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/ingest/log"
 )
 
@@ -21,6 +23,8 @@ type DBStore struct {
 }
 
 type Config struct {
+	*flag.FlagSet `json:"-"`
+
 	Dir       string `toml:"dir"`
 	SourceDir string `toml:"data_source_dir"`
 
@@ -36,6 +40,10 @@ type Config struct {
 	KvIngest KVIngest        `toml:"kv-ingest"`
 
 	Verify Verification `toml:"verify"`
+
+	DoCompact  bool
+	DoChecksum string
+	file       string
 }
 
 type MydumperRuntime struct {
@@ -54,15 +62,26 @@ type Verification struct {
 	CheckRowsCount   bool `toml:"check_rows_count"`
 }
 
-func LoadConfig(file string) (*Config, error) {
-	data, err := ioutil.ReadFile(file)
-	if err != nil {
-		return nil, err
+func LoadConfig(args []string) (*Config, error) {
+	cfg := new(Config)
+	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
+	fs := cfg.FlagSet
+
+	fs.StringVar(&cfg.file, "c", "tidb-lightning.toml", "tidb-lightning configuration file")
+	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compact")
+	fs.StringVar(&cfg.DoChecksum, "checksum", "", "do manual checksum for tables which in comma separated format, like foo.bar1,foo.bar2")
+
+	if err := fs.Parse(args); err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	cfg := new(Config)
+	data, err := ioutil.ReadFile(cfg.file)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if err = toml.Unmarshal(data, cfg); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	// handle mydumper
