@@ -16,17 +16,10 @@ export PATH := $(path_to_add):$(PATH)
 GO        := go
 GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
-# OVERALLS  := CGO_ENABLED=1 overalls
-# GOVERALLS := goveralls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-# PACKAGES  := $$(go list ./...| grep -vE "vendor")
-# FILES     := $$(find . -name "*.go" | grep -vE "vendor")
-# TOPDIRS   := $$(ls -d */ | grep -vE "vendor")
-
-TARGET = ""
 
 .PHONY: all build parser clean parserlib
 
