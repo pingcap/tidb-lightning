@@ -728,7 +728,7 @@ func (c *KVDeliverClient) Cleanup() error {
 func (c *KVDeliverClient) Flush() error {
 	c.closeWriteStream()
 
-	ops := []func() error{c.callFlush, c.callClose, c.callImport}
+	ops := []func() error{c.callClose, c.callImport}
 	for step, fn := range ops {
 		if err := fn(); err != nil {
 			log.Errorf("[kv-deliver] flush stage with error (step = %d) : %s", step, err.Error())
@@ -738,6 +738,7 @@ func (c *KVDeliverClient) Flush() error {
 	return nil
 }
 
+// not used now
 func (c *KVDeliverClient) callFlush() error {
 	wstream, err := c.getWriteStream()
 	if err != nil {
