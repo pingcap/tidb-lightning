@@ -78,6 +78,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 		rc.restoreTables,
 		rc.compact,
 		rc.checksum,
+		rc.analyze,
 	}
 
 	for _, process := range opts {
@@ -241,6 +242,17 @@ func (rc *RestoreControlloer) checksum(ctx context.Context) error {
 	return nil
 }
 
+// analyze will analyze table for all tables.
+func (rc *RestoreControlloer) analyze(ctx context.Context) error {
+	if !rc.cfg.PostRestore.Analyze {
+		log.Info("Skip analyze table.")
+	}
+
+	tables := rc.getTables()
+	analyzeTable(rc.cfg.TiDB, tables)
+
+	return nil
+}
 
 func (rc *RestoreControlloer) getTables() []string {
 	tables := make([]string, 0, len(rc.dbMeta.Tables))
@@ -255,6 +267,21 @@ func (rc *RestoreControlloer) getTables() []string {
 		tables = append(tables, fmt.Sprintf("%s.%s", dbInfo.Name, tbl))
 	}
 	return tables
+}
+
+func analyzeTable(dsn config.DBStore, tables []string) error {
+	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	defer db.Close()
+
+	for _, table := range tables {
+		_, err := db.Exec("ANALYZE TABLE %s", table)
+		if err != nil {
+			log.Errorf("analyze table %s error %s", table, errors.ErrorStack(err))
+			continue
+		}
+	}
+
+	return nil
 }
 
 ////////////////////////////////////////////////////////////////
