@@ -62,6 +62,8 @@ func LoadConfig(file string) (*Config, error) {
 	}
 
 	cfg := new(Config)
+	// set default sql_mode
+	cfg.TiDB = DBStore{SQLMode: "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"}
 	if err = toml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
