@@ -20,11 +20,11 @@ func (s *testMydumpLoaderSuite) SetUpSuite(c *C)    {}
 func (s *testMydumpLoaderSuite) TearDownSuite(c *C) {}
 
 func (s *testMydumpLoaderSuite) TestLoader(c *C) {
-	cfg := &config.Config{SourceDir: "./not-exists"}
+	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./not-exists"}}
 	mdl, err := md.NewMyDumpLoader(cfg)
 	c.Assert(err, NotNil)
 
-	cfg = &config.Config{SourceDir: "./examples"}
+	cfg = &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
 	mdl, err = md.NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)
 

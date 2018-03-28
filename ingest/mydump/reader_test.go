@@ -79,7 +79,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 
 	db := dbMgr.db
 	for _, tblMeta := range dbMeta.Tables {
-		sqlCreteTable, _ := ExportStatment(tblMeta.SchemaFile)
+		sqlCreteTable, _ := ExportStatement(tblMeta.SchemaFile)
 		dbMgr.init(string(sqlCreteTable))
 
 		for _, file := range tblMeta.DataFiles {
@@ -107,7 +107,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 func (s *testMydumpReaderSuite) TestReader(c *C) {
 	fmt.Println("Testing mydump reader ...")
 
-	cfg := &config.Config{SourceDir: utestDataSrouce}
+	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: utestDataSrouce}}
 
 	mdl, err := NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)

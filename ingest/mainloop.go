@@ -12,7 +12,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
-	"github.com/pingcap/tidb-lightning/ingest/common"
 	"github.com/pingcap/tidb-lightning/ingest/config"
 	"github.com/pingcap/tidb-lightning/ingest/kv"
 	applog "github.com/pingcap/tidb-lightning/ingest/log"
@@ -29,18 +28,15 @@ type mainloop struct {
 }
 
 func initEnv(cfg *config.Config) error {
-	if err := common.EnsureDir(cfg.Dir); err != nil {
-		return errors.Trace(err)
-	}
-	if err := applog.InitLogger(&cfg.Log); err != nil {
+	if err := applog.InitLogger(&cfg.App.LogConfig); err != nil {
 		return errors.Trace(err)
 	}
 
-	kv.ConfigDeliverTxnBatchSize(cfg.KvIngest.BatchSize)
+	kv.ConfigDeliverTxnBatchSize(cfg.ImportServer.BatchSize)
 
-	if cfg.ProfilePort > 0 {
+	if cfg.App.ProfilePort > 0 {
 		go func() { // TODO : config to enable it in debug mode
-			log.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.ProfilePort), nil))
+			log.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.App.ProfilePort), nil))
 		}()
 	}
 
@@ -49,6 +45,7 @@ func initEnv(cfg *config.Config) error {
 
 func NewMainLoop(cfg *config.Config) *mainloop {
 	initEnv(cfg)
+	log.Infof("cfg %+v", cfg)
 
 	ctx, shutdown := context.WithCancel(context.Background())
 
@@ -97,7 +94,7 @@ func (m *mainloop) run() {
 }
 
 func (m *mainloop) doCompact() {
-	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, m.cfg.KvIngest.Backend)
+	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, m.cfg.ImportServer.Backend)
 	if err != nil {
 		log.Errorf(errors.ErrorStack(err))
 		return

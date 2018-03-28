@@ -76,7 +76,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 		rc.restoreSchema,
 		// rc.recoverProgress,
 		rc.restoreTables,
-		rc.compaction,
+		rc.compact,
 		rc.checksum,
 	}
 
@@ -99,9 +99,9 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 }
 
 func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
-	log.Info("Restore db/table schema ~")
+	log.Infof("restore schema %s from file %s", rc.dbMeta.Name, rc.dbMeta.SchemaFile)
 
-	tidbMgr, err := NewTiDBManager(rc.cfg.PdAddr)
+	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB.PdAddr)
 	if err != nil {
 		log.Errorf("create tidb manager failed : %v", err)
 		return err
@@ -194,13 +194,13 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 }
 
 // do compaction for the whole data.
-func (rc *RestoreControlloer) compaction(ctx context.Context) error {
-	if !rc.cfg.KvIngest.Compact {
-		log.Warn("Skip compaction !")
+func (rc *RestoreControlloer) compact(ctx context.Context) error {
+	if !rc.cfg.PostRestore.Compact {
+		log.Info("Skip compaction.")
 		return nil
 	}
 
-	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.KvIngest.Backend)
+	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.ImportServer.Backend)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -211,23 +211,12 @@ func (rc *RestoreControlloer) compaction(ctx context.Context) error {
 
 // do checksum for each table.
 func (rc *RestoreControlloer) checksum(ctx context.Context) error {
-	if !rc.cfg.Verify.RunChecksumTable {
-		log.Warn("Skip checksum !")
+	if !rc.cfg.PostRestore.Checksum {
+		log.Info("Skip checksum.")
 		return nil
 	}
 
-	tables := make([]string, 0, len(rc.dbMeta.Tables))
-	dbInfo := rc.dbInfo
-	for tbl := range rc.dbMeta.Tables {
-		// FIXME: it seems a little bit of redundance. Simplify it in the future.  @chendahui
-		_, ok := dbInfo.Tables[tbl]
-		if !ok {
-			log.Warnf("table info not found : %s", tbl)
-			continue
-		}
-		tables = append(tables, fmt.Sprintf("%s.%s", dbInfo.Name, tbl))
-	}
-
+	tables := rc.getTables()
 	remoteChecksums, err := DoChecksum(rc.cfg.TiDB, tables)
 	if err != nil {
 		return errors.Trace(err)
@@ -252,6 +241,22 @@ func (rc *RestoreControlloer) checksum(ctx context.Context) error {
 	return nil
 }
 
+
+func (rc *RestoreControlloer) getTables() []string {
+	tables := make([]string, 0, len(rc.dbMeta.Tables))
+	dbInfo := rc.dbInfo
+	for tbl := range rc.dbMeta.Tables {
+		// FIXME: it seems a little bit of redundance. Simplify it in the future.  @chendahui
+		_, ok := dbInfo.Tables[tbl]
+		if !ok {
+			log.Warnf("table info not found : %s", tbl)
+			continue
+		}
+		tables = append(tables, fmt.Sprintf("%s.%s", dbInfo.Name, tbl))
+	}
+	return tables
+}
+
 ////////////////////////////////////////////////////////////////
 
 // TODO ... find another way to caculate
@@ -272,7 +277,7 @@ func makeKVDeliver(
 	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
 
 	uuid := uuid.Must(uuid.NewV4())
-	return kv.NewKVDeliverClient(ctx, uuid, cfg.KvIngest.Backend)
+	return kv.NewKVDeliverClient(ctx, uuid, cfg.ImportServer.Backend)
 }
 
 ////////////////////////////////////////////////////////////////
@@ -497,7 +502,7 @@ func NewTableRestore(
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
 		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta).init(concurrency),
-		deliversMgr:    kv.NewKVDeliverKeeper(cfg.KvIngest.Backend),
+		deliversMgr:    kv.NewKVDeliverKeeper(cfg.ImportServer.Backend),
 		handledRegions: make(map[int]*regionStat),
 		localChecksums: localChecksums,
 	}
@@ -602,9 +607,7 @@ func (tr *TableRestore) onFinished() {
 	// flush all kvs into TiKV ~
 	tr.ingestKV()
 
-	// verify table data
-	tr.verifyTable(tableRows)
-
+	log.Infof("table %s.%s has imported %s rows", tableRows)
 	return
 }
 
@@ -649,29 +652,6 @@ func (tr *TableRestore) ingestKV() error {
 	if err := kvDeliver.Flush(); err != nil {
 		log.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
 		return errors.Trace(err)
-	}
-
-	return nil
-}
-
-func (tr *TableRestore) verifyTable(rows uint64) error {
-	table := tr.tableInfo.Name
-	log.Infof("[%s] verifying table ...", table)
-
-	start := time.Now()
-	defer func() {
-		metrics.MarkTiming(fmt.Sprintf("[%s]_verify", table), start)
-		log.Infof("[%s] finish verification", table)
-	}()
-
-	// total num
-	if tr.cfg.Verify.CheckRowsCount {
-		log.Infof("[%s] to verify row count (expect = %d) ...", table, rows)
-		if err := tr.verifyQuantity(rows); err != nil {
-			log.Errorf("[%s] verify quantity failed : %s", table, err.Error())
-			return err
-		}
-		log.Infof("[%s] owns %d rows integrallty !", table, rows)
 	}
 
 	return nil
@@ -741,25 +721,6 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 	}
 
 	return checksums, nil
-}
-
-func (tr *TableRestore) verifyQuantity(expectRows uint64) error {
-	dsn := tr.cfg.TiDB
-	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
-	defer db.Close()
-
-	rows := uint64(0)
-	r := db.QueryRow(
-		fmt.Sprintf("SELECT COUNT(*) FROM %s.%s", tr.tableMeta.DB, tr.tableInfo.Name))
-	if err := r.Scan(&rows); err != nil {
-		return err
-	}
-
-	if rows != expectRows {
-		return errors.Errorf("[verify] Rows num not equal %d (expect = %d)", rows, expectRows)
-	}
-
-	return nil
 }
 
 func (tr *TableRestore) excCheckTable() error {

@@ -9,52 +9,54 @@ import (
 	"github.com/pingcap/tidb-lightning/ingest/log"
 )
 
-type DataSource struct {
-	Type string `toml:"type"`
-	URL  string `toml:"url"`
-}
-
 type DBStore struct {
-	Host     string `toml:"host"`
-	Port     int    `toml:"port"`
-	User     string `toml:"user"`
-	Psw      string `toml:"password"`
-	Database string `toml:"database"`
+	PdAddr string `toml:"pd_backend"`
+	Host   string `toml:"host"`
+	Port   int    `toml:"port"`
+	User   string `toml:"user"`
+	Psw    string `toml:"password"`
 }
 
 type Config struct {
 	*flag.FlagSet `json:"-"`
 
-	Dir       string `toml:"dir"`
-	SourceDir string `toml:"data_source_dir"`
+	App  Lightning `toml:"lightning"`
+	TiDB DBStore   `toml:"tidb"`
 
-	PdAddr string  `toml:"pd_backend"`
-	TiDB   DBStore `toml:"tidb"`
-
-	Log log.LogConfig `toml:"log"`
-
-	ProfilePort   int     `toml:"pprof_port"`
+	// not implemented yet.
 	ProgressStore DBStore `toml:"progress_store"`
 
-	Mydumper MydumperRuntime `toml:"mydumper"`
-	KvIngest KVIngest        `toml:"kv-ingest"`
+	Mydumper     MydumperRuntime `toml:"mydumper"`
+	ImportServer ImportServer    `toml:"import-server"`
+	PostRestore  PostRestore     `toml:"post-restore"`
 
-	Verify Verification `toml:"verify"`
-
+	// command line flags
 	DoCompact  bool
 	DoChecksum string
 	file       string
 }
 
-type MydumperRuntime struct {
-	ReadBlockSize int64 `toml:"read-block-size"`
-	MinRegionSize int64 `toml:"region-min-size"`
+type Lightning struct {
+	log.LogConfig
+	ProfilePort int `toml:"pprof_port"`
 }
 
-type KVIngest struct {
+// PostRestore has some options which will be executed after kv restored.
+type PostRestore struct {
+	Compact  bool `toml:"compact"`
+	Checksum bool `toml:"checksum"`
+	Analyze  bool `toml:"analyze"`
+}
+
+type MydumperRuntime struct {
+	ReadBlockSize int64  `toml:"read-block-size"`
+	MinRegionSize int64  `toml:"region-min-size"`
+	SourceDir     string `toml:"data_source_dir"`
+}
+
+type ImportServer struct {
 	Backend   string `toml:"backend"`
 	BatchSize int64  `toml:"batch_size"`
-	Compact   bool   `toml:"compact"`
 }
 
 type Verification struct {
@@ -93,8 +95,8 @@ func LoadConfig(args []string) (*Config, error) {
 	}
 
 	// hendle kv ingest
-	if cfg.KvIngest.BatchSize <= 0 {
-		cfg.KvIngest.BatchSize = KVMaxBatchSize
+	if cfg.ImportServer.BatchSize <= 0 {
+		cfg.ImportServer.BatchSize = KVMaxBatchSize
 	}
 
 	return cfg, nil

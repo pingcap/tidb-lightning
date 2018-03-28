@@ -24,7 +24,7 @@ func (s *testMydumpRegionSuite) TearDownSuite(c *C) {}
 	TODO : test with specified 'fuzzyRegionSize' & 'regionBlockSize' ...
 */
 func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
-	cfg := &config.Config{SourceDir: "./examples"}
+	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
 	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabase()
 	founder := NewRegionFounder(defMinRegionSize)
@@ -78,7 +78,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 }
 
 func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
-	cfg := &config.Config{SourceDir: "./examples"}
+	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
 	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabase()
 	founder := NewRegionFounder(defMinRegionSize)
