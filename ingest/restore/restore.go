@@ -286,7 +286,7 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 
 	for _, table := range tables {
 		log.Infof("analyze table %s", table)
-		_, err := db.Exec("ANALYZE TABLE %s", table)
+		_, err := db.Exec(fmt.Sprintf("ANALYZE TABLE %s", table))
 		if err != nil {
 			log.Errorf("analyze table %s error %s", table, errors.ErrorStack(err))
 			continue
