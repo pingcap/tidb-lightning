@@ -126,13 +126,12 @@ func isSkippedPackageName(name string) bool {
 		strings.Contains(name, "github.com/coreos/pkg/capnslog")
 }
 
-func InitLogger(cfg *LogConfig) error {
+func InitLogger(cfg *LogConfig, tidbLoglevel string) error {
 	log.SetLevel(stringToLogLevel(cfg.Level))
 	log.AddHook(&contextHook{})
 	log.SetFormatter(&SimpleTextFormater{})
 
-	// increase tidb log level to hide the annoying log.
-	logutil.InitLogger(&logutil.LogConfig{Level: "warn"})
+	logutil.InitLogger(&logutil.LogConfig{Level: tidbLoglevel})
 
 	if len(cfg.File) > 0 {
 		if common.IsDirExists(cfg.File) {

@@ -10,12 +10,13 @@ import (
 )
 
 type DBStore struct {
-	Host    string `toml:"host"`
-	Port    int    `toml:"port"`
-	User    string `toml:"user"`
-	Psw     string `toml:"password"`
-	PdAddr  string `toml:"pd-addr"`
-	SQLMode string `toml:"sql-mode"`
+	Host     string `toml:"host"`
+	Port     int    `toml:"port"`
+	User     string `toml:"user"`
+	Psw      string `toml:"password"`
+	PdAddr   string `toml:"pd-addr"`
+	SQLMode  string `toml:"sql-mode"`
+	LogLevel string `toml:"log_level"`
 }
 
 type Config struct {
