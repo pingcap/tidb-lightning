@@ -24,8 +24,8 @@ func setGlobalVars() {
 	plan.PreparedPlanCacheCapacity = 10
 }
 
-func InitMembufCap(batchSqlLength int64) {
-	kv.ImportingTxnMembufCap = int(batchSqlLength) * 4
+func InitMembufCap(batchSQLLength int64) {
+	kv.ImportingTxnMembufCap = int(batchSQLLength) * 4
 	// TODO : calculate predicted ratio, bwtween sql and kvs' size, base on specified DDL
 }
 

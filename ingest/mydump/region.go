@@ -39,9 +39,8 @@ func (rs regionSlice) Swap(i, j int) {
 func (rs regionSlice) Less(i, j int) bool {
 	if rs[i].File == rs[j].File {
 		return rs[i].Offset < rs[j].Offset
-	} else {
-		return rs[i].File < rs[j].File
 	}
+	return rs[i].File < rs[j].File
 }
 
 ////////////////////////////////////////////////////////////////
@@ -108,7 +107,7 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, allocateRowID bool) 
 		region.BeginRowID = -1
 	}
 
-	var tableRows int64 = 0
+	var tableRows int64
 	for _, region := range filesRegions {
 		if allocateRowID {
 			region.BeginRowID = tableRows + 1

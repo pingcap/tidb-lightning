@@ -245,15 +245,15 @@ func countValues(sqlText []byte) int {
 		ps : Count num of tuples (/values) appears within sql statement like :
 				"INSERT INTO `table` VALUES (..), (..), (..);"
 	*/
-	var textLen int = len(sqlText)
+	var textLen = len(sqlText)
 	var slice []byte
-	var tuplesNum int = 0
+	var tuplesNum int
 
 	for i, chr := range sqlText {
 		if chr == ')' && i < textLen-1 {
 			slice = bytes.TrimSpace(sqlText[i+1:])
 			if len(slice) > 0 && (slice[0] == ',' || slice[0] == ';') {
-				tuplesNum += 1
+				tuplesNum++
 			}
 		}
 	}

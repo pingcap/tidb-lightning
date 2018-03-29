@@ -38,7 +38,7 @@ func (m *Metrics) costTimeNS(name string, ns int64) {
 
 func (m *Metrics) DumpTiming() string {
 	marks := make([]string, 0, len(m.Timing))
-	for mark, _ := range m.Timing {
+	for mark := range m.Timing {
 		marks = append(marks, mark)
 	}
 	sort.Strings(marks)

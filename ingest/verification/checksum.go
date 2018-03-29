@@ -33,7 +33,7 @@ func (c *KVChecksum) Update(kvs []kvec.KvPair) {
 		sum = crc64.Update(0, c.ecmaTable, pair.Key)
 		sum = crc64.Update(sum, c.ecmaTable, pair.Val)
 		checksum ^= sum
-		kvNum += 1
+		kvNum++
 		bytes += (len(pair.Key) + len(pair.Val))
 	}
 
