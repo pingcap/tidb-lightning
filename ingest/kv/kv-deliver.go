@@ -37,7 +37,7 @@ type KVDeliver interface {
 	Put([]kvec.KvPair) error
 	Flush() error // + Import() error
 	Cleanup() error
-	Compact() error
+	Compact(start, end []byte) error
 	Close() error
 }
 
@@ -450,14 +450,14 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	return cli
 }
 
-func (k *KVDeliverKeeper) Compact() error {
+func (k *KVDeliverKeeper) Compact(start, end []byte) error {
 	cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.importServerAddr, k.pdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cli.Close()
 
-	return cli.Compact()
+	return cli.Compact(start, end)
 }
 
 func (k *KVDeliverKeeper) Flush() error {
@@ -742,13 +742,16 @@ func (c *KVDeliverClient) Flush() error {
 	return nil
 }
 
-func (c *KVDeliverClient) Compact() error {
-	return c.callCompact()
+func (c *KVDeliverClient) Compact(start, end []byte) error {
+	return c.callCompact(start, end)
 }
 
-func (c *KVDeliverClient) callCompact() error {
+// Do compaction for specific table. `start` and `end`` key can be got in the following way:
+// start key = GenTablePrefix(tableID)
+// end key = GenTablePrefix(tableID + 1)
+func (c *KVDeliverClient) callCompact(start, end []byte) error {
 	log.Infof("call compact ...")
-	req := &importpb.CompactRequest{}
+	req := &importpb.CompactRequest{PdAddr: c.pdAddr, Range: &importpb.Range{Start: start, End: end}}
 	_, err := c.cli.Compact(c.ctx, req)
 	log.Infof("finish call compact !")
 

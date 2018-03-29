@@ -32,7 +32,7 @@ type Config struct {
 	PostRestore  PostRestore     `toml:"post-restore"`
 
 	// command line flags
-	DoCompact  bool
+	DoCompact  string
 	DoChecksum string
 	file       string
 }
@@ -69,7 +69,7 @@ func LoadConfig(args []string) (*Config, error) {
 	fs := cfg.FlagSet
 
 	fs.StringVar(&cfg.file, "c", "tidb-lightning.toml", "tidb-lightning configuration file")
-	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compact")
+	fs.StringVar(&cfg.DoCompact, "compact", "", "do manual compact for tables which in comma separated format, like foo.bar1, foo.bar2")
 	fs.StringVar(&cfg.DoChecksum, "checksum", "", "do manual checksum for tables which in comma separated format, like foo.bar1,foo.bar2")
 
 	if err := fs.Parse(args); err != nil {

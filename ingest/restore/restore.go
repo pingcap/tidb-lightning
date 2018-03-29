@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb-lightning/ingest/mydump"
 	verify "github.com/pingcap/tidb-lightning/ingest/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/tablecodec"
 )
 
 var (
@@ -207,7 +208,17 @@ func (rc *RestoreControlloer) compact(ctx context.Context) error {
 	}
 	defer cli.Close()
 
-	return errors.Trace(cli.Compact())
+	for _, table := range rc.dbInfo.Tables {
+		log.Infof("begin compaction for table %s", table.Name)
+		start := tablecodec.GenTablePrefix(table.ID)
+		end := tablecodec.GenTablePrefix(table.ID + 1)
+		err = cli.Compact(start, end)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Infof("finished compaction for table %s", table.Name)
+	}
+	return nil
 }
 
 // do checksum for each table.

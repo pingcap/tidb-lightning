@@ -9,6 +9,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -144,18 +145,26 @@ func safeCreateTable(ctx goctx.Context, se session.Session, createTable string) 
 	return nil
 }
 
-func (timgr *TiDBManager) LoadSchemaInfo(database string) *TidbDBInfo {
+// GetInfoSchema returns infoschema.InfoSchema.
+func (timgr *TiDBManager) GetInfoSchema() (infoschema.InfoSchema, error) {
 	se, err := session.CreateSession(timgr.store)
 	if err != nil {
-		log.Error(err.Error())
-		return nil
+		return nil, errors.Trace(err)
 	}
 	defer se.Close()
 
-	var dbInfo *TidbDBInfo
-	dom := domain.GetDomain(se)
-	schemas := dom.InfoSchema().AllSchemas() // ps : model/model.go
+	return domain.GetDomain(se).InfoSchema(), nil
+}
 
+func (timgr *TiDBManager) LoadSchemaInfo(database string) *TidbDBInfo {
+	infoschema, err := timgr.GetInfoSchema()
+	if err != nil {
+		log.Errorf("get infoSchema error %s", errors.ErrorStack(err))
+		return nil
+	}
+	schemas := infoschema.AllSchemas()
+
+	var dbInfo *TidbDBInfo
 	for _, db := range schemas {
 		if db.Name.String() != database {
 			continue
@@ -211,6 +220,18 @@ func (timgr *TiDBManager) SyncSchema(database string) *TidbDBInfo {
 	}
 
 	return timgr.LoadSchemaInfo(database)
+}
+
+func (timgr *TiDBManager) GetTableByName(schemaName, tableName string) (*model.TableInfo, error) {
+	infoschema, err := timgr.GetInfoSchema()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	table, err := infoschema.TableByName(model.NewCIStr(schemaName), model.NewCIStr(tableName))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return table.Meta(), nil
 }
 
 func (tbl *TidbTableInfo) WithExplicitPrimaryKey() bool {
