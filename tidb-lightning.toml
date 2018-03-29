@@ -12,7 +12,7 @@ max-days = 28
 max-backups = 14
 
 [import-server]
-backend = "127.0.0.1:8808"
+addr = "127.0.0.1:8808"
 # size of batch to import kv data into TiKV: xxx (GB)
 batch-size = 100 # GB
 
