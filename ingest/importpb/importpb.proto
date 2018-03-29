@@ -29,7 +29,6 @@ option java_package = "com.pingcap.tikv.kvproto";
 // 5. Clean up the engine after it is imported. Delete all data in the engine.
 //    An engine can not be cleaned up when it is writing or importing.
 // 6. Compact the imported range in TiKV stores for better initial performance.
-//    This is OPTIONAL, and it will take a while to finish the compaction.
 service ImportKV {
     // Open an engine.
     rpc Open(OpenRequest) returns (OpenResponse) {}
@@ -96,6 +95,7 @@ message CloseResponse {
 
 message ImportRequest {
     bytes uuid = 1;
+    string pd_addr = 2;
 }
 
 message ImportResponse {
@@ -109,6 +109,8 @@ message CleanupResponse {
 }
 
 message CompactRequest {
+    Range range = 1;
+    string pd_addr = 2;
 }
 
 message CompactResponse {
