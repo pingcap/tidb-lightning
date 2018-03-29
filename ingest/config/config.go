@@ -10,7 +10,7 @@ import (
 )
 
 type DBStore struct {
-	PdAddr string `toml:"pd_backend"`
+	PdAddr string `toml:"pd-addr"`
 	Host   string `toml:"host"`
 	Port   int    `toml:"port"`
 	User   string `toml:"user"`
@@ -24,7 +24,7 @@ type Config struct {
 	TiDB DBStore   `toml:"tidb"`
 
 	// not implemented yet.
-	ProgressStore DBStore `toml:"progress_store"`
+	ProgressStore DBStore `toml:"progress-store"`
 
 	Mydumper     MydumperRuntime `toml:"mydumper"`
 	ImportServer ImportServer    `toml:"import-server"`
@@ -38,7 +38,7 @@ type Config struct {
 
 type Lightning struct {
 	log.LogConfig
-	ProfilePort int `toml:"pprof_port"`
+	ProfilePort int `toml:"pprof-port"`
 }
 
 // PostRestore has some options which will be executed after kv restored.
@@ -51,17 +51,12 @@ type PostRestore struct {
 type MydumperRuntime struct {
 	ReadBlockSize int64  `toml:"read-block-size"`
 	MinRegionSize int64  `toml:"region-min-size"`
-	SourceDir     string `toml:"data_source_dir"`
+	SourceDir     string `toml:"data-source-dir"`
 }
 
 type ImportServer struct {
-	Backend   string `toml:"backend"`
-	BatchSize int64  `toml:"batch_size"`
-}
-
-type Verification struct {
-	RunChecksumTable bool `toml:"run_checksum_table"`
-	CheckRowsCount   bool `toml:"check_rows_count"`
+	Addr      string `toml:"addr"`
+	BatchSize int64  `toml:"batch-size"`
 }
 
 func LoadConfig(args []string) (*Config, error) {

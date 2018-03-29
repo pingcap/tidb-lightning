@@ -62,7 +62,6 @@ func TestManager(t *testing.T) {
 	}
 
 	p.Cleanup()
-	// p.Flush()
 
 	p.CloseAndWait()
 

@@ -94,7 +94,7 @@ func (m *mainloop) run() {
 }
 
 func (m *mainloop) doCompact() {
-	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, m.cfg.ImportServer.Backend)
+	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, m.cfg.ImportServer.Addr)
 	if err != nil {
 		log.Errorf(errors.ErrorStack(err))
 		return

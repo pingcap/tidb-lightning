@@ -738,28 +738,6 @@ func (c *KVDeliverClient) Flush() error {
 	return nil
 }
 
-// not used now
-func (c *KVDeliverClient) callFlush() error {
-	wstream, err := c.getWriteStream()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer c.closeWriteStream()
-
-	log.Infof("call flush ...")
-	write := &importpb.WriteRequest{
-		Batch: &importpb.WriteBatch{
-			CommitTs:  c.ts,
-			Mutations: []*importpb.Mutation{},
-		},
-		// flush to flush
-		Options: &importpb.WriteOptions{Flush: true},
-	}
-	log.Infof("finish call flush !")
-
-	return wstream.Send(write)
-}
-
 func (c *KVDeliverClient) Compact() error {
 	return c.callCompact()
 }

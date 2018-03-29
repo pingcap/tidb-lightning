@@ -201,7 +201,7 @@ func (rc *RestoreControlloer) compact(ctx context.Context) error {
 		return nil
 	}
 
-	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.ImportServer.Backend)
+	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.ImportServer.Addr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -304,7 +304,7 @@ func makeKVDeliver(
 	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
 
 	uuid := uuid.Must(uuid.NewV4())
-	return kv.NewKVDeliverClient(ctx, uuid, cfg.ImportServer.Backend)
+	return kv.NewKVDeliverClient(ctx, uuid, cfg.ImportServer.Addr)
 }
 
 ////////////////////////////////////////////////////////////////
@@ -529,7 +529,7 @@ func NewTableRestore(
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
 		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta).init(concurrency),
-		deliversMgr:    kv.NewKVDeliverKeeper(cfg.ImportServer.Backend),
+		deliversMgr:    kv.NewKVDeliverKeeper(cfg.ImportServer.Addr),
 		handledRegions: make(map[int]*regionStat),
 		localChecksums: localChecksums,
 	}
