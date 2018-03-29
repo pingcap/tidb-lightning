@@ -12,6 +12,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/pingcap/tidb-lightning/ingest/common"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 const (
@@ -129,6 +130,9 @@ func InitLogger(cfg *LogConfig) error {
 	log.SetLevel(stringToLogLevel(cfg.Level))
 	log.AddHook(&contextHook{})
 	log.SetFormatter(&SimpleTextFormater{})
+
+	// increase tidb log level to hide the annoying log.
+	logutil.InitLogger(&logutil.LogConfig{Level: "warn"})
 
 	if len(cfg.File) > 0 {
 		if common.IsDirExists(cfg.File) {
