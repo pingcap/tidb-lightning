@@ -11,15 +11,15 @@ import (
 )
 
 const (
-	uuid    string = "0123456789abcdef"
-	backend string = "172.16.10.2:18309"
-	pdAddr  string = "172.16.10.2:18101"
+	uuid             string = "0123456789abcdef"
+	importServerAddr string = "172.16.10.2:18309"
+	pdAddr           string = "172.16.10.2:18101"
 )
 
 func TestWriteFlush(t *testing.T) {
 	ctx := context.Background()
 
-	c, _ := NewKVDeliverClient(ctx, uuid, backend)
+	c, _ := NewKVDeliverClient(ctx, uuid, importServerAddr)
 	defer c.Close()
 
 	kvs := make([]KvPair, 0, 0)
@@ -42,7 +42,7 @@ func TestWriteFlush(t *testing.T) {
 }
 
 func TestManager(t *testing.T) {
-	p, _ := NewPipeKvDeliver(uuid, backend)
+	p, _ := NewPipeKvDeliver(uuid, importServerAddr)
 	defer p.Close()
 
 	datas := make([][]KvPair, 0)
