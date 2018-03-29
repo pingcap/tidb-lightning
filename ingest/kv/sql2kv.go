@@ -61,7 +61,7 @@ func NewTableKVEncoder(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	log.Infof("set sql_mode=%s", sqlMode)
+	log.Debugf("set sql_mode=%s", sqlMode)
 
 	setGlobalVars()
 
