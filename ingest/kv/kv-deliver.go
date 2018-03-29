@@ -770,7 +770,7 @@ func (c *KVDeliverClient) callClose() error {
 func (c *KVDeliverClient) callImport() error {
 	// TODO ... no matter what, to enusure available to import, call close first !
 	log.Infof("call import ...")
-	req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes()}
+	req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
 	_, err := c.cli.Import(c.ctx, req)
 	log.Infof("finish call import !")
 
