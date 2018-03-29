@@ -640,7 +640,7 @@ func (tr *TableRestore) onFinished() {
 		checksum.Add(regStat.checksum)
 	}
 	table := fmt.Sprintf("%s.%s", tr.tableMeta.DB, tr.tableMeta.Name)
-	log.Infof("table %s.%s self-calculated checksum %s", table, checksum)
+	log.Infof("table %s self-calculated checksum %s", table, checksum)
 	tr.localChecksums[table] = checksum
 
 	tr.restoreTableMeta(tableMaxRowID)
@@ -648,7 +648,7 @@ func (tr *TableRestore) onFinished() {
 	// flush all kvs into TiKV ~
 	tr.ingestKV()
 
-	log.Infof("table %s has imported %s rows", table, tableRows)
+	log.Infof("table %s has imported %d rows", table, tableRows)
 	return
 }
 
