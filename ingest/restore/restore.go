@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb-lightning/ingest/mydump"
 	verify "github.com/pingcap/tidb-lightning/ingest/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/tablecodec"
 )
 
 var (
@@ -201,13 +202,23 @@ func (rc *RestoreControlloer) compact(ctx context.Context) error {
 		return nil
 	}
 
-	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.ImportServer.Addr)
+	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.ImportServer.Addr, rc.cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cli.Close()
 
-	return errors.Trace(cli.Compact())
+	for _, table := range rc.dbInfo.Tables {
+		log.Infof("begin compaction for table %s", table.Name)
+		start := tablecodec.GenTablePrefix(table.ID)
+		end := tablecodec.GenTablePrefix(table.ID + 1)
+		err = cli.Compact(start, end)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Infof("finished compaction for table %s", table.Name)
+	}
+	return nil
 }
 
 // do checksum for each table.
@@ -274,6 +285,7 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 	defer db.Close()
 
 	for _, table := range tables {
+		log.Infof("analyze table %s", table)
 		_, err := db.Exec("ANALYZE TABLE %s", table)
 		if err != nil {
 			log.Errorf("analyze table %s error %s", table, errors.ErrorStack(err))
@@ -304,7 +316,7 @@ func makeKVDeliver(
 	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
 
 	uuid := uuid.Must(uuid.NewV4())
-	return kv.NewKVDeliverClient(ctx, uuid, cfg.ImportServer.Addr)
+	return kv.NewKVDeliverClient(ctx, uuid, cfg.ImportServer.Addr, cfg.TiDB.PdAddr)
 }
 
 ////////////////////////////////////////////////////////////////
@@ -531,7 +543,7 @@ func NewTableRestore(
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
 		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta, cfg.TiDB.SQLMode).init(concurrency),
-		deliversMgr:    kv.NewKVDeliverKeeper(cfg.ImportServer.Addr),
+		deliversMgr:    kv.NewKVDeliverKeeper(cfg.ImportServer.Addr, cfg.TiDB.PdAddr),
 		handledRegions: make(map[int]*regionStat),
 		localChecksums: localChecksums,
 	}
@@ -628,7 +640,7 @@ func (tr *TableRestore) onFinished() {
 		checksum.Add(regStat.checksum)
 	}
 	table := fmt.Sprintf("%s.%s", tr.tableMeta.DB, tr.tableMeta.Name)
-	log.Infof("table %s.%s self-calculated checksum %s", table, checksum)
+	log.Infof("table %s self-calculated checksum %s", table, checksum)
 	tr.localChecksums[table] = checksum
 
 	tr.restoreTableMeta(tableMaxRowID)
@@ -636,7 +648,7 @@ func (tr *TableRestore) onFinished() {
 	// flush all kvs into TiKV ~
 	tr.ingestKV()
 
-	log.Infof("table %s.%s has imported %s rows", tableRows)
+	log.Infof("table %s has imported %d rows", table, tableRows)
 	return
 }
 
@@ -652,7 +664,7 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 
 	kvs, err := encoder.BuildMetaKvs(rowID)
 	if err != nil {
-		log.Errorf("failed to generate meta key (row_id = %d) : %s", table, rowID, err.Error())
+		log.Errorf("table %s failed to generate meta key (row_id = %d) : %s", table, rowID, err.Error())
 		return errors.Trace(err)
 	}
 

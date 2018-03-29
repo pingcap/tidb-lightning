@@ -37,7 +37,7 @@ type KVDeliver interface {
 	Put([]kvec.KvPair) error
 	Flush() error // + Import() error
 	Cleanup() error
-	Compact() error
+	Compact(start, end []byte) error
 	Close() error
 }
 
@@ -79,10 +79,10 @@ type PipeKvDeliver struct {
 	sumKVSize uint64
 }
 
-func NewPipeKvDeliver(uuid uuid.UUID, backend string) (*PipeKvDeliver, error) {
+func NewPipeKvDeliver(uuid uuid.UUID, importServerAddr string, pdAddr string) (*PipeKvDeliver, error) {
 	ctx, shutdown := context.WithCancel(context.Background())
 
-	deliver, err := NewKVDeliverClient(context.Background(), uuid, backend)
+	deliver, err := NewKVDeliverClient(context.Background(), uuid, importServerAddr, pdAddr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -281,8 +281,9 @@ type KVDeliverKeeper struct {
 	ctx      context.Context
 	shutdown context.CancelFunc
 
-	backend     string
-	clientsPool []*KVDeliverClient // aka. connection pool
+	importServerAddr string
+	pdAddr           string
+	clientsPool      []*KVDeliverClient // aka. connection pool
 
 	txnIdCounter int // TODO : need to update to another algorithm
 	txnBoard     map[uuid.UUID]*txnInfo
@@ -299,15 +300,16 @@ type txnInfo struct {
 	clients int
 }
 
-func NewKVDeliverKeeper(backend string) *KVDeliverKeeper {
+func NewKVDeliverKeeper(importServerAddr, pdAddr string) *KVDeliverKeeper {
 	ctx, shutdown := context.WithCancel(context.Background())
 
 	keeper := &KVDeliverKeeper{
 		ctx:      ctx,
 		shutdown: shutdown,
 
-		backend:     backend,
-		clientsPool: make([]*KVDeliverClient, 0, 32),
+		importServerAddr: importServerAddr,
+		pdAddr:           pdAddr,
+		clientsPool:      make([]*KVDeliverClient, 0, 32),
 
 		txnIdCounter:  0, // TODO : need to update to another algorithm
 		txns:          make(map[string][]*deliverTxn),
@@ -428,7 +430,7 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	// pop client/connection from pool
 	size := len(k.clientsPool)
 	if size == 0 {
-		cli, err := NewKVDeliverClient(k.ctx, txn.uuid, k.backend)
+		cli, err := NewKVDeliverClient(k.ctx, txn.uuid, k.importServerAddr, k.pdAddr)
 		if err != nil {
 			log.Infof("[deliver-keeper] failed to create deliver client (UUID = %s) : %s ", txn.uuid, err.Error())
 			return nil
@@ -448,14 +450,14 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	return cli
 }
 
-func (k *KVDeliverKeeper) Compact() error {
-	cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.backend)
+func (k *KVDeliverKeeper) Compact(start, end []byte) error {
+	cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.importServerAddr, k.pdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cli.Close()
 
-	return cli.Compact()
+	return cli.Compact(start, end)
 }
 
 func (k *KVDeliverKeeper) Flush() error {
@@ -508,7 +510,7 @@ func (k *KVDeliverKeeper) flushTxn(txn *deliverTxn) {
 
 func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 	doFlush := func(txn *deliverTxn) {
-		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.backend)
+		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.importServerAddr, k.pdAddr)
 		if err != nil {
 			log.Infof("[deliver-keeper] failed to create deliver client (UUID = %s) : %s ", txn.uuid, err.Error())
 			return
@@ -549,17 +551,18 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 type KVDeliverClient struct {
 	ctx context.Context
 
-	backend string
-	ts      uint64
-	txn     *deliverTxn
+	importServerAddr string
+	pdAddr           string
+	ts               uint64
+	txn              *deliverTxn
 
 	conn    *grpc.ClientConn
 	cli     importpb.ImportKVClient
 	wstream importpb.ImportKV_WriteClient
 }
 
-func newImportClient(addr string) (*grpc.ClientConn, importpb.ImportKVClient, error) {
-	conn, err := grpc.Dial(addr, grpc.WithInsecure())
+func newImportClient(importServerAddr string) (*grpc.ClientConn, importpb.ImportKVClient, error) {
+	conn, err := grpc.Dial(importServerAddr, grpc.WithInsecure())
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -567,19 +570,20 @@ func newImportClient(addr string) (*grpc.ClientConn, importpb.ImportKVClient, er
 	return conn, importpb.NewImportKVClient(conn), nil
 }
 
-func NewKVDeliverClient(ctx context.Context, uuid uuid.UUID, backend string) (*KVDeliverClient, error) {
-	conn, rpcCli, err := newImportClient(backend) // goruntine safe ???
+func NewKVDeliverClient(ctx context.Context, uuid uuid.UUID, importServerAddr string, pdAddr string) (*KVDeliverClient, error) {
+	conn, rpcCli, err := newImportClient(importServerAddr) // goruntine safe ???
 	if err != nil {
 		return nil, err
 	}
 
 	cli := &KVDeliverClient{
-		ctx:     ctx,
-		ts:      uint64(time.Now().Unix()), // TODO ... set outside ? from pd ?
-		backend: backend,
-		conn:    conn,
-		cli:     rpcCli,
-		txn:     newDeliverTxn(uuid),
+		ctx:              ctx,
+		ts:               uint64(time.Now().Unix()), // TODO ... set outside ? from pd ?
+		importServerAddr: importServerAddr,
+		pdAddr:           pdAddr,
+		conn:             conn,
+		cli:              rpcCli,
+		txn:              newDeliverTxn(uuid),
 	}
 
 	return cli, nil
@@ -738,13 +742,16 @@ func (c *KVDeliverClient) Flush() error {
 	return nil
 }
 
-func (c *KVDeliverClient) Compact() error {
-	return c.callCompact()
+func (c *KVDeliverClient) Compact(start, end []byte) error {
+	return c.callCompact(start, end)
 }
 
-func (c *KVDeliverClient) callCompact() error {
+// Do compaction for specific table. `start` and `end`` key can be got in the following way:
+// start key = GenTablePrefix(tableID)
+// end key = GenTablePrefix(tableID + 1)
+func (c *KVDeliverClient) callCompact(start, end []byte) error {
 	log.Infof("call compact ...")
-	req := &importpb.CompactRequest{}
+	req := &importpb.CompactRequest{PdAddr: c.pdAddr, Range: &importpb.Range{Start: start, End: end}}
 	_, err := c.cli.Compact(c.ctx, req)
 	log.Infof("finish call compact !")
 
