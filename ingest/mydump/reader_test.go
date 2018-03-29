@@ -108,7 +108,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 func (s *testMydumpReaderSuite) TestReader(c *C) {
 	fmt.Println("Testing mydump reader ...")
 
-	cfg := &config.Config{SourceDir: utestDataSrouce}
+	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: utestDataSrouce}}
 
 	mdl, err := NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)

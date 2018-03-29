@@ -61,5 +61,5 @@ func (c *KVChecksum) SumKVS() uint64 {
 }
 
 func (c *KVChecksum) String() string {
-	return fmt.Sprintf("checksum = %d / bytes = %d / kvs = %d", c.checksum, c.bytes, c.kvs)
+	return fmt.Sprintf("checksum = %d / kvs = %d / bytes = %d", c.checksum, c.kvs, c.bytes)
 }

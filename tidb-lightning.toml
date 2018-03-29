@@ -1,49 +1,48 @@
 ### tidb-lightning configuartion
-
-# mydumper local source data directory
-data_source_dir = "./"
-
-# PD Server of target cluster
-pd_backend = "127.0.0.1:2380"
+[lightning]
 
 # background profile for debuging ( 0 to disable )
-pprof_port = 0
+pprof-port = 10089
 
-[kv-ingest]
-# kv ingest server
+# logging
+level = "debug"
+file = ""
+max-size = 128 # MB
+max-days = 28
+max-backups = 14
+
+[import-server]
 backend = "127.0.0.1:8808"
-# size of batch to execute kv ingest into TiKV : xxx (GB)
-batch_size = 100 # GB
-
-# call compact after finishing ingesting all kv data into cluster
-# ( ps : it's unnecessary to call it when all kv is ok to ingest within a single batch,
-#        otherwise compact is required whcich also more common in practice )
-compact = true
+# size of batch to import kv data into TiKV: xxx (GB)
+batch-size = 100 # GB
 
 [mydumper]
 # block size of file reading
 read-block-size = 4096 # Byte (default = 4 KB)
 # split source data file into multiple region/chunk to execute restoring in parallel
 region-min-size = 268435456 # Byte (default = 256 MB)
+# mydumper local source data directory
+data-source-dir = "/tmp/export-20180328-200751"
 
+# configuration for tidb(pick one of them if has many tidb servers) and pd server.
 [tidb]
 host = "127.0.0.1"
 port = 4000
 user = "root"
 password = ""
+# PD Server of target cluster
+pd-addr = "127.0.0.1:2379"
 # Uncomment the following line if you want to set sql-mode. You can set it to empty string or any valid sql-mode value supported by tidb
 # sql-mode = ""
 
-[log]
-level = "debug"
-file = "lightning-run.log"
-max-size = 128 # MB
-max-days = 28
-max-backups = 14
 
-[verify]
-run_checksum_table = false
+# post-restore provide some options which will be executed after all kv data has been ingested into the tikv cluster.
+# the execution order are(if set true): compact > checksum > analyze
+[post-restore]
+# if set true, compact will do compaction to tikv data.
+compact = true
+# if set true, checksum will do ADMIN CHECKSUM <table> for each table.
+checksum = true
+# if set true, analyze will do ANALYZE TABLE <table> for each table.
+analyze = true
 
-# whether to count rows as part of verification 
-# (ps : in general, rows counting checking is uncessary while `checksum_table` is configured to executed.)
-# check_rows_count = false

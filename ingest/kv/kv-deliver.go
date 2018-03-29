@@ -18,8 +18,8 @@ import (
 )
 
 var (
-	errInvalidUUID error = errors.New("uuid length must be 16")
-	invalidUUID          = uuid.Nil
+	errInvalidUUID = errors.New("uuid length must be 16")
+	invalidUUID    = uuid.Nil
 )
 
 const (
@@ -120,7 +120,7 @@ func (p *PipeKvDeliver) CloseAndWait() error {
 }
 
 func (p *PipeKvDeliver) Put(kvs []kvec.KvPair) error {
-	p.sumPuts = atomic.AddUint32(&p.sumPuts, 1)
+	atomic.AddUint32(&p.sumPuts, 1)
 	p.tasks <- &deliverTask{
 		op:    opPut,
 		kvs:   kvs,
@@ -161,16 +161,12 @@ func (p *PipeKvDeliver) run(ctx context.Context) {
 				if task.retry > maxRetryTimes {
 					break // TODO ...
 				}
-				go func() {
-					// ps : p.tasks might full ~
-					task.retry += 1
-					p.tasks <- task
-				}()
+				// ps : p.tasks might full ~
+				task.retry++
+				p.tasks <- task
 			}
 		}
 	}
-
-	return
 }
 
 func (p *PipeKvDeliver) handle(task *deliverTask) error {
@@ -351,7 +347,7 @@ func (k *KVDeliverKeeper) validate(txn *deliverTxn) bool {
 }
 
 func (k *KVDeliverKeeper) newTxn(db string, table string) *deliverTxn {
-	k.txnIdCounter += 1
+	k.txnIdCounter++
 	uuid := uuid.Must(uuid.NewV4())
 
 	tag := buildTag(db, table)
@@ -413,7 +409,7 @@ func (k *KVDeliverKeeper) RecycleClient(cli *KVDeliverClient) {
 		return
 	}
 
-	txnInfo.clients -= 1 // ps : simple counter to mark txn is being followed
+	txnInfo.clients-- // ps : simple counter to mark txn is being followed
 	if txnInfo.clients <= 0 &&
 		txn.inStatus(txnPutting) &&
 		txn.isOverLimit(DeliverTxnSizeLimit, DeliverTxnPairsLimit) {
@@ -446,7 +442,7 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	k.clientsPool = k.clientsPool[:size-1]
 
 	// address client with choosing deliver transaction
-	k.txnBoard[txn.uuid].clients += 1 // ps : simple counter to mark txn is being joined
+	k.txnBoard[txn.uuid].clients++ // ps : simple counter to mark txn is being joined
 	cli.bind(txn)
 
 	return cli
@@ -544,8 +540,6 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 			log.Infof("[deliver-keeper] cost time = %.1f sec", time.Since(now).Seconds())
 		}
 	}
-
-	return
 }
 
 /////////////////////// KV Deliver Handler ///////////////////////
@@ -734,7 +728,7 @@ func (c *KVDeliverClient) Cleanup() error {
 func (c *KVDeliverClient) Flush() error {
 	c.closeWriteStream()
 
-	ops := []func() error{c.callFlush, c.callClose, c.callImport}
+	ops := []func() error{c.callClose, c.callImport}
 	for step, fn := range ops {
 		if err := fn(); err != nil {
 			log.Errorf("[kv-deliver] flush stage with error (step = %d) : %s", step, err.Error())
@@ -742,27 +736,6 @@ func (c *KVDeliverClient) Flush() error {
 		}
 	}
 	return nil
-}
-
-func (c *KVDeliverClient) callFlush() error {
-	wstream, err := c.getWriteStream()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer c.closeWriteStream()
-
-	log.Infof("call flush ...")
-	write := &importpb.WriteRequest{
-		Batch: &importpb.WriteBatch{
-			CommitTs:  c.ts,
-			Mutations: []*importpb.Mutation{},
-		},
-		// flush to flush
-		Options: &importpb.WriteOptions{Flush: true},
-	}
-	log.Infof("finish call flush !")
-
-	return wstream.Send(write)
 }
 
 func (c *KVDeliverClient) Compact() error {

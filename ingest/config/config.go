@@ -1,71 +1,87 @@
 package config
 
 import (
+	"flag"
 	"io/ioutil"
 
 	"github.com/BurntSushi/toml"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/ingest/log"
 )
 
-type DataSource struct {
-	Type string `toml:"type"`
-	URL  string `toml:"url"`
-}
-
 type DBStore struct {
-	Host     string `toml:"host"`
-	Port     int    `toml:"port"`
-	User     string `toml:"user"`
-	Psw      string `toml:"password"`
-	Database string `toml:"database"`
-	SQLMode  string `toml:"sql-mode"`
+	Host    string `toml:"host"`
+	Port    int    `toml:"port"`
+	User    string `toml:"user"`
+	Psw     string `toml:"password"`
+	PdAddr  string `toml:"pd-addr"`
+	SQLMode string `toml:"sql-mode"`
 }
 
 type Config struct {
-	Dir       string `toml:"dir"`
-	SourceDir string `toml:"data_source_dir"`
+	*flag.FlagSet `json:"-"`
 
-	PdAddr string  `toml:"pd_backend"`
-	TiDB   DBStore `toml:"tidb"`
+	App  Lightning `toml:"lightning"`
+	TiDB DBStore   `toml:"tidb"`
 
-	Log log.LogConfig `toml:"log"`
+	// not implemented yet.
+	ProgressStore DBStore `toml:"progress-store"`
 
-	ProfilePort   int     `toml:"pprof_port"`
-	ProgressStore DBStore `toml:"progress_store"`
+	Mydumper     MydumperRuntime `toml:"mydumper"`
+	ImportServer ImportServer    `toml:"import-server"`
+	PostRestore  PostRestore     `toml:"post-restore"`
 
-	Mydumper MydumperRuntime `toml:"mydumper"`
-	KvIngest KVIngest        `toml:"kv-ingest"`
+	// command line flags
+	DoCompact  bool
+	DoChecksum string
+	file       string
+}
 
-	Verify Verification `toml:"verify"`
+type Lightning struct {
+	log.LogConfig
+	ProfilePort int `toml:"pprof-port"`
+}
+
+// PostRestore has some options which will be executed after kv restored.
+type PostRestore struct {
+	Compact  bool `toml:"compact"`
+	Checksum bool `toml:"checksum"`
+	Analyze  bool `toml:"analyze"`
 }
 
 type MydumperRuntime struct {
-	ReadBlockSize int64 `toml:"read-block-size"`
-	MinRegionSize int64 `toml:"region-min-size"`
+	ReadBlockSize int64  `toml:"read-block-size"`
+	MinRegionSize int64  `toml:"region-min-size"`
+	SourceDir     string `toml:"data-source-dir"`
 }
 
-type KVIngest struct {
-	Backend   string `toml:"backend"`
-	BatchSize int64  `toml:"batch_size"`
-	Compact   bool   `toml:"compact"`
+type ImportServer struct {
+	Addr      string `toml:"addr"`
+	BatchSize int64  `toml:"batch-size"`
 }
 
-type Verification struct {
-	RunChecksumTable bool `toml:"run_checksum_table"`
-	CheckRowsCount   bool `toml:"check_rows_count"`
-}
-
-func LoadConfig(file string) (*Config, error) {
-	data, err := ioutil.ReadFile(file)
-	if err != nil {
-		return nil, err
-	}
-
+func LoadConfig(args []string) (*Config, error) {
 	cfg := new(Config)
 	// set default sql_mode
 	cfg.TiDB = DBStore{SQLMode: "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"}
+
+	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
+	fs := cfg.FlagSet
+
+	fs.StringVar(&cfg.file, "c", "tidb-lightning.toml", "tidb-lightning configuration file")
+	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compact")
+	fs.StringVar(&cfg.DoChecksum, "checksum", "", "do manual checksum for tables which in comma separated format, like foo.bar1,foo.bar2")
+
+	if err := fs.Parse(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	data, err := ioutil.ReadFile(cfg.file)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if err = toml.Unmarshal(data, cfg); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	// handle mydumper
@@ -77,8 +93,8 @@ func LoadConfig(file string) (*Config, error) {
 	}
 
 	// hendle kv ingest
-	if cfg.KvIngest.BatchSize <= 0 {
-		cfg.KvIngest.BatchSize = KVMaxBatchSize
+	if cfg.ImportServer.BatchSize <= 0 {
+		cfg.ImportServer.BatchSize = KVMaxBatchSize
 	}
 
 	return cfg, nil

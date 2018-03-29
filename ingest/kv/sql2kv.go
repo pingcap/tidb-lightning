@@ -137,15 +137,14 @@ func (kvcodec *TableKVEncoder) BuildMetaKvs(rowID int64) ([]kvec.KvPair, error) 
 	return []kvec.KvPair{kv}, nil
 }
 
-func (kvcodec *TableKVEncoder) Sql2KV(sql []byte) ([]kvec.KvPair, uint64, error) {
+func (kvcodec *TableKVEncoder) SQL2KV(sql []byte) ([]kvec.KvPair, uint64, error) {
 	if PrepareStmtMode {
 		// via prepare statment
 		kvPairs, rowsAffected, err := kvcodec.encodeViaPstmt(sql)
 		if err == nil {
 			return kvPairs, rowsAffected, nil
-		} else {
-			log.Warnf("[sql2kv] stmt encode err : %s", err.Error())
 		}
+		log.Warnf("[sql2kv] stmt encode err : %s", err.Error())
 	}
 
 	// via sql execution
