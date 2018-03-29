@@ -42,9 +42,9 @@ func ParseInsertStmt(sql []byte, values *[]interface{}) error {
 		stack := 0
 		for e = s; e < size; e++ {
 			if sql[e] == '(' {
-				stack += 1
+				stack++
 			} else if sql[e] == ')' {
-				stack -= 1
+				stack--
 				if stack == 0 {
 					break
 				}
@@ -57,7 +57,7 @@ func ParseInsertStmt(sql []byte, values *[]interface{}) error {
 
 		// extract columns' values
 		_ = parseRowValues(sql[s+1:e], values)
-		e += 1 // skip ')'
+		e++ // skip ')'
 
 		// check ending ")," or ");"
 		for ; e < size; e++ {

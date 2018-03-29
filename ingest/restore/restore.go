@@ -173,6 +173,8 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 		}
 	}()
 
+	skipTables := make(map[string]struct{})
+
 	var wg sync.WaitGroup
 	for _, task := range tasks {
 		select {
@@ -183,11 +185,21 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 
 		worker := workers.Apply()
 		wg.Add(1)
-		log.Warnf("region allowed to run >>>>>> [%s]", task.region.Name())
+		log.Infof("restoring region %s", task.region.Name())
 		go func(w *RestoreWorker, t *regionRestoreTask) {
-			defer wg.Done()
 			defer workers.Recycle(w)
-			t.Run(ctx)
+			defer wg.Done()
+			table := fmt.Sprintf("%s.%s", t.region.DB, t.region.Table)
+			if _, ok := skipTables[table]; ok {
+				log.Infof("something wrong with table %s before, so skip region %s", table, t.region.Name())
+				return
+			}
+			err := t.Run(ctx)
+			if err != nil {
+				log.Errorf("table %s region %s run task error %s", table, t.region.Name(), errors.ErrorStack(err))
+				skipTables[table] = struct{}{}
+			}
+
 		}(worker, task)
 	}
 	wg.Wait() // TODO ... ctx abroted
@@ -354,7 +366,7 @@ const (
 	statFailed   string = "failed"
 )
 
-type restoreCallback func(regionID int, maxRowID int64, rows uint64, checksum *verify.KVChecksum, err error)
+type restoreCallback func(regionID int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error
 
 type regionRestoreTask struct {
 	status   string
@@ -383,21 +395,24 @@ func newRegionRestoreTask(
 	}
 }
 
-func (t *regionRestoreTask) Run(ctx context.Context) {
+func (t *regionRestoreTask) Run(ctx context.Context) error {
 	region := t.region
 	log.Infof("Start restore region : [%s] ...", t.region.Name())
 
 	t.status = statRunning
 	maxRowID, rows, checksum, err := t.run(ctx)
 	if err != nil {
-		log.Errorf("Table region (%s) restore failed : %s", region.Name(), err.Error())
+		return errors.Trace(err)
 	}
 
 	log.Infof("Finished restore region : [%s]", region.Name())
-	t.callback(region.ID, maxRowID, rows, checksum, err)
+	err = t.callback(region.ID, maxRowID, rows, checksum)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	t.status = statFinished
 
-	return
+	return nil
 }
 
 func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVChecksum, error) {
@@ -571,12 +586,9 @@ func (tr *TableRestore) loadRegions() {
 	regions := founder.MakeTableRegions(tr.tableMeta, preAllocateRowsID)
 
 	table := tr.tableMeta.Name
-	for _, region := range regions {
-		log.Warnf("[%s] region - %s", table, region.Name())
-	}
-
 	id2regions := make(map[int]*mydump.TableRegion)
 	for _, region := range regions {
+		log.Infof("[%s] region - %s", table, region.Name())
 		id2regions[region.ID] = region
 	}
 
@@ -593,17 +605,10 @@ func (tr *TableRestore) loadRegions() {
 	return
 }
 
-func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, checksum *verify.KVChecksum, err error) {
+func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error {
 	table := tr.tableInfo.Name
 	tr.mux.Lock()
 	defer tr.mux.Unlock()
-
-	region := tr.id2regions[id]
-	if err != nil {
-		log.Errorf("[%s] region (%s) restore failed : %s",
-			table, region.Name(), err.Error())
-		return
-	}
 
 	tr.handledRegions[id] = &regionStat{
 		maxRowID: maxRowID,
@@ -613,19 +618,22 @@ func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, ch
 
 	total := len(tr.regions)
 	handled := len(tr.handledRegions)
-	log.Infof("[%s] handled region count = %d (%s)", table, handled, common.Percent(handled, total))
+	log.Infof("table %s handled region count = %d (%s)", table, handled, common.Percent(handled, total))
 	if handled == len(tr.tasks) {
-		tr.onFinished()
+		err := tr.onFinished()
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	return
+	return nil
 }
 
 func (tr *TableRestore) makeKVDeliver() (kv.KVDeliver, error) {
 	return makeKVDeliver(tr.ctx, tr.cfg, tr.dbInfo, tr.tableInfo)
 }
 
-func (tr *TableRestore) onFinished() {
+func (tr *TableRestore) onFinished() error {
 	// generate meta kv
 	var (
 		tableMaxRowID int64
@@ -643,13 +651,17 @@ func (tr *TableRestore) onFinished() {
 	log.Infof("table %s self-calculated checksum %s", table, checksum)
 	tr.localChecksums[table] = checksum
 
-	tr.restoreTableMeta(tableMaxRowID)
+	if err := tr.restoreTableMeta(tableMaxRowID); err != nil {
+		return errors.Trace(err)
+	}
 
 	// flush all kvs into TiKV ~
-	tr.ingestKV()
+	if err := tr.ingestKV(); err != nil {
+		return errors.Trace(err)
+	}
 
 	log.Infof("table %s has imported %d rows", table, tableRows)
-	return
+	return nil
 }
 
 func (tr *TableRestore) restoreTableMeta(rowID int64) error {

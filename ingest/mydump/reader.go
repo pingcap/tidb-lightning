@@ -95,7 +95,7 @@ func NewMDDataReader(file string, offset int64) (*MDDataReader, error) {
 	}
 
 	if len(mdr.stmtHeader) == 0 {
-		return nil, errors.New("can not find any insert statment !")
+		return nil, errors.New("can not find any insert statment")
 	}
 
 	mdr.skipAnnotation(offset)
@@ -144,12 +144,12 @@ func (r *MDDataReader) Tell() int64 {
 }
 
 func (r *MDDataReader) currOffset() int64 {
-	if off, err := r.fd.Seek(0, io.SeekCurrent); err != nil {
+	off, err := r.fd.Seek(0, io.SeekCurrent)
+	if err != nil {
 		log.Errorf("get file offset failed (%s) : %v", r.file, err)
 		return -1
-	} else {
-		return off
 	}
+	return off
 }
 
 func getInsertStatmentHeader(file string) []byte {
@@ -196,7 +196,7 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 	defer reader.Reset(fd)
 
 	// split file's content into multi sql statement
-	var stmts [][]byte = make([][]byte, 0, 8)
+	var stmts = make([][]byte, 0, 8)
 	appendSQL := func(sql []byte) {
 		sql = bytes.TrimSpace(sql)
 		sqlLen := len(sql)
@@ -235,7 +235,7 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 			(...);
 		'''
 	*/
-	var statment []byte = make([]byte, 0, minSize+4096)
+	var statment = make([]byte, 0, minSize+4096)
 	var readSize, lineSize int64
 	var line []byte
 	var err error

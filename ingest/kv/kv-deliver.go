@@ -285,7 +285,7 @@ type KVDeliverKeeper struct {
 	pdAddr           string
 	clientsPool      []*KVDeliverClient // aka. connection pool
 
-	txnIdCounter int // TODO : need to update to another algorithm
+	txnIDCounter int // TODO : need to update to another algorithm
 	txnBoard     map[uuid.UUID]*txnInfo
 	txns         map[string][]*deliverTxn // map[tag]{*txn, *txn, *txn ...}
 
@@ -311,7 +311,7 @@ func NewKVDeliverKeeper(importServerAddr, pdAddr string) *KVDeliverKeeper {
 		pdAddr:           pdAddr,
 		clientsPool:      make([]*KVDeliverClient, 0, 32),
 
-		txnIdCounter:  0, // TODO : need to update to another algorithm
+		txnIDCounter:  0, // TODO : need to update to another algorithm
 		txns:          make(map[string][]*deliverTxn),
 		txnBoard:      make(map[uuid.UUID]*txnInfo),
 		txnFlushQueue: make(chan *deliverTxn, 64),
@@ -349,7 +349,7 @@ func (k *KVDeliverKeeper) validate(txn *deliverTxn) bool {
 }
 
 func (k *KVDeliverKeeper) newTxn(db string, table string) *deliverTxn {
-	k.txnIdCounter++
+	k.txnIDCounter++
 	uuid := uuid.Must(uuid.NewV4())
 
 	tag := buildTag(db, table)
