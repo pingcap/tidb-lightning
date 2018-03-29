@@ -10,11 +10,12 @@ import (
 )
 
 type DBStore struct {
-	PdAddr string `toml:"pd-addr"`
-	Host   string `toml:"host"`
-	Port   int    `toml:"port"`
-	User   string `toml:"user"`
-	Psw    string `toml:"password"`
+	Host    string `toml:"host"`
+	Port    int    `toml:"port"`
+	User    string `toml:"user"`
+	Psw     string `toml:"password"`
+	PdAddr  string `toml:"pd-addr"`
+	SQLMode string `toml:"sql-mode"`
 }
 
 type Config struct {
@@ -61,6 +62,9 @@ type ImportServer struct {
 
 func LoadConfig(args []string) (*Config, error) {
 	cfg := new(Config)
+	// set default sql_mode
+	cfg.TiDB = DBStore{SQLMode: "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"}
+
 	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
 	fs := cfg.FlagSet
 
@@ -76,7 +80,6 @@ func LoadConfig(args []string) (*Config, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	if err = toml.Unmarshal(data, cfg); err != nil {
 		return nil, errors.Trace(err)
 	}

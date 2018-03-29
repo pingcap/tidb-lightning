@@ -406,17 +406,19 @@ type kvEncoderPool struct {
 	tableInfo *TidbTableInfo
 	tableMeta *mydump.MDTableMeta
 	encoders  []*kv.TableKVEncoder
+	sqlMode   string
 }
 
 func newKvEncoderPool(
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
-	tableMeta *mydump.MDTableMeta) *kvEncoderPool {
+	tableMeta *mydump.MDTableMeta, sqlMode string) *kvEncoderPool {
 	return &kvEncoderPool{
 		dbInfo:    dbInfo,
 		tableInfo: tableInfo,
 		tableMeta: tableMeta,
 		encoders:  []*kv.TableKVEncoder{},
+		sqlMode:   sqlMode,
 	}
 }
 
@@ -435,7 +437,7 @@ func (p *kvEncoderPool) init(size int) *kvEncoderPool {
 			ec, err := kv.NewTableKVEncoder(
 				p.dbInfo.Name, p.dbInfo.ID,
 				p.tableInfo.Name, p.tableInfo.ID,
-				p.tableInfo.Columns, p.tableMeta.GetSchema())
+				p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode)
 			if err == nil {
 				p.encoders = append(p.encoders, ec)
 			}
@@ -454,7 +456,7 @@ func (p *kvEncoderPool) Apply() *kv.TableKVEncoder {
 		encoder, err := kv.NewTableKVEncoder(
 			p.dbInfo.Name, p.dbInfo.ID,
 			p.tableInfo.Name, p.tableInfo.ID,
-			p.tableInfo.Columns, p.tableMeta.GetSchema())
+			p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode)
 		if err != nil {
 			log.Errorf("failed to new kv encoder (%s) : %s", p.dbInfo.Name, err.Error())
 			return nil
@@ -528,7 +530,7 @@ func NewTableRestore(
 		dbInfo:         dbInfo,
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
-		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta).init(concurrency),
+		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta, cfg.TiDB.SQLMode).init(concurrency),
 		deliversMgr:    kv.NewKVDeliverKeeper(cfg.ImportServer.Addr),
 		handledRegions: make(map[int]*regionStat),
 		localChecksums: localChecksums,

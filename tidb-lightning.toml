@@ -22,7 +22,7 @@ read-block-size = 4096 # Byte (default = 4 KB)
 # split source data file into multiple region/chunk to execute restoring in parallel
 region-min-size = 268435456 # Byte (default = 256 MB)
 # mydumper local source data directory
-data-source-dir = ""
+data-source-dir = "/tmp/export-20180328-200751"
 
 # configuration for tidb(pick one of them if has many tidb servers) and pd server.
 [tidb]
@@ -32,6 +32,8 @@ user = "root"
 password = ""
 # PD Server of target cluster
 pd-addr = "127.0.0.1:2379"
+# Uncomment the following line if you want to set sql-mode. You can set it to empty string or any valid sql-mode value supported by tidb
+# sql-mode = ""
 
 
 # post-restore provide some options which will be executed after all kv data has been ingested into the tikv cluster.
