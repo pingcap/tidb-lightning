@@ -8,7 +8,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/ingest/common"
 	"github.com/pingcap/tidb-lightning/ingest/config"
-	. "github.com/pingcap/tidb-lightning/ingest/mydump"
+	"github.com/pingcap/tidb-lightning/ingest/mydump"
 )
 
 const (
@@ -79,11 +79,12 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 
 	db := dbMgr.db
 	for _, tblMeta := range dbMeta.Tables {
-		sqlCreteTable, _ := ExportStatment(tblMeta.SchemaFile)
+		sqlCreteTable, _ := ExportStatement(tblMeta.SchemaFile)
 		dbMgr.init(string(sqlCreteTable))
 
 		for _, file := range tblMeta.DataFiles {
-			reader, _ := NewMDDataReader(file, 0)
+			reader, err := mydump.NewMDDataReader(file, 0)
+			c.Assert(err, IsNil)
 			defer reader.Close()
 
 			for {

@@ -18,6 +18,7 @@ type DBStore struct {
 	User     string `toml:"user"`
 	Psw      string `toml:"password"`
 	Database string `toml:"database"`
+	SQLMode  string `toml:"sql-mode"`
 }
 
 type Config struct {
@@ -61,6 +62,8 @@ func LoadConfig(file string) (*Config, error) {
 	}
 
 	cfg := new(Config)
+	// set default sql_mode
+	cfg.TiDB = DBStore{SQLMode: "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"}
 	if err = toml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}

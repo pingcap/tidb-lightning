@@ -8,11 +8,11 @@ import (
 	"database/sql"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/tikv"
 
 	log "github.com/sirupsen/logrus"
@@ -21,7 +21,7 @@ import (
 
 func init() {
 	domain.RunAutoAnalyze = false
-	tidb.SetStatsLease(0)
+	session.SetStatsLease(0)
 }
 
 func initKVStorage(pd string) (kv.Storage, *domain.Domain, error) {
@@ -46,7 +46,7 @@ func initKVStorage(pd string) (kv.Storage, *domain.Domain, error) {
 		return nil, nil, err
 	}
 
-	dom, err = tidb.BootstrapSession(store)
+	dom, err = session.BootstrapSession(store)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -96,7 +96,7 @@ func (timgr *TiDBManager) Close() {
 }
 
 func (timgr *TiDBManager) InitSchema(database string, tablesSchema map[string]string) error {
-	se, err := tidb.CreateSession(timgr.store)
+	se, err := session.CreateSession(timgr.store)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -136,7 +136,7 @@ func toCreateTableIfNotExists(createTable string) string {
 	return createTable
 }
 
-func safeCreateTable(ctx goctx.Context, se tidb.Session, createTable string) error {
+func safeCreateTable(ctx goctx.Context, se session.Session, createTable string) error {
 	createTable = toCreateTableIfNotExists(createTable)
 	if _, err := se.Execute(ctx, createTable); err != nil {
 		return errors.Trace(err)
@@ -145,7 +145,7 @@ func safeCreateTable(ctx goctx.Context, se tidb.Session, createTable string) err
 }
 
 func (timgr *TiDBManager) LoadSchemaInfo(database string) *TidbDBInfo {
-	se, err := tidb.CreateSession(timgr.store)
+	se, err := session.CreateSession(timgr.store)
 	if err != nil {
 		log.Error(err.Error())
 		return nil
