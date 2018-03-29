@@ -106,8 +106,10 @@ func (timgr *TiDBManager) InitSchema(database string, tablesSchema map[string]st
 	// TODO : all execute in one transaction ?
 
 	ctx := goctx.Background()
-
 	_, err = se.Execute(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database))
+	if err != nil {
+		return errors.Trace(err)
+	}
 	_, err = se.Execute(ctx, fmt.Sprintf("USE %s", database))
 	if err != nil {
 		return errors.Trace(err)
@@ -260,14 +262,12 @@ func (tbl *TidbTableInfo) WithAutoIncrPrimaryKey() bool {
 func ObtainGCLifeTime(db *sql.DB) (gcLifeTime string, err error) {
 	r := db.QueryRow(
 		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'")
-	if err = r.Scan(&gcLifeTime); err != nil {
-		return
-	}
-	return
+	err = r.Scan(&gcLifeTime)
+	return gcLifeTime, errors.Annotatef(err, "query tikv_gc_life_time")
 }
 
 func UpdateGCLifeTime(db *sql.DB, gcLifeTime string) error {
 	_, err := db.Exec(fmt.Sprintf(
 		"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'", gcLifeTime))
-	return err
+	return errors.Annotatef(err, "update tikv_gc_life_time=%s", gcLifeTime)
 }

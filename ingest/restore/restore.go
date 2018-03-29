@@ -88,7 +88,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 			break
 		}
 		if err != nil {
-			log.Errorf("run cause error : %s", err.Error())
+			log.Errorf("run cause error : %s", errors.ErrorStack(err))
 			break // ps : not continue
 		}
 	}
@@ -268,7 +268,7 @@ func (rc *RestoreControlloer) checksum(ctx context.Context) error {
 // analyze will analyze table for all tables.
 func (rc *RestoreControlloer) analyze(ctx context.Context) error {
 	if !rc.cfg.PostRestore.Analyze {
-		log.Info("Skip analyze table.")
+		log.Info("Skip analyze table")
 	}
 
 	tables := rc.getTables()
@@ -732,7 +732,6 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 		gcErr = UpdateGCLifeTime(db, "100h")
 	}
 	if gcErr != nil {
-		log.Errorf("Abort checksum verify for GCLifeTime setting failed : %s", gcErr.Error())
 		return nil, errors.Trace(gcErr)
 	}
 	defer UpdateGCLifeTime(db, oriGCLifeTime)
