@@ -647,7 +647,7 @@ func (tr *TableRestore) onFinished() {
 	// flush all kvs into TiKV ~
 	tr.ingestKV()
 
-	log.Infof("table %s.%s has imported %s rows", tableRows)
+	log.Infof("table %s has imported %s rows", table, tableRows)
 	return
 }
 
@@ -663,7 +663,7 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 
 	kvs, err := encoder.BuildMetaKvs(rowID)
 	if err != nil {
-		log.Errorf("failed to generate meta key (row_id = %d) : %s", table, rowID, err.Error())
+		log.Errorf("table %s failed to generate meta key (row_id = %d) : %s", table, rowID, err.Error())
 		return errors.Trace(err)
 	}
 
