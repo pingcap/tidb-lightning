@@ -18,7 +18,7 @@ type DBStore struct {
 	User     string `toml:"user"`
 	Psw      string `toml:"password"`
 	Database string `toml:"database"`
-	SQLMode  string `toml:"sql_mode"`
+	SQLMode  string `toml:"sql-mode"`
 }
 
 type Config struct {

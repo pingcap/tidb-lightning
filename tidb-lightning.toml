@@ -31,8 +31,8 @@ host = "127.0.0.1"
 port = 4000
 user = "root"
 password = ""
-# Uncomment the following line if you want to set sql_mode. You can set it to empty string or any valid sql_mode value supported by tidb
-# sql_mode = ""
+# Uncomment the following line if you want to set sql-mode. You can set it to empty string or any valid sql-mode value supported by tidb
+# sql-mode = ""
 
 [log]
 level = "debug"
