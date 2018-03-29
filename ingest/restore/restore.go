@@ -573,7 +573,7 @@ func NewTableRestore(
 func (tr *TableRestore) Close() {
 	// TODO : flush table meta right now ~
 	tr.encoders.Clear()
-	log.Infof("[%s] closed !", tr.tableMeta.Name)
+	log.Infof("[%s] restore closed !", tr.tableMeta.Name)
 }
 
 func (tr *TableRestore) loadRegions() {
