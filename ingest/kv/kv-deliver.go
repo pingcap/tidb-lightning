@@ -595,7 +595,7 @@ func (c *KVDeliverClient) Close() error {
 }
 
 func (c *KVDeliverClient) bind(txn *deliverTxn) {
-	log.Infof("Bind kv client with txn (UUID = %s)", txn.uuid)
+	log.Debugf("Bind kv client with txn (UUID = %s)", txn.uuid)
 
 	if c.txn.uuid != txn.uuid {
 		// So as to update stream bound to a new uuid,
@@ -608,7 +608,7 @@ func (c *KVDeliverClient) bind(txn *deliverTxn) {
 }
 
 func (c *KVDeliverClient) exitTxn() {
-	log.Infof("Release kv client from txn (UUID = %s)", c.txn.uuid)
+	log.Debugf("Release kv client from txn (UUID = %s)", c.txn.uuid)
 	c.closeWriteStream()
 	c.txn = newDeliverTxn(invalidUUID)
 	return
@@ -750,29 +750,32 @@ func (c *KVDeliverClient) Compact(start, end []byte) error {
 // start key = GenTablePrefix(tableID)
 // end key = GenTablePrefix(tableID + 1)
 func (c *KVDeliverClient) callCompact(start, end []byte) error {
-	log.Infof("call compact ...")
+	timer := time.Now()
+	log.Infof("compact [%v, %v)", start, end)
 	req := &importpb.CompactRequest{PdAddr: c.pdAddr, Range: &importpb.Range{Start: start, End: end}}
 	_, err := c.cli.Compact(c.ctx, req)
-	log.Infof("finish call compact !")
+	log.Infof("compact [%v, %v) takes %v", start, end, time.Since(timer))
 
 	return errors.Trace(err)
 }
 
 func (c *KVDeliverClient) callClose() error {
-	log.Infof("call close ...")
+	timer := time.Now()
+	log.Infof("[%s] close", c.txn.uuid)
 	req := &importpb.CloseRequest{Uuid: c.txn.uuid.Bytes()}
 	_, err := c.cli.Close(c.ctx, req)
-	log.Infof("finish call close !")
+	log.Infof("[%s] close takes %v", c.txn.uuid, time.Since(timer))
 
 	return errors.Trace(err)
 }
 
 func (c *KVDeliverClient) callImport() error {
 	// TODO ... no matter what, to enusure available to import, call close first !
-	log.Infof("call import ...")
+	timer := time.Now()
+	log.Infof("[%s] import", c.txn.uuid)
 	req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
 	_, err := c.cli.Import(c.ctx, req)
-	log.Infof("finish call import !")
+	log.Infof("[%s] import takes %v", c.txn.uuid, time.Since(timer))
 
 	return errors.Trace(err)
 }

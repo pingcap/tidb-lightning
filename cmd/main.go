@@ -39,6 +39,6 @@ func main() {
 
 	// TODO : onExitSignal() --> mainloop.Stop()
 
-	log.Info("tidb ingest exit.")
+	log.Info("tidb lightning exit.")
 	return
 }

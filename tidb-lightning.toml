@@ -5,8 +5,8 @@
 pprof-port = 10089
 
 # logging
-level = "debug"
-file = ""
+level = "info"
+file = "lightning.log"
 max-size = 128 # MB
 max-days = 28
 max-backups = 14
@@ -14,7 +14,7 @@ max-backups = 14
 [import-server]
 addr = "127.0.0.1:8808"
 # size of batch to import kv data into TiKV: xxx (GB)
-batch-size = 100 # GB
+batch-size = 200 # GB
 
 [mydumper]
 # block size of file reading
@@ -35,14 +35,12 @@ pd-addr = "127.0.0.1:2379"
 # Uncomment the following line if you want to set sql-mode. You can set it to empty string or any valid sql-mode value supported by tidb
 # sql-mode = ""
 
-
 # post-restore provide some options which will be executed after all kv data has been ingested into the tikv cluster.
 # the execution order are(if set true): compact > checksum > analyze
 [post-restore]
 # if set true, compact will do compaction to tikv data.
 compact = true
-# if set true, checksum will do ADMIN CHECKSUM <table> for each table.
+# if set true, checksum will do ADMIN CHECKSUM TABLE <table> for each table.
 checksum = true
 # if set true, analyze will do ANALYZE TABLE <table> for each table.
 analyze = true
-

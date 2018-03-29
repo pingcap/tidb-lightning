@@ -71,8 +71,6 @@ func (rc *RestoreControlloer) Close() {
 }
 
 func (rc *RestoreControlloer) Run(ctx context.Context) {
-	log.Info("restore controlloer start running !")
-
 	opts := []func(context.Context) error{
 		rc.restoreSchema,
 		// rc.recoverProgress,
@@ -95,7 +93,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 
 	// show metrics
 	statistic := metrics.DumpTiming()
-	log.Warnf("Timing statistic :\n%s", statistic)
+	log.Infof("Timing statistic :\n%s", statistic)
 
 	return
 }
@@ -127,8 +125,6 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 }
 
 func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
-	log.Info("start to restore tables ~")
-
 	// tables' restoring mission
 	tablesRestoring := make([]*TableRestore, 0, len(rc.dbMeta.Tables))
 	defer func() {
@@ -168,7 +164,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 			select {
 			case <-ticker.C:
 				statistic := metrics.DumpTiming()
-				log.Warnf("Timing statistic :\n%s", statistic)
+				log.Infof("Timing statistic :\n%s", statistic)
 			}
 		}
 	}()
@@ -185,7 +181,6 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 
 		worker := workers.Apply()
 		wg.Add(1)
-		log.Infof("restoring region %s", task.region.Name())
 		go func(w *RestoreWorker, t *regionRestoreTask) {
 			defer workers.Recycle(w)
 			defer wg.Done()
@@ -221,14 +216,15 @@ func (rc *RestoreControlloer) compact(ctx context.Context) error {
 	defer cli.Close()
 
 	for _, table := range rc.dbInfo.Tables {
-		log.Infof("begin compaction for table %s", table.Name)
+		timer := time.Now()
+		log.Infof("[%s] compact", table.Name)
 		start := tablecodec.GenTablePrefix(table.ID)
 		end := tablecodec.GenTablePrefix(table.ID + 1)
 		err = cli.Compact(start, end)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Infof("finished compaction for table %s", table.Name)
+		log.Infof("[%s] compact takes %v", table.Name, time.Since(timer))
 	}
 	return nil
 }
@@ -250,16 +246,16 @@ func (rc *RestoreControlloer) checksum(ctx context.Context) error {
 		table := fmt.Sprintf("%s.%s", remoteChecksum.Schema, remoteChecksum.Table)
 		localChecksum, ok := rc.localChecksums[table]
 		if !ok {
-			log.Warnf("not found local checksum for table %s", table)
+			log.Warnf("[%s] no local checksum", table)
 			continue
 		}
 
 		if remoteChecksum.Checksum != localChecksum.Sum() || remoteChecksum.TotalKVs != localChecksum.SumKVS() || remoteChecksum.TotalBytes != localChecksum.SumSize() {
-			log.Errorf("table %s checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
+			log.Errorf("[%s] checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
 				table, remoteChecksum.Checksum, localChecksum.Sum(), remoteChecksum.TotalKVs, localChecksum.SumKVS(), remoteChecksum.TotalBytes, localChecksum.SumSize())
 		}
 
-		log.Infof("table %s checksum identical", table)
+		log.Infof("[%s] checksum pass", table)
 	}
 
 	return nil
@@ -269,6 +265,7 @@ func (rc *RestoreControlloer) checksum(ctx context.Context) error {
 func (rc *RestoreControlloer) analyze(ctx context.Context) error {
 	if !rc.cfg.PostRestore.Analyze {
 		log.Info("Skip analyze table.")
+		return nil
 	}
 
 	tables := rc.getTables()
@@ -297,12 +294,14 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 	defer db.Close()
 
 	for _, table := range tables {
-		log.Infof("analyze table %s", table)
+		timer := time.Now()
+		log.Infof("[%s] analyze", table)
 		_, err := db.Exec(fmt.Sprintf("ANALYZE TABLE %s", table))
 		if err != nil {
 			log.Errorf("analyze table %s error %s", table, errors.ErrorStack(err))
 			continue
 		}
+		log.Infof("[%s] analyze takes %v", table, time.Since(timer))
 	}
 
 	return nil
@@ -396,8 +395,9 @@ func newRegionRestoreTask(
 }
 
 func (t *regionRestoreTask) Run(ctx context.Context) error {
+	timer := time.Now()
 	region := t.region
-	log.Infof("Start restore region : [%s] ...", t.region.Name())
+	log.Infof("[%s] restore region [%s]", region.Table, region.Name())
 
 	t.status = statRunning
 	maxRowID, rows, checksum, err := t.run(ctx)
@@ -405,7 +405,7 @@ func (t *regionRestoreTask) Run(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	log.Infof("Finished restore region : [%s]", region.Name())
+	log.Infof("[%s] restore region [%s] takes %v", region.Table, region.Name(), time.Since(timer))
 	err = t.callback(region.ID, maxRowID, rows, checksum)
 	if err != nil {
 		return errors.Trace(err)
@@ -563,9 +563,9 @@ func NewTableRestore(
 		localChecksums: localChecksums,
 	}
 
-	s := time.Now()
+	timer := time.Now()
 	tr.loadRegions()
-	log.Infof("[%s] load regions cost = %.2f sec", tableInfo.Name, time.Since(s).Seconds())
+	log.Infof("[%s] load regions takes %v", tableInfo.Name, time.Since(timer))
 
 	return tr
 }
@@ -573,11 +573,11 @@ func NewTableRestore(
 func (tr *TableRestore) Close() {
 	// TODO : flush table meta right now ~
 	tr.encoders.Clear()
-	log.Infof("[%s] closed !", tr.tableMeta.Name)
+	log.Infof("[%s] closed", tr.tableMeta.Name)
 }
 
 func (tr *TableRestore) loadRegions() {
-	log.Infof("[%s] load regions !", tr.tableMeta.Name)
+	log.Infof("[%s] load regions", tr.tableMeta.Name)
 
 	// TODO : regionProgress & !regionProgress.Finished()
 
@@ -618,7 +618,7 @@ func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, ch
 
 	total := len(tr.regions)
 	handled := len(tr.handledRegions)
-	log.Infof("table %s handled region count = %d (%s)", table, handled, common.Percent(handled, total))
+	log.Infof("[%s] handled region count = %d (%s)", table, handled, common.Percent(handled, total))
 	if handled == len(tr.tasks) {
 		err := tr.onFinished()
 		if err != nil {
@@ -648,7 +648,7 @@ func (tr *TableRestore) onFinished() error {
 		checksum.Add(regStat.checksum)
 	}
 	table := fmt.Sprintf("%s.%s", tr.tableMeta.DB, tr.tableMeta.Name)
-	log.Infof("table %s self-calculated checksum %s", table, checksum)
+	log.Infof("[%s] local checksum %s", tr.tableMeta.Name, checksum)
 	tr.localChecksums[table] = checksum
 
 	if err := tr.restoreTableMeta(tableMaxRowID); err != nil {
@@ -660,7 +660,7 @@ func (tr *TableRestore) onFinished() error {
 		return errors.Trace(err)
 	}
 
-	log.Infof("table %s has imported %d rows", table, tableRows)
+	log.Infof("[%s] has imported %d rows", tr.tableMeta.Name, tableRows)
 	return nil
 }
 
@@ -676,7 +676,7 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 
 	kvs, err := encoder.BuildMetaKvs(rowID)
 	if err != nil {
-		log.Errorf("table %s failed to generate meta key (row_id = %d) : %s", table, rowID, err.Error())
+		log.Errorf("[%s] failed to generate meta key (row_id = %d) : %s", table, rowID, err.Error())
 		return errors.Trace(err)
 	}
 
@@ -690,7 +690,7 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 
 func (tr *TableRestore) ingestKV() error {
 	table := tr.tableInfo.Name
-	log.Infof("[%s] to flush kv deliver ...", table)
+	log.Infof("[%s] flush kv deliver ...", table)
 
 	// kvDeliver, _ := tr.makeKVDeliver()
 	kvDeliver := tr.deliversMgr
