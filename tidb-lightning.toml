@@ -37,7 +37,7 @@ pd-addr = "127.0.0.1:2379"
 # lightning uses some code of tidb(used as library), and the flag controls it's log level.
 log-level = "error"
 
-# post-restore provide some options which will be executed after all kv data has been ingested into the tikv cluster.
+# post-restore provide some options which will be executed after all kv data has been imported into the tikv cluster.
 # the execution order are(if set true): compact > checksum > analyze
 [post-restore]
 # if set true, compact will do compaction to tikv data.

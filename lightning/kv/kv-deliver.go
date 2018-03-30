@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb-lightning/ingest/importpb"
+	"github.com/pingcap/tidb-lightning/lightning/importpb"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	log "github.com/sirupsen/logrus"
 
