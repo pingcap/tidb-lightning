@@ -1,6 +1,7 @@
 package restore
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"runtime"
@@ -729,38 +730,9 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	defer db.Close()
 
-	// ps : checksum command usually take long time to execute,
-	//		so here need to expand the gcLifeTime for single transaction.
-	oriGCLifeTime, err := ObtainGCLifeTime(db)
+	err := increaseGCLifeTime(db)
 	if err != nil {
-		log.Errorf("Abort checksum verify for GCLifeTime setting failed : %s", err.Error())
 		return nil, errors.Trace(err)
-	}
-
-	var increaseGCLifeTime bool
-	if oriGCLifeTime != "" {
-		ori, err := time.ParseDuration(oriGCLifeTime)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if ori < defaultGCLifeTime {
-			increaseGCLifeTime = true
-		}
-	} else {
-		increaseGCLifeTime = true
-	}
-
-	if increaseGCLifeTime {
-		err = UpdateGCLifeTime(db, defaultGCLifeTime.String())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		defer func() {
-			err = UpdateGCLifeTime(db, oriGCLifeTime)
-			if err != nil {
-				log.Errorf("rollback tikv_gc_life_time error %v", err)
-			}
-		}()
 	}
 
 	// ps : speed up executing checksum temporarily
@@ -800,6 +772,44 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 	}
 
 	return checksums, nil
+}
+
+func increaseGCLifeTime(db *sql.DB) error {
+	// checksum command usually takes a long time to execute,
+	// so here need to increase the gcLifeTime for single transaction.
+	oriGCLifeTime, err := ObtainGCLifeTime(db)
+	if err != nil {
+		log.Errorf("Abort checksum verify for GCLifeTime setting failed : %s", err.Error())
+		return errors.Trace(err)
+	}
+
+	var increaseGCLifeTime bool
+	if oriGCLifeTime != "" {
+		ori, err := time.ParseDuration(oriGCLifeTime)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ori < defaultGCLifeTime {
+			increaseGCLifeTime = true
+		}
+	} else {
+		increaseGCLifeTime = true
+	}
+
+	if increaseGCLifeTime {
+		err = UpdateGCLifeTime(db, defaultGCLifeTime.String())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer func() {
+			err = UpdateGCLifeTime(db, oriGCLifeTime)
+			if err != nil {
+				log.Errorf("rollback tikv_gc_life_time error %v", err)
+			}
+		}()
+	}
+
+	return nil
 }
 
 func (tr *TableRestore) excCheckTable() error {
