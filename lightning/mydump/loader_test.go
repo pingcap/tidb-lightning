@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb-lightning/ingest/config"
-	md "github.com/pingcap/tidb-lightning/ingest/mydump"
+	"github.com/pingcap/tidb-lightning/lightning/config"
+	md "github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
 var _ = Suite(&testMydumpLoaderSuite{})

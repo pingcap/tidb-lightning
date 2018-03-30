@@ -9,7 +9,7 @@ endif
 
 LIGHTNING_BIN := bin/tidb-lightning
 
-TIDBDIR := $(GOPATH)/src/github.com/pingcap/tidb/
+TIDBDIR := $(GOPATH)/src/github.com/pingcap/tidb
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
@@ -21,7 +21,7 @@ ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
 
-.PHONY: all build parser clean parserlib
+.PHONY: all build parser clean parserlib lightning
 
 default: clean lightning checksuccess
 
@@ -69,6 +69,6 @@ ifeq ("$(WITH_RACE)", "1")
 endif
 
 lightning: parserlib
-	@mv $(TIDBDIR)/vendor/golang.org/x/net/trace $(TIDBDIR)/vendor/golang.org/x/net/_trace
+	@if [ -d $(TIDBDIR)/vendor/golang.org/x/net/trace ]; then mv $(TIDBDIR)/vendor/golang.org/x/net/trace $(TIDBDIR)/vendor/golang.org/x/net/_trace; fi
 	-$(GOBUILD) $(RACE_FLAG) -o $(LIGHTNING_BIN) cmd/main.go
-	@mv $(TIDBDIR)/vendor/golang.org/x/net/_trace $(TIDBDIR)/vendor/golang.org/x/net/trace
+	@if [ -d $(TIDBDIR)/vendor/golang.org/x/net/_trace ]; then mv $(TIDBDIR)/vendor/golang.org/x/net/_trace $(TIDBDIR)/vendor/golang.org/x/net/trace; fi 

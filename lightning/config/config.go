@@ -6,7 +6,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb-lightning/ingest/log"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
 type DBStore struct {
@@ -93,7 +93,7 @@ func LoadConfig(args []string) (*Config, error) {
 		cfg.Mydumper.ReadBlockSize = ReadBlockSize
 	}
 
-	// hendle kv ingest
+	// hendle kv import
 	if cfg.ImportServer.BatchSize <= 0 {
 		cfg.ImportServer.BatchSize = KVMaxBatchSize
 	}

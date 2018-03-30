@@ -10,10 +10,10 @@ import (
 
 	. "github.com/pingcap/check"
 
-	"github.com/pingcap/tidb-lightning/ingest/common"
-	"github.com/pingcap/tidb-lightning/ingest/config"
-	. "github.com/pingcap/tidb-lightning/ingest/mydump"
-	. "github.com/pingcap/tidb-lightning/ingest/sql"
+	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
+	. "github.com/pingcap/tidb-lightning/lightning/mydump"
+	. "github.com/pingcap/tidb-lightning/lightning/sql"
 )
 
 var _ = Suite(&testParserSuite{})

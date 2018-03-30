@@ -11,7 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 
-	"github.com/pingcap/tidb-lightning/ingest/common"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb/util/logutil"
 )
 

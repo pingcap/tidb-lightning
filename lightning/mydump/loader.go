@@ -9,8 +9,8 @@ import (
 	"github.com/juju/errors"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/pingcap/tidb-lightning/ingest/common"
-	"github.com/pingcap/tidb-lightning/ingest/config"
+	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 )
 
 var (
