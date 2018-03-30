@@ -10,8 +10,8 @@ import (
 	"github.com/juju/errors"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/pingcap/tidb-lightning/ingest"
-	"github.com/pingcap/tidb-lightning/ingest/config"
+	"github.com/pingcap/tidb-lightning/lightning"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 )
 
 func onExitSignal() {
@@ -38,7 +38,7 @@ func main() {
 		log.Fatalf("parse cmd flags error: %s", err)
 	}
 
-	mainloop := ingest.NewMainLoop(cfg)
+	mainloop := lightning.NewMainLoop(cfg)
 	mainloop.Run()
 
 	// TODO : onExitSignal() --> mainloop.Stop()

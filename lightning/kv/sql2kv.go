@@ -2,7 +2,7 @@ package kv
 
 import (
 	"github.com/juju/errors"
-	sqltool "github.com/pingcap/tidb-lightning/ingest/sql"
+	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/plan"

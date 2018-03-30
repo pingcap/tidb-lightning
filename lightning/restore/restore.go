@@ -13,11 +13,11 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
-	"github.com/pingcap/tidb-lightning/ingest/common"
-	"github.com/pingcap/tidb-lightning/ingest/config"
-	"github.com/pingcap/tidb-lightning/ingest/kv"
-	"github.com/pingcap/tidb-lightning/ingest/mydump"
-	verify "github.com/pingcap/tidb-lightning/ingest/verification"
+	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/kv"
+	"github.com/pingcap/tidb-lightning/lightning/mydump"
+	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/tablecodec"
 )

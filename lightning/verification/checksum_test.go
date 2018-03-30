@@ -5,7 +5,7 @@ import (
 
 	. "github.com/pingcap/check"
 
-	"github.com/pingcap/tidb-lightning/ingest/verification"
+	"github.com/pingcap/tidb-lightning/lightning/verification"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 

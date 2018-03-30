@@ -1,4 +1,4 @@
-package ingest
+package lightning
 
 import (
 	"fmt"
@@ -14,11 +14,11 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
-	"github.com/pingcap/tidb-lightning/ingest/config"
-	"github.com/pingcap/tidb-lightning/ingest/kv"
-	applog "github.com/pingcap/tidb-lightning/ingest/log"
-	"github.com/pingcap/tidb-lightning/ingest/mydump"
-	"github.com/pingcap/tidb-lightning/ingest/restore"
+	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/kv"
+	applog "github.com/pingcap/tidb-lightning/lightning/log"
+	"github.com/pingcap/tidb-lightning/lightning/mydump"
+	"github.com/pingcap/tidb-lightning/lightning/restore"
 )
 
 type mainloop struct {
