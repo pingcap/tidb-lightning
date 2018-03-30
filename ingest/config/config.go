@@ -16,7 +16,7 @@ type DBStore struct {
 	Psw      string `toml:"password"`
 	PdAddr   string `toml:"pd-addr"`
 	SQLMode  string `toml:"sql-mode"`
-	LogLevel string `toml:"log_level"`
+	LogLevel string `toml:"log-level"`
 }
 
 type Config struct {
