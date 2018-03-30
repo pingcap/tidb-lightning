@@ -656,7 +656,7 @@ func (tr *TableRestore) onFinished() error {
 	}
 
 	// flush all kvs into TiKV ~
-	if err := tr.ingestKV(); err != nil {
+	if err := tr.importKV(); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -688,7 +688,7 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 	return nil
 }
 
-func (tr *TableRestore) ingestKV() error {
+func (tr *TableRestore) importKV() error {
 	table := tr.tableInfo.Name
 	log.Infof("[%s] flush kv deliver ...", table)
 
