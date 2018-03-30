@@ -1,6 +1,7 @@
 package restore
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"runtime"
@@ -26,6 +27,10 @@ var (
 	errCtxAborted = errors.New("context aborted error")
 	metrics       = common.NewMetrics()
 	concurrency   = 1
+)
+
+const (
+	defaultGCLifeTime = 100 * time.Hour
 )
 
 func init() {
@@ -725,19 +730,20 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	defer db.Close()
 
-	// ps : checksum command usually take long time to execute,
-	//		so here need to expand the gcLifeTime for single transaction.
-	oriGCLifeTime, gcErr := ObtainGCLifeTime(db)
-	if gcErr == nil {
-		gcErr = UpdateGCLifeTime(db, "100h")
+	ori, err := increaseGCLifeTime(db)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	if gcErr != nil {
-		return nil, errors.Trace(gcErr)
-	}
-	defer UpdateGCLifeTime(db, oriGCLifeTime)
+	// set it back finally
+	defer func() {
+		err = UpdateGCLifeTime(db, ori)
+		if err != nil {
+			log.Errorf("update tikv_gc_life_time error %s", errors.ErrorStack(err))
+		}
+	}()
 
 	// ps : speed up executing checksum temporarily
-	_, err := db.Exec("set session tidb_checksum_table_concurrency = 32")
+	_, err = db.Exec("set session tidb_checksum_table_concurrency = 32")
 	if err != nil {
 		log.Warnf("failed to set variable @tidb_checksum_table_concurrency: %s", err.Error())
 	}
@@ -773,6 +779,37 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 	}
 
 	return checksums, nil
+}
+
+func increaseGCLifeTime(db *sql.DB) (oriGCLifeTime string, err error) {
+	// checksum command usually takes a long time to execute,
+	// so here need to increase the gcLifeTime for single transaction.
+	oriGCLifeTime, err = ObtainGCLifeTime(db)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	var increaseGCLifeTime bool
+	if oriGCLifeTime != "" {
+		ori, err := time.ParseDuration(oriGCLifeTime)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		if ori < defaultGCLifeTime {
+			increaseGCLifeTime = true
+		}
+	} else {
+		increaseGCLifeTime = true
+	}
+
+	if increaseGCLifeTime {
+		err = UpdateGCLifeTime(db, defaultGCLifeTime.String())
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+	}
+
+	return oriGCLifeTime, nil
 }
 
 func (tr *TableRestore) excCheckTable() error {
