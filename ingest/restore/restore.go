@@ -28,6 +28,10 @@ var (
 	concurrency   = 1
 )
 
+const (
+	defaultGCLifeTime = 100 * time.Hour
+)
+
 func init() {
 	concurrency = runtime.NumCPU() // TODO ... config
 
@@ -727,18 +731,40 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 
 	// ps : checksum command usually take long time to execute,
 	//		so here need to expand the gcLifeTime for single transaction.
-	oriGCLifeTime, gcErr := ObtainGCLifeTime(db)
-	if gcErr == nil {
-		gcErr = UpdateGCLifeTime(db, "100h")
+	oriGCLifeTime, err := ObtainGCLifeTime(db)
+	if err != nil {
+		log.Errorf("Abort checksum verify for GCLifeTime setting failed : %s", err.Error())
+		return nil, errors.Trace(err)
 	}
-	if gcErr != nil {
-		log.Errorf("Abort checksum verify for GCLifeTime setting failed : %s", gcErr.Error())
-		return nil, errors.Trace(gcErr)
+
+	var increaseGCLifeTime bool
+	if oriGCLifeTime != "" {
+		ori, err := time.ParseDuration(oriGCLifeTime)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if ori < defaultGCLifeTime {
+			increaseGCLifeTime = true
+		}
+	} else {
+		increaseGCLifeTime = true
 	}
-	defer UpdateGCLifeTime(db, oriGCLifeTime)
+
+	if increaseGCLifeTime {
+		err = UpdateGCLifeTime(db, defaultGCLifeTime.String())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		defer func() {
+			err = UpdateGCLifeTime(db, oriGCLifeTime)
+			if err != nil {
+				log.Errorf("rollback tikv_gc_life_time error %v", err)
+			}
+		}()
+	}
 
 	// ps : speed up executing checksum temporarily
-	_, err := db.Exec("set session tidb_checksum_table_concurrency = 32")
+	_, err = db.Exec("set session tidb_checksum_table_concurrency = 32")
 	if err != nil {
 		log.Warnf("failed to set variable @tidb_checksum_table_concurrency: %s", err.Error())
 	}
