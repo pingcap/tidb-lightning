@@ -30,7 +30,7 @@ type mainloop struct {
 }
 
 func initEnv(cfg *config.Config) error {
-	if err := applog.InitLogger(&cfg.App.LogConfig); err != nil {
+	if err := applog.InitLogger(&cfg.App.LogConfig, cfg.TiDB.LogLevel); err != nil {
 		return errors.Trace(err)
 	}
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
@@ -29,9 +30,12 @@ func onExitSignal() {
 
 func main() {
 	cfg, err := config.LoadConfig(os.Args[1:])
-	if err != nil {
-		log.Errorf("load config failed: %s", errors.ErrorStack(err))
-		return
+	switch errors.Cause(err) {
+	case nil:
+	case flag.ErrHelp:
+		os.Exit(0)
+	default:
+		log.Fatalf("parse cmd flags error: %s", err)
 	}
 
 	mainloop := ingest.NewMainLoop(cfg)

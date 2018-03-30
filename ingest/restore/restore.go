@@ -91,7 +91,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 			break
 		}
 		if err != nil {
-			log.Errorf("run cause error : %s", err.Error())
+			log.Errorf("run cause error : %s", errors.ErrorStack(err))
 			break // ps : not continue
 		}
 	}
