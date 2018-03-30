@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/restore"
 )
 
-type mainloop struct {
+type Lightning struct {
 	cfg      *config.Config
 	ctx      context.Context
 	shutdown context.CancelFunc
@@ -45,71 +45,71 @@ func initEnv(cfg *config.Config) error {
 	return nil
 }
 
-func NewMainLoop(cfg *config.Config) *mainloop {
+func New(cfg *config.Config) *Lightning {
 	initEnv(cfg)
 	log.Infof("cfg %+v", cfg)
 
 	ctx, shutdown := context.WithCancel(context.Background())
 
-	return &mainloop{
+	return &Lightning{
 		cfg:      cfg,
 		ctx:      ctx,
 		shutdown: shutdown,
 	}
 }
 
-func (m *mainloop) Run() {
+func (l *Lightning) Run() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	if m.cfg.DoCompact != "" {
-		tables := strings.Split(m.cfg.DoCompact, ",")
-		err := m.doCompact(tables)
+	if l.cfg.DoCompact != "" {
+		tables := strings.Split(l.cfg.DoCompact, ",")
+		err := l.doCompact(tables)
 		if err != nil {
 			log.Errorf("compact error %s", errors.ErrorStack(err))
 		}
 		return
 	}
 
-	if m.cfg.DoChecksum != "" {
-		tables := strings.Split(m.cfg.DoChecksum, ",")
-		err := m.doChecksum(tables)
+	if l.cfg.DoChecksum != "" {
+		tables := strings.Split(l.cfg.DoChecksum, ",")
+		err := l.doChecksum(tables)
 		if err != nil {
 			log.Errorf("checksum error %s", errors.ErrorStack(err))
 		}
 		return
 	}
 
-	m.wg.Add(1)
+	l.wg.Add(1)
 	go func() {
-		defer m.wg.Done()
-		m.run()
+		defer l.wg.Done()
+		l.run()
 	}()
-	m.wg.Wait()
+	l.wg.Wait()
 }
 
-func (m *mainloop) run() {
-	mdl, err := mydump.NewMyDumpLoader(m.cfg)
+func (l *Lightning) run() {
+	mdl, err := mydump.NewMyDumpLoader(l.cfg)
 	if err != nil {
 		log.Errorf("failed to load mydumper source : %s", err.Error())
 		return
 	}
 
 	dbMeta := mdl.GetDatabase()
-	procedure := restore.NewRestoreControlloer(dbMeta, m.cfg)
+	procedure := restore.NewRestoreControlloer(dbMeta, l.cfg)
 	defer procedure.Close()
 
-	procedure.Run(m.ctx)
+	procedure.Run(l.ctx)
 	return
 }
 
-func (m *mainloop) doCompact(tables []string) error {
-	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, m.cfg.ImportServer.Addr, m.cfg.TiDB.PdAddr)
+func (l *Lightning) doCompact(tables []string) error {
+	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, l.cfg.ImportServer.Addr, l.cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cli.Close()
 
-	tidbMgr, err := restore.NewTiDBManager(m.cfg.TiDB.PdAddr)
+	tidbMgr, err := restore.NewTiDBManager(l.cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -142,8 +142,8 @@ func (m *mainloop) doCompact(tables []string) error {
 	return nil
 }
 
-func (m *mainloop) doChecksum(tables []string) error {
-	results, err := restore.DoChecksum(m.cfg.TiDB, tables)
+func (l *Lightning) doChecksum(tables []string) error {
+	results, err := restore.DoChecksum(l.cfg.TiDB, tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -155,7 +155,7 @@ func (m *mainloop) doChecksum(tables []string) error {
 	return nil
 }
 
-func (m *mainloop) Stop() {
-	m.shutdown()
-	m.wg.Wait()
+func (l *Lightning) Stop() {
+	l.shutdown()
+	l.wg.Wait()
 }

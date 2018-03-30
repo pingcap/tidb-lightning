@@ -38,8 +38,8 @@ func main() {
 		log.Fatalf("parse cmd flags error: %s", err)
 	}
 
-	mainloop := lightning.NewMainLoop(cfg)
-	mainloop.Run()
+	app := lightning.New(cfg)
+	app.Run()
 
 	// TODO : onExitSignal() --> mainloop.Stop()
 
