@@ -219,12 +219,9 @@ func (rc *RestoreControlloer) compact(ctx context.Context) error {
 	}
 	defer cli.Close()
 
-	timer := time.Now()
-	log.Info("compact start")
 	if err := cli.Compact([]byte{}, []byte{}); err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("compact takes", time.Since(timer))
 	return nil
 }
 
