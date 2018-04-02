@@ -33,9 +33,8 @@ type Config struct {
 	PostRestore  PostRestore     `toml:"post-restore"`
 
 	// command line flags
-	DoCompact  string
-	DoChecksum string
-	file       string
+	ConfigFile string
+	DoCompact  bool
 }
 
 type Lightning struct {
@@ -69,15 +68,14 @@ func LoadConfig(args []string) (*Config, error) {
 	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
 	fs := cfg.FlagSet
 
-	fs.StringVar(&cfg.file, "c", "tidb-lightning.toml", "tidb-lightning configuration file")
-	fs.StringVar(&cfg.DoCompact, "compact", "", "do manual compact for tables which in comma separated format, like foo.bar1, foo.bar2")
-	fs.StringVar(&cfg.DoChecksum, "checksum", "", "do manual checksum for tables which in comma separated format, like foo.bar1,foo.bar2")
+	fs.StringVar(&cfg.ConfigFile, "c", "tidb-lightning.toml", "tidb-lightning configuration file")
+	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compaction on the target cluster")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	data, err := ioutil.ReadFile(cfg.file)
+	data, err := ioutil.ReadFile(cfg.ConfigFile)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

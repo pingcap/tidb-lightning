@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/tablecodec"
 )
 
 var (
@@ -220,17 +219,12 @@ func (rc *RestoreControlloer) compact(ctx context.Context) error {
 	}
 	defer cli.Close()
 
-	for _, table := range rc.dbInfo.Tables {
-		timer := time.Now()
-		log.Infof("[%s] compact", table.Name)
-		start := tablecodec.GenTablePrefix(table.ID)
-		end := tablecodec.GenTablePrefix(table.ID + 1)
-		err = cli.Compact(start, end)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		log.Infof("[%s] compact takes %v", table.Name, time.Since(timer))
+	timer := time.Now()
+	log.Info("compact start")
+	if err := cli.Compact([]byte{}, []byte{}); err != nil {
+		return errors.Trace(err)
 	}
+	log.Info("compact takes", time.Since(timer))
 	return nil
 }
 

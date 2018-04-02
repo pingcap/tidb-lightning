@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
-	"strings"
 	"sync"
-
-	"github.com/pingcap/tidb/tablecodec"
+	"time"
 
 	"github.com/juju/errors"
 	uuid "github.com/satori/go.uuid"
@@ -61,20 +59,10 @@ func New(cfg *config.Config) *Lightning {
 func (l *Lightning) Run() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	if l.cfg.DoCompact != "" {
-		tables := strings.Split(l.cfg.DoCompact, ",")
-		err := l.doCompact(tables)
+	if l.cfg.DoCompact {
+		err := l.doCompact()
 		if err != nil {
 			log.Errorf("compact error %s", errors.ErrorStack(err))
-		}
-		return
-	}
-
-	if l.cfg.DoChecksum != "" {
-		tables := strings.Split(l.cfg.DoChecksum, ",")
-		err := l.doChecksum(tables)
-		if err != nil {
-			log.Errorf("checksum error %s", errors.ErrorStack(err))
 		}
 		return
 	}
@@ -102,56 +90,19 @@ func (l *Lightning) run() {
 	return
 }
 
-func (l *Lightning) doCompact(tables []string) error {
+func (l *Lightning) doCompact() error {
 	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, l.cfg.ImportServer.Addr, l.cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cli.Close()
 
-	tidbMgr, err := restore.NewTiDBManager(l.cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer tidbMgr.Close()
-
-	for _, table := range tables {
-		log.Infof("begin compaction for table %s", table)
-
-		// table must contains only one dot or we don't know how to split it.
-		if strings.Count(table, ".") != 1 {
-			log.Warnf("tables %s contains not dot or more than one dot which is not allowed", table)
-			continue
-		}
-
-		split := strings.Split(table, ".")
-		tableInfo, err := tidbMgr.GetTableByName(split[0], split[1])
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		start := tablecodec.GenTablePrefix(tableInfo.ID)
-		end := tablecodec.GenTablePrefix(tableInfo.ID + 1)
-		if err := cli.Compact(start, end); err != nil {
-			return errors.Trace(err)
-		}
-		log.Infof("finished compaction for table %s", table)
-	}
-
-	log.Info("compact done")
-	return nil
-}
-
-func (l *Lightning) doChecksum(tables []string) error {
-	results, err := restore.DoChecksum(l.cfg.TiDB, tables)
-	if err != nil {
+	start := time.Now()
+	if err := cli.Compact([]byte{}, []byte{}); err != nil {
 		return errors.Trace(err)
 	}
 
-	for _, result := range results {
-		log.Infof("table %s.%s remote(from tidb) checksum %d,  total_kvs, total_bytes %d",
-			result.Schema, result.Table, result.Checksum, result.TotalKVs, result.TotalBytes)
-	}
+	fmt.Println("compact takes", time.Since(start))
 	return nil
 }
 
