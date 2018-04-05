@@ -290,12 +290,8 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 	defer db.Close()
 
 	// speed up executing analyze table temporarily
-	if _, err := db.Exec("set session tidb_build_stats_concurrency = 32"); err != nil {
-		log.Warnf("failed to set variable @tidb_build_stats_concurrency: %s", err.Error())
-	}
-	if _, err := db.Exec("set session tidb_distsql_scan_concurrency = 32"); err != nil {
-		log.Warnf("failed to set variable @tidb_distsql_scan_concurrency: %s", err.Error())
-	}
+	setSessionVarInt(db, "tidb_build_stats_concurrency", 16)
+	setSessionVarInt(db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
 
 	for _, table := range tables {
 		timer := time.Now()
@@ -332,6 +328,13 @@ func makeKVDeliver(
 
 	uuid := uuid.Must(uuid.NewV4())
 	return kv.NewKVDeliverClient(ctx, uuid, cfg.ImportServer.Addr, cfg.TiDB.PdAddr)
+}
+
+func setSessionVarInt(db *sql.DB, name string, value int) {
+	stmt := fmt.Sprintf("set session %s = %d", name, value)
+	if _, err := db.Exec(stmt); err != nil {
+		log.Warnf("failed to set variable @%s: %s", name, err.Error())
+	}
 }
 
 ////////////////////////////////////////////////////////////////
@@ -741,13 +744,9 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 		}
 	}()
 
-	// speed up executing checksum temporarily
-	if _, err := db.Exec("set session tidb_checksum_table_concurrency = 32"); err != nil {
-		log.Warnf("failed to set variable @tidb_checksum_table_concurrency: %s", err.Error())
-	}
-	if _, err := db.Exec("set session tidb_distsql_scan_concurrency = 32"); err != nil {
-		log.Warnf("failed to set variable @tidb_distsql_scan_concurrency: %s", err.Error())
-	}
+	// speed up executing checksum table temporarily
+	setSessionVarInt(db, "tidb_checksum_table_concurrency", 16)
+	setSessionVarInt(db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
 
 	// ADMIN CHECKSUM TABLE <table>,<table>  example.
 	// 	mysql> admin checksum table test.t;

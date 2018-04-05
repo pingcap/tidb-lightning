@@ -11,13 +11,14 @@ import (
 )
 
 type DBStore struct {
-	Host     string `toml:"host"`
-	Port     int    `toml:"port"`
-	User     string `toml:"user"`
-	Psw      string `toml:"password"`
-	PdAddr   string `toml:"pd-addr"`
-	SQLMode  string `toml:"sql-mode"`
-	LogLevel string `toml:"log-level"`
+	Host                   string `toml:"host"`
+	Port                   int    `toml:"port"`
+	User                   string `toml:"user"`
+	Psw                    string `toml:"password"`
+	PdAddr                 string `toml:"pd-addr"`
+	SQLMode                string `toml:"sql-mode"`
+	LogLevel               string `toml:"log-level"`
+	DistSQLScanConcurrency int    `toml:"distsql-scan-concurrency"`
 }
 
 type Config struct {
@@ -69,7 +70,10 @@ func LoadConfig(args []string) (*Config, error) {
 	cfg.App = Lightning{NumCPU: runtime.NumCPU()}
 
 	// set default sql-mode
-	cfg.TiDB = DBStore{SQLMode: "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"}
+	cfg.TiDB = DBStore{
+		SQLMode:                "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+		DistSQLScanConcurrency: 16,
+	}
 
 	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
 	fs := cfg.FlagSet
