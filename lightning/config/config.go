@@ -39,6 +39,7 @@ type Config struct {
 
 type Lightning struct {
 	log.LogConfig
+	NumCPU      int `toml:"num-cpu"`
 	ProfilePort int `toml:"pprof-port"`
 }
 

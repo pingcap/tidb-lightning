@@ -57,7 +57,7 @@ func New(cfg *config.Config) *Lightning {
 }
 
 func (l *Lightning) Run() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
+	runtime.GOMAXPROCS(l.cfg.App.NumCPU)
 
 	if l.cfg.DoCompact {
 		err := l.doCompact()

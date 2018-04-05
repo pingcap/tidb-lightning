@@ -289,6 +289,14 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	defer db.Close()
 
+	// speed up executing analyze table temporarily
+	if _, err := db.Exec("set session tidb_build_stats_concurrency = 32"); err != nil {
+		log.Warnf("failed to set variable @tidb_build_stats_concurrency: %s", err.Error())
+	}
+	if _, err := db.Exec("set session tidb_distsql_scan_concurrency = 32"); err != nil {
+		log.Warnf("failed to set variable @tidb_distsql_scan_concurrency: %s", err.Error())
+	}
+
 	for _, table := range tables {
 		timer := time.Now()
 		log.Infof("[%s] analyze", table)
@@ -733,10 +741,12 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 		}
 	}()
 
-	// ps : speed up executing checksum temporarily
-	_, err = db.Exec("set session tidb_checksum_table_concurrency = 32")
-	if err != nil {
+	// speed up executing checksum temporarily
+	if _, err := db.Exec("set session tidb_checksum_table_concurrency = 32"); err != nil {
 		log.Warnf("failed to set variable @tidb_checksum_table_concurrency: %s", err.Error())
+	}
+	if _, err := db.Exec("set session tidb_distsql_scan_concurrency = 32"); err != nil {
+		log.Warnf("failed to set variable @tidb_distsql_scan_concurrency: %s", err.Error())
 	}
 
 	// ADMIN CHECKSUM TABLE <table>,<table>  example.
