@@ -1,6 +1,9 @@
 ### tidb-lightning configuartion
 [lightning]
 
+# maximum number of CPUs to run goroutines.
+# num-cpu = (default to `runtime.NumCPU()`)
+
 # background profile for debuging ( 0 to disable )
 pprof-port = 10089
 

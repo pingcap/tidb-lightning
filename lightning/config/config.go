@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"io/ioutil"
+	"runtime"
 
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
@@ -63,7 +64,11 @@ type ImportServer struct {
 
 func LoadConfig(args []string) (*Config, error) {
 	cfg := new(Config)
-	// set default sql_mode
+
+	// set default num-cpu
+	cfg.App = Lightning{NumCPU: runtime.NumCPU()}
+
+	// set default sql-mode
 	cfg.TiDB = DBStore{SQLMode: "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"}
 
 	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
