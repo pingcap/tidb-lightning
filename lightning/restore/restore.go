@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -25,7 +24,6 @@ import (
 var (
 	errCtxAborted = errors.New("context aborted error")
 	metrics       = common.NewMetrics()
-	concurrency   = 1
 )
 
 const (
@@ -33,8 +31,6 @@ const (
 )
 
 func init() {
-	concurrency = runtime.NumCPU() // TODO ... config
-
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
 
@@ -158,7 +154,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 		tasks = append(tasks, tr.tasks...)
 	}
 
-	workers := NewRestoreWorkerPool(concurrency)
+	workers := NewRestoreWorkerPool(rc.cfg.App.WorkerPoolSize)
 
 	go func() {
 		ticker := time.NewTicker(time.Minute * 5)
@@ -289,6 +285,10 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	defer db.Close()
 
+	// speed up executing analyze table temporarily
+	setSessionVarInt(db, "tidb_build_stats_concurrency", 16)
+	setSessionVarInt(db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
+
 	for _, table := range tables {
 		timer := time.Now()
 		log.Infof("[%s] analyze", table)
@@ -324,6 +324,13 @@ func makeKVDeliver(
 
 	uuid := uuid.Must(uuid.NewV4())
 	return kv.NewKVDeliverClient(ctx, uuid, cfg.ImportServer.Addr, cfg.TiDB.PdAddr)
+}
+
+func setSessionVarInt(db *sql.DB, name string, value int) {
+	stmt := fmt.Sprintf("set session %s = %d", name, value)
+	if _, err := db.Exec(stmt); err != nil {
+		log.Warnf("failed to set variable @%s to %d: %s", name, value, err.Error())
+	}
 }
 
 ////////////////////////////////////////////////////////////////
@@ -547,13 +554,16 @@ func NewTableRestore(
 	cfg *config.Config,
 	localChecksums map[string]*verify.KVChecksum) *TableRestore {
 
+	encoders := newKvEncoderPool(dbInfo, tableInfo, tableMeta, cfg.TiDB.SQLMode)
+	encoders.init(cfg.App.WorkerPoolSize)
+
 	tr := &TableRestore{
 		ctx:            ctx,
 		cfg:            cfg,
 		dbInfo:         dbInfo,
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
-		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta, cfg.TiDB.SQLMode).init(concurrency),
+		encoders:       encoders,
 		deliversMgr:    kv.NewKVDeliverKeeper(cfg.ImportServer.Addr, cfg.TiDB.PdAddr),
 		handledRegions: make(map[int]*regionStat),
 		localChecksums: localChecksums,
@@ -733,11 +743,9 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 		}
 	}()
 
-	// ps : speed up executing checksum temporarily
-	_, err = db.Exec("set session tidb_checksum_table_concurrency = 32")
-	if err != nil {
-		log.Warnf("failed to set variable @tidb_checksum_table_concurrency: %s", err.Error())
-	}
+	// speed up executing checksum table temporarily
+	setSessionVarInt(db, "tidb_checksum_table_concurrency", 16)
+	setSessionVarInt(db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
 
 	// ADMIN CHECKSUM TABLE <table>,<table>  example.
 	// 	mysql> admin checksum table test.t;

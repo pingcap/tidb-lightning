@@ -4,6 +4,9 @@
 # background profile for debuging ( 0 to disable )
 pprof-port = 10089
 
+# number of workers to restore tables (default to `runtime.NumCPU()`).
+# worker-pool-size =
+
 # logging
 level = "info"
 file = "lightning.log"
@@ -36,6 +39,8 @@ pd-addr = "127.0.0.1:2379"
 # sql-mode = ""
 # lightning uses some code of tidb(used as library), and the flag controls it's log level.
 log-level = "error"
+# set tidb session variable to speed up checksum/analyze table.
+distsql-scan-concurrency = 16
 
 # post-restore provide some options which will be executed after all kv data has been imported into the tikv cluster.
 # the execution order are(if set true): compact > checksum > analyze

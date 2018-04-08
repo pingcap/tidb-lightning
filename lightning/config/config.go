@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"io/ioutil"
+	"runtime"
 
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
@@ -10,13 +11,14 @@ import (
 )
 
 type DBStore struct {
-	Host     string `toml:"host"`
-	Port     int    `toml:"port"`
-	User     string `toml:"user"`
-	Psw      string `toml:"password"`
-	PdAddr   string `toml:"pd-addr"`
-	SQLMode  string `toml:"sql-mode"`
-	LogLevel string `toml:"log-level"`
+	Host                   string `toml:"host"`
+	Port                   int    `toml:"port"`
+	User                   string `toml:"user"`
+	Psw                    string `toml:"password"`
+	PdAddr                 string `toml:"pd-addr"`
+	SQLMode                string `toml:"sql-mode"`
+	LogLevel               string `toml:"log-level"`
+	DistSQLScanConcurrency int    `toml:"distsql-scan-concurrency"`
 }
 
 type Config struct {
@@ -39,7 +41,8 @@ type Config struct {
 
 type Lightning struct {
 	log.LogConfig
-	ProfilePort int `toml:"pprof-port"`
+	ProfilePort    int `toml:"pprof-port"`
+	WorkerPoolSize int `toml:"worker-pool-size"`
 }
 
 // PostRestore has some options which will be executed after kv restored.
@@ -60,10 +63,20 @@ type ImportServer struct {
 	BatchSize int64  `toml:"batch-size"`
 }
 
+func NewConfig() *Config {
+	return &Config{
+		App: Lightning{
+			WorkerPoolSize: runtime.NumCPU(),
+		},
+		TiDB: DBStore{
+			SQLMode:                "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+			DistSQLScanConcurrency: 16,
+		},
+	}
+}
+
 func LoadConfig(args []string) (*Config, error) {
-	cfg := new(Config)
-	// set default sql_mode
-	cfg.TiDB = DBStore{SQLMode: "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"}
+	cfg := NewConfig()
 
 	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
 	fs := cfg.FlagSet
