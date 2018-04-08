@@ -639,8 +639,10 @@ func (c *KVDeliverClient) newWriteStream() (importpb.ImportKV_WriteClient, error
 
 	// Bind uuid for this write request
 	req := &importpb.WriteRequest{
-		Head: &importpb.WriteRequest_Head{
-			Uuid: c.txn.uuid.Bytes(),
+		Chunk: &importpb.WriteRequest_Head{
+			Head: &importpb.WriteHead{
+				Uuid: c.txn.uuid.Bytes(),
+			},
 		},
 	}
 	if err = wstream.Send(req); err != nil {
@@ -700,9 +702,11 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 	}
 
 	write := &importpb.WriteRequest{
-		Batch: &importpb.WriteBatch{
-			CommitTs:  c.ts,
-			Mutations: mutations,
+		Chunk: &importpb.WriteRequest_Batch{
+			Batch: &importpb.WriteBatch{
+				CommitTs:  c.ts,
+				Mutations: mutations,
+			},
 		},
 	}
 
