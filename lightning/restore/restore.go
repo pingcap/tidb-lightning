@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -25,7 +24,6 @@ import (
 var (
 	errCtxAborted = errors.New("context aborted error")
 	metrics       = common.NewMetrics()
-	concurrency   = 1
 )
 
 const (
@@ -33,8 +31,6 @@ const (
 )
 
 func init() {
-	concurrency = runtime.NumCPU() // TODO ... config
-
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
 
@@ -158,7 +154,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 		tasks = append(tasks, tr.tasks...)
 	}
 
-	workers := NewRestoreWorkerPool(concurrency)
+	workers := NewRestoreWorkerPool(rc.cfg.App.WorkerPoolSize)
 
 	go func() {
 		ticker := time.NewTicker(time.Minute * 5)
@@ -558,13 +554,16 @@ func NewTableRestore(
 	cfg *config.Config,
 	localChecksums map[string]*verify.KVChecksum) *TableRestore {
 
+	encoders := newKvEncoderPool(dbInfo, tableInfo, tableMeta, cfg.TiDB.SQLMode)
+	encoders.init(cfg.App.WorkerPoolSize)
+
 	tr := &TableRestore{
 		ctx:            ctx,
 		cfg:            cfg,
 		dbInfo:         dbInfo,
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
-		encoders:       newKvEncoderPool(dbInfo, tableInfo, tableMeta, cfg.TiDB.SQLMode).init(concurrency),
+		encoders:       encoders,
 		deliversMgr:    kv.NewKVDeliverKeeper(cfg.ImportServer.Addr, cfg.TiDB.PdAddr),
 		handledRegions: make(map[int]*regionStat),
 		localChecksums: localChecksums,

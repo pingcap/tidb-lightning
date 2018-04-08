@@ -41,8 +41,8 @@ type Config struct {
 
 type Lightning struct {
 	log.LogConfig
-	NumCPU      int `toml:"num-cpu"`
-	ProfilePort int `toml:"pprof-port"`
+	ProfilePort    int `toml:"pprof-port"`
+	WorkerPoolSize int `toml:"worker-pool-size"`
 }
 
 // PostRestore has some options which will be executed after kv restored.
@@ -63,17 +63,20 @@ type ImportServer struct {
 	BatchSize int64  `toml:"batch-size"`
 }
 
-func LoadConfig(args []string) (*Config, error) {
-	cfg := new(Config)
-
-	// set default num-cpu
-	cfg.App = Lightning{NumCPU: runtime.NumCPU()}
-
-	// set default sql-mode
-	cfg.TiDB = DBStore{
-		SQLMode:                "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
-		DistSQLScanConcurrency: 16,
+func NewConfig() *Config {
+	return &Config{
+		App: Lightning{
+			WorkerPoolSize: runtime.NumCPU(),
+		},
+		TiDB: DBStore{
+			SQLMode:                "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+			DistSQLScanConcurrency: 16,
+		},
 	}
+}
+
+func LoadConfig(args []string) (*Config, error) {
+	cfg := NewConfig()
 
 	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
 	fs := cfg.FlagSet
