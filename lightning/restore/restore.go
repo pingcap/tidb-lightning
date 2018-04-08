@@ -329,7 +329,7 @@ func makeKVDeliver(
 func setSessionVarInt(db *sql.DB, name string, value int) {
 	stmt := fmt.Sprintf("set session %s = %d", name, value)
 	if _, err := db.Exec(stmt); err != nil {
-		log.Warnf("failed to set variable @%s: %s", name, err.Error())
+		log.Warnf("failed to set variable @%s to %d: %s", name, value, err.Error())
 	}
 }
 
