@@ -137,8 +137,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 	for tbl, tableMeta := range rc.dbMeta.Tables {
 		tableInfo, ok := dbInfo.Tables[tbl]
 		if !ok {
-			log.Warnf("table info not found : %s", tbl)
-			continue
+			return errors.Errorf("table info %s not found", tbl)
 		}
 
 		tablesRestoring = append(tablesRestoring, NewTableRestore(
