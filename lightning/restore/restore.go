@@ -755,26 +755,16 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 	// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
 	// +---------+------------+---------------------+-----------+-------------+
 
-	tbls := strings.Join(tables, ",")
-	log.Infof("doing checksum for tables %s", tbls)
-
-	rows, err := db.Query(fmt.Sprintf("ADMIN CHECKSUM TABLE %s", tbls))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer rows.Close()
-
 	checksums := make([]*RemoteChecksum, 0, len(tables))
-	for rows.Next() {
+	// do table checksum one by one instead of doing all at once to make tikv server comfortable
+	for _, table := range tables {
 		cs := RemoteChecksum{}
-		err = rows.Scan(&cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
+		log.Infof("[%s] doing remote checksum", table)
+		err := db.QueryRow(fmt.Sprintf("ADMIN CHECKSUM TABLE %s", table)).Scan(&cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		checksums = append(checksums, &cs)
-	}
-	if err := rows.Err(); err != nil {
-		return checksums, errors.Trace(err)
 	}
 
 	return checksums, nil
