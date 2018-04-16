@@ -863,7 +863,10 @@ func (exc *RegionRestoreExectuor) Run(
 			3. load kvs data (into kv deliver server)
 			4. flush kvs data (into tikv node)
 	*/
-	reader, _ := mydump.NewRegionReader(region.File, region.Offset, region.Size)
+	reader, err := mydump.NewRegionReader(region.File, region.Offset, region.Size)
+	if err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
 	defer reader.Close()
 
 	table := exc.tableInfo.Name
@@ -876,8 +879,8 @@ func (exc *RegionRestoreExectuor) Run(
 	/*
 		TODO :
 			So far, since checksum can not recompute on the same key-value pair,
-			otherwise this would leds to an incorrect checksum value finally.
-			So it's important to gaurnate that do checksum on kvs correctly
+			otherwise this would leads to an incorrect checksum value finally.
+			So it's important to guarantee that do checksum on kvs correctly
 			no matter what happens during process of restore ( eg. safe point / error retry ... )
 	*/
 
