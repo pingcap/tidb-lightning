@@ -32,7 +32,7 @@ func initEnv(cfg *config.Config) error {
 		return errors.Trace(err)
 	}
 
-	kv.ConfigDeliverTxnBatchSize(cfg.ImportServer.BatchSize)
+	kv.ConfigDeliverTxnBatchSize(cfg.TikvImporter.BatchSize)
 
 	if cfg.App.ProfilePort > 0 {
 		go func() { // TODO : config to enable it in debug mode
@@ -91,7 +91,7 @@ func (l *Lightning) run() {
 }
 
 func (l *Lightning) doCompact() error {
-	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, l.cfg.ImportServer.Addr, l.cfg.TiDB.PdAddr)
+	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, l.cfg.TikvImporter.Addr, l.cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}

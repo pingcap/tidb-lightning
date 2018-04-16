@@ -208,7 +208,7 @@ func (rc *RestoreControlloer) compact(ctx context.Context) error {
 		return nil
 	}
 
-	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.ImportServer.Addr, rc.cfg.TiDB.PdAddr)
+	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -323,7 +323,7 @@ func makeKVDeliver(
 	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
 
 	uuid := uuid.Must(uuid.NewV4())
-	return kv.NewKVDeliverClient(ctx, uuid, cfg.ImportServer.Addr, cfg.TiDB.PdAddr)
+	return kv.NewKVDeliverClient(ctx, uuid, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 }
 
 func setSessionVarInt(db *sql.DB, name string, value int) {
@@ -564,7 +564,7 @@ func NewTableRestore(
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
 		encoders:       encoders,
-		deliversMgr:    kv.NewKVDeliverKeeper(cfg.ImportServer.Addr, cfg.TiDB.PdAddr),
+		deliversMgr:    kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
 		handledRegions: make(map[int]*regionStat),
 		localChecksums: localChecksums,
 	}
@@ -853,7 +853,10 @@ func (exc *RegionRestoreExectuor) Run(
 			3. load kvs data (into kv deliver server)
 			4. flush kvs data (into tikv node)
 	*/
-	reader, _ := mydump.NewRegionReader(region.File, region.Offset, region.Size)
+	reader, err := mydump.NewRegionReader(region.File, region.Offset, region.Size)
+	if err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
 	defer reader.Close()
 
 	table := exc.tableInfo.Name
@@ -866,8 +869,8 @@ func (exc *RegionRestoreExectuor) Run(
 	/*
 		TODO :
 			So far, since checksum can not recompute on the same key-value pair,
-			otherwise this would leds to an incorrect checksum value finally.
-			So it's important to gaurnate that do checksum on kvs correctly
+			otherwise this would leads to an incorrect checksum value finally.
+			So it's important to guarantee that do checksum on kvs correctly
 			no matter what happens during process of restore ( eg. safe point / error retry ... )
 	*/
 

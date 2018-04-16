@@ -31,7 +31,7 @@ type Config struct {
 	ProgressStore DBStore `toml:"progress-store"`
 
 	Mydumper     MydumperRuntime `toml:"mydumper"`
-	ImportServer ImportServer    `toml:"import-server"`
+	TikvImporter TikvImporter    `toml:"tikv-importer"`
 	PostRestore  PostRestore     `toml:"post-restore"`
 
 	// command line flags
@@ -58,7 +58,7 @@ type MydumperRuntime struct {
 	SourceDir     string `toml:"data-source-dir"`
 }
 
-type ImportServer struct {
+type TikvImporter struct {
 	Addr      string `toml:"addr"`
 	BatchSize int64  `toml:"batch-size"`
 }
@@ -105,8 +105,8 @@ func LoadConfig(args []string) (*Config, error) {
 	}
 
 	// hendle kv import
-	if cfg.ImportServer.BatchSize <= 0 {
-		cfg.ImportServer.BatchSize = KVMaxBatchSize
+	if cfg.TikvImporter.BatchSize <= 0 {
+		cfg.TikvImporter.BatchSize = KVMaxBatchSize
 	}
 
 	return cfg, nil
