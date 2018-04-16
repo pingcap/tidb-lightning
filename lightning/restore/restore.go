@@ -209,7 +209,7 @@ func (rc *RestoreControlloer) compact(ctx context.Context) error {
 		return nil
 	}
 
-	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.ImportServer.Addr, rc.cfg.TiDB.PdAddr)
+	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -323,7 +323,7 @@ func makeKVDeliver(
 	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
 
 	uuid := uuid.Must(uuid.NewV4())
-	return kv.NewKVDeliverClient(ctx, uuid, cfg.ImportServer.Addr, cfg.TiDB.PdAddr)
+	return kv.NewKVDeliverClient(ctx, uuid, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 }
 
 func setSessionVarInt(db *sql.DB, name string, value int) {
@@ -564,7 +564,7 @@ func NewTableRestore(
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
 		encoders:       encoders,
-		deliversMgr:    kv.NewKVDeliverKeeper(cfg.ImportServer.Addr, cfg.TiDB.PdAddr),
+		deliversMgr:    kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
 		handledRegions: make(map[int]*regionStat),
 		localChecksums: localChecksums,
 	}
