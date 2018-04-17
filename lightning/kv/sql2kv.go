@@ -4,7 +4,6 @@ import (
 	"github.com/juju/errors"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/plan"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	log "github.com/sirupsen/logrus"
@@ -41,7 +40,7 @@ type TableKVEncoder struct {
 	bufValues []interface{}
 
 	encoder     kvec.KvEncoder
-	idAllocator autoid.Allocator
+	idAllocator *kvec.Allocator
 }
 
 func NewTableKVEncoder(
@@ -50,7 +49,7 @@ func NewTableKVEncoder(
 	columns int, tableSchema string, sqlMode string) (*TableKVEncoder, error) {
 
 	idAllocator := kvec.NewAllocator()
-	idAllocator.Rebase(tableID, 0, false)
+	idAllocator.Reset(0)
 	kvEncoder, err := kvec.New(db, idAllocator)
 	if err != nil {
 		log.Errorf("[sql2kv] kv encoder create failed : %v", err)
@@ -117,8 +116,8 @@ func (kvcodec *TableKVEncoder) makeStatments(maxRows int) ([]uint32, error) {
 	return stmtIds, nil
 }
 
-func (kvcodec *TableKVEncoder) RebaseRowID(rowID int64) {
-	kvcodec.idAllocator.Rebase(kvcodec.tableID, rowID, false)
+func (kvcodec *TableKVEncoder) ResetRowID(rowID int64) {
+	kvcodec.idAllocator.Reset(rowID)
 }
 
 func (kvcodec *TableKVEncoder) Close() error {
@@ -126,7 +125,7 @@ func (kvcodec *TableKVEncoder) Close() error {
 }
 
 func (kvcodec *TableKVEncoder) NextRowID() int64 {
-	return kvcodec.idAllocator.Base()
+	return kvcodec.idAllocator.Base() + 1
 }
 
 func (kvcodec *TableKVEncoder) BuildMetaKvs(rowID int64) ([]kvec.KvPair, error) {

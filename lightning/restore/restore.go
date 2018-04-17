@@ -680,18 +680,11 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 	kvDeliver := tr.deliversMgr.AcquireClient(tr.dbInfo.Name, table)
 	defer tr.deliversMgr.RecycleClient(kvDeliver)
 
-	kvs, err := encoder.BuildMetaKvs(rowID)
-	if err != nil {
-		log.Errorf("[%s] failed to generate meta key (row_id = %d) : %s", table, rowID, err.Error())
-		return errors.Trace(err)
-	}
+	dsn := tr.cfg.TiDB
+	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	defer db.Close()
 
-	if err = kvDeliver.Put(kvs); err != nil {
-		log.Errorf("[%s] meta key deliver failed : %s", table, err.Error())
-		return errors.Trace(err)
-	}
-
-	return nil
+	return errors.Trace(AlterAutoIncrement(db, tr.tableMeta.DB, tr.tableMeta.Name, rowID))
 }
 
 func (tr *TableRestore) importKV() error {
@@ -875,7 +868,7 @@ func (exc *RegionRestoreExectuor) Run(
 	*/
 
 	if region.BeginRowID >= 0 {
-		kvEncoder.RebaseRowID(region.BeginRowID)
+		kvEncoder.ResetRowID(region.BeginRowID)
 	}
 	for {
 		select {

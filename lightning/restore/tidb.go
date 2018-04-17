@@ -271,3 +271,9 @@ func UpdateGCLifeTime(db *sql.DB, gcLifeTime string) error {
 		"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'", gcLifeTime))
 	return errors.Annotatef(err, "update tikv_gc_life_time=%s", gcLifeTime)
 }
+
+func AlterAutoIncrement(db *sql.DB, schema string, table string, incr int64) error {
+	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d", schema, table, incr)
+	_, err := db.Exec(query)
+	return errors.Annotatef(err, "alter table %s.%s auto_increment=%d", schema, table, incr)
+}
