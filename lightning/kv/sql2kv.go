@@ -126,7 +126,7 @@ func (kvcodec *TableKVEncoder) Close() error {
 }
 
 func (kvcodec *TableKVEncoder) NextRowID() int64 {
-	return kvcodec.idAllocator.Base()
+	return kvcodec.idAllocator.Base() + 1
 }
 
 func (kvcodec *TableKVEncoder) BuildMetaKvs(rowID int64) ([]kvec.KvPair, error) {

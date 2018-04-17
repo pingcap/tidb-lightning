@@ -873,7 +873,7 @@ func (exc *RegionRestoreExectuor) Run(
 	for {
 		select {
 		case <-ctx.Done():
-			return kvEncoder.NextRowID() + 1, rows, checksum, errCtxAborted
+			return kvEncoder.NextRowID(), rows, checksum, errCtxAborted
 		default:
 		}
 
@@ -892,7 +892,7 @@ func (exc *RegionRestoreExectuor) Run(
 
 			if err != nil {
 				log.Errorf("kv encode failed = %s\n", err.Error())
-				return kvEncoder.NextRowID() + 1, rows, checksum, errors.Trace(err)
+				return kvEncoder.NextRowID(), rows, checksum, errors.Trace(err)
 			}
 
 			// kv -> deliver ( -> tikv )
@@ -903,7 +903,7 @@ func (exc *RegionRestoreExectuor) Run(
 			if err != nil {
 				// TODO : retry ~
 				log.Errorf("kv deliver failed = %s\n", err.Error())
-				return kvEncoder.NextRowID() + 1, rows, checksum, errors.Trace(err)
+				return kvEncoder.NextRowID(), rows, checksum, errors.Trace(err)
 			}
 
 			checksum.Update(kvs)
@@ -915,5 +915,5 @@ func (exc *RegionRestoreExectuor) Run(
 	// TODO :
 	//		It's really necessary to statistic total num of kv pairs for debug tracing !!!
 
-	return kvEncoder.NextRowID() + 1, rows, checksum, nil
+	return kvEncoder.NextRowID(), rows, checksum, nil
 }
