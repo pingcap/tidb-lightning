@@ -868,7 +868,7 @@ func (exc *RegionRestoreExectuor) Run(
 	*/
 
 	if region.BeginRowID >= 0 {
-		kvEncoder.RebaseRowID(region.BeginRowID)
+		kvEncoder.ResetRowID(region.BeginRowID)
 	}
 	for {
 		select {
