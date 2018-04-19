@@ -4,7 +4,6 @@ import (
 	"github.com/juju/errors"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/plan"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	log "github.com/sirupsen/logrus"
 )
@@ -17,21 +16,15 @@ var (
 	PrepareStmtMode = false
 )
 
-func setGlobalVars() {
-	// hardcode it
-	plan.PreparedPlanCacheEnabled = true
-	plan.PreparedPlanCacheCapacity = 10
-}
-
 func InitMembufCap(batchSQLLength int64) {
 	kv.ImportingTxnMembufCap = int(batchSQLLength) * 4
 	// TODO : calculate predicted ratio, bwtween sql and kvs' size, base on specified DDL
 }
 
 type TableKVEncoder struct {
-	db      string
-	table   string
-	dbID    int64
+	db    string
+	table string
+	// dbID    int64
 	tableID int64
 	ddl     string
 	columns int
@@ -44,8 +37,7 @@ type TableKVEncoder struct {
 }
 
 func NewTableKVEncoder(
-	db string, dbID int64,
-	table string, tableID int64,
+	db string, table string, tableID int64,
 	columns int, tableSchema string, sqlMode string) (*TableKVEncoder, error) {
 
 	idAllocator := kvec.NewAllocator()
@@ -62,12 +54,9 @@ func NewTableKVEncoder(
 	}
 	log.Debugf("set sql_mode=%s", sqlMode)
 
-	setGlobalVars()
-
 	kvcodec := &TableKVEncoder{
 		db:          db,
 		table:       table,
-		dbID:        dbID,
 		tableID:     tableID,
 		encoder:     kvEncoder,
 		idAllocator: idAllocator,
@@ -126,14 +115,6 @@ func (kvcodec *TableKVEncoder) Close() error {
 
 func (kvcodec *TableKVEncoder) NextRowID() int64 {
 	return kvcodec.idAllocator.Base() + 1
-}
-
-func (kvcodec *TableKVEncoder) BuildMetaKvs(rowID int64) ([]kvec.KvPair, error) {
-	kv, err := kvcodec.encoder.EncodeMetaAutoID(kvcodec.dbID, kvcodec.tableID, rowID)
-	if err != nil {
-		log.Errorf("[sql2kv] build auot_id meta key error = %v", err)
-	}
-	return []kvec.KvPair{kv}, nil
 }
 
 func (kvcodec *TableKVEncoder) SQL2KV(sql []byte) ([]kvec.KvPair, uint64, error) {
