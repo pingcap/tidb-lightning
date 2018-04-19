@@ -17,18 +17,14 @@ import (
 )
 
 type TiDBManager struct {
-	db *sql.DB
-	// store kv.Storage
-	// dom   *domain.Domain
+	db      *sql.DB
 	client  *http.Client
 	baseURL *url.URL
 }
 
 type TidbDBInfo struct {
-	// ID        int64
 	Name   string
 	Tables map[string]*TidbTableInfo
-	// Available bool
 }
 
 type TidbTableInfo struct {
@@ -36,7 +32,6 @@ type TidbTableInfo struct {
 	Name    string
 	Columns int
 	Indices int
-	// Available bool
 
 	core *model.TableInfo
 }
@@ -56,8 +51,6 @@ func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
 		db:      db,
 		client:  &http.Client{},
 		baseURL: u,
-		// store: kvStore,
-		// dom:   dom,
 	}, nil
 }
 
