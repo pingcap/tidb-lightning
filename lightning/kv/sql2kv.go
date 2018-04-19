@@ -22,9 +22,8 @@ func InitMembufCap(batchSQLLength int64) {
 }
 
 type TableKVEncoder struct {
-	db    string
-	table string
-	// dbID    int64
+	db      string
+	table   string
 	tableID int64
 	ddl     string
 	columns int

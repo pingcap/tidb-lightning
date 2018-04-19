@@ -1,13 +1,12 @@
 package restore
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
-
-	"database/sql"
-	"encoding/json"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -59,7 +58,6 @@ func (timgr *TiDBManager) Close() {
 }
 
 func (timgr *TiDBManager) InitSchema(database string, tablesSchema map[string]string) error {
-
 	_, err := timgr.db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database))
 	if err != nil {
 		return errors.Trace(err)
