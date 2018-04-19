@@ -640,6 +640,11 @@ func (tr *TableRestore) makeKVDeliver() (kv.KVDeliver, error) {
 }
 
 func (tr *TableRestore) onFinished() error {
+	// flush all kvs into TiKV
+	if err := tr.importKV(); err != nil {
+		return errors.Trace(err)
+	}
+
 	// generate meta kv
 	var (
 		tableMaxRowID int64
@@ -658,11 +663,6 @@ func (tr *TableRestore) onFinished() error {
 	tr.localChecksums[table] = checksum
 
 	if err := tr.restoreTableMeta(tableMaxRowID); err != nil {
-		return errors.Trace(err)
-	}
-
-	// flush all kvs into TiKV ~
-	if err := tr.importKV(); err != nil {
 		return errors.Trace(err)
 	}
 
