@@ -673,15 +673,6 @@ func (tr *TableRestore) onFinished() error {
 }
 
 func (tr *TableRestore) restoreTableMeta(rowID int64) error {
-	encoder := tr.encoders.Apply()
-	defer tr.encoders.Recycle(encoder)
-
-	table := tr.tableInfo.Name
-	log.Infof("[%s] restore table meta (row_id = %d)", table, rowID)
-
-	kvDeliver := tr.deliversMgr.AcquireClient(tr.dbInfo.Name, table)
-	defer tr.deliversMgr.RecycleClient(kvDeliver)
-
 	dsn := tr.cfg.TiDB
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
