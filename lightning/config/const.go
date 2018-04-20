@@ -6,8 +6,8 @@ const (
 	_G = _M << 10
 
 	// mydumper
-	ReadBlockSize int64 = 32 * _K
-	MinRegionSize int64 = 256 * _M
+	DefaultReadBlockSize int64 = 32 * _K
+	DefaultMinRegionSize int64 = 256 * _M
 
 	// kv import
 	KVMaxBatchSize int64 = 200 * _G

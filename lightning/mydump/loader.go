@@ -61,7 +61,7 @@ type MDLoader struct {
 
 func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	mdl := &MDLoader{
-		dir: cfg.Mydumper.SourceDir,
+		dir: cfg.DataSource.SourceDir,
 		dbs: make(map[string]*MDDatabaseMeta),
 	}
 

@@ -590,7 +590,7 @@ func (tr *TableRestore) loadRegions() {
 	// TODO : regionProgress & !regionProgress.Finished()
 
 	preAllocateRowsID := !tr.tableInfo.WithIntegerPrimaryKey()
-	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
+	founder := mydump.NewRegionFounder(tr.cfg.DataSource.MinRegionSize)
 	regions := founder.MakeTableRegions(tr.tableMeta, preAllocateRowsID)
 
 	table := tr.tableMeta.Name

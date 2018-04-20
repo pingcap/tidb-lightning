@@ -31,9 +31,9 @@ type Config struct {
 	// not implemented yet.
 	ProgressStore DBStore `toml:"progress-store"`
 
-	Mydumper     MydumperRuntime `toml:"mydumper"`
-	TikvImporter TikvImporter    `toml:"tikv-importer"`
-	PostRestore  PostRestore     `toml:"post-restore"`
+	DataSource   DataSource   `toml:"data-source"`
+	TikvImporter TikvImporter `toml:"tikv-importer"`
+	PostRestore  PostRestore  `toml:"post-restore"`
 
 	// command line flags
 	ConfigFile string
@@ -53,10 +53,11 @@ type PostRestore struct {
 	Analyze  bool `toml:"analyze"`
 }
 
-type MydumperRuntime struct {
+type DataSource struct {
+	SourceType    string `toml:"data-source-type"`
+	SourceDir     string `toml:"data-source-dir"`
 	ReadBlockSize int64  `toml:"read-block-size"`
 	MinRegionSize int64  `toml:"region-min-size"`
-	SourceDir     string `toml:"data-source-dir"`
 }
 
 type TikvImporter struct {
@@ -98,14 +99,14 @@ func LoadConfig(args []string) (*Config, error) {
 	}
 
 	// handle mydumper
-	if cfg.Mydumper.MinRegionSize <= 0 {
-		cfg.Mydumper.MinRegionSize = MinRegionSize
+	if cfg.DataSource.MinRegionSize <= 0 {
+		cfg.DataSource.MinRegionSize = DefaultMinRegionSize
 	}
-	if cfg.Mydumper.ReadBlockSize <= 0 {
-		cfg.Mydumper.ReadBlockSize = ReadBlockSize
+	if cfg.DataSource.ReadBlockSize <= 0 {
+		cfg.DataSource.ReadBlockSize = DefaultReadBlockSize
 	}
 
-	// hendle kv import
+	// handle kv import
 	if cfg.TikvImporter.BatchSize <= 0 {
 		cfg.TikvImporter.BatchSize = KVMaxBatchSize
 	}
