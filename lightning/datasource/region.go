@@ -1,4 +1,4 @@
-package mydump
+package datasource
 
 import (
 	"fmt"

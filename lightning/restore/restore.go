@@ -15,8 +15,8 @@ import (
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/datasource"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
-	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 )
@@ -42,7 +42,7 @@ type RestoreControlloer struct {
 	wg  sync.WaitGroup
 
 	cfg    *config.Config
-	dbMeta *mydump.MDDatabaseMeta
+	dbMeta *datasource.MDDatabaseMeta
 	dbInfo *TidbDBInfo
 
 	localChecksums map[string]*verify.KVChecksum
@@ -52,7 +52,7 @@ type RestoreControlloer struct {
 	// tablesProgress map[string]*TableProgress
 }
 
-func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *RestoreControlloer {
+func NewRestoreControlloer(dbMeta *datasource.MDDatabaseMeta, cfg *config.Config) *RestoreControlloer {
 	// store := cfg.ProgressStore
 	// statDB := ConnectDB(store.Host, store.Port, store.User, store.Psw)
 	// statDbms := NewProgressDBMS(statDB, store.Database)
@@ -376,7 +376,7 @@ type restoreCallback func(regionID int, maxRowID int64, rows uint64, checksum *v
 
 type regionRestoreTask struct {
 	status   string
-	region   *mydump.TableRegion
+	region   *datasource.TableRegion
 	executor *RegionRestoreExectuor
 	encoders *kvEncoderPool
 	delivers *kv.KVDeliverKeeper
@@ -385,7 +385,7 @@ type regionRestoreTask struct {
 }
 
 func newRegionRestoreTask(
-	region *mydump.TableRegion,
+	region *datasource.TableRegion,
 	executor *RegionRestoreExectuor,
 	encoders *kvEncoderPool,
 	delivers *kv.KVDeliverKeeper,
@@ -438,7 +438,7 @@ type kvEncoderPool struct {
 	mux       sync.Mutex
 	dbInfo    *TidbDBInfo
 	tableInfo *TidbTableInfo
-	tableMeta *mydump.MDTableMeta
+	tableMeta *datasource.MDTableMeta
 	encoders  []*kv.TableKVEncoder
 	sqlMode   string
 }
@@ -446,7 +446,7 @@ type kvEncoderPool struct {
 func newKvEncoderPool(
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
-	tableMeta *mydump.MDTableMeta, sqlMode string) *kvEncoderPool {
+	tableMeta *datasource.MDTableMeta, sqlMode string) *kvEncoderPool {
 	return &kvEncoderPool{
 		dbInfo:    dbInfo,
 		tableInfo: tableInfo,
@@ -531,12 +531,12 @@ type TableRestore struct {
 	cfg         *config.Config
 	dbInfo      *TidbDBInfo
 	tableInfo   *TidbTableInfo
-	tableMeta   *mydump.MDTableMeta
+	tableMeta   *datasource.MDTableMeta
 	encoders    *kvEncoderPool
 	deliversMgr *kv.KVDeliverKeeper
 
-	regions        []*mydump.TableRegion
-	id2regions     map[int]*mydump.TableRegion
+	regions        []*datasource.TableRegion
+	id2regions     map[int]*datasource.TableRegion
 	tasks          []*regionRestoreTask
 	handledRegions map[int]*regionStat
 	localChecksums map[string]*verify.KVChecksum
@@ -552,7 +552,7 @@ func NewTableRestore(
 	ctx context.Context,
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
-	tableMeta *mydump.MDTableMeta,
+	tableMeta *datasource.MDTableMeta,
 	cfg *config.Config,
 	localChecksums map[string]*verify.KVChecksum) *TableRestore {
 
@@ -590,11 +590,11 @@ func (tr *TableRestore) loadRegions() {
 	// TODO : regionProgress & !regionProgress.Finished()
 
 	preAllocateRowsID := !tr.tableInfo.WithIntegerPrimaryKey()
-	founder := mydump.NewRegionFounder(tr.cfg.DataSource.MinRegionSize)
+	founder := datasource.NewRegionFounder(tr.cfg.DataSource.MinRegionSize)
 	regions := founder.MakeTableRegions(tr.tableMeta, preAllocateRowsID)
 
 	table := tr.tableMeta.Name
-	id2regions := make(map[int]*mydump.TableRegion)
+	id2regions := make(map[int]*datasource.TableRegion)
 	for _, region := range regions {
 		log.Infof("[%s] region - %s", table, region.Name())
 		id2regions[region.ID] = region
@@ -816,14 +816,14 @@ type RegionRestoreExectuor struct {
 
 	dbInfo    *TidbDBInfo
 	tableInfo *TidbTableInfo
-	tableMeta *mydump.MDTableMeta
+	tableMeta *datasource.MDTableMeta
 }
 
 func NewRegionRestoreExectuor(
 	cfg *config.Config,
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
-	tableMeta *mydump.MDTableMeta) *RegionRestoreExectuor {
+	tableMeta *datasource.MDTableMeta) *RegionRestoreExectuor {
 
 	exc := &RegionRestoreExectuor{
 		cfg:       cfg,
@@ -837,18 +837,18 @@ func NewRegionRestoreExectuor(
 
 func (exc *RegionRestoreExectuor) Run(
 	ctx context.Context,
-	region *mydump.TableRegion,
+	region *datasource.TableRegion,
 	kvEncoder *kv.TableKVEncoder,
 	kvDeliver kv.KVDeliver) (int64, uint64, *verify.KVChecksum, error) {
 
 	/*
 		Flows :
-			1. read mydump file
+			1. read datasource file
 			2. sql -> kvs
 			3. load kvs data (into kv deliver server)
 			4. flush kvs data (into tikv node)
 	*/
-	reader, err := mydump.NewRegionReader(region.File, region.Offset, region.Size)
+	reader, err := datasource.NewRegionReader(region.File, region.Offset, region.Size)
 	if err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}

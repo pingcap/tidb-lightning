@@ -1,4 +1,4 @@
-package mydump_test
+package datasource
 
 import (
 	"bytes"

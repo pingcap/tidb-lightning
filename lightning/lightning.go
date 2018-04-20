@@ -13,9 +13,9 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/datasource"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
 	applog "github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
 )
 
@@ -76,7 +76,7 @@ func (l *Lightning) Run() {
 }
 
 func (l *Lightning) run() {
-	mdl, err := mydump.NewMyDumpLoader(l.cfg)
+	mdl, err := datasource.NewMyDumpLoader(l.cfg)
 	if err != nil {
 		log.Errorf("failed to load mydumper source : %s", err.Error())
 		return
