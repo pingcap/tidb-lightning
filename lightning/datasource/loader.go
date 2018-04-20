@@ -13,6 +13,11 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/config"
 )
 
+const (
+	TypeCSV      = "csv"
+	TypeMydumper = "mydumper"
+)
+
 var (
 	// errors
 	errMDEmpty   = errors.New("empty mydumper dir")
@@ -27,7 +32,7 @@ type MDDatabaseMeta struct {
 }
 
 func (m *MDDatabaseMeta) GetSchema() string {
-	schema, err := ExportStatement(m.SchemaFile)
+	schema, err := exportStatement(m.SchemaFile)
 	if err != nil {
 		log.Errorf("failed to extract database schema (%s) : %s", m.SchemaFile, err.Error())
 		return ""
@@ -43,7 +48,7 @@ type MDTableMeta struct {
 }
 
 func (m *MDTableMeta) GetSchema() string {
-	schema, err := ExportStatement(m.SchemaFile)
+	schema, err := exportStatement(m.SchemaFile)
 	if err != nil {
 		log.Errorf("failed to extract table schema (%s) : %s", m.SchemaFile, err.Error())
 		return ""
