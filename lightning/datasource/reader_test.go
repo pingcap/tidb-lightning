@@ -8,7 +8,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	"github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
 const (
@@ -22,10 +21,12 @@ type dbManager struct {
 	db       *sql.DB
 }
 
-func newDBManager() *dbManager {
+func newDBManager(c *C) *dbManager {
+	db, err := common.ConnectDB("localhost", 3306, "root", "")
+	c.Assert(err, IsNil)
 	mgr := &dbManager{
 		database: utestDB,
-		db:       common.ConnectDB("localhost", 3306, "root", ""),
+		db:       db,
 	}
 	return mgr.init("")
 }
@@ -72,7 +73,7 @@ func checkTableData(c *C, db *sql.DB) {
 }
 
 func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
-	dbMgr := newDBManager()
+	dbMgr := newDBManager(c)
 	defer func() {
 		dbMgr.clear().close()
 	}()
@@ -83,7 +84,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 		dbMgr.init(string(sqlCreteTable))
 
 		for _, file := range tblMeta.DataFiles {
-			reader, err := mydump.NewMDDataReader(file, 0)
+			reader, err := NewMDDataReader(file, 0)
 			c.Assert(err, IsNil)
 			defer reader.Close()
 
@@ -97,7 +98,9 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 					c.Assert(err, IsNil)
 				}
 			}
-			c.Assert(reader.Tell(), Equals, common.GetFileSize(file))
+			fileSize, err := common.GetFileSize(file)
+			c.Assert(err, IsNil)
+			c.Assert(reader.Tell(), Equals, fileSize)
 		}
 	}
 
@@ -108,7 +111,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 func (s *testMydumpReaderSuite) TestReader(c *C) {
 	fmt.Println("Testing mydump reader ...")
 
-	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: utestDataSrouce}}
+	cfg := &config.Config{DataSource: config.DataSource{SourceDir: utestDataSrouce}}
 
 	mdl, err := NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)

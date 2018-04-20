@@ -5,7 +5,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	md "github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
 var _ = Suite(&testMydumpLoaderSuite{})
@@ -20,12 +19,12 @@ func (s *testMydumpLoaderSuite) SetUpSuite(c *C)    {}
 func (s *testMydumpLoaderSuite) TearDownSuite(c *C) {}
 
 func (s *testMydumpLoaderSuite) TestLoader(c *C) {
-	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./not-exists"}}
-	mdl, err := md.NewMyDumpLoader(cfg)
+	cfg := &config.Config{DataSource: config.DataSource{SourceDir: "./not-exists"}}
+	mdl, err := NewMyDumpLoader(cfg)
 	c.Assert(err, NotNil)
 
-	cfg = &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
-	mdl, err = md.NewMyDumpLoader(cfg)
+	cfg = &config.Config{DataSource: config.DataSource{SourceDir: "./examples"}}
+	mdl, err = NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)
 
 	dbMeta := mdl.GetDatabase()

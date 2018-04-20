@@ -6,7 +6,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
 const (
@@ -24,13 +23,13 @@ func (s *testMydumpRegionSuite) TearDownSuite(c *C) {}
 	TODO : test with specified 'fuzzyRegionSize' & 'regionBlockSize' ...
 */
 func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
-	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
+	cfg := &config.Config{DataSource: config.DataSource{SourceDir: "./examples"}}
 	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabase()
 	founder := NewRegionFounder(defMinRegionSize)
 
 	for _, meta := range dbMeta.Tables {
-		regions := founder.MakeTableRegions(meta)
+		regions := founder.MakeTableRegions(meta, false)
 
 		// table := meta.Name
 		// fmt.Printf("[%s] region count ===============> %d\n", table, len(regions))
@@ -44,7 +43,9 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		var tolFileSize int64 = 0
 		var tolRegionSize int64 = 0
 		for _, file := range meta.DataFiles {
-			tolFileSize += common.GetFileSize(file)
+			fileSize, err := common.GetFileSize(file)
+			c.Assert(err, IsNil)
+			tolFileSize += fileSize
 		}
 		for _, region := range regions {
 			tolRegionSize += region.Size
@@ -78,13 +79,13 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 }
 
 func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
-	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
+	cfg := &config.Config{DataSource: config.DataSource{SourceDir: "./examples"}}
 	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabase()
 	founder := NewRegionFounder(defMinRegionSize)
 
 	for _, meta := range dbMeta.Tables {
-		regions := founder.MakeTableRegions(meta)
+		regions := founder.MakeTableRegions(meta, false)
 
 		tolValTuples := 0
 		for _, reg := range regions {
