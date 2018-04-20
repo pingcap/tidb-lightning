@@ -37,9 +37,6 @@ password = ""
 status_port = 10080
 # PD Server of target cluster
 pd-addr = "127.0.0.1:2379"
-# PD Server of target cluster. One pd address is enough.
-# Uncomment the following line if you want to set sql-mode. You can set it to empty string or any valid sql-mode value supported by tidb
-# sql-mode = ""
 # lightning uses some code of tidb(used as library), and the flag controls it's log level.
 log-level = "error"
 # set tidb session variable to speed up checksum/analyze table.
