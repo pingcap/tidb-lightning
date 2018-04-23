@@ -57,6 +57,7 @@ type MydumperRuntime struct {
 	ReadBlockSize int64  `toml:"read-block-size"`
 	MinRegionSize int64  `toml:"region-min-size"`
 	SourceDir     string `toml:"data-source-dir"`
+	NoSchema      bool   `toml:"no-schema"`
 }
 
 type TikvImporter struct {

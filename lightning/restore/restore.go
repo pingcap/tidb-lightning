@@ -108,14 +108,16 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 	defer tidbMgr.Close()
 
 	database := rc.dbMeta.Name
-	tablesSchema := make(map[string]string)
-	for tbl, tblMeta := range rc.dbMeta.Tables {
-		tablesSchema[tbl] = tblMeta.GetSchema()
-	}
 
-	err = tidbMgr.InitSchema(database, tablesSchema)
-	if err != nil {
-		return errors.Errorf("db schema failed to init : %v", err)
+	if !rc.cfg.Mydumper.NoSchema {
+		tablesSchema := make(map[string]string)
+		for tbl, tblMeta := range rc.dbMeta.Tables {
+			tablesSchema[tbl] = tblMeta.GetSchema()
+		}
+		err = tidbMgr.InitSchema(database, tablesSchema)
+		if err != nil {
+			return errors.Errorf("db schema failed to init : %v", err)
+		}
 	}
 	dbInfo, err := tidbMgr.LoadSchemaInfo(database)
 	if err != nil {
@@ -470,7 +472,7 @@ func (p *kvEncoderPool) init(size int) *kvEncoderPool {
 			defer wg.Done()
 			ec, err := kv.NewTableKVEncoder(
 				p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-				p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode)
+				p.tableInfo.Columns, p.tableInfo.CreateTableStmt, p.sqlMode)
 			if err == nil {
 				p.encoders = append(p.encoders, ec)
 			}
@@ -488,7 +490,7 @@ func (p *kvEncoderPool) Apply() *kv.TableKVEncoder {
 	if size == 0 {
 		encoder, err := kv.NewTableKVEncoder(
 			p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-			p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode)
+			p.tableInfo.Columns, p.tableInfo.CreateTableStmt, p.sqlMode)
 		if err != nil {
 			log.Errorf("failed to new kv encoder (%s) : %s", p.dbInfo.Name, err.Error())
 			return nil
