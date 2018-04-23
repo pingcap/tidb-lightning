@@ -67,7 +67,7 @@ func NewRegionFounder(minRegionSize int64) *RegionFounder {
 	}
 }
 
-func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, allocateRowID bool) []*TableRegion {
+func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, allocateRowID bool, sourceType string) []*TableRegion {
 	var lock sync.Mutex
 	var wg sync.WaitGroup
 
@@ -85,9 +85,9 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, allocateRowID bool) 
 
 			var regions []*TableRegion
 			if allocateRowID {
-				regions = splitExactRegion(db, table, file, minRegionSize)
+				regions = splitExactRegion(sourceType, db, table, file, minRegionSize)
 			} else {
-				regions = splitFuzzyRegion(db, table, file, minRegionSize)
+				regions = splitFuzzyRegion(sourceType, db, table, file, minRegionSize)
 			}
 
 			lock.Lock()
@@ -120,8 +120,8 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, allocateRowID bool) 
 	return filesRegions
 }
 
-func splitFuzzyRegion(db string, table string, file string, minRegionSize int64) []*TableRegion {
-	reader, err := NewMDDataReader(file, 0)
+func splitFuzzyRegion(sourceType string, db string, table string, file string, minRegionSize int64) []*TableRegion {
+	reader, err := NewDataReader(sourceType, file, 0)
 	if err != nil {
 		log.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
 		return nil
@@ -166,8 +166,8 @@ func splitFuzzyRegion(db string, table string, file string, minRegionSize int64)
 	return regions
 }
 
-func splitExactRegion(db string, table string, file string, minRegionSize int64) []*TableRegion {
-	reader, err := NewMDDataReader(file, 0)
+func splitExactRegion(sourceType string, db string, table string, file string, minRegionSize int64) []*TableRegion {
+	reader, err := NewDataReader(sourceType, file, 0)
 	if err != nil {
 		log.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
 		return nil

@@ -76,13 +76,13 @@ func (l *Lightning) Run() {
 }
 
 func (l *Lightning) run() {
-	mdl, err := datasource.NewMyDumpLoader(l.cfg)
+	ds, err := datasource.New(l.cfg)
 	if err != nil {
 		log.Errorf("failed to load mydumper source : %s", err.Error())
 		return
 	}
 
-	dbMeta := mdl.GetDatabase()
+	dbMeta := ds.GetDatabase()
 	procedure := restore.NewRestoreControlloer(dbMeta, l.cfg)
 	defer procedure.Close()
 

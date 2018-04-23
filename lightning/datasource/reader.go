@@ -16,6 +16,23 @@ var (
 	insStmtRegex = regexp.MustCompile(`INSERT INTO .* VALUES`)
 )
 
+type DataReader interface {
+	Read(minSize int64) ([][]byte, error)
+	Tell() int64
+	Seek(offset int64) int64
+	Close() error
+}
+
+func NewDataReader(sourceType string, file string, offset int64) (DataReader, error) {
+	switch sourceType {
+	case TypeMydumper:
+		return newMDDataReader(file, offset)
+		// case TypeCSV:
+		// return newCSVDataReader(file, offset)
+	}
+	return nil, errors.Errorf("unknown source type %s", sourceType)
+}
+
 func exportStatement(sqlFile string) ([]byte, error) {
 	fd, err := os.Open(sqlFile)
 	if err != nil {
@@ -69,7 +86,7 @@ type MDDataReader struct {
 	// readBuffer []byte
 }
 
-func NewMDDataReader(file string, offset int64) (*MDDataReader, error) {
+func newMDDataReader(file string, offset int64) (DataReader, error) {
 	fd, err := os.Open(file)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -286,17 +303,18 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 
 /////////////////////////////////////////////////////////////////////////
 
+// TODO:
 type RegionReader struct {
-	fileReader *MDDataReader
+	fileReader DataReader
 	offset     int64
 	size       int64
 	pos        int64
 }
 
-func NewRegionReader(file string, offset int64, size int64) (*RegionReader, error) {
+func NewRegionReader(sourceType string, file string, offset int64, size int64) (*RegionReader, error) {
 	log.Debugf("[%s] offset = %d / size = %d", file, offset, size)
 
-	fileReader, err := NewMDDataReader(file, offset)
+	fileReader, err := NewDataReader(sourceType, file, offset)
 	if err != nil {
 		return nil, err
 	}

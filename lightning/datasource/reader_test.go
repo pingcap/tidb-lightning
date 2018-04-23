@@ -12,7 +12,7 @@ import (
 
 const (
 	utestDB         string = "_mydump_reader_utest_"
-	utestDataSrouce string = "./examples"
+	utestDataSource string = "./examples"
 )
 
 ////////////////////////////
@@ -112,7 +112,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 func (s *testMydumpReaderSuite) TestReader(c *C) {
 	fmt.Println("Testing mydump reader ...")
 
-	cfg := &config.Config{DataSource: config.DataSource{SourceDir: utestDataSrouce}}
+	cfg := &config.Config{DataSource: config.DataSource{SourceDir: utestDataSource}}
 
 	mdl, err := NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)

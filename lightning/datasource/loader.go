@@ -59,26 +59,28 @@ func (m *MDTableMeta) GetSchema() string {
 /*
 	Mydumper File Loader
 */
-type MDLoader struct {
-	dir string
-	dbs map[string]*MDDatabaseMeta
+type DataSource struct {
+	sourceType string
+	dir        string
+	dbs        map[string]*MDDatabaseMeta
 }
 
-func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
-	mdl := &MDLoader{
-		dir: cfg.DataSource.SourceDir,
-		dbs: make(map[string]*MDDatabaseMeta),
+func New(cfg *config.Config) (*DataSource, error) {
+	ds := &DataSource{
+		sourceType: cfg.DataSource.SourceType,
+		dir:        cfg.DataSource.SourceDir,
+		dbs:        make(map[string]*MDDatabaseMeta),
 	}
 
-	if err := mdl.setup(mdl.dir); err != nil {
+	if err := ds.setup(ds.dir); err != nil {
 		// log.Errorf("init mydumper loader failed : %s\n", err.Error())
 		return nil, errors.Trace(err)
 	}
 
-	return mdl, nil
+	return ds, nil
 }
 
-func (l *MDLoader) setup(dir string) error {
+func (ds *DataSource) setup(dir string) error {
 	/*
 		Mydumper file names format
 			db    —— {db}-schema-create.sql
@@ -100,20 +102,20 @@ func (l *MDLoader) setup(dir string) error {
 	log.Debugf("Files detected : %+v", files)
 
 	// DB : [table , table ...]
-	if err := l.setupDBs(files); err != nil {
+	if err := ds.setupDBs(files); err != nil {
 		return errors.Trace(err)
 	}
 
 	// Table : create table ~
-	if err := l.setupTables(files); err != nil {
+	if err := ds.setupTables(files); err != nil {
 		return errors.Trace(err)
 	}
 
 	// Sql file for restore data
-	return l.setupTablesData(files)
+	return ds.setupTablesData(files)
 }
 
-func (l *MDLoader) setupDBs(files map[string]string) error {
+func (ds *DataSource) setupDBs(files map[string]string) error {
 	for fpath, fname := range files {
 		if !strings.HasSuffix(fname, "-schema-create.sql") {
 			continue
@@ -121,21 +123,21 @@ func (l *MDLoader) setupDBs(files map[string]string) error {
 
 		idx := strings.Index(fname, "-schema-create.sql")
 		dbname := fname[:idx]
-		l.dbs[dbname] = &MDDatabaseMeta{
+		ds.dbs[dbname] = &MDDatabaseMeta{
 			Name:       dbname,
 			SchemaFile: fpath,
 			Tables:     make(map[string]*MDTableMeta),
 		}
 	}
 
-	if len(l.dbs) == 0 {
+	if len(ds.dbs) == 0 {
 		return errMDMiss
 	}
 
 	return nil
 }
 
-func (l *MDLoader) setupTables(files map[string]string) error {
+func (ds *DataSource) setupTables(files map[string]string) error {
 	for fpath, fname := range files {
 		// filepath.Base(path)
 		if !strings.HasSuffix(fname, "-schema.sql") {
@@ -151,7 +153,7 @@ func (l *MDLoader) setupTables(files map[string]string) error {
 		}
 
 		db, table := fields[0], fields[1]
-		dbMeta, ok := l.dbs[db]
+		dbMeta, ok := ds.dbs[db]
 		if !ok {
 			return errors.Errorf("invalid table schema file, cannot find db - %s", fpath)
 		} else if _, exists := dbMeta.Tables[table]; exists {
@@ -169,9 +171,17 @@ func (l *MDLoader) setupTables(files map[string]string) error {
 	return nil
 }
 
-func (l *MDLoader) setupTablesData(files map[string]string) error {
+func (ds *DataSource) setupTablesData(files map[string]string) error {
+	var suffix string
+	switch ds.sourceType {
+	case TypeCSV:
+		suffix = ".csv"
+	case TypeMydumper:
+		suffix = ".sql"
+	}
+
 	for fpath, fname := range files {
-		if !strings.HasSuffix(fname, ".sql") ||
+		if !strings.HasSuffix(fname, suffix) ||
 			strings.Index(fname, "-schema.sql") >= 0 ||
 			strings.Index(fname, "-schema-create.sql") >= 0 {
 			continue
@@ -187,7 +197,7 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 			continue
 		}
 
-		idx := strings.Index(fname, ".sql")
+		idx := strings.Index(fname, suffix)
 		name := fname[:idx]
 		fields := strings.Split(name, ".")
 		if len(fields) < 2 {
@@ -196,18 +206,18 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 		}
 
 		db, table := fields[0], fields[1]
-		if dbMeta, ok := l.dbs[db]; !ok {
+		if dbMeta, ok := ds.dbs[db]; !ok {
 			return errors.Errorf("invalid data sql file, miss host db - %s", fpath)
 		} else if tableMeta, ok := dbMeta.Tables[table]; !ok {
 			return errors.Errorf("invalid data sql file, miss host table - %s", fpath)
 		} else {
-			// tableMeta.Rows += l.countTableFileRows(fpath)
+			// tableMeta.Rows += ds.countTableFileRows(fpath)
 			tableMeta.DataFiles = append(tableMeta.DataFiles, fpath)
 		}
 	}
 
 	// sort all tables' data files by file-name
-	for _, dbMeta := range l.dbs {
+	for _, dbMeta := range ds.dbs {
 		for _, tblMeta := range dbMeta.Tables {
 			sort.Strings(tblMeta.DataFiles)
 		}
@@ -216,8 +226,8 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 	return nil
 }
 
-func (l *MDLoader) countTableFileRows(file string) int {
-	reader, err := NewMDDataReader(file, 0)
+func (ds *DataSource) countTableFileRows(file string) int {
+	reader, err := NewDataReader(ds.sourceType, file, 0)
 	if err != nil {
 		log.Errorf("read mydump file failed (%s) : %s", file, err.Error())
 		return -1
@@ -238,9 +248,9 @@ func (l *MDLoader) countTableFileRows(file string) int {
 	return rows
 }
 
-func (l *MDLoader) GetDatabase() *MDDatabaseMeta {
-	for db := range l.dbs {
-		return l.dbs[db]
+func (ds *DataSource) GetDatabase() *MDDatabaseMeta {
+	for db := range ds.dbs {
+		return ds.dbs[db]
 	}
 	return nil
 }

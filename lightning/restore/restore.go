@@ -591,7 +591,7 @@ func (tr *TableRestore) loadRegions() {
 
 	preAllocateRowsID := !tr.tableInfo.WithIntegerPrimaryKey()
 	founder := datasource.NewRegionFounder(tr.cfg.DataSource.MinRegionSize)
-	regions := founder.MakeTableRegions(tr.tableMeta, preAllocateRowsID)
+	regions := founder.MakeTableRegions(tr.tableMeta, preAllocateRowsID, tr.cfg.DataSource.SourceType)
 
 	table := tr.tableMeta.Name
 	id2regions := make(map[int]*datasource.TableRegion)
@@ -848,7 +848,7 @@ func (exc *RegionRestoreExectuor) Run(
 			3. load kvs data (into kv deliver server)
 			4. flush kvs data (into tikv node)
 	*/
-	reader, err := datasource.NewRegionReader(region.File, region.Offset, region.Size)
+	reader, err := datasource.NewRegionReader(exc.cfg.DataSource.SourceType, region.File, region.Offset, region.Size)
 	if err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
