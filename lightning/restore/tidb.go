@@ -114,8 +114,9 @@ func (timgr *TiDBManager) GetSchemas() ([]*model.DBInfo, error) {
 }
 
 func (timgr *TiDBManager) getSchemas() ([]*model.DBInfo, error) {
-	timgr.baseURL.Path = "schema"
-	resp, err := timgr.client.Get(timgr.baseURL.String())
+	baseURL := *timgr.baseURL
+	baseURL.Path = "schema"
+	resp, err := timgr.client.Get(baseURL.String())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -135,8 +136,9 @@ func (timgr *TiDBManager) getSchemas() ([]*model.DBInfo, error) {
 }
 
 func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
-	timgr.baseURL.Path = fmt.Sprintf("schema/%s", schema)
-	resp, err := timgr.client.Get(timgr.baseURL.String())
+	baseURL := *timgr.baseURL
+	baseURL.Path = fmt.Sprintf("schema/%s", schema)
+	resp, err := timgr.client.Get(baseURL.String())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
