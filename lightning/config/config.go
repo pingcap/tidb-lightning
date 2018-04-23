@@ -15,7 +15,7 @@ type DBStore struct {
 	Port                   int    `toml:"port"`
 	User                   string `toml:"user"`
 	Psw                    string `toml:"password"`
-	StatusPort             int    `toml:"status_port"`
+	StatusPort             int    `toml:"status-port"`
 	PdAddr                 string `toml:"pd-addr"`
 	SQLMode                string `toml:"sql-mode"`
 	LogLevel               string `toml:"log-level"`

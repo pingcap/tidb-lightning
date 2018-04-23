@@ -17,7 +17,7 @@ import (
 var (
 	// errors
 	errDirNotExists = errors.New("mydumper dir not exists")
-	errMDMiss       = errors.New("invalid mydumper files")
+	errMissingFile  = errors.New("missing file")
 )
 
 type MDDatabaseMeta struct {
@@ -27,7 +27,10 @@ type MDDatabaseMeta struct {
 }
 
 func (meta *MDDatabaseMeta) String() string {
-	v, _ := json.Marshal(meta)
+	v, err := json.Marshal(meta)
+	if err != nil {
+		log.Error("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
+	}
 	return string(v)
 }
 
@@ -127,7 +130,7 @@ func (l *MDLoader) setupDBs(files map[string]string) error {
 	}
 
 	if len(l.dbs) == 0 {
-		return errors.Annotatef(errMDMiss, "missing {schema}-schema-create.sql")
+		return errors.Annotatef(errMissingFile, "missing {schema}-schema-create.sql")
 	}
 
 	return nil
