@@ -1,123 +1,74 @@
 package restore
 
 import (
-	"fmt"
-	"strings"
-	"time"
-
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/tikv"
-
-	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
 )
 
-func init() {
-	domain.RunAutoAnalyze = false
-	session.SetStatsLease(0)
-}
-
-func initKVStorage(pd string) (kv.Storage, *domain.Domain, error) {
-	var (
-		store kv.Storage
-		dom   *domain.Domain
-		err   error
-	)
-	defer func() {
-		if err != nil {
-			if store != nil {
-				store.Close()
-			}
-			if dom != nil {
-				dom.Close()
-			}
-		}
-	}()
-
-	store, err = tikv.Driver{}.Open("tikv://" + pd)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	dom, err = session.BootstrapSession(store)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return store, dom, nil
-}
-
 type TiDBManager struct {
-	store kv.Storage
-	dom   *domain.Domain
+	db      *sql.DB
+	client  *http.Client
+	baseURL *url.URL
 }
 
 type TidbDBInfo struct {
-	ID        int64
-	Name      string
-	Tables    map[string]*TidbTableInfo
-	Available bool
+	Name   string
+	Tables map[string]*TidbTableInfo
 }
 
 type TidbTableInfo struct {
-	ID        int64
-	Name      string
-	Columns   int
-	Indices   int
-	Available bool
+	ID      int64
+	Name    string
+	Columns int
+	Indices int
 
 	core *model.TableInfo
 }
 
-func NewTiDBManager(pdAddr string) (*TiDBManager, error) {
-	kvStore, dom, err := initKVStorage(pdAddr)
+func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
+	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	timgr := &TiDBManager{
-		store: kvStore,
-		dom:   dom,
+	u, err := url.Parse(fmt.Sprintf("http://%s:%d", dsn.Host, dsn.StatusPort))
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	return timgr, nil
+	return &TiDBManager{
+		db:      db,
+		client:  &http.Client{},
+		baseURL: u,
+	}, nil
 }
 
 func (timgr *TiDBManager) Close() {
-	timgr.dom.Close()
-	timgr.store.Close()
+	timgr.db.Close()
 }
 
 func (timgr *TiDBManager) InitSchema(database string, tablesSchema map[string]string) error {
-	se, err := session.CreateSession(timgr.store)
+	_, err := timgr.db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer se.Close()
-
-	// TODO : all execute in one transaction ?
-
-	ctx := goctx.Background()
-	_, err = se.Execute(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = se.Execute(ctx, fmt.Sprintf("USE %s", database))
+	_, err = timgr.db.Exec(fmt.Sprintf("USE %s", database))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	for _, sqlCreateTable := range tablesSchema {
-		// if _, err = se.Execute(ctx, sqlCreateTable); err != nil {
-		if err = safeCreateTable(ctx, se, sqlCreateTable); err != nil {
+		if err = safeCreateTable(timgr.db, sqlCreateTable); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -139,101 +90,83 @@ func toCreateTableIfNotExists(createTable string) string {
 	return createTable
 }
 
-func safeCreateTable(ctx goctx.Context, se session.Session, createTable string) error {
+func safeCreateTable(db *sql.DB, createTable string) error {
 	createTable = toCreateTableIfNotExists(createTable)
-	if _, err := se.Execute(ctx, createTable); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	_, err := db.Exec(createTable)
+	return errors.Trace(err)
 }
 
-// GetInfoSchema returns infoschema.InfoSchema.
-func (timgr *TiDBManager) GetInfoSchema() (infoschema.InfoSchema, error) {
-	se, err := session.CreateSession(timgr.store)
+func (timgr *TiDBManager) GetSchemas() ([]*model.DBInfo, error) {
+	schemas, err := timgr.getSchemas()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer se.Close()
-
-	return domain.GetDomain(se).InfoSchema(), nil
+	// schema.Tables is empty, we need to set them manually.
+	for _, schema := range schemas {
+		tables, err := timgr.getTables(schema.Name.String())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		schema.Tables = tables
+	}
+	return schemas, nil
 }
 
-func (timgr *TiDBManager) LoadSchemaInfo(database string) *TidbDBInfo {
-	infoschema, err := timgr.GetInfoSchema()
-	if err != nil {
-		log.Errorf("get infoSchema error %s", errors.ErrorStack(err))
-		return nil
-	}
-	schemas := infoschema.AllSchemas()
-
-	var dbInfo *TidbDBInfo
-	for _, db := range schemas {
-		if db.Name.String() != database {
-			continue
-		}
-
-		dbInfo = &TidbDBInfo{
-			ID:        db.ID,
-			Name:      db.Name.String(),
-			Tables:    make(map[string]*TidbTableInfo),
-			Available: db.State == model.StatePublic,
-		}
-
-		for _, tbl := range db.Tables {
-			tableName := tbl.Name.String()
-
-			tableInfo := &TidbTableInfo{
-				ID:        tbl.ID,
-				Name:      tableName,
-				Columns:   len(tbl.Columns),
-				Indices:   len(tbl.Indices),
-				Available: tbl.State == model.StatePublic,
-				core:      tbl,
-			}
-			dbInfo.Tables[tableName] = tableInfo
-
-			if !tableInfo.Available {
-				log.Warnf("Table [%s] not available : state = %v",
-					tableName, tbl.State)
-			}
-		}
-	}
-
-	return dbInfo
-}
-
-func (timgr *TiDBManager) SyncSchema(database string) *TidbDBInfo {
-	// TODO : change to timeout ~
-	for i := 0; i < 100; i++ {
-		done := true
-		dbInfo := timgr.LoadSchemaInfo(database)
-		for _, tblInfo := range dbInfo.Tables {
-			if !tblInfo.Available {
-				done = false
-				break
-			}
-		}
-		if !done {
-			log.Warnf("Not all tables ready yet")
-			time.Sleep(time.Second * 5)
-			continue
-		}
-		break
-	}
-
-	return timgr.LoadSchemaInfo(database)
-}
-
-func (timgr *TiDBManager) GetTableByName(schemaName, tableName string) (*model.TableInfo, error) {
-	infoschema, err := timgr.GetInfoSchema()
+func (timgr *TiDBManager) getSchemas() ([]*model.DBInfo, error) {
+	baseURL := *timgr.baseURL
+	baseURL.Path = "schema"
+	resp, err := timgr.client.Get(baseURL.String())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	table, err := infoschema.TableByName(model.NewCIStr(schemaName), model.NewCIStr(tableName))
+	defer resp.Body.Close()
+
+	var schemas []*model.DBInfo
+	err = json.NewDecoder(resp.Body).Decode(&schemas)
+	return schemas, errors.Trace(err)
+}
+
+func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
+	baseURL := *timgr.baseURL
+	baseURL.Path = fmt.Sprintf("schema/%s", schema)
+	resp, err := timgr.client.Get(baseURL.String())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return table.Meta(), nil
+	defer resp.Body.Close()
+
+	var tables []*model.TableInfo
+	err = json.NewDecoder(resp.Body).Decode(&tables)
+	return tables, errors.Trace(err)
+}
+
+func (timgr *TiDBManager) LoadSchemaInfo(schema string) (*TidbDBInfo, error) {
+	tables, err := timgr.getTables(schema)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	dbInfo := &TidbDBInfo{
+		Name:   schema,
+		Tables: make(map[string]*TidbTableInfo),
+	}
+
+	for _, tbl := range tables {
+		tableName := tbl.Name.String()
+		if tbl.State != model.StatePublic {
+			return nil, errors.Errorf("table [%s.%s] state is not public", schema, tableName)
+		}
+		tableInfo := &TidbTableInfo{
+			ID:      tbl.ID,
+			Name:    tableName,
+			Columns: len(tbl.Columns),
+			Indices: len(tbl.Indices),
+			core:    tbl,
+		}
+		dbInfo.Tables[tableName] = tableInfo
+	}
+
+	return dbInfo, nil
 }
 
 func (tbl *TidbTableInfo) WithExplicitPrimaryKey() bool {

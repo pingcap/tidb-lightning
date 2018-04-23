@@ -101,10 +101,9 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 	log.Infof("restore schema %s from file %s", rc.dbMeta.Name, rc.dbMeta.SchemaFile)
 
-	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB.PdAddr)
+	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB)
 	if err != nil {
-		log.Errorf("create tidb manager failed : %v", err)
-		return err
+		return errors.Trace(err)
 	}
 	defer tidbMgr.Close()
 
@@ -118,9 +117,11 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 	if err != nil {
 		return errors.Errorf("db schema failed to init : %v", err)
 	}
-	// TODO : check tables' schema
-	rc.dbInfo = tidbMgr.SyncSchema(database)
-
+	dbInfo, err := tidbMgr.LoadSchemaInfo(database)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rc.dbInfo = dbInfo
 	return nil
 }
 
@@ -282,7 +283,10 @@ func (rc *RestoreControlloer) getTables() []string {
 }
 
 func analyzeTable(dsn config.DBStore, tables []string) error {
-	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer db.Close()
 
 	// speed up executing analyze table temporarily
@@ -465,8 +469,7 @@ func (p *kvEncoderPool) init(size int) *kvEncoderPool {
 		go func() {
 			defer wg.Done()
 			ec, err := kv.NewTableKVEncoder(
-				p.dbInfo.Name, p.dbInfo.ID,
-				p.tableInfo.Name, p.tableInfo.ID,
+				p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
 				p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode)
 			if err == nil {
 				p.encoders = append(p.encoders, ec)
@@ -484,8 +487,7 @@ func (p *kvEncoderPool) Apply() *kv.TableKVEncoder {
 	size := len(p.encoders)
 	if size == 0 {
 		encoder, err := kv.NewTableKVEncoder(
-			p.dbInfo.Name, p.dbInfo.ID,
-			p.tableInfo.Name, p.tableInfo.ID,
+			p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
 			p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode)
 		if err != nil {
 			log.Errorf("failed to new kv encoder (%s) : %s", p.dbInfo.Name, err.Error())
@@ -671,17 +673,11 @@ func (tr *TableRestore) onFinished() error {
 }
 
 func (tr *TableRestore) restoreTableMeta(rowID int64) error {
-	encoder := tr.encoders.Apply()
-	defer tr.encoders.Recycle(encoder)
-
-	table := tr.tableInfo.Name
-	log.Infof("[%s] restore table meta (row_id = %d)", table, rowID)
-
-	kvDeliver := tr.deliversMgr.AcquireClient(tr.dbInfo.Name, table)
-	defer tr.deliversMgr.RecycleClient(kvDeliver)
-
 	dsn := tr.cfg.TiDB
-	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer db.Close()
 
 	return errors.Trace(AlterAutoIncrement(db, tr.tableMeta.DB, tr.tableMeta.Name, rowID))
@@ -721,7 +717,10 @@ type RemoteChecksum struct {
 // DoChecksum do checksum for tables.
 // table should be in <db>.<table>, format.  e.g. foo.bar
 func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) {
-	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	defer db.Close()
 
 	ori, err := increaseGCLifeTime(db)
@@ -798,13 +797,16 @@ func (tr *TableRestore) excCheckTable() error {
 	log.Infof("Verify by execute `admin check table` : %s", tr.tableMeta.Name)
 
 	dsn := tr.cfg.TiDB
-	db := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer db.Close()
 
 	// verify datas completion via command "admin check table"
-	_, err := db.Exec(
+	_, err = db.Exec(
 		fmt.Sprintf("ADMIN CHECK TABLE %s.%s", tr.tableMeta.DB, tr.tableMeta.Name))
-	return err
+	return errors.Trace(err)
 }
 
 ////////////////////////////////////////////////////////////////

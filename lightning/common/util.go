@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 )
 
@@ -16,15 +17,14 @@ func Percent(a int, b int) string {
 	return fmt.Sprintf("%.2f %%", float64(a)/float64(b)*100)
 }
 
-func ConnectDB(host string, port int, user string, psw string) *sql.DB {
+func ConnectDB(host string, port int, user string, psw string) (*sql.DB, error) {
 	dbDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8", user, psw, host, port)
 	db, err := sql.Open("mysql", dbDSN)
 	if err != nil {
-		log.Errorf("can not open db file [%s]", err)
-		return nil
+		return nil, errors.Trace(err)
 	}
 
-	return db
+	return db, errors.Trace(db.Ping())
 }
 
 func GetFileSize(file string) (int64, error) {
