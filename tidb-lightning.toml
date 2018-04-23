@@ -29,7 +29,7 @@ read-block-size = 4096 # Byte (default = 4 KB)
 # split source data file into multiple region/chunk to execute restoring in parallel
 region-min-size = 268435456 # Byte (default = 256 MB)
 
-# configuration for tidb(pick one of them if has many tidb servers) and pd server.
+# configuration for tidb server address(one is enough) and pd server address(one is enough).
 [tidb]
 host = "127.0.0.1"
 port = 4000
@@ -37,11 +37,7 @@ user = "root"
 password = ""
 # table schema information is fetched from tidb via this status_port.
 status_port = 10080
-# PD Server of target cluster
 pd-addr = "127.0.0.1:2379"
-# PD Server of target cluster. One pd address is enough.
-# Uncomment the following line if you want to set sql-mode. You can set it to empty string or any valid sql-mode value supported by tidb
-# sql-mode = ""
 # lightning uses some code of tidb(used as library), and the flag controls it's log level.
 log-level = "error"
 # set tidb session variable to speed up checksum/analyze table.

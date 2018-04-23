@@ -167,10 +167,6 @@ func (timgr *TiDBManager) LoadSchemaInfo(schema string) (*TidbDBInfo, error) {
 	return dbInfo, nil
 }
 
-func (timgr *TiDBManager) SyncSchema(schema string) (*TidbDBInfo, error) {
-	return timgr.LoadSchemaInfo(schema)
-}
-
 func (tbl *TidbTableInfo) WithExplicitPrimaryKey() bool {
 	// TODO : need to check `tableInfo.PKIsHandle` ??
 	for _, col := range tbl.core.Columns {

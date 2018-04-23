@@ -117,7 +117,7 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 	if err != nil {
 		return errors.Errorf("db schema failed to init : %v", err)
 	}
-	dbInfo, err := tidbMgr.SyncSchema(database)
+	dbInfo, err := tidbMgr.LoadSchemaInfo(database)
 	if err != nil {
 		return errors.Trace(err)
 	}
