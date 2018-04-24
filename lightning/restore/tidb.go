@@ -127,7 +127,7 @@ func (timgr *TiDBManager) getSchemas() ([]*model.DBInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return nil, errors.Errorf("get %s http status code != 200, message %s", timgr.baseURL.String(), string(body))
+		return nil, errors.Errorf("get %s http status code != 200, message %s", baseURL.String(), string(body))
 	}
 
 	var schemas []*model.DBInfo
@@ -148,7 +148,7 @@ func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return nil, errors.Errorf("get %s http status code !=200, message %s", timgr.baseURL.String(), string(body))
+		return nil, errors.Errorf("get %s http status code !=200, message %s", baseURL.String(), string(body))
 	}
 
 	var tables []*model.TableInfo
