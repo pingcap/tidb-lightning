@@ -4,7 +4,6 @@ import (
 	"github.com/juju/errors"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/plan"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	log "github.com/sirupsen/logrus"
 )
@@ -16,12 +15,6 @@ const (
 var (
 	PrepareStmtMode = false
 )
-
-func setGlobalVars() {
-	// hardcode it
-	plan.PreparedPlanCacheEnabled = true
-	plan.PreparedPlanCacheCapacity = 10
-}
 
 func InitMembufCap(batchSQLLength int64) {
 	kv.ImportingTxnMembufCap = int(batchSQLLength) * 4
@@ -59,8 +52,6 @@ func NewTableKVEncoder(
 		return nil, errors.Trace(err)
 	}
 	log.Debugf("set sql_mode=%s", sqlMode)
-
-	setGlobalVars()
 
 	kvcodec := &TableKVEncoder{
 		db:          db,
