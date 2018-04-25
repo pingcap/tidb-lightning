@@ -29,11 +29,11 @@ func InitMembufCap(batchSQLLength int64) {
 }
 
 type TableKVEncoder struct {
-	db      string
-	table   string
-	tableID int64
-	ddl     string
-	columns int
+	db          string
+	table       string
+	tableID     int64
+	tableSchema string
+	columns     int
 
 	stmtIds   []uint32
 	bufValues []interface{}
@@ -44,11 +44,9 @@ type TableKVEncoder struct {
 
 func NewTableKVEncoder(
 	db string, table string, tableID int64,
-	columns int, tableSchema string, sqlMode string) (*TableKVEncoder, error) {
+	columns int, tableSchema string, sqlMode string, idAlloc *kvec.Allocator) (*TableKVEncoder, error) {
 
-	idAllocator := kvec.NewAllocator()
-	idAllocator.Reset(0)
-	kvEncoder, err := kvec.New(db, idAllocator)
+	kvEncoder, err := kvec.New(db, idAlloc)
 	if err != nil {
 		log.Errorf("[sql2kv] kv encoder create failed : %v", err)
 		return nil, errors.Trace(err)
@@ -67,8 +65,8 @@ func NewTableKVEncoder(
 		table:       table,
 		tableID:     tableID,
 		encoder:     kvEncoder,
-		idAllocator: idAllocator,
-		ddl:         tableSchema,
+		idAllocator: idAlloc,
+		tableSchema: tableSchema,
 		columns:     columns,
 	}
 
@@ -81,8 +79,8 @@ func NewTableKVEncoder(
 }
 
 func (kvcodec *TableKVEncoder) init() error {
-	if err := kvcodec.encoder.ExecDDLSQL(kvcodec.ddl); err != nil {
-		log.Errorf("[sql2kv] ddl execute failed : %v", err)
+	if err := kvcodec.encoder.ExecDDLSQL(kvcodec.tableSchema); err != nil {
+		log.Errorf("[sql2kv] tableSchema execute failed : %v", err)
 		return errors.Trace(err)
 	}
 

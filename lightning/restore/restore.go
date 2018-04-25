@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
+	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 
 var (
@@ -441,18 +442,24 @@ type kvEncoderPool struct {
 	tableMeta *mydump.MDTableMeta
 	encoders  []*kv.TableKVEncoder
 	sqlMode   string
+	idAlloc   *kvec.Allocator
 }
 
 func newKvEncoderPool(
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
 	tableMeta *mydump.MDTableMeta, sqlMode string) *kvEncoderPool {
+
+	idAllocator := kvec.NewAllocator()
+	idAllocator.Reset(0)
+
 	return &kvEncoderPool{
 		dbInfo:    dbInfo,
 		tableInfo: tableInfo,
 		tableMeta: tableMeta,
 		encoders:  []*kv.TableKVEncoder{},
 		sqlMode:   sqlMode,
+		idAlloc:   idAllocator,
 	}
 }
 
@@ -470,7 +477,7 @@ func (p *kvEncoderPool) init(size int) *kvEncoderPool {
 			defer wg.Done()
 			ec, err := kv.NewTableKVEncoder(
 				p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-				p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode)
+				p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode, p.idAlloc)
 			if err == nil {
 				p.encoders = append(p.encoders, ec)
 			}
@@ -488,7 +495,7 @@ func (p *kvEncoderPool) Apply() *kv.TableKVEncoder {
 	if size == 0 {
 		encoder, err := kv.NewTableKVEncoder(
 			p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-			p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode)
+			p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode, p.idAlloc)
 		if err != nil {
 			log.Errorf("failed to new kv encoder (%s) : %s", p.dbInfo.Name, err.Error())
 			return nil
