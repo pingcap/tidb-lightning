@@ -12,6 +12,7 @@ import (
 
 	"github.com/pingcap/tidb-lightning/lightning"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb/plan"
 )
 
 func onExitSignal() {
@@ -28,7 +29,15 @@ func onExitSignal() {
 	log.Infof("Got signal %d to exit.", sig)
 }
 
+func setGlobalVars() {
+	// hardcode it
+	plan.PreparedPlanCacheEnabled = true
+	plan.PreparedPlanCacheCapacity = 10
+}
+
 func main() {
+	setGlobalVars()
+
 	cfg, err := config.LoadConfig(os.Args[1:])
 	switch errors.Cause(err) {
 	case nil:
