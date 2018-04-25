@@ -594,11 +594,8 @@ func (tr *TableRestore) Close() {
 func (tr *TableRestore) loadRegions() {
 	log.Infof("[%s] load regions", tr.tableMeta.Name)
 
-	// TODO : regionProgress & !regionProgress.Finished()
-
-	preAllocateRowsID := !tr.tableInfo.WithIntegerPrimaryKey()
 	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
-	regions := founder.MakeTableRegions(tr.tableMeta, preAllocateRowsID)
+	regions := founder.MakeTableRegions(tr.tableMeta)
 
 	table := tr.tableMeta.Name
 	id2regions := make(map[int]*mydump.TableRegion)
@@ -876,9 +873,6 @@ func (exc *RegionRestoreExectuor) Run(
 			no matter what happens during process of restore ( eg. safe point / error retry ... )
 	*/
 
-	if region.BeginRowID >= 0 {
-		kvEncoder.ResetRowID(region.BeginRowID)
-	}
 	for {
 		select {
 		case <-ctx.Done():
