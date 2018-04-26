@@ -19,7 +19,6 @@ type TableRegion struct {
 
 	Offset int64
 	Size   int64
-	Rows   int64
 }
 
 func (reg *TableRegion) Name() string {
@@ -120,7 +119,6 @@ func splitFuzzyRegion(db string, table string, file string, minRegionSize int64)
 			File:   file,
 			Offset: off,
 			Size:   0,
-			Rows:   0,
 		}
 	}
 
@@ -135,7 +133,6 @@ func splitFuzzyRegion(db string, table string, file string, minRegionSize int64)
 
 		region := newRegion(offset)
 		region.Size = pos - offset
-		region.Rows = -1
 		if region.Size > 0 {
 			regions = append(regions, region)
 		}

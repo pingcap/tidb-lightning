@@ -194,7 +194,6 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 		} else if tableMeta, ok := dbMeta.Tables[table]; !ok {
 			return errors.Errorf("invalid data sql file, miss host table - %s", fpath)
 		} else {
-			// tableMeta.Rows += l.countTableFileRows(fpath)
 			tableMeta.DataFiles = append(tableMeta.DataFiles, fpath)
 		}
 	}
