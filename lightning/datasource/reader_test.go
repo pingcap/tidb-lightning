@@ -80,12 +80,12 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 
 	db := dbMgr.db
 	for _, tblMeta := range dbMeta.Tables {
-		sqlCreteTable, err := exportStatement(tblMeta.SchemaFile)
+		sqlCreteTable, err := ExportStatement(tblMeta.SchemaFile)
 		c.Assert(err, IsNil)
 		dbMgr.init(string(sqlCreteTable))
 
 		for _, file := range tblMeta.DataFiles {
-			reader, err := NewMDDataReader(file, 0)
+			reader, err := NewDataReader("mydumper", file, 0)
 			c.Assert(err, IsNil)
 			defer reader.Close()
 

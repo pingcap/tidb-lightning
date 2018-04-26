@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb-lightning/lightning/datasource"
+
 	. "github.com/pingcap/check"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 	. "github.com/pingcap/tidb-lightning/lightning/sql"
 )
 
@@ -58,7 +59,7 @@ type storage struct {
 
 func newStorage() *storage {
 	database := "_test_parser_"
-	db := common.ConnectDB("localhost", 3306, "root", "")
+	db, err := common.ConnectDB("localhost", 3306, "root", "")
 	db.Exec("create database if not exists " + database)
 	db.Exec("use " + database)
 
@@ -158,7 +159,7 @@ func (s *testParserSuite) testParseRealFile(c *C) {
 
 	dbMeta := loader.GetTree()
 	for _, tblMeta := range dbMeta.Tables {
-		sqlCreteTable, _ := ExportStatment(tblMeta.SchemaFile)
+		sqlCreteTable, _ := datasource.ExportStatement(tblMeta.SchemaFile)
 		store.init(string(sqlCreteTable))
 
 		// read from file

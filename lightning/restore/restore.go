@@ -142,9 +142,11 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 			return errors.Errorf("table info %s not found", tbl)
 		}
 
-		tablesRestoring = append(tablesRestoring, NewTableRestore(
-			ctx, dbInfo, tableInfo, tableMeta, rc.cfg, rc.localChecksums,
-		))
+		tableRestoring, err := NewTableRestore(ctx, dbInfo, tableInfo, tableMeta, rc.cfg, rc.localChecksums)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tablesRestoring = append(tablesRestoring, tableRestoring)
 	}
 
 	// TODO .. sort table by table ?
@@ -436,30 +438,34 @@ func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVC
 ////////////////////////////////////////////////////////////////
 
 type kvEncoderPool struct {
-	mux       sync.Mutex
-	dbInfo    *TidbDBInfo
-	tableInfo *TidbTableInfo
-	tableMeta *datasource.MDTableMeta
-	encoders  []*kv.TableKVEncoder
-	sqlMode   string
-	idAlloc   *kvec.Allocator
+	mux            sync.Mutex
+	dbInfo         *TidbDBInfo
+	tableInfo      *TidbTableInfo
+	tableMeta      *datasource.MDTableMeta
+	encoders       []*kv.TableKVEncoder
+	sqlMode        string
+	idAlloc        *kvec.Allocator
+	usePrepareStmt bool
 }
 
 func newKvEncoderPool(
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
-	tableMeta *datasource.MDTableMeta,, sqlMode string) *kvEncoderPool {
+	tableMeta *datasource.MDTableMeta,
+	sqlMode string,
+	sourceType string) *kvEncoderPool {
 
 	idAllocator := kvec.NewAllocator()
 	idAllocator.Reset(0)
 
 	return &kvEncoderPool{
-		dbInfo:    dbInfo,
-		tableInfo: tableInfo,
-		tableMeta: tableMeta,
-		encoders:  []*kv.TableKVEncoder{},
-		sqlMode:   sqlMode,
-		idAlloc:   idAllocator,
+		dbInfo:         dbInfo,
+		tableInfo:      tableInfo,
+		tableMeta:      tableMeta,
+		encoders:       []*kv.TableKVEncoder{},
+		sqlMode:        sqlMode,
+		idAlloc:        idAllocator,
+		usePrepareStmt: sourceType == datasource.TypeCSV,
 	}
 }
 
@@ -477,7 +483,7 @@ func (p *kvEncoderPool) init(size int) *kvEncoderPool {
 			defer wg.Done()
 			ec, err := kv.NewTableKVEncoder(
 				p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-				p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode, p.idAlloc)
+				p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode, p.idAlloc, p.usePrepareStmt)
 			if err == nil {
 				p.encoders = append(p.encoders, ec)
 			}
@@ -495,7 +501,7 @@ func (p *kvEncoderPool) Apply() *kv.TableKVEncoder {
 	if size == 0 {
 		encoder, err := kv.NewTableKVEncoder(
 			p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-			p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode, p.idAlloc)
+			p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode, p.idAlloc, p.usePrepareStmt)
 		if err != nil {
 			log.Errorf("failed to new kv encoder (%s) : %s", p.dbInfo.Name, err.Error())
 			return nil
@@ -561,9 +567,9 @@ func NewTableRestore(
 	tableInfo *TidbTableInfo,
 	tableMeta *datasource.MDTableMeta,
 	cfg *config.Config,
-	localChecksums map[string]*verify.KVChecksum) *TableRestore {
+	localChecksums map[string]*verify.KVChecksum) (*TableRestore, error) {
 
-	encoders := newKvEncoderPool(dbInfo, tableInfo, tableMeta, cfg.TiDB.SQLMode)
+	encoders := newKvEncoderPool(dbInfo, tableInfo, tableMeta, cfg.TiDB.SQLMode, cfg.DataSource.SourceType)
 	encoders.init(cfg.App.WorkerPoolSize)
 
 	tr := &TableRestore{
@@ -579,10 +585,12 @@ func NewTableRestore(
 	}
 
 	timer := time.Now()
-	tr.loadRegions()
+	if err := tr.loadRegions(); err != nil {
+		return nil, errors.Trace(err)
+	}
 	log.Infof("[%s] load regions takes %v", tableInfo.Name, time.Since(timer))
 
-	return tr
+	return tr, nil
 }
 
 func (tr *TableRestore) Close() {
@@ -591,11 +599,14 @@ func (tr *TableRestore) Close() {
 	log.Infof("[%s] closed", tr.tableMeta.Name)
 }
 
-func (tr *TableRestore) loadRegions() {
+func (tr *TableRestore) loadRegions() error {
 	log.Infof("[%s] load regions", tr.tableMeta.Name)
 
-	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
-	regions := founder.MakeTableRegions(tr.tableMeta)
+	founder := datasource.NewRegionFounder(tr.cfg.DataSource.MinRegionSize)
+	regions, err := founder.MakeTableRegions(tr.tableMeta, tr.cfg.DataSource.SourceType)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	table := tr.tableMeta.Name
 	id2regions := make(map[int]*datasource.TableRegion)
@@ -614,7 +625,7 @@ func (tr *TableRestore) loadRegions() {
 	tr.regions = regions
 	tr.id2regions = id2regions
 	tr.tasks = tasks
-	return
+	return nil
 }
 
 func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error {
@@ -852,7 +863,7 @@ func (exc *RegionRestoreExectuor) Run(
 			3. load kvs data (into kv deliver server)
 			4. flush kvs data (into tikv node)
 	*/
-	reader, err := datasource.NewRegionReader(exc.cfg.DataSource.SourceType, region.File, region.Offset, region.Size)
+	reader, err := datasource.NewRegionReader(region)
 	if err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
@@ -881,16 +892,16 @@ func (exc *RegionRestoreExectuor) Run(
 		}
 
 		start := time.Now()
-		sqls, err := reader.Read(defReadBlockSize)
+		payloads, err := reader.Read(defReadBlockSize)
 		if err == io.EOF {
 			break
 		}
 		metrics.MarkTiming(readMark, start)
 
-		for _, stmt := range sqls {
+		for _, payload := range payloads {
 			// sql -> kv
 			start = time.Now()
-			kvs, affectedRows, err := kvEncoder.SQL2KV(stmt)
+			kvs, affectedRows, err := kvEncoder.SQL2KV(payload)
 			metrics.MarkTiming(encodeMark, start)
 
 			if err != nil {
