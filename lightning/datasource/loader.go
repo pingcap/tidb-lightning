@@ -1,8 +1,6 @@
 package datasource
 
 import (
-	"bytes"
-	"io"
 	"sort"
 	"strings"
 
@@ -211,7 +209,6 @@ func (ds *DataSource) setupTablesData(files map[string]string) error {
 		} else if tableMeta, ok := dbMeta.Tables[table]; !ok {
 			return errors.Errorf("invalid data sql file, miss host table - %s", fpath)
 		} else {
-			// tableMeta.Rows += ds.countTableFileRows(fpath)
 			tableMeta.DataFiles = append(tableMeta.DataFiles, fpath)
 		}
 	}
@@ -226,51 +223,9 @@ func (ds *DataSource) setupTablesData(files map[string]string) error {
 	return nil
 }
 
-func (ds *DataSource) countTableFileRows(file string) int {
-	reader, err := NewDataReader(ds.sourceType, file, 0)
-	if err != nil {
-		log.Errorf("read mydump file failed (%s) : %s", file, err.Error())
-		return -1
-	}
-	defer reader.Close()
-
-	var rows int
-	for {
-		statements, err := reader.Read(defReadBlockSize)
-		if err == io.EOF {
-			break
-		}
-
-		for _, stmt := range statements {
-			rows += countValues(stmt)
-		}
-	}
-	return rows
-}
-
-func (ds *DataSource) GetDatabase() *MDDatabaseMeta {
-	for db := range ds.dbs {
-		return ds.dbs[db]
+func (l *MDLoader) GetDatabase() *MDDatabaseMeta {
+	for db := range l.dbs {
+		return l.dbs[db]
 	}
 	return nil
-}
-
-func countValues(sqlText []byte) int {
-	/*
-		ps : Count num of tuples (/values) appears within sql statement like :
-				"INSERT INTO `table` VALUES (..), (..), (..);"
-	*/
-	var textLen = len(sqlText)
-	var slice []byte
-	var tuplesNum int
-
-	for i, chr := range sqlText {
-		if chr == ')' && i < textLen-1 {
-			slice = bytes.TrimSpace(sqlText[i+1:])
-			if len(slice) > 0 && (slice[0] == ',' || slice[0] == ';') {
-				tuplesNum++
-			}
-		}
-	}
-	return tuplesNum
 }
