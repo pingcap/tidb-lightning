@@ -83,7 +83,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 
 	for _, process := range opts {
 		err := process(ctx)
-		if err == errCtxAborted {
+		if errors.Cause(err) == errCtxAborted {
 			break
 		}
 		if err != nil {
@@ -127,6 +127,7 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 }
 
 func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
+	log.Info("restoring tables")
 	// tables' restoring mission
 	tablesRestoring := make([]*TableRestore, 0, len(rc.dbMeta.Tables))
 	defer func() {
@@ -189,12 +190,13 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 			defer wg.Done()
 			table := fmt.Sprintf("%s.%s", t.region.DB, t.region.Table)
 			if _, ok := skipTables[table]; ok {
-				log.Infof("something wrong with table %s before, so skip region %s", table, t.region.Name())
+				log.Infof("something wrong with table %s before, so skip region %s", table, t.region)
 				return
 			}
+			log.Infof("restoring region %+v", t.region)
 			err := t.Run(ctx)
 			if err != nil {
-				log.Errorf("table %s region %s run task error %s", table, t.region.Name(), errors.ErrorStack(err))
+				log.Errorf("table %s region %s run task error %s", table, t.region, errors.ErrorStack(err))
 				skipTables[table] = struct{}{}
 			}
 
@@ -407,7 +409,7 @@ func newRegionRestoreTask(
 func (t *regionRestoreTask) Run(ctx context.Context) error {
 	timer := time.Now()
 	region := t.region
-	log.Infof("[%s] restore region [%s]", region.Table, region.Name())
+	log.Infof("[%s] restore region [%s]", region.Table, region)
 
 	t.status = statRunning
 	maxRowID, rows, checksum, err := t.run(ctx)
@@ -415,7 +417,7 @@ func (t *regionRestoreTask) Run(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	log.Infof("[%s] restore region [%s] takes %v", region.Table, region.Name(), time.Since(timer))
+	log.Infof("[%s] restore region [%s] takes %v", region.Table, region, time.Since(timer))
 	err = t.callback(region.ID, maxRowID, rows, checksum)
 	if err != nil {
 		return errors.Trace(err)
@@ -608,10 +610,8 @@ func (tr *TableRestore) loadRegions() error {
 		return errors.Trace(err)
 	}
 
-	table := tr.tableMeta.Name
 	id2regions := make(map[int]*datasource.TableRegion)
 	for _, region := range regions {
-		log.Infof("[%s] region - %s", table, region.Name())
 		id2regions[region.ID] = region
 	}
 
@@ -893,7 +893,8 @@ func (exc *RegionRestoreExectuor) Run(
 
 		start := time.Now()
 		payloads, err := reader.Read(defReadBlockSize)
-		if err == io.EOF {
+		if errors.Cause(err) == io.EOF {
+			log.Infof("region %v, EOF", region)
 			break
 		}
 		metrics.MarkTiming(readMark, start)
@@ -929,5 +930,6 @@ func (exc *RegionRestoreExectuor) Run(
 	// TODO :
 	//		It's really necessary to statistic total num of kv pairs for debug tracing !!!
 
+	log.Infof("region %+v has %d rows", region, rows)
 	return kvEncoder.NextRowID(), rows, checksum, nil
 }

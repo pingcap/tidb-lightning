@@ -22,9 +22,9 @@ type TableRegion struct {
 	SourceType string
 }
 
-func (reg *TableRegion) Name() string {
-	return fmt.Sprintf("%s|%s|%d|%d",
-		reg.DB, reg.Table, reg.ID, reg.Offset)
+func (reg *TableRegion) String() string {
+	return fmt.Sprintf("id:%d db:%s table:%s offset:%d size:%d file:%s",
+		reg.ID, reg.DB, reg.Table, reg.Offset, reg.Size, reg.File)
 }
 
 type regionSlice []*TableRegion

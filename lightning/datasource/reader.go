@@ -63,8 +63,8 @@ func ExportStatement(sqlFile string) ([]byte, error) {
 
 		buffer = append(buffer, []byte(line)...)
 		if buffer[len(buffer)-1] == ';' {
-			statment := string(buffer)
-			if !(strings.HasPrefix(statment, "/*") && strings.HasSuffix(statment, "*/;")) {
+			statement := string(buffer)
+			if !(strings.HasPrefix(statement, "/*") && strings.HasSuffix(statement, "*/;")) {
 				data = append(data, buffer...)
 			}
 			buffer = buffer[:0]
@@ -112,11 +112,11 @@ func newMDDataReader(db, table, file string, offset int64) (DataReader, error) {
 		fd:         fd,
 		fsize:      fstat.Size(),
 		file:       file,
-		stmtHeader: getInsertStatmentHeader(file),
+		stmtHeader: getInsertStatementHeader(file),
 	}
 
 	if len(mdr.stmtHeader) == 0 {
-		return nil, errors.New("can not find any insert statment")
+		return nil, errors.New("can not find any insert statement")
 	}
 
 	mdr.skipAnnotation(offset)
@@ -169,14 +169,14 @@ func (r *MDDataReader) Tell() int64 {
 }
 
 func (r *MDDataReader) SplitRegions(regionSize int64) ([]*TableRegion, error) {
-	newRegion := func(off int64) *TableRegion {
+	newRegion := func(offset, size int64) *TableRegion {
 		return &TableRegion{
 			ID:         -1,
 			DB:         r.db,
 			Table:      r.table,
 			File:       r.file,
-			Offset:     off,
-			Size:       0,
+			Offset:     offset,
+			Size:       size,
 			SourceType: r.sourceType(),
 		}
 	}
@@ -190,22 +190,20 @@ func (r *MDDataReader) SplitRegions(regionSize int64) ([]*TableRegion, error) {
 		_, err := r.Read(extendSize)
 		pos := r.Tell()
 
-		region := newRegion(offset)
-		region.Size = pos - offset
+		size := pos - offset
+		region := newRegion(offset, size)
 		if region.Size > 0 {
 			regions = append(regions, region)
 		}
-
-		if err == io.EOF {
+		if errors.Cause(err) == io.EOF {
 			break
 		}
 		offset = pos
 	}
-
 	return regions, nil
 }
 
-func getInsertStatmentHeader(file string) []byte {
+func getInsertStatementHeader(file string) []byte {
 	f, err := os.Open(file)
 	if err != nil {
 		log.Errorf("open file failed (%s) : %v", file, err)
@@ -262,7 +260,7 @@ func (r *MDDataReader) Read(minSize int64) ([]*Payload, error) {
 				return
 			}
 			if sqlLen == len(r.stmtHeader) {
-				return // ps : empty sql statment without any actual values ~
+				return // ps : empty sql statement without any actual values ~
 			}
 
 			// check suffix
@@ -288,7 +286,7 @@ func (r *MDDataReader) Read(minSize int64) ([]*Payload, error) {
 			(...);
 		'''
 	*/
-	var statment = make([]byte, 0, minSize+4096)
+	var statement = make([]byte, 0, minSize+4096)
 	var readSize, lineSize int64
 	var line []byte
 	var err error
@@ -312,14 +310,14 @@ func (r *MDDataReader) Read(minSize int64) ([]*Payload, error) {
 				continue
 			}
 
-			if len(statment) == 0 && !bytes.HasPrefix(line, r.stmtHeader) {
-				statment = append(statment, r.stmtHeader...)
+			if len(statement) == 0 && !bytes.HasPrefix(line, r.stmtHeader) {
+				statement = append(statement, r.stmtHeader...)
 			}
-			statment = append(statment, line...)
+			statement = append(statement, line...)
 
-			if statment[len(statment)-1] == ';' {
-				appendSQL(statment)
-				statment = make([]byte, 0, minSize+4096)
+			if statement[len(statement)-1] == ';' {
+				appendSQL(statement)
+				statement = make([]byte, 0, minSize+4096)
 			}
 		}
 
@@ -330,8 +328,8 @@ func (r *MDDataReader) Read(minSize int64) ([]*Payload, error) {
 		}
 	}
 
-	if len(statment) > 0 {
-		appendSQL(statment)
+	if len(statement) > 0 {
+		appendSQL(statement)
 	}
 
 	payloads := make([]*Payload, 0, len(stmts))
@@ -347,6 +345,7 @@ type CSVDataReader struct {
 	file  string
 	fd    *os.File
 	rd    *csv.Reader
+	fsize int64
 }
 
 func newCSVDataReader(db, table, file string, offset int64) (DataReader, error) {
@@ -360,11 +359,11 @@ func newCSVDataReader(db, table, file string, offset int64) (DataReader, error) 
 		return nil, errors.Trace(err)
 	}
 
-	// fstat, err := fd.Stat()
-	// if err != nil {
-	// 	fd.Close()
-	// 	return nil, errors.Trace(err)
-	// }
+	fstat, err := fd.Stat()
+	if err != nil {
+		fd.Close()
+		return nil, errors.Trace(err)
+	}
 
 	return &CSVDataReader{
 		db:    db,
@@ -372,14 +371,20 @@ func newCSVDataReader(db, table, file string, offset int64) (DataReader, error) 
 		file:  file,
 		fd:    fd,
 		rd:    csv.NewReader(fd),
+		fsize: fstat.Size(),
 	}, nil
 }
 
 func (r *CSVDataReader) Read(minSize int64) ([]*Payload, error) {
 	// read one record.
-	params, err := r.rd.Read()
+	values, err := r.rd.Read()
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	params := make([]interface{}, 0, len(values))
+	for _, value := range values {
+		params = append(params, value)
 	}
 	return []*Payload{&Payload{Params: params}}, nil
 }
@@ -407,8 +412,47 @@ func (r *CSVDataReader) Close() error {
 }
 
 func (r *CSVDataReader) SplitRegions(regionSize int64) ([]*TableRegion, error) {
+	regions := make([]*TableRegion, 0)
 
-	return nil, nil
+	appendRegion := func(offset, size int64) {
+		region := &TableRegion{
+			ID:         -1,
+			DB:         r.db,
+			Table:      r.table,
+			File:       r.file,
+			Offset:     offset,
+			Size:       size,
+			SourceType: r.sourceType(),
+		}
+		regions = append(regions, region)
+	}
+
+	// only one region
+	if r.fsize <= regionSize {
+		appendRegion(0, r.fsize)
+		return regions, nil
+	}
+
+	var offset int64
+	var lastRegionOffset int64
+	rd := bufio.NewReader(r.fd)
+
+	for {
+		line, err := rd.ReadString('\n')
+		if err == io.EOF {
+			if size := offset - lastRegionOffset; size > 0 {
+				appendRegion(lastRegionOffset, size)
+			}
+			break
+		}
+		offset += int64(len(line))
+		if size := offset - lastRegionOffset; size > regionSize {
+			appendRegion(lastRegionOffset, size)
+			lastRegionOffset = offset
+		}
+	}
+
+	return regions, nil
 }
 
 func (r *CSVDataReader) sourceType() string {
@@ -420,19 +464,17 @@ func (r *CSVDataReader) sourceType() string {
 // Payload has either SQL or Params and they are mutually exclusive
 type Payload struct {
 	SQL    string
-	Params []string
+	Params []interface{}
 }
 
 type RegionReader struct {
 	fileReader DataReader
-	sourceType string
-	offset     int64
-	size       int64
 	pos        int64
+	region     *TableRegion
 }
 
 func NewRegionReader(region *TableRegion) (*RegionReader, error) {
-	log.Debugf("[%s] offset = %d / size = %d", region.File, region.Offset, region.Size)
+	log.Infof("[%s] offset = %d / size = %d", region.File, region.Offset, region.Size)
 
 	fileReader, err := NewDataReader(region.SourceType, region.DB, region.Table, region.File, region.Offset)
 	if err != nil {
@@ -440,20 +482,19 @@ func NewRegionReader(region *TableRegion) (*RegionReader, error) {
 	}
 
 	return &RegionReader{
-		sourceType: region.SourceType,
 		fileReader: fileReader,
-		size:       region.Size,
-		offset:     region.Offset,
 		pos:        fileReader.Tell(),
+		region:     region,
 	}, nil
 }
 
 func (r *RegionReader) Read(maxBlockSize int64) ([]*Payload, error) {
-	if r.pos >= r.offset+r.size {
+	if r.pos >= r.region.Offset+r.region.Size {
+		log.Infof("region %+v returns EOF", r.region)
 		return nil, io.EOF
 	}
 
-	readSize := r.offset + r.size - r.pos
+	readSize := r.region.Offset + r.region.Size - r.pos
 	if maxBlockSize < readSize {
 		readSize = maxBlockSize
 	}
@@ -461,7 +502,7 @@ func (r *RegionReader) Read(maxBlockSize int64) ([]*Payload, error) {
 	datas, err := r.fileReader.Read(readSize)
 	r.pos = r.fileReader.Tell()
 
-	return datas, err
+	return datas, errors.Trace(err)
 }
 
 func (r *RegionReader) Close() error {

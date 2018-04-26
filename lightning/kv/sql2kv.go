@@ -110,12 +110,12 @@ func (enc *TableKVEncoder) NextRowID() int64 {
 
 func (enc *TableKVEncoder) SQL2KV(payload *datasource.Payload) ([]kvec.KvPair, uint64, error) {
 	if enc.usePrepareStmt {
-		// via prepare statment
+		// via prepare statement
 		kvPairs, rowsAffected, err := enc.encodeViaPstmt(payload.Params)
-		if err == nil {
-			return kvPairs, rowsAffected, nil
+		if err != nil {
+			return nil, 0, errors.Trace(err)
 		}
-		log.Warnf("[sql2kv] stmt encode err : %s", err.Error())
+		return kvPairs, rowsAffected, nil
 	}
 
 	// via sql execution
@@ -128,9 +128,9 @@ func (enc *TableKVEncoder) SQL2KV(payload *datasource.Payload) ([]kvec.KvPair, u
 	return kvPairs, rowsAffected, nil
 }
 
-func (enc *TableKVEncoder) encodeViaPstmt(params []string) ([]kvec.KvPair, uint64, error) {
+func (enc *TableKVEncoder) encodeViaPstmt(params []interface{}) ([]kvec.KvPair, uint64, error) {
 	stmtID := enc.applyStmtID()
-	kvs, affected, err := enc.encoder.EncodePrepareStmt(enc.tableID, stmtID, params)
+	kvs, affected, err := enc.encoder.EncodePrepareStmt(enc.tableID, stmtID, params...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
