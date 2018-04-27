@@ -20,11 +20,12 @@ type TableRegion struct {
 	Offset     int64
 	Size       int64
 	SourceType string
+	Rows       int64
 }
 
 func (reg *TableRegion) String() string {
-	return fmt.Sprintf("id:%d db:%s table:%s offset:%d size:%d file:%s",
-		reg.ID, reg.DB, reg.Table, reg.Offset, reg.Size, reg.File)
+	return fmt.Sprintf("file:%s id:%d db:%s table:%s offset:%d size:%d rows:%d ",
+		reg.File, reg.ID, reg.DB, reg.Table, reg.Offset, reg.Size, reg.Rows)
 }
 
 type regionSlice []*TableRegion

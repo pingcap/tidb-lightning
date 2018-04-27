@@ -884,6 +884,8 @@ func (exc *RegionRestoreExectuor) Run(
 			no matter what happens during process of restore ( eg. safe point / error retry ... )
 	*/
 
+	var lastRecords []interface{}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -894,12 +896,13 @@ func (exc *RegionRestoreExectuor) Run(
 		start := time.Now()
 		payloads, err := reader.Read(defReadBlockSize)
 		if errors.Cause(err) == io.EOF {
-			log.Infof("region %v, EOF", region)
+			log.Infof("region %v, EOF, last records %+v", region, lastRecords)
 			break
 		}
 		metrics.MarkTiming(readMark, start)
 
 		for _, payload := range payloads {
+			lastRecords = payload.Params
 			// sql -> kv
 			start = time.Now()
 			kvs, affectedRows, err := kvEncoder.SQL2KV(payload)
@@ -930,6 +933,6 @@ func (exc *RegionRestoreExectuor) Run(
 	// TODO :
 	//		It's really necessary to statistic total num of kv pairs for debug tracing !!!
 
-	log.Infof("region %+v has %d rows", region, rows)
+	log.Infof("region %+v has imported %d rows", region, rows)
 	return kvEncoder.NextRowID(), rows, checksum, nil
 }

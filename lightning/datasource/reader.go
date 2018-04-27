@@ -85,8 +85,7 @@ type MDDataReader struct {
 	stmtHeader []byte
 
 	bufferSize int64
-	buffer     *bufio.Reader
-	// readBuffer []byte
+	br         *bufio.Reader
 }
 
 func newMDDataReader(db, table, file string, offset int64) (DataReader, error) {
@@ -134,7 +133,7 @@ func (r *MDDataReader) Close() error {
 		}
 	}
 
-	r.buffer = nil
+	r.br = nil
 	r.bufferSize = 0
 	return nil
 }
@@ -231,10 +230,10 @@ func getInsertStatementHeader(file string) []byte {
 
 func (r *MDDataReader) acquireBufferReader(fd *os.File, size int64) *bufio.Reader {
 	if size > r.bufferSize {
-		r.buffer = bufio.NewReaderSize(fd, int(size))
+		r.br = bufio.NewReaderSize(fd, int(size))
 		r.bufferSize = size
 	}
-	return r.buffer
+	return r.br
 }
 
 func (r *MDDataReader) Read(minSize int64) ([]*Payload, error) {
@@ -340,12 +339,13 @@ func (r *MDDataReader) Read(minSize int64) ([]*Payload, error) {
 }
 
 type CSVDataReader struct {
-	db    string
-	table string
-	file  string
-	fd    *os.File
-	rd    *csv.Reader
-	fsize int64
+	db     string
+	table  string
+	file   string
+	fd     *os.File
+	br     *bufio.Reader
+	fsize  int64
+	buffer bytes.Buffer
 }
 
 func newCSVDataReader(db, table, file string, offset int64) (DataReader, error) {
@@ -370,23 +370,61 @@ func newCSVDataReader(db, table, file string, offset int64) (DataReader, error) 
 		table: table,
 		file:  file,
 		fd:    fd,
-		rd:    csv.NewReader(fd),
 		fsize: fstat.Size(),
 	}, nil
 }
 
 func (r *CSVDataReader) Read(minSize int64) ([]*Payload, error) {
-	// read one record.
-	values, err := r.rd.Read()
+	var readSize int64
+	beginPos := r.Tell()
+
+	br := bufio.NewReaderSize(r.fd, int(minSize))
+
+	var lastRecord string
+	// read block
+	for {
+		line, err := br.ReadString('\n')
+		if err == io.EOF {
+			log.Infof("EOF, last record %s", lastRecord)
+			break
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		_, err = r.buffer.WriteString(line)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		readSize += int64(len(line))
+		lastRecord = line
+		if r.buffer.Len() >= int(minSize) {
+			_, err = r.fd.Seek(beginPos+readSize, io.SeekStart)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			break
+		}
+	}
+
+	// parse csv
+	rd := csv.NewReader(&r.buffer)
+	defer r.buffer.Reset()
+
+	records, err := rd.ReadAll()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	params := make([]interface{}, 0, len(values))
-	for _, value := range values {
-		params = append(params, value)
+	payloads := make([]*Payload, 0, len(records))
+	for _, record := range records {
+		params := make([]interface{}, 0, len(record))
+		for _, value := range record {
+			params = append(params, value)
+		}
+		payloads = append(payloads, &Payload{Params: params})
 	}
-	return []*Payload{&Payload{Params: params}}, nil
+
+	return payloads, nil
 }
 
 func (r *CSVDataReader) Tell() int64 {
@@ -414,7 +452,7 @@ func (r *CSVDataReader) Close() error {
 func (r *CSVDataReader) SplitRegions(regionSize int64) ([]*TableRegion, error) {
 	regions := make([]*TableRegion, 0)
 
-	appendRegion := func(offset, size int64) {
+	appendRegion := func(offset, size int64, rows int64) {
 		region := &TableRegion{
 			ID:         -1,
 			DB:         r.db,
@@ -423,32 +461,50 @@ func (r *CSVDataReader) SplitRegions(regionSize int64) ([]*TableRegion, error) {
 			Offset:     offset,
 			Size:       size,
 			SourceType: r.sourceType(),
+			Rows:       rows,
 		}
 		regions = append(regions, region)
 	}
 
+	rd := bufio.NewReader(r.fd)
+
 	// only one region
 	if r.fsize <= regionSize {
-		appendRegion(0, r.fsize)
+		rows, err := countRows(rd)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		appendRegion(0, r.fsize, rows)
 		return regions, nil
 	}
 
-	var offset int64
-	var lastRegionOffset int64
-	rd := bufio.NewReader(r.fd)
-
+	var (
+		offset           int64
+		lastRegionOffset int64
+		regionRows       int64
+	)
+	var lastRecord string
 	for {
 		line, err := rd.ReadString('\n')
 		if err == io.EOF {
 			if size := offset - lastRegionOffset; size > 0 {
-				appendRegion(lastRegionOffset, size)
+				appendRegion(lastRegionOffset, size, regionRows)
+				regionRows = 0
+				log.Infof("last record %s", lastRecord)
 			}
 			break
 		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		offset += int64(len(line))
+		regionRows++
+		lastRecord = line
 		if size := offset - lastRegionOffset; size > regionSize {
-			appendRegion(lastRegionOffset, size)
+			appendRegion(lastRegionOffset, size, regionRows)
 			lastRegionOffset = offset
+			regionRows = 0
+			log.Infof("last record %s", lastRecord)
 		}
 	}
 
@@ -457,6 +513,22 @@ func (r *CSVDataReader) SplitRegions(regionSize int64) ([]*TableRegion, error) {
 
 func (r *CSVDataReader) sourceType() string {
 	return TypeCSV
+}
+
+func countRows(rd *bufio.Reader) (int64, error) {
+	var rows int64
+	for {
+		_, err := rd.ReadString('\n')
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		rows++
+
+	}
+	return rows, nil
 }
 
 /////////////////////////////////////////////////////////////////////////
