@@ -4,23 +4,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/datasource"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
-	"github.com/pingcap/tidb/kv"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	log "github.com/sirupsen/logrus"
 )
-
-const (
-	encodeBatchRows = 1024
-)
-
-var (
-	PrepareStmtMode = false
-)
-
-func InitMembufCap(batchSQLLength int64) {
-	kv.ImportingTxnMembufCap = int(batchSQLLength) * 4
-	// TODO : calculate predicted ratio, bwtween sql and kvs' size, base on specified DDL
-}
 
 type TableKVEncoder struct {
 	db          string
@@ -79,9 +65,6 @@ func (enc *TableKVEncoder) init() error {
 	}
 
 	if enc.usePrepareStmt {
-		reserve := (encodeBatchRows * enc.columns) << 1 // TODO : rows x ( cols + indices )
-		enc.bufValues = make([]interface{}, 0, reserve)
-
 		stmtID, err := enc.makeStatements()
 		if err != nil {
 			return errors.Trace(err)

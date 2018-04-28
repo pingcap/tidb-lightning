@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/datasource"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
-	tidbcfg "github.com/pingcap/tidb/config"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 
@@ -31,12 +30,6 @@ const (
 	defaultGCLifeTime = 100 * time.Hour
 )
 
-func init() {
-	cfg := tidbcfg.GetGlobalConfig()
-	cfg.Log.SlowThreshold = 3000
-
-	kv.InitMembufCap(defReadBlockSize)
-}
 
 type RestoreControlloer struct {
 	mux sync.RWMutex
@@ -894,7 +887,7 @@ func (exc *RegionRestoreExectuor) Run(
 		}
 
 		start := time.Now()
-		payloads, err := reader.Read(defReadBlockSize)
+		payloads, err := reader.Read(exc.cfg.DataSource.ReadBlockSize)
 		if errors.Cause(err) == io.EOF {
 			log.Infof("region %v, EOF, last records %+v", region, lastRecords)
 			break

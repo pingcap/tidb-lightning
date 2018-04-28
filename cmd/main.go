@@ -8,11 +8,12 @@ import (
 	"syscall"
 
 	"github.com/juju/errors"
-	log "github.com/sirupsen/logrus"
-
 	"github.com/pingcap/tidb-lightning/lightning"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	tidbcfg "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
+	log "github.com/sirupsen/logrus"
 )
 
 func onExitSignal() {
@@ -29,15 +30,19 @@ func onExitSignal() {
 	log.Infof("Got signal %d to exit.", sig)
 }
 
-func setGlobalVars() {
+func setGlobalVars(localCfg *config.Config) {
 	// hardcode it
 	plan.PreparedPlanCacheEnabled = true
 	plan.PreparedPlanCacheCapacity = 10
+
+	cfg := tidbcfg.GetGlobalConfig()
+	cfg.Log.SlowThreshold = 3000
+
+	kv.ImportingTxnMembufCap = int(localCfg.DataSource.ReadBlockSize * 4)
+	// TODO : calculate predicted ratio, bwtween sql and kvs' size, base on specified DDL
 }
 
 func main() {
-	setGlobalVars()
-
 	cfg, err := config.LoadConfig(os.Args[1:])
 	switch errors.Cause(err) {
 	case nil:
@@ -46,6 +51,8 @@ func main() {
 	default:
 		log.Fatalf("parse cmd flags error: %s", err)
 	}
+
+	setGlobalVars(cfg)
 
 	app := lightning.New(cfg)
 	app.Run()

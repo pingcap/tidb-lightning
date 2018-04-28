@@ -211,7 +211,7 @@ func getInsertStatementHeader(file string) []byte {
 	defer f.Close()
 
 	header := ""
-	br := bufio.NewReaderSize(f, int(defReadBlockSize))
+	br := bufio.NewReader(f)
 	for {
 		line, err := br.ReadString('\n')
 		if err == io.EOF {
