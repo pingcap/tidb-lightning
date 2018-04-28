@@ -23,11 +23,13 @@ batch-size = 200 # GB
 [data-source]
 # source-type can be "mydumper" or "csv".
 data-source-type = "mydumper"
-data-source-dir = "/Users/holys/code/src/github.com/pingcap/tidb-docker-compose"
+data-source-dir = "/tmp/export-20180328-200751"
 # block size of file reading
 read-block-size = 32768 # Byte (default = 32 KB)
 # split source data file into multiple region/chunk to execute restoring in parallel
 region-min-size = 268435456 # Byte (default = 256 MB)
+# if no-schema is set true, lightning will get schema information from tidb-server directly without creating them.
+no-schema=false
 
 # configuration for tidb server address(one is enough) and pd server address(one is enough).
 [tidb]
