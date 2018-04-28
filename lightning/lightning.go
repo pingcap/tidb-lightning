@@ -78,7 +78,7 @@ func (l *Lightning) Run() {
 func (l *Lightning) run() {
 	mdl, err := mydump.NewMyDumpLoader(l.cfg)
 	if err != nil {
-		log.Errorf("failed to load mydumper source : %s", err.Error())
+		log.Errorf("failed to load mydumper source : %s", errors.ErrorStack(err))
 		return
 	}
 

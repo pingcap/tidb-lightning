@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,12 +27,12 @@ type TidbDBInfo struct {
 }
 
 type TidbTableInfo struct {
-	ID      int64
-	Name    string
-	Columns int
-	Indices int
-
-	core *model.TableInfo
+	ID              int64
+	Name            string
+	Columns         int
+	Indices         int
+	CreateTableStmt string
+	core            *model.TableInfo
 }
 
 func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
@@ -120,6 +121,14 @@ func (timgr *TiDBManager) getSchemas() ([]*model.DBInfo, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return nil, errors.Errorf("get %s http status code != 200, message %s", baseURL.String(), string(body))
+	}
+
 	var schemas []*model.DBInfo
 	err = json.NewDecoder(resp.Body).Decode(&schemas)
 	return schemas, errors.Trace(err)
@@ -133,10 +142,17 @@ func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
 		return nil, errors.Trace(err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return nil, errors.Errorf("get %s http status code !=200, message %s", baseURL.String(), string(body))
+	}
 
 	var tables []*model.TableInfo
 	err = json.NewDecoder(resp.Body).Decode(&tables)
-	return tables, errors.Trace(err)
+	return tables, errors.Annotatef(err, "get tables for schema %s", schema)
 }
 
 func (timgr *TiDBManager) LoadSchemaInfo(schema string) (*TidbDBInfo, error) {
@@ -155,17 +171,29 @@ func (timgr *TiDBManager) LoadSchemaInfo(schema string) (*TidbDBInfo, error) {
 		if tbl.State != model.StatePublic {
 			return nil, errors.Errorf("table [%s.%s] state is not public", schema, tableName)
 		}
+		createTableStmt, err := timgr.getCreateTableStmt(schema, tableName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		tableInfo := &TidbTableInfo{
-			ID:      tbl.ID,
-			Name:    tableName,
-			Columns: len(tbl.Columns),
-			Indices: len(tbl.Indices),
-			core:    tbl,
+			ID:              tbl.ID,
+			Name:            tableName,
+			Columns:         len(tbl.Columns),
+			Indices:         len(tbl.Indices),
+			CreateTableStmt: createTableStmt,
+			core:            tbl,
 		}
 		dbInfo.Tables[tableName] = tableInfo
 	}
 
 	return dbInfo, nil
+}
+
+func (timgr *TiDBManager) getCreateTableStmt(schema, table string) (string, error) {
+	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", schema, table)
+	var tbl, createTable string
+	err := timgr.db.QueryRow(query).Scan(&tbl, &createTable)
+	return createTable, errors.Annotatef(err, "query %s", query)
 }
 
 func ObtainGCLifeTime(db *sql.DB) (gcLifeTime string, err error) {

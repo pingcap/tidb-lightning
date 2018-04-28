@@ -26,6 +26,8 @@ read-block-size = 4096 # Byte (default = 4 KB)
 region-min-size = 268435456 # Byte (default = 256 MB)
 # mydumper local source data directory
 data-source-dir = "/tmp/export-20180328-200751"
+# if no-schema is set true, lightning will get schema information from tidb-server directly without creating them.
+no-schema=false
 
 # configuration for tidb server address(one is enough) and pd server address(one is enough).
 [tidb]

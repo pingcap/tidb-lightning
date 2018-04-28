@@ -1,6 +1,7 @@
 package mydump
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 
@@ -13,15 +14,22 @@ import (
 
 var (
 	// errors
-	errMDEmpty   = errors.New("empty mydumper dir")
-	errMDInvalid = errors.New("invalid mydumper dir, none metadata exists")
-	errMDMiss    = errors.New("invalid mydumper files")
+	errDirNotExists = errors.New("mydumper dir not exists")
+	errMissingFile  = errors.New("missing file")
 )
 
 type MDDatabaseMeta struct {
 	Name       string
 	SchemaFile string
 	Tables     map[string]*MDTableMeta
+}
+
+func (meta *MDDatabaseMeta) String() string {
+	v, err := json.Marshal(meta)
+	if err != nil {
+		log.Error("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
+	}
+	return string(v)
 }
 
 func (m *MDDatabaseMeta) GetSchema() string {
@@ -53,14 +61,16 @@ func (m *MDTableMeta) GetSchema() string {
 	Mydumper File Loader
 */
 type MDLoader struct {
-	dir string
-	dbs map[string]*MDDatabaseMeta
+	dir      string
+	noSchema bool
+	dbs      map[string]*MDDatabaseMeta
 }
 
 func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	mdl := &MDLoader{
-		dir: cfg.Mydumper.SourceDir,
-		dbs: make(map[string]*MDDatabaseMeta),
+		dir:      cfg.Mydumper.SourceDir,
+		noSchema: cfg.Mydumper.NoSchema,
+		dbs:      make(map[string]*MDDatabaseMeta),
 	}
 
 	if err := mdl.setup(mdl.dir); err != nil {
@@ -79,27 +89,23 @@ func (l *MDLoader) setup(dir string) error {
 			sql   —— {db}.{table}.{part}.sql / {db}.{table}.sql
 	*/
 	if !common.IsDirExists(dir) {
-		return errMDEmpty
+		return errors.Annotatef(errDirNotExists, "dir %s", dir)
 	}
 
 	files := common.ListFiles(dir)
 
-	// ps : skip checking it as no denpendcy on it so far
-	// metaFile := filepath.Join(dir, "metadata")
-	// if _, exists := files[metaFile]; !exists {
-	// 	return errMDInvalid
-	// }
-
 	log.Debugf("Files detected : %+v", files)
 
-	// DB : [table , table ...]
-	if err := l.setupDBs(files); err != nil {
-		return errors.Trace(err)
-	}
+	if !l.noSchema {
+		// DB : [table , table ...]
+		if err := l.setupDBs(files); err != nil {
+			return errors.Trace(err)
+		}
 
-	// Table : create table ~
-	if err := l.setupTables(files); err != nil {
-		return errors.Trace(err)
+		// Table : create table ~
+		if err := l.setupTables(files); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// Sql file for restore data
@@ -122,7 +128,7 @@ func (l *MDLoader) setupDBs(files map[string]string) error {
 	}
 
 	if len(l.dbs) == 0 {
-		return errMDMiss
+		return errors.Annotatef(errMissingFile, "missing {schema}-schema-create.sql")
 	}
 
 	return nil
@@ -189,14 +195,34 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 		}
 
 		db, table := fields[0], fields[1]
-		if dbMeta, ok := l.dbs[db]; !ok {
-			return errors.Errorf("invalid data sql file, miss host db - %s", fpath)
-		} else if tableMeta, ok := dbMeta.Tables[table]; !ok {
-			return errors.Errorf("invalid data sql file, miss host table - %s", fpath)
-		} else {
-			tableMeta.DataFiles = append(tableMeta.DataFiles, fpath)
+		dbMeta, ok := l.dbs[db]
+		if !ok {
+			if !l.noSchema {
+				return errors.Errorf("invalid data sql file, miss host db - %s", fpath)
+			}
+			dbMeta = &MDDatabaseMeta{
+				Name:   db,
+				Tables: make(map[string]*MDTableMeta),
+			}
+			l.dbs[db] = dbMeta
 		}
+		tableMeta, ok := dbMeta.Tables[table]
+		if !ok {
+			if !l.noSchema {
+				return errors.Errorf("invalid data sql file, miss host table - %s", fpath)
+			}
+			tableMeta = &MDTableMeta{
+				DB:        db,
+				Name:      table,
+				DataFiles: make([]string, 0, 16),
+			}
+			dbMeta.Tables[table] = tableMeta
+		}
+		// tableMeta.Rows += l.countTableFileRows(fpath)
+		tableMeta.DataFiles = append(tableMeta.DataFiles, fpath)
 	}
+
+	log.Infof("datafiles %+v", l.dbs)
 
 	// sort all tables' data files by file-name
 	for _, dbMeta := range l.dbs {
@@ -209,6 +235,7 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 }
 
 func (l *MDLoader) GetDatabase() *MDDatabaseMeta {
+	// TODO: support multiple databases.
 	for db := range l.dbs {
 		return l.dbs[db]
 	}
