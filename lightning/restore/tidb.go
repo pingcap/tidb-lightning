@@ -13,7 +13,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 )
 
 type TiDBManager struct {
@@ -195,29 +194,6 @@ func (timgr *TiDBManager) getCreateTableStmt(schema, table string) (string, erro
 	var tbl, createTable string
 	err := timgr.db.QueryRow(query).Scan(&tbl, &createTable)
 	return createTable, errors.Annotatef(err, "query %s", query)
-}
-
-func (tbl *TidbTableInfo) WithExplicitPrimaryKey() bool {
-	// TODO : need to check `tableInfo.PKIsHandle` ??
-	for _, col := range tbl.core.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
-			return true
-		}
-	}
-	return false
-}
-
-func (tbl *TidbTableInfo) WithIntegerPrimaryKey() bool {
-	return tbl.core.PKIsHandle
-}
-
-func (tbl *TidbTableInfo) WithAutoIncrPrimaryKey() bool {
-	for _, col := range tbl.core.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) && mysql.HasAutoIncrementFlag(col.Flag) {
-			return true
-		}
-	}
-	return false
 }
 
 func ObtainGCLifeTime(db *sql.DB) (gcLifeTime string, err error) {
