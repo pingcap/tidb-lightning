@@ -1,47 +1,14 @@
 package datasource
 
 import (
-	"fmt"
 	"runtime"
 	"sort"
 	"sync"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb-lightning/lightning/datasource/base"
 	log "github.com/sirupsen/logrus"
 )
-
-type TableRegion struct {
-	ID int
-
-	DB    string
-	Table string
-	File  string
-
-	Offset     int64
-	Size       int64
-	SourceType string
-	Rows       int64
-}
-
-func (reg *TableRegion) String() string {
-	return fmt.Sprintf("file:%s id:%d db:%s table:%s offset:%d size:%d rows:%d ",
-		reg.File, reg.ID, reg.DB, reg.Table, reg.Offset, reg.Size, reg.Rows)
-}
-
-type regionSlice []*TableRegion
-
-func (rs regionSlice) Len() int {
-	return len(rs)
-}
-func (rs regionSlice) Swap(i, j int) {
-	rs[i], rs[j] = rs[j], rs[i]
-}
-func (rs regionSlice) Less(i, j int) bool {
-	if rs[i].File == rs[j].File {
-		return rs[i].Offset < rs[j].Offset
-	}
-	return rs[i].File < rs[j].File
-}
 
 ////////////////////////////////////////////////////////////////
 
@@ -67,7 +34,7 @@ func NewRegionFounder(minRegionSize int64) *RegionFounder {
 	}
 }
 
-func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, sourceType string) ([]*TableRegion, error) {
+func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, sourceType string) ([]*base.TableRegion, error) {
 	var lock sync.Mutex
 	var wg sync.WaitGroup
 
@@ -79,7 +46,7 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, sourceType string) (
 	errChs := make(chan error, len(meta.DataFiles))
 
 	// Split files into regions
-	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
+	filesRegions := make(base.RegionSlice, 0, len(meta.DataFiles))
 	for _, dataFile := range meta.DataFiles {
 		wg.Add(1)
 		go func(pid int, file string) {
@@ -115,7 +82,7 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, sourceType string) (
 	return filesRegions, nil
 }
 
-func splitFuzzyRegion(sourceType string, db string, table string, file string, minRegionSize int64) ([]*TableRegion, error) {
+func splitFuzzyRegion(sourceType string, db string, table string, file string, minRegionSize int64) ([]*base.TableRegion, error) {
 	reader, err := NewDataReader(sourceType, db, table, file, 0)
 	if err != nil {
 		log.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())

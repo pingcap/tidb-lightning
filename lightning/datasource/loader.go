@@ -1,19 +1,17 @@
 package datasource
 
 import (
+	"bufio"
+	"io"
+	"os"
 	"sort"
 	"strings"
 
 	"github.com/juju/errors"
-	log "github.com/sirupsen/logrus"
-
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-)
-
-const (
-	TypeCSV      = "csv"
-	TypeMydumper = "mydumper"
+	"github.com/pingcap/tidb-lightning/lightning/datasource/base"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -172,9 +170,9 @@ func (ds *DataSource) setupTables(files map[string]string) error {
 func (ds *DataSource) setupTablesData(files map[string]string) error {
 	var suffix string
 	switch ds.sourceType {
-	case TypeCSV:
+	case base.TypeCSV:
 		suffix = ".csv"
-	case TypeMydumper:
+	case base.TypeMydumper:
 		suffix = ".sql"
 	}
 
@@ -228,4 +226,45 @@ func (ds *DataSource) GetDatabase() *MDDatabaseMeta {
 		return ds.dbs[db]
 	}
 	return nil
+}
+
+func ExportStatement(sqlFile string) ([]byte, error) {
+	fd, err := os.Open(sqlFile)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer fd.Close()
+
+	br := bufio.NewReader(fd)
+	f, err := os.Stat(sqlFile)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	data := make([]byte, 0, f.Size()+1)
+	buffer := make([]byte, 0, f.Size()+1)
+	for {
+		line, err := br.ReadString('\n')
+		if err == io.EOF {
+			break
+		}
+
+		line = strings.TrimSpace(line[:len(line)-1])
+		if len(line) == 0 {
+			continue
+		}
+
+		buffer = append(buffer, []byte(line)...)
+		if buffer[len(buffer)-1] == ';' {
+			statement := string(buffer)
+			if !(strings.HasPrefix(statement, "/*") && strings.HasSuffix(statement, "*/;")) {
+				data = append(data, buffer...)
+			}
+			buffer = buffer[:0]
+		} else {
+			buffer = append(buffer, '\n')
+		}
+	}
+
+	return data, nil
 }
