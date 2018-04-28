@@ -2,7 +2,7 @@ package kv
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb-lightning/lightning/datasource"
+	"github.com/pingcap/tidb-lightning/lightning/datasource/base"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	log "github.com/sirupsen/logrus"
@@ -91,7 +91,7 @@ func (enc *TableKVEncoder) NextRowID() int64 {
 	return enc.idAllocator.Base() + 1
 }
 
-func (enc *TableKVEncoder) SQL2KV(payload *datasource.Payload) ([]kvec.KvPair, uint64, error) {
+func (enc *TableKVEncoder) SQL2KV(payload *base.Payload) ([]kvec.KvPair, uint64, error) {
 	if enc.usePrepareStmt {
 		// via prepare statement
 		kvPairs, rowsAffected, err := enc.encodeViaPstmt(payload.Params)

@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/datasource"
+	"github.com/pingcap/tidb-lightning/lightning/datasource/base"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
@@ -29,7 +30,6 @@ var (
 const (
 	defaultGCLifeTime = 100 * time.Hour
 )
-
 
 type RestoreControlloer struct {
 	mux sync.RWMutex
@@ -374,7 +374,7 @@ type restoreCallback func(regionID int, maxRowID int64, rows uint64, checksum *v
 
 type regionRestoreTask struct {
 	status   string
-	region   *datasource.TableRegion
+	region   *base.TableRegion
 	executor *RegionRestoreExectuor
 	encoders *kvEncoderPool
 	delivers *kv.KVDeliverKeeper
@@ -383,7 +383,7 @@ type regionRestoreTask struct {
 }
 
 func newRegionRestoreTask(
-	region *datasource.TableRegion,
+	region *base.TableRegion,
 	executor *RegionRestoreExectuor,
 	encoders *kvEncoderPool,
 	delivers *kv.KVDeliverKeeper,
@@ -460,7 +460,7 @@ func newKvEncoderPool(
 		encoders:       []*kv.TableKVEncoder{},
 		sqlMode:        sqlMode,
 		idAlloc:        idAllocator,
-		usePrepareStmt: sourceType == datasource.TypeCSV,
+		usePrepareStmt: sourceType == base.TypeCSV,
 	}
 }
 
@@ -543,8 +543,8 @@ type TableRestore struct {
 	encoders    *kvEncoderPool
 	deliversMgr *kv.KVDeliverKeeper
 
-	regions        []*datasource.TableRegion
-	id2regions     map[int]*datasource.TableRegion
+	regions        []*base.TableRegion
+	id2regions     map[int]*base.TableRegion
 	tasks          []*regionRestoreTask
 	handledRegions map[int]*regionStat
 	localChecksums map[string]*verify.KVChecksum
@@ -603,7 +603,7 @@ func (tr *TableRestore) loadRegions() error {
 		return errors.Trace(err)
 	}
 
-	id2regions := make(map[int]*datasource.TableRegion)
+	id2regions := make(map[int]*base.TableRegion)
 	for _, region := range regions {
 		id2regions[region.ID] = region
 	}
@@ -845,7 +845,7 @@ func NewRegionRestoreExectuor(
 
 func (exc *RegionRestoreExectuor) Run(
 	ctx context.Context,
-	region *datasource.TableRegion,
+	region *base.TableRegion,
 	kvEncoder *kv.TableKVEncoder,
 	kvDeliver kv.KVDeliver) (int64, uint64, *verify.KVChecksum, error) {
 
