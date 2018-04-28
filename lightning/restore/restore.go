@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
+	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 
 var (
@@ -441,18 +442,23 @@ type kvEncoderPool struct {
 	tableMeta *mydump.MDTableMeta
 	encoders  []*kv.TableKVEncoder
 	sqlMode   string
+	idAlloc   *kvec.Allocator
 }
 
 func newKvEncoderPool(
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
 	tableMeta *mydump.MDTableMeta, sqlMode string) *kvEncoderPool {
+
+	idAllocator := kvec.NewAllocator()
+
 	return &kvEncoderPool{
 		dbInfo:    dbInfo,
 		tableInfo: tableInfo,
 		tableMeta: tableMeta,
 		encoders:  []*kv.TableKVEncoder{},
 		sqlMode:   sqlMode,
+		idAlloc:   idAllocator,
 	}
 }
 
@@ -470,7 +476,7 @@ func (p *kvEncoderPool) init(size int) *kvEncoderPool {
 			defer wg.Done()
 			ec, err := kv.NewTableKVEncoder(
 				p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-				p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode)
+				p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode, p.idAlloc)
 			if err == nil {
 				p.encoders = append(p.encoders, ec)
 			}
@@ -488,7 +494,7 @@ func (p *kvEncoderPool) Apply() *kv.TableKVEncoder {
 	if size == 0 {
 		encoder, err := kv.NewTableKVEncoder(
 			p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-			p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode)
+			p.tableInfo.Columns, p.tableMeta.GetSchema(), p.sqlMode, p.idAlloc)
 		if err != nil {
 			log.Errorf("failed to new kv encoder (%s) : %s", p.dbInfo.Name, err.Error())
 			return nil
@@ -587,11 +593,8 @@ func (tr *TableRestore) Close() {
 func (tr *TableRestore) loadRegions() {
 	log.Infof("[%s] load regions", tr.tableMeta.Name)
 
-	// TODO : regionProgress & !regionProgress.Finished()
-
-	preAllocateRowsID := !tr.tableInfo.WithIntegerPrimaryKey()
 	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
-	regions := founder.MakeTableRegions(tr.tableMeta, preAllocateRowsID)
+	regions := founder.MakeTableRegions(tr.tableMeta)
 
 	table := tr.tableMeta.Name
 	id2regions := make(map[int]*mydump.TableRegion)
@@ -869,9 +872,6 @@ func (exc *RegionRestoreExectuor) Run(
 			no matter what happens during process of restore ( eg. safe point / error retry ... )
 	*/
 
-	if region.BeginRowID >= 0 {
-		kvEncoder.ResetRowID(region.BeginRowID)
-	}
 	for {
 		select {
 		case <-ctx.Done():
