@@ -451,7 +451,6 @@ func newKvEncoderPool(
 	tableMeta *mydump.MDTableMeta, sqlMode string) *kvEncoderPool {
 
 	idAllocator := kvec.NewAllocator()
-	idAllocator.Reset(0)
 
 	return &kvEncoderPool{
 		dbInfo:    dbInfo,
