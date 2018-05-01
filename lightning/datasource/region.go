@@ -83,7 +83,7 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta, sourceType string) (
 }
 
 func splitFuzzyRegion(sourceType string, db string, table string, file string, minRegionSize int64) ([]*base.TableRegion, error) {
-	reader, err := NewDataReader(sourceType, db, table, file, 0)
+	reader, err := NewDataReader(sourceType, db, table, file, 0, 0)
 	if err != nil {
 		log.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
 		return nil, nil

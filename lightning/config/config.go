@@ -59,6 +59,7 @@ type DataSource struct {
 	ReadBlockSize int64  `toml:"read-block-size"`
 	MinRegionSize int64  `toml:"region-min-size"`
 	NoSchema      bool   `toml:"no-schema"`
+	Batch         int64  `toml:"batch"`
 }
 
 type TikvImporter struct {

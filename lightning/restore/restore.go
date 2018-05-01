@@ -480,7 +480,8 @@ func (p *kvEncoderPool) init(size int) *kvEncoderPool {
 			defer wg.Done()
 			ec, err := kv.NewTableKVEncoder(
 				p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-				p.tableInfo.Columns, p.tableInfo.CreateTableStmt, p.sqlMode, p.idAlloc, p.usePrepareStmt)
+				p.tableInfo.Columns, p.tableInfo.CreateTableStmt,
+				p.sqlMode, p.idAlloc, p.usePrepareStmt)
 			if err == nil {
 				p.encoders = append(p.encoders, ec)
 			}
@@ -858,7 +859,7 @@ func (exc *RegionRestoreExectuor) Run(
 			3. load kvs data (into kv deliver server)
 			4. flush kvs data (into tikv node)
 	*/
-	reader, err := datasource.NewRegionReader(region)
+	reader, err := datasource.NewRegionReader(region, exc.cfg.DataSource.Batch)
 	if err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
@@ -879,8 +880,6 @@ func (exc *RegionRestoreExectuor) Run(
 			no matter what happens during process of restore ( eg. safe point / error retry ... )
 	*/
 
-	var lastRecords []interface{}
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -891,14 +890,13 @@ func (exc *RegionRestoreExectuor) Run(
 		start := time.Now()
 		payloads, err := reader.Read(exc.cfg.DataSource.ReadBlockSize)
 		if errors.Cause(err) == io.EOF {
-			log.Infof("region %v, EOF, last records %+v", region, lastRecords)
 			break
 		}
 		metrics.MarkTiming(readMark, start)
 
 		for _, payload := range payloads {
-			lastRecords = payload.Params
 			// sql -> kv
+
 			start = time.Now()
 			kvs, affectedRows, err := kvEncoder.SQL2KV(payload)
 			metrics.MarkTiming(encodeMark, start)

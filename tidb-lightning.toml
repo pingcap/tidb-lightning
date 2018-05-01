@@ -30,6 +30,8 @@ read-block-size = 32768 # Byte (default = 32 KB)
 region-min-size = 268435456 # Byte (default = 256 MB)
 # if no-schema is set true, lightning will get schema information from tidb-server directly without creating them.
 no-schema=false
+# batch is used for csv batch KV encoding.
+batch = 5000
 
 # configuration for tidb server address(one is enough) and pd server address(one is enough).
 [tidb]

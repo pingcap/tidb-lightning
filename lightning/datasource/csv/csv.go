@@ -20,9 +20,10 @@ type CSVDataReader struct {
 	br     *bufio.Reader
 	fsize  int64
 	buffer bytes.Buffer
+	batch  int64
 }
 
-func NewCSVDataReader(db, table, file string, offset int64) (*CSVDataReader, error) {
+func NewCSVDataReader(db, table, file string, offset int64, batch int64) (*CSVDataReader, error) {
 	fd, err := os.Open(file)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -45,10 +46,11 @@ func NewCSVDataReader(db, table, file string, offset int64) (*CSVDataReader, err
 		file:  file,
 		fd:    fd,
 		fsize: fstat.Size(),
+		batch: batch,
 	}, nil
 }
 
-func (r *CSVDataReader) Read(minSize int64) ([]*base.Payload, error) {
+func (r *CSVDataReader) Read(minSize int64, endPos int64) ([]*base.Payload, error) {
 	var readSize int64
 	beginPos := r.Tell()
 
@@ -56,6 +58,7 @@ func (r *CSVDataReader) Read(minSize int64) ([]*base.Payload, error) {
 
 	var lastRecord string
 	// read block
+	var count int64
 	for {
 		line, err := br.ReadString('\n')
 		if err == io.EOF {
@@ -71,7 +74,15 @@ func (r *CSVDataReader) Read(minSize int64) ([]*base.Payload, error) {
 		}
 		readSize += int64(len(line))
 		lastRecord = line
-		if r.buffer.Len() >= int(minSize) {
+
+		count++
+		// if r.buffer.Len() >= int(minSize) {
+
+		// if base.CurrOffset(r.fd) >= endPos {
+		// 	return
+		// }
+
+		if count >= r.batch || base.CurrOffset(r.fd) >= endPos {
 			_, err = r.fd.Seek(beginPos+readSize, io.SeekStart)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -89,16 +100,16 @@ func (r *CSVDataReader) Read(minSize int64) ([]*base.Payload, error) {
 		return nil, errors.Trace(err)
 	}
 
-	payloads := make([]*base.Payload, 0, len(records))
+	if len(records) == 0 {
+		return []*base.Payload{}, nil
+	}
+	params := make([]interface{}, 0, len(records)*len(records[0]))
 	for _, record := range records {
-		params := make([]interface{}, 0, len(record))
 		for _, value := range record {
 			params = append(params, value)
 		}
-		payloads = append(payloads, &base.Payload{Params: params})
 	}
-
-	return payloads, nil
+	return []*base.Payload{&base.Payload{Params: params}}, nil
 }
 
 func (r *CSVDataReader) Tell() int64 {
@@ -156,8 +167,8 @@ func (r *CSVDataReader) SplitRegions(regionSize int64) ([]*base.TableRegion, err
 		offset           int64
 		lastRegionOffset int64
 		regionRows       int64
+		lastRecord       string
 	)
-	var lastRecord string
 	for {
 		line, err := rd.ReadString('\n')
 		if err == io.EOF {

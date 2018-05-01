@@ -127,7 +127,7 @@ func (r *MDDataReader) SplitRegions(regionSize int64) ([]*base.TableRegion, erro
 	var offset int64
 	for {
 		r.Seek(offset + regionSize)
-		_, err := r.Read(extendSize)
+		_, err := r.Read(extendSize, 0)
 		pos := r.Tell()
 
 		size := pos - offset
@@ -177,7 +177,7 @@ func (r *MDDataReader) acquireBufferReader(fd *os.File, size int64) *bufio.Reade
 	return r.br
 }
 
-func (r *MDDataReader) Read(minSize int64) ([]*base.Payload, error) {
+func (r *MDDataReader) Read(minSize int64, endPos int64) ([]*base.Payload, error) {
 	fd, beginPos := r.fd, base.CurrOffset(r.fd)
 	if beginPos >= r.fsize {
 		return nil, io.EOF

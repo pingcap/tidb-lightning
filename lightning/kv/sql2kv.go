@@ -1,6 +1,8 @@
 package kv
 
 import (
+	"sync"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/datasource/base"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
@@ -15,17 +17,21 @@ type TableKVEncoder struct {
 	tableSchema string
 	columns     int
 
-	stmtID    uint32
-	bufValues []interface{}
+	stmtIDs struct {
+		values map[int]uint32
+		mu     *sync.RWMutex
+	}
 
 	encoder        kvec.KvEncoder
 	idAllocator    *kvec.Allocator
 	usePrepareStmt bool
 }
 
+// TODO: parameters are too long, refine it.
 func NewTableKVEncoder(
 	db string, table string, tableID int64,
-	columns int, tableSchema string, sqlMode string, idAlloc *kvec.Allocator, usePrepareStmt bool) (*TableKVEncoder, error) {
+	columns int, tableSchema string,
+	sqlMode string, idAlloc *kvec.Allocator, usePrepareStmt bool) (*TableKVEncoder, error) {
 
 	kvEncoder, err := kvec.New(db, idAlloc)
 	if err != nil {
@@ -49,6 +55,8 @@ func NewTableKVEncoder(
 		tableSchema:    tableSchema,
 		usePrepareStmt: usePrepareStmt,
 	}
+	enc.stmtIDs.values = make(map[int]uint32)
+	enc.stmtIDs.mu = new(sync.RWMutex)
 
 	if err = enc.init(); err != nil {
 		enc.Close()
@@ -64,19 +72,13 @@ func (enc *TableKVEncoder) init() error {
 		return errors.Trace(err)
 	}
 
-	if enc.usePrepareStmt {
-		stmtID, err := enc.makeStatements()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		enc.stmtID = stmtID
-	}
-
 	return nil
 }
 
-func (enc *TableKVEncoder) makeStatements() (uint32, error) {
-	return enc.prepareStatement()
+func (enc *TableKVEncoder) makeStatements(rows int) (uint32, error) {
+	stmt := sqltool.MakePrepareStatement(enc.table, enc.columns, rows)
+	stmtID, err := enc.encoder.PrepareStmt(stmt)
+	return stmtID, errors.Trace(err)
 }
 
 func (enc *TableKVEncoder) ResetRowID(rowID int64) {
@@ -112,7 +114,14 @@ func (enc *TableKVEncoder) SQL2KV(payload *base.Payload) ([]kvec.KvPair, uint64,
 }
 
 func (enc *TableKVEncoder) encodeViaPstmt(params []interface{}) ([]kvec.KvPair, uint64, error) {
-	stmtID := enc.applyStmtID()
+	if len(params)%enc.columns != 0 {
+		// TODO: refine it
+		panic("no exact division")
+	}
+	stmtID, err := enc.applyStmtID(len(params) / enc.columns)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
 	kvs, affected, err := enc.encoder.EncodePrepareStmt(enc.tableID, stmtID, params...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -120,12 +129,23 @@ func (enc *TableKVEncoder) encodeViaPstmt(params []interface{}) ([]kvec.KvPair, 
 	return kvs, affected, nil
 }
 
-func (enc *TableKVEncoder) applyStmtID() uint32 {
-	return enc.stmtID
-}
+func (enc *TableKVEncoder) applyStmtID(rows int) (uint32, error) {
+	enc.stmtIDs.mu.RLock()
+	if stmtID, ok := enc.stmtIDs.values[rows]; ok {
+		enc.stmtIDs.mu.RUnlock()
+		return stmtID, nil
+	}
+	enc.stmtIDs.mu.RUnlock()
 
-func (enc *TableKVEncoder) prepareStatement() (uint32, error) {
-	stmt := sqltool.MakePrepareStatement(enc.table, enc.columns, 1)
-	stmtID, err := enc.encoder.PrepareStmt(stmt)
-	return stmtID, errors.Trace(err)
+	// lazy prepare
+	log.Infof("make prepare statement for %d rows", rows)
+	stmtID, err := enc.makeStatements(rows)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	enc.stmtIDs.mu.Lock()
+	enc.stmtIDs.values[rows] = stmtID
+	enc.stmtIDs.mu.Unlock()
+
+	return stmtID, nil
 }
