@@ -1,68 +1,81 @@
 package config
 
 import (
+	"encoding/json"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"runtime"
 
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
+	"github.com/sirupsen/logrus"
 )
 
 type DBStore struct {
-	Host                   string `toml:"host"`
-	Port                   int    `toml:"port"`
-	User                   string `toml:"user"`
-	Psw                    string `toml:"password"`
-	StatusPort             int    `toml:"status-port"`
-	PdAddr                 string `toml:"pd-addr"`
-	SQLMode                string `toml:"sql-mode"`
-	LogLevel               string `toml:"log-level"`
-	DistSQLScanConcurrency int    `toml:"distsql-scan-concurrency"`
+	Host                   string `toml:"host" json:"host"`
+	Port                   int    `toml:"port" json:"port"`
+	User                   string `toml:"user" json:"user"`
+	Psw                    string `toml:"password" json:"password"`
+	StatusPort             int    `toml:"status-port" json:"status-port"`
+	PdAddr                 string `toml:"pd-addr" json:"pd-addr"`
+	SQLMode                string `toml:"sql-mode" json:"sql-mode"`
+	LogLevel               string `toml:"log-level" json:"log-level"`
+	DistSQLScanConcurrency int    `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
 }
 
 type Config struct {
 	*flag.FlagSet `json:"-"`
 
-	App  Lightning `toml:"lightning"`
-	TiDB DBStore   `toml:"tidb"`
+	App  Lightning `toml:"lightning" json:"lightning"`
+	TiDB DBStore   `toml:"tidb" json:"tidb"`
 
 	// not implemented yet.
-	ProgressStore DBStore `toml:"progress-store"`
+	ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
 
-	Mydumper     MydumperRuntime `toml:"mydumper"`
-	TikvImporter TikvImporter    `toml:"tikv-importer"`
-	PostRestore  PostRestore     `toml:"post-restore"`
+	Mydumper     MydumperRuntime `toml:"mydumper" json:"mydumper"`
+	TikvImporter TikvImporter    `toml:"tikv-importer" json:"tikv-importer"`
+	PostRestore  PostRestore     `toml:"post-restore" json:"post-restore"`
 
 	// command line flags
-	ConfigFile string
-	DoCompact  bool
+	ConfigFile   string `json:"config-file"`
+	DoCompact    bool   `json:"-"`
+	printVersion bool
+}
+
+func (c *Config) String() string {
+	bytes, err := json.Marshal(c)
+	if err != nil {
+		logrus.Errorf("[loader] marshal config to json error %v", err)
+	}
+	return string(bytes)
 }
 
 type Lightning struct {
 	log.LogConfig
-	ProfilePort    int `toml:"pprof-port"`
-	WorkerPoolSize int `toml:"worker-pool-size"`
+	ProfilePort    int `toml:"pprof-port" json:"json"`
+	WorkerPoolSize int `toml:"worker-pool-size" json:"worker-pool-size"`
 }
 
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
-	Compact  bool `toml:"compact"`
-	Checksum bool `toml:"checksum"`
-	Analyze  bool `toml:"analyze"`
+	Compact  bool `toml:"compact" json:"compact"`
+	Checksum bool `toml:"checksum" json:"checksum"`
+	Analyze  bool `toml:"analyze" json:"analyze"`
 }
 
 type MydumperRuntime struct {
-	ReadBlockSize int64  `toml:"read-block-size"`
-	MinRegionSize int64  `toml:"region-min-size"`
-	SourceDir     string `toml:"data-source-dir"`
-	NoSchema      bool   `toml:"no-schema"`
+	ReadBlockSize int64  `toml:"read-block-size" json:"read-block-size"`
+	MinRegionSize int64  `toml:"region-min-size" json:"region-min-size"`
+	SourceDir     string `toml:"data-source-dir" json:"data-source-dir"`
+	NoSchema      bool   `toml:"no-schema" json:"no-schema"`
 }
 
 type TikvImporter struct {
-	Addr      string `toml:"addr"`
-	BatchSize int64  `toml:"batch-size"`
+	Addr      string `toml:"addr" json:"addr"`
+	BatchSize int64  `toml:"batch-size" json:"batch-size"`
 }
 
 func NewConfig() *Config {
@@ -85,9 +98,14 @@ func LoadConfig(args []string) (*Config, error) {
 
 	fs.StringVar(&cfg.ConfigFile, "c", "tidb-lightning.toml", "tidb-lightning configuration file")
 	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compaction on the target cluster")
+	fs.BoolVar(&cfg.printVersion, "V", false, "print version of lightning")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, errors.Trace(err)
+	}
+	if cfg.printVersion {
+		fmt.Println(common.GetRawInfo())
+		return nil, flag.ErrHelp
 	}
 
 	data, err := ioutil.ReadFile(cfg.ConfigFile)
