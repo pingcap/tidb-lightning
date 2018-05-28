@@ -48,7 +48,7 @@ type Config struct {
 func (c *Config) String() string {
 	bytes, err := json.Marshal(c)
 	if err != nil {
-		logrus.Errorf("[loader] marshal config to json error %v", err)
+		logrus.Errorf("marshal config to json error %v", err)
 	}
 	return string(bytes)
 }
