@@ -18,7 +18,7 @@ type DBStore struct {
 	Host                   string `toml:"host" json:"host"`
 	Port                   int    `toml:"port" json:"port"`
 	User                   string `toml:"user" json:"user"`
-	Psw                    string `toml:"password" json:"password"`
+	Psw                    string `toml:"password" json:"-"`
 	StatusPort             int    `toml:"status-port" json:"status-port"`
 	PdAddr                 string `toml:"pd-addr" json:"pd-addr"`
 	SQLMode                string `toml:"sql-mode" json:"sql-mode"`
