@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
+// DBStore contains tidb informations.
 type DBStore struct {
 	Host                   string `toml:"host"`
 	Port                   int    `toml:"port"`
@@ -22,6 +23,7 @@ type DBStore struct {
 	DistSQLScanConcurrency int    `toml:"distsql-scan-concurrency"`
 }
 
+// Config represents configuration.
 type Config struct {
 	*flag.FlagSet `json:"-"`
 
@@ -40,6 +42,7 @@ type Config struct {
 	DoCompact  bool
 }
 
+// Lightning contains the configuration about the application itself.
 type Lightning struct {
 	log.LogConfig
 	ProfilePort    int `toml:"pprof-port"`
@@ -53,20 +56,24 @@ type PostRestore struct {
 	Analyze  bool `toml:"analyze"`
 }
 
+// DataSource represents a datasource.
 type DataSource struct {
-	SourceType    string `toml:"data-source-type"`
-	SourceDir     string `toml:"data-source-dir"`
-	ReadBlockSize int64  `toml:"read-block-size"`
-	MinRegionSize int64  `toml:"region-min-size"`
-	NoSchema      bool   `toml:"no-schema"`
-	Batch         int64  `toml:"batch"`
+	SourceType      string `toml:"data-source-type"`
+	SourceDir       string `toml:"data-source-dir"`
+	ReadBlockSize   int64  `toml:"read-block-size"`
+	MinRegionSize   int64  `toml:"region-min-size"`
+	NoSchema        bool   `toml:"no-schema"`
+	Batch           int64  `toml:"batch"`
+	IgnoreFirstLine bool   `toml:"ignore-first-line"`
 }
 
+// TikvImporter contains configuration for tikv-importer.
 type TikvImporter struct {
 	Addr      string `toml:"addr"`
 	BatchSize int64  `toml:"batch-size"`
 }
 
+// NewConfig returns a Config instance.
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
@@ -79,6 +86,7 @@ func NewConfig() *Config {
 	}
 }
 
+// LoadConfig loads configuration from command line flags and configurations file.
 func LoadConfig(args []string) (*Config, error) {
 	cfg := NewConfig()
 
@@ -102,15 +110,15 @@ func LoadConfig(args []string) (*Config, error) {
 
 	// handle mydumper
 	if cfg.DataSource.MinRegionSize <= 0 {
-		cfg.DataSource.MinRegionSize = DefaultMinRegionSize
+		cfg.DataSource.MinRegionSize = defaultMinRegionSize
 	}
 	if cfg.DataSource.ReadBlockSize <= 0 {
-		cfg.DataSource.ReadBlockSize = DefaultReadBlockSize
+		cfg.DataSource.ReadBlockSize = defaultReadBlockSize
 	}
 
 	// handle kv import
 	if cfg.TikvImporter.BatchSize <= 0 {
-		cfg.TikvImporter.BatchSize = KVMaxBatchSize
+		cfg.TikvImporter.BatchSize = kvMaxBatchSize
 	}
 
 	return cfg, nil
