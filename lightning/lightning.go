@@ -12,6 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
 	applog "github.com/pingcap/tidb-lightning/lightning/log"
@@ -45,7 +46,6 @@ func initEnv(cfg *config.Config) error {
 
 func New(cfg *config.Config) *Lightning {
 	initEnv(cfg)
-	log.Infof("cfg %+v", cfg)
 
 	ctx, shutdown := context.WithCancel(context.Background())
 
@@ -58,6 +58,9 @@ func New(cfg *config.Config) *Lightning {
 
 func (l *Lightning) Run() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	common.PrintInfo("lightning", func() {
+		log.Infof("cfg %s", l.cfg)
+	})
 
 	if l.cfg.DoCompact {
 		err := l.doCompact()
