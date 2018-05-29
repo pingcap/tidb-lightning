@@ -7,6 +7,12 @@ ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
 
+LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.ReleaseVersion=$(shell git describe --tags --dirty="-dev")"
+LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.BuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
+LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GitHash=$(shell git rev-parse HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GoVersion=$(shell go version)"
+
 LIGHTNING_BIN := bin/tidb-lightning
 
 TIDBDIR := $(GOPATH)/src/github.com/pingcap/tidb
@@ -14,7 +20,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOBUILD   := CGO_ENABLED=0 $(GO) build
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
 
 ARCH      := "`uname -s`"
@@ -70,5 +76,5 @@ endif
 
 lightning: parserlib
 	@if [ -d $(TIDBDIR)/vendor/golang.org/x/net/trace ]; then mv $(TIDBDIR)/vendor/golang.org/x/net/trace $(TIDBDIR)/vendor/golang.org/x/net/_trace; fi
-	-$(GOBUILD) $(RACE_FLAG) -o $(LIGHTNING_BIN) cmd/main.go
+	-$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/main.go
 	@if [ -d $(TIDBDIR)/vendor/golang.org/x/net/_trace ]; then mv $(TIDBDIR)/vendor/golang.org/x/net/_trace $(TIDBDIR)/vendor/golang.org/x/net/trace; fi 
