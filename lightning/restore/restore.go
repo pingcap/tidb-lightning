@@ -244,8 +244,8 @@ func (rc *RestoreControlloer) checksum(ctx context.Context) error {
 	for _, remoteChecksum := range remoteChecksums {
 		table := fmt.Sprintf("%s.%s", remoteChecksum.Schema, remoteChecksum.Table)
 		localChecksum, ok := rc.localChecksums[table]
-		if !ok {
-			log.Warnf("[%s] no local checksum", table)
+		if !ok && remoteChecksum.Checksum != 0 {
+			log.Warnf("[%s] no local checksum, remote checksum is %v", table, remoteChecksum)
 			continue
 		}
 
@@ -726,6 +726,10 @@ type RemoteChecksum struct {
 	TotalBytes uint64
 }
 
+func (c *RemoteChecksum) String() string {
+	return fmt.Sprintf("[%s.%s] remote_checksum=%d, total_kvs=%d, total_bytes=%d", c.Schema, c.Table, c.Checksum, c.TotalKVs, c.TotalBytes)
+}
+
 // DoChecksum do checksum for tables.
 // table should be in <db>.<table>, format.  e.g. foo.bar
 func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) {
@@ -770,7 +774,7 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 			return nil, errors.Trace(err)
 		}
 		checksums = append(checksums, &cs)
-		log.Infof("[%s] do checksum takes %v", time.Since(timer))
+		log.Infof("[%s] do checksum takes %v", table, time.Since(timer))
 	}
 
 	return checksums, nil
@@ -902,7 +906,7 @@ func (exc *RegionRestoreExectuor) Run(
 			start = time.Now()
 			kvs, affectedRows, err := kvEncoder.SQL2KV(stmt)
 			metrics.MarkTiming(encodeMark, start)
-
+			log.Debugf("len(kvs) %d, len(sql) %d", len(kvs), len(stmt))
 			if err != nil {
 				log.Errorf("kv encode failed = %s\n", err.Error())
 				return kvEncoder.NextRowID(), rows, checksum, errors.Trace(err)
