@@ -30,13 +30,13 @@ func ConnectDB(host string, port int, user string, psw string) (*sql.DB, error) 
 func GetFileSize(file string) (int64, error) {
 	fd, err := os.Open(file)
 	if err != nil {
-		return -1, err
+		return -1, errors.Trace(err)
 	}
 	defer fd.Close()
 
 	fstat, err := fd.Stat()
 	if err != nil {
-		return -1, err
+		return -1, errors.Trace(err)
 	}
 
 	return fstat.Size(), nil
@@ -59,7 +59,7 @@ func IsDirExists(name string) bool {
 func EnsureDir(dir string) error {
 	if !FileExists(dir) {
 		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil

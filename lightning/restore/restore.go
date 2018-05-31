@@ -83,7 +83,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 
 	for _, process := range opts {
 		err := process(ctx)
-		if err == errCtxAborted {
+		if errors.Cause(err) == errCtxAborted {
 			break
 		}
 		if err != nil {
@@ -334,7 +334,8 @@ func makeKVDeliver(
 	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
 
 	uuid := uuid.Must(uuid.NewV4())
-	return kv.NewKVDeliverClient(ctx, uuid, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+	deliver, err := kv.NewKVDeliverClient(ctx, uuid, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+	return deliver, errors.Trace(err)
 }
 
 func setSessionVarInt(db *sql.DB, name string, value int) {
@@ -436,7 +437,8 @@ func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVC
 	kvDeliver := t.delivers.AcquireClient(t.executor.dbInfo.Name, t.executor.tableInfo.Name)
 	defer t.delivers.RecycleClient(kvDeliver)
 
-	return t.executor.Run(ctx, t.region, kvEncoder, kvDeliver)
+	nextRowID, affectedRows, checksum, err := t.executor.Run(ctx, t.region, kvEncoder, kvDeliver)
+	return nextRowID, affectedRows, checksum, errors.Trace(err)
 }
 
 ////////////////////////////////////////////////////////////////
@@ -647,7 +649,8 @@ func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, ch
 }
 
 func (tr *TableRestore) makeKVDeliver() (kv.KVDeliver, error) {
-	return makeKVDeliver(tr.ctx, tr.cfg, tr.dbInfo, tr.tableInfo)
+	deliver, err := makeKVDeliver(tr.ctx, tr.cfg, tr.dbInfo, tr.tableInfo)
+	return deliver, errors.Trace(err)
 }
 
 func (tr *TableRestore) onFinished() error {
@@ -850,7 +853,7 @@ func (exc *RegionRestoreExectuor) Run(
 	ctx context.Context,
 	region *mydump.TableRegion,
 	kvEncoder *kv.TableKVEncoder,
-	kvDeliver kv.KVDeliver) (int64, uint64, *verify.KVChecksum, error) {
+	kvDeliver kv.KVDeliver) (nextRowID int64, affectedRows uint64, checksum *verify.KVChecksum, err error) {
 
 	/*
 		Flows :
@@ -871,7 +874,7 @@ func (exc *RegionRestoreExectuor) Run(
 	deliverMark := fmt.Sprintf("[%s]_deliver_write", table)
 
 	rows := uint64(0)
-	checksum := verify.NewKVChecksum(0)
+	checksum = verify.NewKVChecksum(0)
 	/*
 		TODO :
 			So far, since checksum can not recompute on the same key-value pair,
@@ -889,7 +892,7 @@ func (exc *RegionRestoreExectuor) Run(
 
 		start := time.Now()
 		sqls, err := reader.Read(defReadBlockSize)
-		if err == io.EOF {
+		if errors.Cause(err) == io.EOF {
 			break
 		}
 		metrics.MarkTiming(readMark, start)

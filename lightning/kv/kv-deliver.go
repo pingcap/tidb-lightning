@@ -101,7 +101,7 @@ func NewPipeKvDeliver(uuid uuid.UUID, importServerAddr string, pdAddr string) (*
 func (p *PipeKvDeliver) Close() error {
 	p.shutdown()
 	p.wg.Wait()
-	return p.deliver.Close()
+	return errors.Trace(p.deliver.Close())
 }
 
 func (p *PipeKvDeliver) CloseAndWait() error {
@@ -116,7 +116,7 @@ func (p *PipeKvDeliver) CloseAndWait() error {
 		}
 	}
 
-	return p.deliver.Close()
+	return errors.Trace(p.deliver.Close())
 }
 
 func (p *PipeKvDeliver) Put(kvs []kvec.KvPair) error {
@@ -573,7 +573,7 @@ func newImportClient(importServerAddr string) (*grpc.ClientConn, importpb.Import
 func NewKVDeliverClient(ctx context.Context, uuid uuid.UUID, importServerAddr string, pdAddr string) (*KVDeliverClient, error) {
 	conn, rpcCli, err := newImportClient(importServerAddr) // goruntine safe ???
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	cli := &KVDeliverClient{
@@ -591,7 +591,7 @@ func NewKVDeliverClient(ctx context.Context, uuid uuid.UUID, importServerAddr st
 
 func (c *KVDeliverClient) Close() error {
 	defer c.conn.Close()
-	return c.closeWriteStream()
+	return errors.Trace(c.closeWriteStream())
 }
 
 func (c *KVDeliverClient) bind(txn *deliverTxn) {
@@ -747,7 +747,7 @@ func (c *KVDeliverClient) Flush() error {
 }
 
 func (c *KVDeliverClient) Compact(start, end []byte) error {
-	return c.callCompact(start, end)
+	return errors.Trace(c.callCompact(start, end))
 }
 
 // Do compaction for specific table. `start` and `end`` key can be got in the following way:

@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -89,7 +90,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 
 			for {
 				statements, err := reader.Read(minBlockSize)
-				if err == io.EOF {
+				if errors.Cause(err) == io.EOF {
 					break
 				}
 				for _, stmt := range statements {

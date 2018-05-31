@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/juju/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -137,7 +138,7 @@ func splitFuzzyRegion(db string, table string, file string, minRegionSize int64)
 			regions = append(regions, region)
 		}
 
-		if err == io.EOF {
+		if errors.Cause(err) == io.EOF {
 			break
 		}
 		offset = pos
