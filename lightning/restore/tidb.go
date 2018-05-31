@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -69,9 +70,11 @@ func (timgr *TiDBManager) InitSchema(database string, tablesSchema map[string]st
 	}
 
 	for _, sqlCreateTable := range tablesSchema {
+		timer := time.Now()
 		if err = safeCreateTable(timgr.db, sqlCreateTable); err != nil {
 			return errors.Trace(err)
 		}
+		log.Infof("%s takes %v", sqlCreateTable, time.Since(timer))
 	}
 
 	return nil
