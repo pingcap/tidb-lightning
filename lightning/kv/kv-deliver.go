@@ -539,7 +539,7 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 
 			k.flushWg.Done()
 			log.Infof("[deliver-keeper] finished flushing txn (UUID = %s)", txn.uuid)
-			log.Infof("[deliver-keeper] cost time = %.1f sec", time.Since(now).Seconds())
+			log.Infof("[deliver-keeper] takes %v", time.Since(now))
 		}
 	}
 }

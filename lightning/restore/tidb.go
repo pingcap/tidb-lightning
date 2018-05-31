@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb/model"
+	log "github.com/sirupsen/logrus"
 )
 
 type TiDBManager struct {
@@ -210,6 +211,7 @@ func UpdateGCLifeTime(db *sql.DB, gcLifeTime string) error {
 }
 
 func AlterAutoIncrement(db *sql.DB, schema string, table string, incr int64) error {
+	log.Infof("[%s.%s] set auto_increment=%d", schema, table, incr)
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d", schema, table, incr)
 	_, err := db.Exec(query)
 	return errors.Annotatef(err, "alter table %s.%s auto_increment=%d", schema, table, incr)

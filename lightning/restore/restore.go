@@ -100,7 +100,8 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 }
 
 func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
-	log.Infof("restore schema %s from file %s", rc.dbMeta.Name, rc.dbMeta.SchemaFile)
+	timer := time.Now()
+	log.Infof("restore table schema %s from file %s", rc.dbMeta.Name, rc.dbMeta.SchemaFile)
 
 	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB)
 	if err != nil {
@@ -125,10 +126,12 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	rc.dbInfo = dbInfo
+	log.Infof("restore table schema takes %v", time.Since(timer))
 	return nil
 }
 
 func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
+	timer := time.Now()
 	// tables' restoring mission
 	tablesRestoring := make([]*TableRestore, 0, len(rc.dbMeta.Tables))
 	defer func() {
@@ -201,6 +204,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 		}(worker, task)
 	}
 	wg.Wait() // TODO ... ctx abroted
+	log.Infof("restore table data takes %v", time.Since(timer))
 
 	return nil
 }
@@ -755,6 +759,7 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 	checksums := make([]*RemoteChecksum, 0, len(tables))
 	// do table checksum one by one instead of doing all at once to make tikv server comfortable
 	for _, table := range tables {
+		timer := time.Now()
 		cs := RemoteChecksum{}
 		log.Infof("[%s] doing remote checksum", table)
 		err := db.QueryRow(fmt.Sprintf("ADMIN CHECKSUM TABLE %s", table)).Scan(&cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
@@ -762,6 +767,7 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 			return nil, errors.Trace(err)
 		}
 		checksums = append(checksums, &cs)
+		log.Infof("[%s] do checksum takes %v", time.Since(timer))
 	}
 
 	return checksums, nil
