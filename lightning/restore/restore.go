@@ -292,7 +292,7 @@ func (rc *RestoreControlloer) getTables() []string {
 func analyzeTable(dsn config.DBStore, tables []string) error {
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
-		log.Warnf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually")
+		log.Warnf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually", err)
 		return nil
 	}
 	defer db.Close()

@@ -105,7 +105,7 @@ func QueryRowWithRetry(db *sql.DB, query string, dest ...interface{}) (err error
 	maxRetry := defaultMaxRetry
 	for i := 0; i < maxRetry; i++ {
 		if i > 0 {
-			log.Warnf("query %s retry %d: %v", query, i, maxRetry)
+			log.Warnf("query %s retry %d: %v", query, i, dest)
 			time.Sleep(retryTimeout)
 		}
 
