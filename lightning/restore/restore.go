@@ -484,7 +484,7 @@ func (p *kvEncoderPool) init(size int) *kvEncoderPool {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ec, err := kv.db.QueryRow((
+			ec, err := kv.NewTableKVEncoder(
 				p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
 				p.tableInfo.Columns, p.tableInfo.CreateTableStmt, p.sqlMode, p.idAlloc)
 			if err == nil {
