@@ -2,15 +2,25 @@ package common
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strings"
+	"time"
 
 	"database/sql"
+	"database/sql/driver"
 	"path/filepath"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	tmysql "github.com/pingcap/tidb/mysql"
+	log "github.com/sirupsen/logrus"
+)
+
+const (
+	retryTimeout = 3 * time.Second
+
+	defaultMaxRetry = 100
 )
 
 func Percent(a int, b int) string {
@@ -89,4 +99,117 @@ func ListFiles(dir string) map[string]string {
 	})
 
 	return files
+}
+
+func QueryRowWithRetry(db *sql.DB, query string, dest ...interface{}) (err error) {
+	maxRetry := defaultMaxRetry
+	for i := 0; i < maxRetry; i++ {
+		if i > 0 {
+			log.Warnf("query %s retry %d: %v", i, query)
+			time.Sleep(retryTimeout)
+		}
+
+		err = db.QueryRow(query).Scan(dest...)
+		if err != nil {
+			if !isRetryableError(err) {
+				return errors.Trace(err)
+			}
+			log.Warnf("query %s [error]%v", query, err)
+			continue
+		}
+
+		return nil
+	}
+
+	return errors.Errorf("query sql[%s] failed", query)
+}
+
+// ExecWithRetry executes sqls with optional retry.
+func ExecWithRetry(db *sql.DB, sqls []string) error {
+	maxRetry := defaultMaxRetry
+
+	if len(sqls) == 0 {
+		return nil
+	}
+
+	var err error
+	for i := 0; i < maxRetry; i++ {
+		if i > 0 {
+			log.Warnf("sql stmt_exec retry %d: %v", i, sqls)
+			time.Sleep(retryTimeout)
+		}
+
+		if err = executeSQLImp(db, sqls); err != nil {
+			if isRetryableError(err) {
+				continue
+			}
+			log.Errorf("[exec][sql]%s[error]%v", sqls, err)
+			return errors.Trace(err)
+		}
+
+		return nil
+	}
+
+	return errors.Errorf("exec sqls[%v] failed, err:%s", sqls, err.Error())
+}
+
+func executeSQLImp(db *sql.DB, sqls []string) error {
+	// startTime := time.Now()
+	// defer func() {
+	// 	cost := time.Since(startTime).Seconds()
+
+	// }()
+
+	txn, err := db.Begin()
+	if err != nil {
+		log.Errorf("exec sqls[%v] begin failed %v", sqls, errors.ErrorStack(err))
+		return errors.Trace(err)
+	}
+
+	for i := range sqls {
+		log.Debugf("[exec][sql]%s", sqls[i])
+
+		_, err = txn.Exec(sqls[i])
+		if err != nil {
+			log.Warnf("[exec][sql]%s[args]%v[error]%v", sqls[i], err)
+			rerr := txn.Rollback()
+			if rerr != nil {
+				log.Errorf("[exec][sql]%s[args]%v[error]%v", sqls[i], rerr)
+			}
+			// we should return the exec err, instead of the rollback rerr.
+			return errors.Trace(err)
+		}
+	}
+	err = txn.Commit()
+	if err != nil {
+		log.Errorf("exec sqls[%v] commit failed %v", sqls, errors.ErrorStack(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func isRetryableError(err error) bool {
+	err = errors.Cause(err)
+	if err == driver.ErrBadConn {
+		return true
+	}
+
+	if nerr, ok := err.(net.Error); ok {
+		if nerr.Timeout() {
+			return true
+		}
+	}
+
+	mysqlErr, ok := err.(*mysql.MySQLError)
+	if ok {
+		switch mysqlErr.Number {
+		// ErrLockDeadlock can retry to commit while meet deadlock
+		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout, tmysql.ErrRegionUnavailable:
+			return true
+		default:
+			return false
+		}
+	}
+
+	return true
 }

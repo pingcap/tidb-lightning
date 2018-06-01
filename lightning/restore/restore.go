@@ -244,7 +244,7 @@ func (rc *RestoreControlloer) checksum(ctx context.Context) error {
 	for _, remoteChecksum := range remoteChecksums {
 		table := fmt.Sprintf("%s.%s", remoteChecksum.Schema, remoteChecksum.Table)
 		localChecksum, ok := rc.localChecksums[table]
-		if !ok && remoteChecksum.Checksum != 0 {
+		if !ok {
 			log.Warnf("[%s] no local checksum, remote checksum is %v", table, remoteChecksum)
 			continue
 		}
@@ -292,7 +292,8 @@ func (rc *RestoreControlloer) getTables() []string {
 func analyzeTable(dsn config.DBStore, tables []string) error {
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
-		return errors.Trace(err)
+		log.Warnf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually")
+		return nil
 	}
 	defer db.Close()
 
@@ -303,7 +304,8 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 	for _, table := range tables {
 		timer := time.Now()
 		log.Infof("[%s] analyze", table)
-		_, err := db.Exec(fmt.Sprintf("ANALYZE TABLE %s", table))
+		query := fmt.Sprintf("ANALYZE TABLE %s", table)
+		err := common.ExecWithRetry(db, []string{query})
 		if err != nil {
 			log.Errorf("analyze table %s error %s", table, errors.ErrorStack(err))
 			continue
@@ -340,7 +342,7 @@ func makeKVDeliver(
 
 func setSessionVarInt(db *sql.DB, name string, value int) {
 	stmt := fmt.Sprintf("set session %s = %d", name, value)
-	if _, err := db.Exec(stmt); err != nil {
+	if err := common.ExecWithRetry(db, []string{stmt}); err != nil {
 		log.Warnf("failed to set variable @%s to %d: %s", name, value, err.Error())
 	}
 }
@@ -482,7 +484,7 @@ func (p *kvEncoderPool) init(size int) *kvEncoderPool {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ec, err := kv.NewTableKVEncoder(
+			ec, err := kv.db.QueryRow((
 				p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
 				p.tableInfo.Columns, p.tableInfo.CreateTableStmt, p.sqlMode, p.idAlloc)
 			if err == nil {
@@ -688,7 +690,9 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 	dsn := tr.cfg.TiDB
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
-		return errors.Trace(err)
+		// let it failed and record it to log.
+		log.Warnf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, rowID)
+		return nil
 	}
 	defer db.Close()
 
@@ -769,7 +773,8 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 		timer := time.Now()
 		cs := RemoteChecksum{}
 		log.Infof("[%s] doing remote checksum", table)
-		err := db.QueryRow(fmt.Sprintf("ADMIN CHECKSUM TABLE %s", table)).Scan(&cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
+		query := fmt.Sprintf("ADMIN CHECKSUM TABLE %s", table)
+		common.QueryRowWithRetry(db, query, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -811,6 +816,7 @@ func increaseGCLifeTime(db *sql.DB) (oriGCLifeTime string, err error) {
 	return oriGCLifeTime, nil
 }
 
+// not used now.
 func (tr *TableRestore) excCheckTable() error {
 	log.Infof("Verify by execute `admin check table` : %s", tr.tableMeta.Name)
 
@@ -822,8 +828,8 @@ func (tr *TableRestore) excCheckTable() error {
 	defer db.Close()
 
 	// verify datas completion via command "admin check table"
-	_, err = db.Exec(
-		fmt.Sprintf("ADMIN CHECK TABLE %s.%s", tr.tableMeta.DB, tr.tableMeta.Name))
+	query := fmt.Sprintf("ADMIN CHECK TABLE %s.%s", tr.tableMeta.DB, tr.tableMeta.Name)
+	err = common.ExecWithRetry(db, []string{query})
 	return errors.Trace(err)
 }
 
