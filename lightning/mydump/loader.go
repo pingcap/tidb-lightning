@@ -222,8 +222,6 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fpath)
 	}
 
-	log.Infof("datafiles %+v", l.dbs)
-
 	// sort all tables' data files by file-name
 	for _, dbMeta := range l.dbs {
 		for _, tblMeta := range dbMeta.Tables {
