@@ -818,7 +818,7 @@ func increaseGCLifeTime(db *sql.DB) (oriGCLifeTime string, err error) {
 
 // not used now.
 func (tr *TableRestore) excCheckTable() error {
-	log.Infof("Verify by execute `admin check table` : %s", tr.tableMeta.Name)
+	log.Infof("verify by execute `admin check table` : %s", tr.tableMeta.Name)
 
 	dsn := tr.cfg.TiDB
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)

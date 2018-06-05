@@ -230,6 +230,7 @@ const (
 )
 
 type deliverTxn struct {
+	tag     string
 	mux     sync.RWMutex
 	uuid    uuid.UUID
 	stat    int
@@ -237,8 +238,9 @@ type deliverTxn struct {
 	kvPairs int64
 }
 
-func newDeliverTxn(uuid uuid.UUID) *deliverTxn {
+func newDeliverTxn(uuid uuid.UUID, tag string) *deliverTxn {
 	return &deliverTxn{
+		tag:     tag,
 		uuid:    uuid,
 		stat:    txnPutting,
 		kvSize:  0,
@@ -323,7 +325,7 @@ func NewKVDeliverKeeper(importServerAddr, pdAddr string) *KVDeliverKeeper {
 }
 
 func buildTag(db string, table string) string {
-	return fmt.Sprintf("%s.%s", db, table)
+	return fmt.Sprintf("`%s`.`%s`", db, table)
 }
 
 func (k *KVDeliverKeeper) Close() error {
@@ -353,8 +355,8 @@ func (k *KVDeliverKeeper) newTxn(db string, table string) *deliverTxn {
 	uuid := uuid.Must(uuid.NewV4())
 
 	tag := buildTag(db, table)
-	txn := newDeliverTxn(uuid)
-	log.Infof("[deliver-keeper] new txn (UUID = %s) for [%s]", txn.uuid, tag)
+	txn := newDeliverTxn(uuid, tag)
+	log.Infof("[deliver-keeper][%s] new txn (UUID = %s) ", tag, txn.uuid)
 
 	return txn
 }
@@ -389,7 +391,7 @@ func (k *KVDeliverKeeper) applyTxn(db string, table string) *deliverTxn {
 			table:   table,
 			clients: 0,
 		}
-		log.Infof("[deliver-keeper] holds txn total = %d", len(k.txnBoard))
+		log.Infof("[deliver-keeper][%s] holds txn total = %d", tag, len(k.txnBoard))
 	}
 
 	return txn
@@ -432,7 +434,7 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	if size == 0 {
 		cli, err := NewKVDeliverClient(k.ctx, txn.uuid, k.importServerAddr, k.pdAddr)
 		if err != nil {
-			log.Infof("[deliver-keeper] failed to create deliver client (UUID = %s) : %s ", txn.uuid, err.Error())
+			log.Errorf("[deliver-keeper][%s] failed to create deliver client (UUID = %s) : %s ", buildTag(db, table), txn.uuid, err.Error())
 			return nil
 		}
 
@@ -497,7 +499,7 @@ func (k *KVDeliverKeeper) closeTxnClients(txn *deliverTxn) {
 }
 
 func (k *KVDeliverKeeper) flushTxn(txn *deliverTxn) {
-	log.Infof("[deliver-keeper] gonna to flush txn (UUID = %s)", txn.uuid)
+	log.Infof("[deliver-keeper][%s] gonna to flush txn (UUID = %s)", txn.tag, txn.uuid)
 
 	// release relating client/connection first
 	k.closeTxnClients(txn)
@@ -512,7 +514,7 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 	doFlush := func(txn *deliverTxn) {
 		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.importServerAddr, k.pdAddr)
 		if err != nil {
-			log.Infof("[deliver-keeper] failed to create deliver client (UUID = %s) : %s ", txn.uuid, err.Error())
+			log.Errorf("[deliver-keeper] failed to create deliver client (UUID = %s) : %s ", txn.uuid, err.Error())
 			return
 		}
 		defer func() {
@@ -521,7 +523,7 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 		}()
 
 		if err := cli.Flush(); err != nil {
-			log.Infof("[deliver-keeper] txn (UUID = %s) flush failed : %s ", txn.uuid, err.Error())
+			log.Errorf("[deliver-keeper] txn (UUID = %s) flush failed : %s ", txn.uuid, err.Error())
 		} else {
 			cli.Cleanup()
 		}
@@ -583,7 +585,7 @@ func NewKVDeliverClient(ctx context.Context, uuid uuid.UUID, importServerAddr st
 		pdAddr:           pdAddr,
 		conn:             conn,
 		cli:              rpcCli,
-		txn:              newDeliverTxn(uuid),
+		txn:              newDeliverTxn(uuid, ""),
 	}
 
 	return cli, nil
@@ -610,7 +612,7 @@ func (c *KVDeliverClient) bind(txn *deliverTxn) {
 func (c *KVDeliverClient) exitTxn() {
 	log.Debugf("Release kv client from txn (UUID = %s)", c.txn.uuid)
 	c.closeWriteStream()
-	c.txn = newDeliverTxn(invalidUUID)
+	c.txn = newDeliverTxn(invalidUUID, "")
 	return
 }
 
@@ -776,10 +778,10 @@ func (c *KVDeliverClient) callClose() error {
 func (c *KVDeliverClient) callImport() error {
 	// TODO ... no matter what, to enusure available to import, call close first !
 	timer := time.Now()
-	log.Infof("[%s] import", c.txn.uuid)
+	log.Infof("[%s] [%s] import", c.txn.tag, c.txn.uuid)
 	req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
 	_, err := c.cli.Import(c.ctx, req)
-	log.Infof("[%s] import takes %v", c.txn.uuid, time.Since(timer))
+	log.Infof("[%s] [%s] import takes %v", c.txn.uuid, time.Since(timer))
 
 	return errors.Trace(err)
 }
