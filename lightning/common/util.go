@@ -114,14 +114,14 @@ func QueryRowWithRetry(db *sql.DB, query string, dest ...interface{}) (err error
 			if !isRetryableError(err) {
 				return errors.Trace(err)
 			}
-			log.Warnf("query %s [error]%v", query, err)
+			log.Warnf("query %s [error] %v", query, err)
 			continue
 		}
 
 		return nil
 	}
 
-	return errors.Errorf("query sql[%s] failed", query)
+	return errors.Errorf("query sql [%s] failed", query)
 }
 
 // ExecWithRetry executes sqls with optional retry.
@@ -143,32 +143,32 @@ func ExecWithRetry(db *sql.DB, sqls []string) error {
 			if isRetryableError(err) {
 				continue
 			}
-			log.Errorf("[exec][sql]%s[error]%v", sqls, err)
+			log.Errorf("[exec][sql] %s [error] %v", sqls, err)
 			return errors.Trace(err)
 		}
 
 		return nil
 	}
 
-	return errors.Errorf("exec sqls[%v] failed, err:%s", sqls, err.Error())
+	return errors.Errorf("exec sqls [%v] failed, err:%s", sqls, err.Error())
 }
 
 func executeSQLImp(db *sql.DB, sqls []string) error {
 	txn, err := db.Begin()
 	if err != nil {
-		log.Errorf("exec sqls[%v] begin failed %v", sqls, errors.ErrorStack(err))
+		log.Errorf("exec sqls [%v] begin failed %v", sqls, errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 
 	for i := range sqls {
-		log.Debugf("[exec][sql]%s", sqls[i])
+		log.Debugf("[exec][sql] %s", sqls[i])
 
 		_, err = txn.Exec(sqls[i])
 		if err != nil {
-			log.Warnf("[exec][sql]%s[error]%v", sqls[i], err)
+			log.Warnf("[exec][sql] %s [error]%v", sqls[i], err)
 			rerr := txn.Rollback()
 			if rerr != nil {
-				log.Errorf("[exec][sql]%s[error]%v", sqls[i], rerr)
+				log.Errorf("[exec][sql] %s [error] %v", sqls[i], rerr)
 			}
 			// we should return the exec err, instead of the rollback rerr.
 			return errors.Trace(err)
@@ -176,7 +176,7 @@ func executeSQLImp(db *sql.DB, sqls []string) error {
 	}
 	err = txn.Commit()
 	if err != nil {
-		log.Errorf("exec sqls[%v] commit failed %v", sqls, errors.ErrorStack(err))
+		log.Errorf("exec sqls [%v] commit failed %v", sqls, errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 	return nil
