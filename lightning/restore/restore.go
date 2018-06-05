@@ -99,9 +99,6 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 }
 
 func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
-	timer := time.Now()
-	log.Infof("restore table schema for `%s`", rc.dbMeta.Name)
-
 	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB)
 	if err != nil {
 		return errors.Trace(err)
@@ -111,6 +108,8 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 	database := rc.dbMeta.Name
 
 	if !rc.cfg.Mydumper.NoSchema {
+		timer := time.Now()
+		log.Infof("restore table schema for `%s`", rc.dbMeta.Name)
 		tablesSchema := make(map[string]string)
 		for tbl, tblMeta := range rc.dbMeta.Tables {
 			tablesSchema[tbl] = tblMeta.GetSchema()
@@ -119,13 +118,13 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 		if err != nil {
 			return errors.Errorf("db schema failed to init : %v", err)
 		}
+		log.Infof("restore table schema for `%s` takes %v", rc.dbMeta.Name, time.Since(timer))
 	}
 	dbInfo, err := tidbMgr.LoadSchemaInfo(database)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	rc.dbInfo = dbInfo
-	log.Infof("restore table schema for `%s` takes %v", rc.dbMeta.Name, time.Since(timer))
 	return nil
 }
 
