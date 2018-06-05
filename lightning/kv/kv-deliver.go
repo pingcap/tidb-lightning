@@ -22,9 +22,10 @@ var (
 )
 
 const (
-	_G             uint64 = 1 << 30
-	flushSizeLimit uint64 = 1 * _G
-	maxRetryTimes  int    = 10
+	_G               uint64 = 1 << 30
+	flushSizeLimit   uint64 = 1 * _G
+	maxRetryTimes    int    = 3 // tikv-importer has done retry internally. so we don't too many retry times.
+	retryBackoffTime        = time.Second * 3
 )
 
 var (
@@ -558,6 +559,7 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 			break
 		}
 		log.Errorf("[kv-deliver] [%s] write stream failed to send: %s", c.txn.tag, sendErr.Error())
+		time.Sleep(retryBackoffTime)
 	}
 	if sendErr != nil {
 		c.closeWriteStream()
@@ -633,7 +635,7 @@ func (c *KVDeliverClient) callImport() error {
 			return nil
 		}
 		log.Warnf("[%s] [%s] import failed and retry %d time, err %v", c.txn.tag, c.txn.uuid, i+1, err)
-		time.Sleep(time.Second * 1)
+		time.Sleep(retryBackoffTime)
 	}
 
 	return errors.Errorf("[%s] [%s] import reach max retry %d and still failed", c.txn.tag, c.txn.uuid, maxRetryTimes)
