@@ -849,7 +849,7 @@ func (exc *RegionRestoreExectuor) Run(
 	}
 	defer reader.Close()
 
-	table := exc.tableInfo.Name
+	table := common.UniqueTable(exc.tableMeta.DB, exc.tableMeta.Name)
 	readMark := fmt.Sprintf("[%s]_read_file", table)
 	encodeMark := fmt.Sprintf("[%s]_sql_2_kv", table)
 	deliverMark := fmt.Sprintf("[%s]_deliver_write", table)
