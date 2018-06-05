@@ -100,7 +100,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 
 func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 	timer := time.Now()
-	log.Infof("restore table schema %s from file %s", rc.dbMeta.Name, rc.dbMeta.SchemaFile)
+	log.Infof("restore table schema for `%s` from file %s", rc.dbMeta.Name, rc.dbMeta.SchemaFile)
 
 	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB)
 	if err != nil {
@@ -125,7 +125,7 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	rc.dbInfo = dbInfo
-	log.Infof("restore table schema takes %v", time.Since(timer))
+	log.Infof("restore table schema for `%s` takes %v", rc.dbMeta.Name, time.Since(timer))
 	return nil
 }
 

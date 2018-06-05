@@ -271,7 +271,7 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	// pop client/connection from pool
 	size := len(k.clientsPool)
 	if size == 0 {
-		cli, err := NewKVDeliverClient(k.ctx, txn.uuid, k.importServerAddr, k.pdAddr, "")
+		cli, err := NewKVDeliverClient(k.ctx, txn.uuid, k.importServerAddr, k.pdAddr, common.UniqueTable(db, table))
 		if err != nil {
 			log.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", common.UniqueTable(db, table), txn.uuid, err.Error())
 			return nil
