@@ -318,28 +318,6 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 
 ////////////////////////////////////////////////////////////////
 
-// TODO ... find another way to caculate
-func adjustUUID(uuid string, length int) string {
-	size := len(uuid)
-	if size > length {
-		uuid = uuid[size-length:]
-	} else if size < length {
-		uuid = uuid + strings.Repeat("+", length-size)
-	}
-	return uuid
-}
-
-func makeKVDeliver(
-	ctx context.Context,
-	cfg *config.Config,
-	dbInfo *TidbDBInfo,
-	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
-
-	uuid := uuid.Must(uuid.NewV4())
-	deliver, err := kv.NewKVDeliverClient(ctx, uuid, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	return deliver, errors.Trace(err)
-}
-
 func setSessionVarInt(db *sql.DB, name string, value int) {
 	stmt := fmt.Sprintf("set session %s = %d", name, value)
 	if err := common.ExecWithRetry(db, []string{stmt}); err != nil {
