@@ -154,12 +154,6 @@ func ExecWithRetry(db *sql.DB, sqls []string) error {
 }
 
 func executeSQLImp(db *sql.DB, sqls []string) error {
-	// startTime := time.Now()
-	// defer func() {
-	// 	cost := time.Since(startTime).Seconds()
-
-	// }()
-
 	txn, err := db.Begin()
 	if err != nil {
 		log.Errorf("exec sqls[%v] begin failed %v", sqls, errors.ErrorStack(err))
@@ -195,9 +189,7 @@ func isRetryableError(err error) bool {
 	}
 
 	if nerr, ok := err.(net.Error); ok {
-		if nerr.Timeout() {
-			return true
-		}
+		return nerr.Timeout()
 	}
 
 	mysqlErr, ok := err.(*mysql.MySQLError)
