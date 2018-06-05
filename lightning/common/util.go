@@ -171,10 +171,10 @@ func executeSQLImp(db *sql.DB, sqls []string) error {
 
 		_, err = txn.Exec(sqls[i])
 		if err != nil {
-			log.Warnf("[exec][sql]%s[args]%v[error]%v", sqls[i], err)
+			log.Warnf("[exec][sql]%s[error]%v", sqls[i], err)
 			rerr := txn.Rollback()
 			if rerr != nil {
-				log.Errorf("[exec][sql]%s[args]%v[error]%v", sqls[i], rerr)
+				log.Errorf("[exec][sql]%s[error]%v", sqls[i], rerr)
 			}
 			// we should return the exec err, instead of the rollback rerr.
 			return errors.Trace(err)
