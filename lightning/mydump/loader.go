@@ -24,8 +24,8 @@ type MDDatabaseMeta struct {
 	Tables     map[string]*MDTableMeta
 }
 
-func (meta *MDDatabaseMeta) String() string {
-	v, err := json.Marshal(meta)
+func (m *MDDatabaseMeta) String() string {
+	v, err := json.Marshal(m)
 	if err != nil {
 		log.Error("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
 	}

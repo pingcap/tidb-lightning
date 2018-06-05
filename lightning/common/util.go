@@ -213,3 +213,8 @@ func isRetryableError(err error) bool {
 
 	return true
 }
+
+// UniqueTable returns an unique table name.
+func UniqueTable(schema string, table string) string {
+	return fmt.Sprintf("`%s`.`%s`", schema, table)
+}

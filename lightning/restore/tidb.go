@@ -60,12 +60,12 @@ func (timgr *TiDBManager) Close() {
 }
 
 func (timgr *TiDBManager) InitSchema(database string, tablesSchema map[string]string) error {
-	createDatabase := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database)
+	createDatabase := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
 	err := common.ExecWithRetry(timgr.db, []string{createDatabase})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	useDB := fmt.Sprintf("USE %s", database)
+	useDB := fmt.Sprintf("USE `%s`", database)
 	err = common.ExecWithRetry(timgr.db, []string{useDB})
 	if err != nil {
 		return errors.Trace(err)
@@ -199,25 +199,25 @@ func (timgr *TiDBManager) getCreateTableStmt(schema, table string) (string, erro
 	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", schema, table)
 	var tbl, createTable string
 	err := common.QueryRowWithRetry(timgr.db, query, &tbl, &createTable)
-	return createTable, errors.Annotatef(err, "query %s", query)
+	return createTable, errors.Annotatef(err, "%s", query)
 }
 
 func ObtainGCLifeTime(db *sql.DB) (gcLifeTime string, err error) {
 	query := "SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'"
 	err = common.QueryRowWithRetry(db, query, &gcLifeTime)
-	return gcLifeTime, errors.Annotatef(err, "query tikv_gc_life_time")
+	return gcLifeTime, errors.Annotatef(err, "%s", query)
 }
 
 func UpdateGCLifeTime(db *sql.DB, gcLifeTime string) error {
 	query := fmt.Sprintf(
 		"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'", gcLifeTime)
 	err := common.ExecWithRetry(db, []string{query})
-	return errors.Annotatef(err, "update tikv_gc_life_time=%s", gcLifeTime)
+	return errors.Annotatef(err, "%s", query)
 }
 
 func AlterAutoIncrement(db *sql.DB, schema string, table string, incr int64) error {
-	log.Infof("[%s.%s] set auto_increment=%d", schema, table, incr)
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d", schema, table, incr)
+	log.Infof("[%s.%s] %s", schema, table, query)
 	err := common.ExecWithRetry(db, []string{query})
-	return errors.Annotatef(err, "alter table %s.%s auto_increment=%d", schema, table, incr)
+	return errors.Annotatef(err, "%s", query)
 }

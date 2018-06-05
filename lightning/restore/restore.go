@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
 	"time"
 
@@ -190,7 +189,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 		go func(w *RestoreWorker, t *regionRestoreTask) {
 			defer workers.Recycle(w)
 			defer wg.Done()
-			table := fmt.Sprintf("%s.%s", t.region.DB, t.region.Table)
+			table := common.UniqueTable(t.region.DB, t.region.Table)
 			if _, ok := skipTables[table]; ok {
 				log.Infof("something wrong with table %s before, so skip region %s", table, t.region.Name())
 				return
@@ -216,7 +215,7 @@ func (rc *RestoreControlloer) compact(ctx context.Context) error {
 		return nil
 	}
 
-	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr)
+	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr, "")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -242,7 +241,7 @@ func (rc *RestoreControlloer) checksum(ctx context.Context) error {
 	}
 
 	for _, remoteChecksum := range remoteChecksums {
-		table := fmt.Sprintf("%s.%s", remoteChecksum.Schema, remoteChecksum.Table)
+		table := common.UniqueTable(remoteChecksum.Schema, remoteChecksum.Table)
 		localChecksum, ok := rc.localChecksums[table]
 		if !ok {
 			log.Warnf("[%s] no local checksum, remote checksum is %v", table, remoteChecksum)
@@ -284,7 +283,7 @@ func (rc *RestoreControlloer) getTables() []string {
 			log.Warnf("table info not found : %s", tbl)
 			continue
 		}
-		tables = append(tables, fmt.Sprintf("%s.%s", dbInfo.Name, tbl))
+		tables = append(tables, common.UniqueTable(dbInfo.Name, tbl))
 	}
 	return tables
 }
@@ -392,7 +391,8 @@ func newRegionRestoreTask(
 func (t *regionRestoreTask) Run(ctx context.Context) error {
 	timer := time.Now()
 	region := t.region
-	log.Infof("[%s] restore region [%s]", region.Table, region.Name())
+	table := common.UniqueTable(region.DB, region.Table)
+	log.Infof("[%s] restore region [%s]", table, region.Name())
 
 	t.status = statRunning
 	maxRowID, rows, checksum, err := t.run(ctx)
@@ -400,7 +400,7 @@ func (t *regionRestoreTask) Run(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	log.Infof("[%s] restore region [%s] takes %v", region.Table, region.Name(), time.Since(timer))
+	log.Infof("[%s] restore region [%s] takes %v", table, region.Name(), time.Since(timer))
 	err = t.callback(region.ID, maxRowID, rows, checksum)
 	if err != nil {
 		return errors.Trace(err)
@@ -567,7 +567,7 @@ func NewTableRestore(
 
 	timer := time.Now()
 	tr.loadRegions()
-	log.Infof("[%s] load regions takes %v", tableInfo.Name, time.Since(timer))
+	log.Infof("[%s] load regions takes %v", common.UniqueTable(tableMeta.DB, tableMeta.Name), time.Since(timer))
 
 	return tr
 }
@@ -575,19 +575,18 @@ func NewTableRestore(
 func (tr *TableRestore) Close() {
 	// TODO : flush table meta right now ~
 	tr.encoders.Clear()
-	log.Infof("[%s] closed", tr.tableMeta.Name)
+	log.Infof("[%s] closed", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name))
 }
 
 func (tr *TableRestore) loadRegions() {
-	log.Infof("[%s] load regions", tr.tableMeta.Name)
+	log.Infof("[%s] load regions", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name))
 
 	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
 	regions := founder.MakeTableRegions(tr.tableMeta)
 
-	table := tr.tableMeta.Name
 	id2regions := make(map[int]*mydump.TableRegion)
 	for _, region := range regions {
-		log.Infof("[%s] region - %s", table, region.Name())
+		log.Infof("[%s] region - %s", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name), region.Name())
 		id2regions[region.ID] = region
 	}
 
@@ -605,7 +604,7 @@ func (tr *TableRestore) loadRegions() {
 }
 
 func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error {
-	table := tr.tableInfo.Name
+	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
 	tr.mux.Lock()
 	defer tr.mux.Unlock()
 
@@ -628,11 +627,6 @@ func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, ch
 	return nil
 }
 
-func (tr *TableRestore) makeKVDeliver() (kv.KVDeliver, error) {
-	deliver, err := makeKVDeliver(tr.ctx, tr.cfg, tr.dbInfo, tr.tableInfo)
-	return deliver, errors.Trace(err)
-}
-
 func (tr *TableRestore) onFinished() error {
 	// flush all kvs into TiKV
 	if err := tr.importKV(); err != nil {
@@ -652,15 +646,15 @@ func (tr *TableRestore) onFinished() error {
 		}
 		checksum.Add(regStat.checksum)
 	}
-	table := fmt.Sprintf("%s.%s", tr.tableMeta.DB, tr.tableMeta.Name)
-	log.Infof("[%s] local checksum %s", tr.tableMeta.Name, checksum)
+	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
+	log.Infof("[%s] local checksum %s", table, checksum)
 	tr.localChecksums[table] = checksum
 
 	if err := tr.restoreTableMeta(tableMaxRowID); err != nil {
 		return errors.Trace(err)
 	}
 
-	log.Infof("[%s] has imported %d rows", tr.tableMeta.Name, tableRows)
+	log.Infof("[%s] has imported %d rows", table, tableRows)
 	return nil
 }
 
@@ -678,10 +672,9 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 }
 
 func (tr *TableRestore) importKV() error {
-	table := tr.tableInfo.Name
+	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
 	log.Infof("[%s] flush kv deliver ...", table)
 
-	// kvDeliver, _ := tr.makeKVDeliver()
 	kvDeliver := tr.deliversMgr
 
 	start := time.Now()
@@ -709,7 +702,7 @@ type RemoteChecksum struct {
 }
 
 func (c *RemoteChecksum) String() string {
-	return fmt.Sprintf("[%s.%s] remote_checksum=%d, total_kvs=%d, total_bytes=%d", c.Schema, c.Table, c.Checksum, c.TotalKVs, c.TotalBytes)
+	return fmt.Sprintf("[%s] remote_checksum=%d, total_kvs=%d, total_bytes=%d", common.UniqueTable(c.Schema, c.Table), c.Checksum, c.TotalKVs, c.TotalBytes)
 }
 
 // DoChecksum do checksum for tables.

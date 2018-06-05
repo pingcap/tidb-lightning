@@ -1,13 +1,12 @@
 package kv
 
 import (
-	"fmt"
 	"math"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/importpb"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	log "github.com/sirupsen/logrus"
@@ -25,7 +24,7 @@ var (
 const (
 	_G             uint64 = 1 << 30
 	flushSizeLimit uint64 = 1 * _G
-	maxRetryTimes  int    = 3
+	maxRetryTimes  int    = 10
 )
 
 var (
@@ -168,10 +167,6 @@ func NewKVDeliverKeeper(importServerAddr, pdAddr string) *KVDeliverKeeper {
 	return keeper
 }
 
-func buildTag(db string, table string) string {
-	return fmt.Sprintf("`%s`.`%s`", db, table)
-}
-
 func (k *KVDeliverKeeper) Close() error {
 	k.mux.Lock()
 	defer k.mux.Unlock()
@@ -198,7 +193,7 @@ func (k *KVDeliverKeeper) newTxn(db string, table string) *deliverTxn {
 	k.txnIDCounter++
 	uuid := uuid.Must(uuid.NewV4())
 
-	tag := buildTag(db, table)
+	tag := common.UniqueTable(db, table)
 	txn := newDeliverTxn(uuid, tag)
 	log.Infof("[deliver-keeper][%s] new txn (UUID = %s) ", tag, txn.uuid)
 
@@ -209,7 +204,7 @@ func (k *KVDeliverKeeper) applyTxn(db string, table string) *deliverTxn {
 	var txn *deliverTxn
 
 	// try to choose a valid deliver txn to join
-	tag := buildTag(db, table)
+	tag := common.UniqueTable(db, table)
 	tagTxns, ok := k.txns[tag]
 	if ok {
 		for _, tx := range tagTxns {
@@ -227,7 +222,7 @@ func (k *KVDeliverKeeper) applyTxn(db string, table string) *deliverTxn {
 		tagTxns = make([]*deliverTxn, 0, 4)
 		tagTxns = append(tagTxns, txn)
 		k.txns[tag] = tagTxns
-		log.Infof("[deliver-keeper] holds [%s] txn count = %d", tag, len(tagTxns))
+		log.Infof("[deliver-keeper] [%s] holds txn count = %d", tag, len(tagTxns))
 
 		k.txnBoard[txn.uuid] = &txnInfo{
 			txn:     txn,
@@ -235,7 +230,7 @@ func (k *KVDeliverKeeper) applyTxn(db string, table string) *deliverTxn {
 			table:   table,
 			clients: 0,
 		}
-		log.Infof("[deliver-keeper][%s] holds txn total = %d", tag, len(k.txnBoard))
+		log.Infof("[deliver-keeper] [%s] holds txn total = %d", tag, len(k.txnBoard))
 	}
 
 	return txn
@@ -276,9 +271,9 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	// pop client/connection from pool
 	size := len(k.clientsPool)
 	if size == 0 {
-		cli, err := NewKVDeliverClient(k.ctx, txn.uuid, k.importServerAddr, k.pdAddr)
+		cli, err := NewKVDeliverClient(k.ctx, txn.uuid, k.importServerAddr, k.pdAddr, "")
 		if err != nil {
-			log.Errorf("[deliver-keeper][%s] failed to create deliver client (UUID = %s) : %s ", buildTag(db, table), txn.uuid, err.Error())
+			log.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", common.UniqueTable(db, table), txn.uuid, err.Error())
 			return nil
 		}
 
@@ -297,7 +292,7 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 }
 
 func (k *KVDeliverKeeper) Compact(start, end []byte) error {
-	cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.importServerAddr, k.pdAddr)
+	cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.importServerAddr, k.pdAddr, "")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -343,8 +338,6 @@ func (k *KVDeliverKeeper) closeTxnClients(txn *deliverTxn) {
 }
 
 func (k *KVDeliverKeeper) flushTxn(txn *deliverTxn) {
-	log.Infof("[deliver-keeper][%s] gonna to flush txn (UUID = %s)", txn.tag, txn.uuid)
-
 	// release relating client/connection first
 	k.closeTxnClients(txn)
 
@@ -356,9 +349,9 @@ func (k *KVDeliverKeeper) flushTxn(txn *deliverTxn) {
 
 func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 	doFlush := func(txn *deliverTxn) {
-		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.importServerAddr, k.pdAddr)
+		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.importServerAddr, k.pdAddr, txn.tag)
 		if err != nil {
-			log.Errorf("[deliver-keeper] failed to create deliver client (UUID = %s) : %s ", txn.uuid, err.Error())
+			log.Errorf("[deliver-keeper][%s] failed to create deliver client (UUID = %s) : %s ", txn.tag, txn.uuid, err.Error())
 			return
 		}
 		defer func() {
@@ -367,9 +360,12 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 		}()
 
 		if err := cli.Flush(); err != nil {
-			log.Errorf("[deliver-keeper] txn (UUID = %s) flush failed : %s ", txn.uuid, err.Error())
-		} else {
-			cli.Cleanup()
+			log.Errorf("[deliver-keeper][%s] txn (UUID = %s) flush failed : %s ", txn.tag, txn.uuid, err.Error())
+			return
+		}
+		err = cli.Cleanup()
+		if err != nil {
+			log.Warnf("[deliver-keeper][%s] txn (UUID = %s) cleanup failed: %s", txn.tag, txn.uuid, err.Error())
 		}
 	}
 
@@ -379,13 +375,12 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 			return
 		case txn := <-k.txnFlushQueue:
 			now := time.Now()
-			log.Infof("[deliver-keeper] start flushing txn (UUID = %s) ... ", txn.uuid)
+			log.Infof("[deliver-keeper][%s] start flushing txn (UUID = %s) ... ", txn.tag, txn.uuid)
 
 			doFlush(txn)
 
 			k.flushWg.Done()
-			log.Infof("[deliver-keeper] finished flushing txn (UUID = %s)", txn.uuid)
-			log.Infof("[deliver-keeper] takes %v", time.Since(now))
+			log.Infof("[deliver-keeper][%s] finished flushing txn (UUID = %s), takes %v", txn.tag, txn.uuid, time.Since(now))
 		}
 	}
 }
@@ -416,7 +411,7 @@ func newImportClient(importServerAddr string) (*grpc.ClientConn, importpb.Import
 	return conn, importpb.NewImportKVClient(conn), nil
 }
 
-func NewKVDeliverClient(ctx context.Context, uuid uuid.UUID, importServerAddr string, pdAddr string) (*KVDeliverClient, error) {
+func NewKVDeliverClient(ctx context.Context, uuid uuid.UUID, importServerAddr string, pdAddr string, uniqueTable string) (*KVDeliverClient, error) {
 	conn, rpcCli, err := newImportClient(importServerAddr) // goruntine safe ???
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -556,10 +551,17 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 		},
 	}
 
-	if err := wstream.Send(write); err != nil {
-		log.Errorf("[kv-deliver] write stream failed to send : %s", err.Error())
+	var sendErr error
+	for i := 0; i < maxRetryTimes; i++ {
+		sendErr = wstream.Send(write)
+		if sendErr == nil {
+			break
+		}
+		log.Errorf("[kv-deliver][%s] write stream failed to send: %s", c.txn.tag, sendErr.Error())
+	}
+	if sendErr != nil {
 		c.closeWriteStream()
-		return errors.Trace(err)
+		return errors.Trace(sendErr)
 	}
 
 	kvSize := 0
@@ -611,21 +613,28 @@ func (c *KVDeliverClient) callCompact(start, end []byte) error {
 
 func (c *KVDeliverClient) callClose() error {
 	timer := time.Now()
-	log.Infof("[%s] close", c.txn.uuid)
+	log.Infof("[%s] [%s] close", c.txn.tag, c.txn.uuid)
 	req := &importpb.CloseRequest{Uuid: c.txn.uuid.Bytes()}
 	_, err := c.cli.Close(c.ctx, req)
-	log.Infof("[%s] close takes %v", c.txn.uuid, time.Since(timer))
+	log.Infof("[%s] [%s] close takes %v", c.txn.tag, c.txn.uuid, time.Since(timer))
 
 	return errors.Trace(err)
 }
 
 func (c *KVDeliverClient) callImport() error {
 	// TODO ... no matter what, to enusure available to import, call close first !
-	timer := time.Now()
-	log.Infof("[%s] [%s] import", c.txn.tag, c.txn.uuid)
-	req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
-	_, err := c.cli.Import(c.ctx, req)
-	log.Infof("[%s] [%s] import takes %v", c.txn.uuid, time.Since(timer))
+	for i := 0; i < maxRetryTimes; i++ {
+		timer := time.Now()
+		log.Infof("[%s] [%s] import", c.txn.tag, c.txn.uuid)
+		req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
+		_, err := c.cli.Import(c.ctx, req)
+		log.Infof("[%s] [%s] import takes %v", c.txn.uuid, time.Since(timer))
+		if err == nil {
+			return nil
+		}
+		log.Warnf("[%s] [%s] import failed and retry %d time, err %v", i+1, err)
+		time.Sleep(time.Second * 1)
+	}
 
-	return errors.Trace(err)
+	return errors.Errorf("[%s] [%s] import reach max retry %d and still failed", c.txn.tag, c.txn.uuid, maxRetryTimes)
 }
