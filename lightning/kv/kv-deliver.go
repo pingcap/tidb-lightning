@@ -195,7 +195,7 @@ func (k *KVDeliverKeeper) newTxn(db string, table string) *deliverTxn {
 
 	tag := common.UniqueTable(db, table)
 	txn := newDeliverTxn(uuid, tag)
-	log.Infof("[deliver-keeper][%s] new txn (UUID = %s) ", tag, txn.uuid)
+	log.Infof("[deliver-keeper] [%s] new txn (UUID = %s) ", tag, txn.uuid)
 
 	return txn
 }
@@ -351,7 +351,7 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 	doFlush := func(txn *deliverTxn) {
 		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.importServerAddr, k.pdAddr, txn.tag)
 		if err != nil {
-			log.Errorf("[deliver-keeper][%s] failed to create deliver client (UUID = %s) : %s ", txn.tag, txn.uuid, err.Error())
+			log.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", txn.tag, txn.uuid, err.Error())
 			return
 		}
 		defer func() {
@@ -360,12 +360,12 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 		}()
 
 		if err := cli.Flush(); err != nil {
-			log.Errorf("[deliver-keeper][%s] txn (UUID = %s) flush failed : %s ", txn.tag, txn.uuid, err.Error())
+			log.Errorf("[deliver-keeper] [%s] txn (UUID = %s) flush failed : %s ", txn.tag, txn.uuid, err.Error())
 			return
 		}
 		err = cli.Cleanup()
 		if err != nil {
-			log.Warnf("[deliver-keeper][%s] txn (UUID = %s) cleanup failed: %s", txn.tag, txn.uuid, err.Error())
+			log.Warnf("[deliver-keeper] [%s] txn (UUID = %s) cleanup failed: %s", txn.tag, txn.uuid, err.Error())
 		}
 	}
 
@@ -375,12 +375,12 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 			return
 		case txn := <-k.txnFlushQueue:
 			now := time.Now()
-			log.Infof("[deliver-keeper][%s] start flushing txn (UUID = %s) ... ", txn.tag, txn.uuid)
+			log.Infof("[deliver-keeper] [%s] start flushing txn (UUID = %s) ... ", txn.tag, txn.uuid)
 
 			doFlush(txn)
 
 			k.flushWg.Done()
-			log.Infof("[deliver-keeper][%s] finished flushing txn (UUID = %s), takes %v", txn.tag, txn.uuid, time.Since(now))
+			log.Infof("[deliver-keeper] [%s] finished flushing txn (UUID = %s), takes %v", txn.tag, txn.uuid, time.Since(now))
 		}
 	}
 }
@@ -424,7 +424,7 @@ func NewKVDeliverClient(ctx context.Context, uuid uuid.UUID, importServerAddr st
 		pdAddr:           pdAddr,
 		conn:             conn,
 		cli:              rpcCli,
-		txn:              newDeliverTxn(uuid, ""),
+		txn:              newDeliverTxn(uuid, uniqueTable),
 	}
 
 	return cli, nil
@@ -557,7 +557,7 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 		if sendErr == nil {
 			break
 		}
-		log.Errorf("[kv-deliver][%s] write stream failed to send: %s", c.txn.tag, sendErr.Error())
+		log.Errorf("[kv-deliver] [%s] write stream failed to send: %s", c.txn.tag, sendErr.Error())
 	}
 	if sendErr != nil {
 		c.closeWriteStream()
@@ -628,11 +628,11 @@ func (c *KVDeliverClient) callImport() error {
 		log.Infof("[%s] [%s] import", c.txn.tag, c.txn.uuid)
 		req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
 		_, err := c.cli.Import(c.ctx, req)
-		log.Infof("[%s] [%s] import takes %v", c.txn.uuid, time.Since(timer))
+		log.Infof("[%s] [%s] import takes %v", c.txn.tag, c.txn.uuid, time.Since(timer))
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[%s] [%s] import failed and retry %d time, err %v", i+1, err)
+		log.Warnf("[%s] [%s] import failed and retry %d time, err %v", c.txn.tag, c.txn.uuid, i+1, err)
 		time.Sleep(time.Second * 1)
 	}
 
