@@ -33,7 +33,7 @@ func ExportStatement(sqlFile string) ([]byte, error) {
 	buffer := make([]byte, 0, f.Size()+1)
 	for {
 		line, err := br.ReadString('\n')
-		if err == io.EOF {
+		if errors.Cause(err) == io.EOF {
 			break
 		}
 
@@ -118,7 +118,7 @@ func (r *MDDataReader) skipAnnotation(offset int64) int64 {
 	br := bufio.NewReader(r.fd)
 	for skipSize := 0; ; {
 		line, err := br.ReadString('\n')
-		if err == io.EOF {
+		if errors.Cause(err) == io.EOF {
 			break
 		}
 
@@ -164,7 +164,7 @@ func getInsertStatmentHeader(file string) []byte {
 	br := bufio.NewReaderSize(f, int(defReadBlockSize))
 	for {
 		line, err := br.ReadString('\n')
-		if err == io.EOF {
+		if errors.Cause(err) == io.EOF {
 			break
 		}
 
@@ -298,7 +298,7 @@ func NewRegionReader(file string, offset int64, size int64) (*RegionReader, erro
 
 	fileReader, err := NewMDDataReader(file, offset)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	return &RegionReader{
@@ -322,9 +322,9 @@ func (r *RegionReader) Read(maxBlockSize int64) ([][]byte, error) {
 	datas, err := r.fileReader.Read(readSize)
 	r.pos = r.fileReader.Tell()
 
-	return datas, err
+	return datas, errors.Trace(err)
 }
 
 func (r *RegionReader) Close() error {
-	return r.fileReader.Close()
+	return errors.Trace(r.fileReader.Close())
 }

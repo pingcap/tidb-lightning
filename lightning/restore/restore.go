@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
 	"time"
 
@@ -83,7 +82,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 
 	for _, process := range opts {
 		err := process(ctx)
-		if err == errCtxAborted {
+		if errors.Cause(err) == errCtxAborted {
 			break
 		}
 		if err != nil {
@@ -100,8 +99,6 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 }
 
 func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
-	log.Infof("restore schema %s from file %s", rc.dbMeta.Name, rc.dbMeta.SchemaFile)
-
 	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB)
 	if err != nil {
 		return errors.Trace(err)
@@ -111,6 +108,8 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 	database := rc.dbMeta.Name
 
 	if !rc.cfg.Mydumper.NoSchema {
+		timer := time.Now()
+		log.Infof("restore table schema for `%s`", rc.dbMeta.Name)
 		tablesSchema := make(map[string]string)
 		for tbl, tblMeta := range rc.dbMeta.Tables {
 			tablesSchema[tbl] = tblMeta.GetSchema()
@@ -119,6 +118,7 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 		if err != nil {
 			return errors.Errorf("db schema failed to init : %v", err)
 		}
+		log.Infof("restore table schema for `%s` takes %v", rc.dbMeta.Name, time.Since(timer))
 	}
 	dbInfo, err := tidbMgr.LoadSchemaInfo(database)
 	if err != nil {
@@ -129,6 +129,7 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 }
 
 func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
+	timer := time.Now()
 	// tables' restoring mission
 	tablesRestoring := make([]*TableRestore, 0, len(rc.dbMeta.Tables))
 	defer func() {
@@ -187,7 +188,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 		go func(w *RestoreWorker, t *regionRestoreTask) {
 			defer workers.Recycle(w)
 			defer wg.Done()
-			table := fmt.Sprintf("%s.%s", t.region.DB, t.region.Table)
+			table := common.UniqueTable(t.region.DB, t.region.Table)
 			if _, ok := skipTables[table]; ok {
 				log.Infof("something wrong with table %s before, so skip region %s", table, t.region.Name())
 				return
@@ -201,6 +202,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 		}(worker, task)
 	}
 	wg.Wait() // TODO ... ctx abroted
+	log.Infof("restore table data takes %v", time.Since(timer))
 
 	return nil
 }
@@ -212,7 +214,7 @@ func (rc *RestoreControlloer) compact(ctx context.Context) error {
 		return nil
 	}
 
-	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr)
+	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr, "")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -238,10 +240,10 @@ func (rc *RestoreControlloer) checksum(ctx context.Context) error {
 	}
 
 	for _, remoteChecksum := range remoteChecksums {
-		table := fmt.Sprintf("%s.%s", remoteChecksum.Schema, remoteChecksum.Table)
+		table := common.UniqueTable(remoteChecksum.Schema, remoteChecksum.Table)
 		localChecksum, ok := rc.localChecksums[table]
 		if !ok {
-			log.Warnf("[%s] no local checksum", table)
+			log.Warnf("[%s] no local checksum, remote checksum is %v", table, remoteChecksum)
 			continue
 		}
 
@@ -280,7 +282,7 @@ func (rc *RestoreControlloer) getTables() []string {
 			log.Warnf("table info not found : %s", tbl)
 			continue
 		}
-		tables = append(tables, fmt.Sprintf("%s.%s", dbInfo.Name, tbl))
+		tables = append(tables, common.UniqueTable(dbInfo.Name, tbl))
 	}
 	return tables
 }
@@ -288,7 +290,8 @@ func (rc *RestoreControlloer) getTables() []string {
 func analyzeTable(dsn config.DBStore, tables []string) error {
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
-		return errors.Trace(err)
+		log.Warnf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually", err)
+		return nil
 	}
 	defer db.Close()
 
@@ -299,7 +302,8 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 	for _, table := range tables {
 		timer := time.Now()
 		log.Infof("[%s] analyze", table)
-		_, err := db.Exec(fmt.Sprintf("ANALYZE TABLE %s", table))
+		query := fmt.Sprintf("ANALYZE TABLE %s", table)
+		err := common.ExecWithRetry(db, []string{query})
 		if err != nil {
 			log.Errorf("analyze table %s error %s", table, errors.ErrorStack(err))
 			continue
@@ -312,30 +316,9 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 
 ////////////////////////////////////////////////////////////////
 
-// TODO ... find another way to caculate
-func adjustUUID(uuid string, length int) string {
-	size := len(uuid)
-	if size > length {
-		uuid = uuid[size-length:]
-	} else if size < length {
-		uuid = uuid + strings.Repeat("+", length-size)
-	}
-	return uuid
-}
-
-func makeKVDeliver(
-	ctx context.Context,
-	cfg *config.Config,
-	dbInfo *TidbDBInfo,
-	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
-
-	uuid := uuid.Must(uuid.NewV4())
-	return kv.NewKVDeliverClient(ctx, uuid, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-}
-
 func setSessionVarInt(db *sql.DB, name string, value int) {
 	stmt := fmt.Sprintf("set session %s = %d", name, value)
-	if _, err := db.Exec(stmt); err != nil {
+	if err := common.ExecWithRetry(db, []string{stmt}); err != nil {
 		log.Warnf("failed to set variable @%s to %d: %s", name, value, err.Error())
 	}
 }
@@ -407,7 +390,8 @@ func newRegionRestoreTask(
 func (t *regionRestoreTask) Run(ctx context.Context) error {
 	timer := time.Now()
 	region := t.region
-	log.Infof("[%s] restore region [%s]", region.Table, region.Name())
+	table := common.UniqueTable(region.DB, region.Table)
+	log.Infof("[%s] restore region [%s]", table, region.Name())
 
 	t.status = statRunning
 	maxRowID, rows, checksum, err := t.run(ctx)
@@ -415,7 +399,7 @@ func (t *regionRestoreTask) Run(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	log.Infof("[%s] restore region [%s] takes %v", region.Table, region.Name(), time.Since(timer))
+	log.Infof("[%s] restore region [%s] takes %v", table, region.Name(), time.Since(timer))
 	err = t.callback(region.ID, maxRowID, rows, checksum)
 	if err != nil {
 		return errors.Trace(err)
@@ -432,7 +416,8 @@ func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVC
 	kvDeliver := t.delivers.AcquireClient(t.executor.dbInfo.Name, t.executor.tableInfo.Name)
 	defer t.delivers.RecycleClient(kvDeliver)
 
-	return t.executor.Run(ctx, t.region, kvEncoder, kvDeliver)
+	nextRowID, affectedRows, checksum, err := t.executor.Run(ctx, t.region, kvEncoder, kvDeliver)
+	return nextRowID, affectedRows, checksum, errors.Trace(err)
 }
 
 ////////////////////////////////////////////////////////////////
@@ -581,7 +566,7 @@ func NewTableRestore(
 
 	timer := time.Now()
 	tr.loadRegions()
-	log.Infof("[%s] load regions takes %v", tableInfo.Name, time.Since(timer))
+	log.Infof("[%s] load regions takes %v", common.UniqueTable(tableMeta.DB, tableMeta.Name), time.Since(timer))
 
 	return tr
 }
@@ -589,19 +574,18 @@ func NewTableRestore(
 func (tr *TableRestore) Close() {
 	// TODO : flush table meta right now ~
 	tr.encoders.Clear()
-	log.Infof("[%s] closed", tr.tableMeta.Name)
+	log.Infof("[%s] closed", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name))
 }
 
 func (tr *TableRestore) loadRegions() {
-	log.Infof("[%s] load regions", tr.tableMeta.Name)
+	log.Infof("[%s] load regions", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name))
 
 	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
 	regions := founder.MakeTableRegions(tr.tableMeta)
 
-	table := tr.tableMeta.Name
 	id2regions := make(map[int]*mydump.TableRegion)
 	for _, region := range regions {
-		log.Infof("[%s] region - %s", table, region.Name())
+		log.Infof("[%s] region - %s", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name), region.Name())
 		id2regions[region.ID] = region
 	}
 
@@ -619,7 +603,7 @@ func (tr *TableRestore) loadRegions() {
 }
 
 func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error {
-	table := tr.tableInfo.Name
+	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
 	tr.mux.Lock()
 	defer tr.mux.Unlock()
 
@@ -642,10 +626,6 @@ func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, ch
 	return nil
 }
 
-func (tr *TableRestore) makeKVDeliver() (kv.KVDeliver, error) {
-	return makeKVDeliver(tr.ctx, tr.cfg, tr.dbInfo, tr.tableInfo)
-}
-
 func (tr *TableRestore) onFinished() error {
 	// flush all kvs into TiKV
 	if err := tr.importKV(); err != nil {
@@ -665,15 +645,15 @@ func (tr *TableRestore) onFinished() error {
 		}
 		checksum.Add(regStat.checksum)
 	}
-	table := fmt.Sprintf("%s.%s", tr.tableMeta.DB, tr.tableMeta.Name)
-	log.Infof("[%s] local checksum %s", tr.tableMeta.Name, checksum)
+	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
+	log.Infof("[%s] local checksum %s", table, checksum)
 	tr.localChecksums[table] = checksum
 
 	if err := tr.restoreTableMeta(tableMaxRowID); err != nil {
 		return errors.Trace(err)
 	}
 
-	log.Infof("[%s] has imported %d rows", tr.tableMeta.Name, tableRows)
+	log.Infof("[%s] has imported %d rows", table, tableRows)
 	return nil
 }
 
@@ -681,7 +661,9 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 	dsn := tr.cfg.TiDB
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
-		return errors.Trace(err)
+		// let it failed and record it to log.
+		log.Warnf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, rowID)
+		return nil
 	}
 	defer db.Close()
 
@@ -689,10 +671,9 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 }
 
 func (tr *TableRestore) importKV() error {
-	table := tr.tableInfo.Name
+	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
 	log.Infof("[%s] flush kv deliver ...", table)
 
-	// kvDeliver, _ := tr.makeKVDeliver()
 	kvDeliver := tr.deliversMgr
 
 	start := time.Now()
@@ -717,6 +698,10 @@ type RemoteChecksum struct {
 	Checksum   uint64
 	TotalKVs   uint64
 	TotalBytes uint64
+}
+
+func (c *RemoteChecksum) String() string {
+	return fmt.Sprintf("[%s] remote_checksum=%d, total_kvs=%d, total_bytes=%d", common.UniqueTable(c.Schema, c.Table), c.Checksum, c.TotalKVs, c.TotalBytes)
 }
 
 // DoChecksum do checksum for tables.
@@ -755,13 +740,16 @@ func DoChecksum(dsn config.DBStore, tables []string) ([]*RemoteChecksum, error) 
 	checksums := make([]*RemoteChecksum, 0, len(tables))
 	// do table checksum one by one instead of doing all at once to make tikv server comfortable
 	for _, table := range tables {
+		timer := time.Now()
 		cs := RemoteChecksum{}
 		log.Infof("[%s] doing remote checksum", table)
-		err := db.QueryRow(fmt.Sprintf("ADMIN CHECKSUM TABLE %s", table)).Scan(&cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
+		query := fmt.Sprintf("ADMIN CHECKSUM TABLE %s", table)
+		common.QueryRowWithRetry(db, query, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		checksums = append(checksums, &cs)
+		log.Infof("[%s] do checksum takes %v", table, time.Since(timer))
 	}
 
 	return checksums, nil
@@ -798,8 +786,9 @@ func increaseGCLifeTime(db *sql.DB) (oriGCLifeTime string, err error) {
 	return oriGCLifeTime, nil
 }
 
+// not used now.
 func (tr *TableRestore) excCheckTable() error {
-	log.Infof("Verify by execute `admin check table` : %s", tr.tableMeta.Name)
+	log.Infof("verify by execute `admin check table` : %s", tr.tableMeta.Name)
 
 	dsn := tr.cfg.TiDB
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
@@ -809,8 +798,8 @@ func (tr *TableRestore) excCheckTable() error {
 	defer db.Close()
 
 	// verify datas completion via command "admin check table"
-	_, err = db.Exec(
-		fmt.Sprintf("ADMIN CHECK TABLE %s.%s", tr.tableMeta.DB, tr.tableMeta.Name))
+	query := fmt.Sprintf("ADMIN CHECK TABLE %s.%s", tr.tableMeta.DB, tr.tableMeta.Name)
+	err = common.ExecWithRetry(db, []string{query})
 	return errors.Trace(err)
 }
 
@@ -844,7 +833,7 @@ func (exc *RegionRestoreExectuor) Run(
 	ctx context.Context,
 	region *mydump.TableRegion,
 	kvEncoder *kv.TableKVEncoder,
-	kvDeliver kv.KVDeliver) (int64, uint64, *verify.KVChecksum, error) {
+	kvDeliver kv.KVDeliver) (nextRowID int64, affectedRows uint64, checksum *verify.KVChecksum, err error) {
 
 	/*
 		Flows :
@@ -859,13 +848,13 @@ func (exc *RegionRestoreExectuor) Run(
 	}
 	defer reader.Close()
 
-	table := exc.tableInfo.Name
+	table := common.UniqueTable(exc.tableMeta.DB, exc.tableMeta.Name)
 	readMark := fmt.Sprintf("[%s]_read_file", table)
 	encodeMark := fmt.Sprintf("[%s]_sql_2_kv", table)
 	deliverMark := fmt.Sprintf("[%s]_deliver_write", table)
 
 	rows := uint64(0)
-	checksum := verify.NewKVChecksum(0)
+	checksum = verify.NewKVChecksum(0)
 	/*
 		TODO :
 			So far, since checksum can not recompute on the same key-value pair,
@@ -883,7 +872,7 @@ func (exc *RegionRestoreExectuor) Run(
 
 		start := time.Now()
 		sqls, err := reader.Read(defReadBlockSize)
-		if err == io.EOF {
+		if errors.Cause(err) == io.EOF {
 			break
 		}
 		metrics.MarkTiming(readMark, start)
@@ -893,7 +882,7 @@ func (exc *RegionRestoreExectuor) Run(
 			start = time.Now()
 			kvs, affectedRows, err := kvEncoder.SQL2KV(stmt)
 			metrics.MarkTiming(encodeMark, start)
-
+			log.Debugf("len(kvs) %d, len(sql) %d", len(kvs), len(stmt))
 			if err != nil {
 				log.Errorf("kv encode failed = %s\n", err.Error())
 				return kvEncoder.NextRowID(), rows, checksum, errors.Trace(err)

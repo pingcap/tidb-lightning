@@ -24,8 +24,8 @@ type MDDatabaseMeta struct {
 	Tables     map[string]*MDTableMeta
 }
 
-func (meta *MDDatabaseMeta) String() string {
-	v, err := json.Marshal(meta)
+func (m *MDDatabaseMeta) String() string {
+	v, err := json.Marshal(m)
 	if err != nil {
 		log.Error("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
 	}
@@ -221,8 +221,6 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 		// tableMeta.Rows += l.countTableFileRows(fpath)
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fpath)
 	}
-
-	log.Infof("datafiles %+v", l.dbs)
 
 	// sort all tables' data files by file-name
 	for _, dbMeta := range l.dbs {
