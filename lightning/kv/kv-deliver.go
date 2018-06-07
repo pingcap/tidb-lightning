@@ -6,8 +6,9 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	importpb "github.com/pingcap/kvproto/pkg/import_kvpb"
+	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pingcap/tidb-lightning/lightning/importpb"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	log "github.com/sirupsen/logrus"
 
@@ -37,7 +38,7 @@ type KVDeliver interface {
 	Put([]kvec.KvPair) error
 	Flush() error // + Import() error
 	Cleanup() error
-	Compact(start, end []byte) error
+	Compact(start, end []byte, level int32) error
 	Close() error
 }
 
@@ -292,14 +293,14 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	return cli
 }
 
-func (k *KVDeliverKeeper) Compact(start, end []byte) error {
+func (k *KVDeliverKeeper) Compact(start, end []byte, level int32) error {
 	cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.importServerAddr, k.pdAddr, "")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cli.Close()
 
-	return cli.Compact(start, end)
+	return cli.Compact(start, end, level)
 }
 
 func (k *KVDeliverKeeper) Flush() error {
@@ -596,17 +597,24 @@ func (c *KVDeliverClient) Flush() error {
 	return nil
 }
 
-func (c *KVDeliverClient) Compact(start, end []byte) error {
-	return errors.Trace(c.callCompact(start, end))
+func (c *KVDeliverClient) Compact(start, end []byte, level int32) error {
+	return errors.Trace(c.callCompact(start, end, level))
 }
 
 // Do compaction for specific table. `start` and `end`` key can be got in the following way:
 // start key = GenTablePrefix(tableID)
 // end key = GenTablePrefix(tableID + 1)
 func (c *KVDeliverClient) callCompact(start, end []byte) error {
+func (c *KVDeliverClient) callCompact(start, end []byte, level int32) error {
 	timer := time.Now()
 	log.Infof("compact [%v, %v)", start, end)
-	req := &importpb.CompactRequest{PdAddr: c.pdAddr, Range: &importpb.Range{Start: start, End: end}}
+	req := &importpb.CompactRequest{
+		PdAddr: c.pdAddr,
+		Request: &sstpb.CompactRequest{
+			Range:       &sstpb.Range{Start: start, End: end},
+			OutputLevel: level,
+		},
+	}
 	_, err := c.cli.Compact(c.ctx, req)
 	log.Infof("compact [%v, %v) takes %v", start, end, time.Since(timer))
 

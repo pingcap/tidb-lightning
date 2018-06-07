@@ -101,7 +101,7 @@ func (l *Lightning) doCompact() error {
 	defer cli.Close()
 
 	start := time.Now()
-	if err := cli.Compact([]byte{}, []byte{}); err != nil {
+	if err := cli.Compact([]byte{}, []byte{}, -1); err != nil {
 		return errors.Trace(err)
 	}
 
