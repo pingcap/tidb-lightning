@@ -168,9 +168,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) error {
 	defer t.Close()
 	timer := time.Now()
-
 	table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
-
 	//1. restore table data
 	for _, task := range t.tasks {
 		select {
@@ -184,8 +182,8 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 			log.Errorf("[%s] region %s run task error %s", table, task.region.Name(), errors.ErrorStack(err))
 			continue
 		}
-		log.Infof("[%s] restore region %s takes %v", table, task.region.Name(), time.Since(timer))
 	}
+	log.Infof("[%s] restore table data takes %v", table, time.Since(timer))
 
 	// 2. compact level 1
 	if err := rc.doCompact(ctx, 1); err != nil {
@@ -644,6 +642,7 @@ func (tr *TableRestore) onFinished() error {
 }
 
 func (tr *TableRestore) restoreTableMeta() error {
+	timer := time.Now()
 	dsn := tr.cfg.TiDB
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
@@ -653,7 +652,12 @@ func (tr *TableRestore) restoreTableMeta() error {
 	}
 	defer db.Close()
 
-	return errors.Trace(AlterAutoIncrement(db, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID))
+	err = AlterAutoIncrement(db, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Infof("[%s] alter table set auto_id takes %v", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name), time.Since(timer))
+	return nil
 }
 
 func (tr *TableRestore) importKV() error {
