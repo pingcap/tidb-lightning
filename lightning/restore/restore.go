@@ -8,10 +8,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/satori/go.uuid"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
-
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -20,6 +16,9 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
+	"github.com/satori/go.uuid"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -39,33 +38,23 @@ func init() {
 }
 
 type RestoreController struct {
-	mux sync.RWMutex
-	wg  sync.WaitGroup
-
-	cfg    *config.Config
-	dbMeta *mydump.MDDatabaseMeta
-	dbInfo *TidbDBInfo
-
-	// statDB         *sql.DB
-	// statDbms       *ProgressDBMS
-	// tablesProgress map[string]*TableProgress
+	cfg           *config.Config
+	dbMeta        *mydump.MDDatabaseMeta
+	dbInfo        *TidbDBInfo
+	tableWorkers  *RestoreWorkerPool
+	regionWorkers *RestoreWorkerPool
 }
 
 func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *RestoreController {
-	// store := cfg.ProgressStore
-	// statDB := ConnectDB(store.Host, store.Port, store.User, store.Psw)
-	// statDbms := NewProgressDBMS(statDB, store.Database)
-
 	return &RestoreController{
-		cfg:    cfg,
-		dbMeta: dbMeta,
-		// statDB: statDB,
-		// statDbms: statDbms,
+		cfg:           cfg,
+		dbMeta:        dbMeta,
+		tableWorkers:  NewRestoreWorkerPool(cfg.App.WorkerPoolSize),
+		regionWorkers: NewRestoreWorkerPool(cfg.App.WorkerPoolSize),
 	}
 }
 
 func (rc *RestoreController) Close() {
-	// rc.statDB.Close()
 }
 
 func (rc *RestoreController) Run(ctx context.Context) {
@@ -128,9 +117,9 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	timer := time.Now()
-	var wg sync.WaitGroup
-	workers := NewRestoreWorkerPool(rc.cfg.App.WorkerPoolSize)
 	dbInfo := rc.dbInfo
+	var wg sync.WaitGroup
+
 	for tbl, tableMeta := range rc.dbMeta.Tables {
 		tableInfo, ok := dbInfo.Tables[tbl]
 		if !ok {
@@ -145,10 +134,10 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		default:
 		}
 
-		worker := workers.Apply()
+		worker := rc.tableWorkers.Apply()
 		wg.Add(1)
 		go func(w *RestoreWorker, t *TableRestore) {
-			defer workers.Recycle(w)
+			defer rc.tableWorkers.Recycle(w)
 			defer wg.Done()
 			table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
 			err := rc.restoreTable(ctx, tr)
@@ -169,6 +158,9 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 	defer t.Close()
 	timer := time.Now()
 	table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
+
+	var wg sync.WaitGroup
+
 	//1. restore table data
 	for _, task := range t.tasks {
 		select {
@@ -177,12 +169,18 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 		default:
 		}
 
-		err := task.Run(ctx)
-		if err != nil {
-			log.Errorf("[%s] region %s run task error %s", table, task.region.Name(), errors.ErrorStack(err))
-			continue
-		}
+		worker := rc.regionWorkers.Apply()
+		wg.Add(1)
+		go func(w *RestoreWorker, t *regionRestoreTask) {
+			defer rc.regionWorkers.Recycle(w)
+			defer wg.Done()
+			err := t.Run(ctx)
+			if err != nil {
+				log.Errorf("[%s] region %s run task error %s", table, t.region.Name(), errors.ErrorStack(err))
+			}
+		}(worker, task)
 	}
+	wg.Wait()
 	log.Infof("[%s] restore table data takes %v", table, time.Since(timer))
 
 	// 2. compact level 1
