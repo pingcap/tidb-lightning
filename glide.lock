@@ -1,1 +1,276 @@
+hash: 93a1a69ea841b2d13cfa73e893b126e1539cf26b49cc5ad80b4a0a36bf137125
+updated: 2018-06-04T20:49:56.912760168+08:00
+imports:
+- name: github.com/apache/thrift
+  version: e59b73d3c2bf1c328ccb78e683c0462fa1a473c7
+  subpackages:
+  - lib/go/thrift
+- name: github.com/beorn7/perks
+  version: 3ac7bf7a47d159a033b107610db8a1b6575507a4
+  subpackages:
+  - quantile
+- name: github.com/BurntSushi/toml
+  version: b26d9c308763d68093482582cea63d69be07a0f0
+- name: github.com/codahale/hdrhistogram
+  version: f8ad88b59a584afeee9d334eff879b104439117b
 - name: github.com/coreos/etcd
+  version: 9d43462d174c664f5edf313dec0de31e1ef4ed47
+  subpackages:
+  - auth/authpb
+  - clientv3
+  - clientv3/concurrency
+  - etcdserver/api/v3rpc/rpctypes
+  - etcdserver/etcdserverpb
+  - mvcc/mvccpb
+- name: github.com/cznic/mathutil
+  version: 78ad7f262603437f0ecfebc835d80094f89c8f54
+- name: github.com/cznic/sortutil
+  version: 4c7342852e65c2088c981288f2c5610d10b9f7f4
+- name: github.com/go-sql-driver/mysql
+  version: d523deb1b23d913de5bdada721a6071e71283618
+- name: github.com/golang/protobuf
+  version: b4deda0973fb4c70b50d226b1af49f3da59f5265
+  subpackages:
+  - proto
+  - ptypes
+  - ptypes/any
+  - ptypes/duration
+  - ptypes/timestamp
+- name: github.com/golang/snappy
+  version: 723cc1e459b8eea2dea4583200fd60757d40097a
+- name: github.com/google/btree
+  version: 925471ac9e2131377a91e1595defec898166fe49
+- name: github.com/grpc-ecosystem/go-grpc-middleware
+  version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
+  subpackages:
+  - tags
+  - tracing/opentracing
+  - util/metautils
+- name: github.com/grpc-ecosystem/go-grpc-prometheus
+  version: 6b7015e65d366bf3f19b2b2a000a831940f0f7e0
+- name: github.com/juju/errors
+  version: 6f54ff6318409d31ff16261533ce2c8381a4fd5d
+- name: github.com/matttproud/golang_protobuf_extensions
+  version: c12348ce28de40eed0136aa2b644d0ee0650e56c
+  subpackages:
+  - pbutil
+- name: github.com/ngaut/log
+  version: cec23d3e10b016363780d894a0eb732a12c06e02
+- name: github.com/ngaut/pools
+  version: b7bc8c42aac787667ba45adea78233f53f548443
+- name: github.com/ngaut/sync2
+  version: 7a24ed77b2efb460c1468b7dc917821c66e80e55
+- name: github.com/opentracing/opentracing-go
+  version: 1949ddbfd147afd4d964a9f00b24eb291e0e7c38
+  subpackages:
+  - ext
+  - log
+- name: github.com/pingcap/goleveldb
+  version: 158edde5a354460121af007d02a00b01c8d03443
+  subpackages:
+  - leveldb
+  - leveldb/cache
+  - leveldb/comparer
+  - leveldb/errors
+  - leveldb/filter
+  - leveldb/iterator
+  - leveldb/journal
+  - leveldb/memdb
+  - leveldb/opt
+  - leveldb/storage
+  - leveldb/table
+  - leveldb/util
+- name: github.com/pingcap/kvproto
+  version: e33073e1475021e04c795c3de5e1f4e28baa708a
+  subpackages:
+  - pkg/coprocessor
+  - pkg/eraftpb
+  - pkg/errorpb
+  - pkg/kvrpcpb
+  - pkg/metapb
+  - pkg/pdpb
+  - pkg/raft_serverpb
+  - pkg/tikvpb
+- name: github.com/pingcap/pd
+  version: eed819b6999186a4bf2d25255f8d61b371a450d6
+  subpackages:
+  - pd-client
+- name: github.com/pingcap/tidb
+  version: fc699c9b0d29f038e0a55702c9fd2e18e89373c4
+  subpackages:
+  - ast
+  - config
+  - context
+  - ddl
+  - ddl/util
+  - distsql
+  - domain
+  - executor
+  - expression
+  - expression/aggregation
+  - infoschema
+  - kv
+  - meta
+  - meta/autoid
+  - metrics
+  - model
+  - mysql
+  - owner
+  - parser
+  - parser/opcode
+  - perfschema
+  - plan
+  - privilege
+  - privilege/privileges
+  - sessionctx/binloginfo
+  - sessionctx/stmtctx
+  - sessionctx/variable
+  - statistics
+  - store/tikv
+  - store/tikv/mocktikv
+  - store/tikv/oracle
+  - store/tikv/oracle/oracles
+  - store/tikv/tikvrpc
+  - structure
+  - table
+  - table/tables
+  - tablecodec
+  - terror
+  - types
+  - types/json
+  - util
+  - util/admin
+  - util/auth
+  - util/charset
+  - util/chunk
+  - util/codec
+  - util/encrypt
+  - util/format
+  - util/goroutine_pool
+  - util/hack
+  - util/kvcache
+  - util/kvencoder
+  - util/logutil
+  - util/mock
+  - util/mvmap
+  - util/printer
+  - util/ranger
+  - util/sqlexec
+  - util/stringutil
+- name: github.com/pingcap/tipb
+  version: 1043caee48da56ffc3521406a041db8e5feac9a8
+  subpackages:
+  - go-binlog
+  - go-tipb
+  - sharedbytes
+- name: github.com/prometheus/client_golang
+  version: c5b7fccd204277076155f10851dad72b76a49317
+  subpackages:
+  - prometheus
+- name: github.com/prometheus/client_model
+  version: fa8ad6fec33561be4280a8f0514318c79d7f6cb6
+  subpackages:
+  - go
+- name: github.com/prometheus/common
+  version: 49fee292b27bfff7f354ee0f64e1bc4850462edf
+  subpackages:
+  - expfmt
+  - internal/bitbucket.org/ww/goautoneg
+  - model
+- name: github.com/prometheus/procfs
+  version: a1dba9ce8baed984a2495b658c82687f8157b98f
+  subpackages:
+  - xfs
+- name: github.com/satori/go.uuid
+  version: f58768cc1a7a7e77a3bd49e98cdd21419399b6a3
+- name: github.com/sirupsen/logrus
+  version: c155da19408a8799da419ed3eeb0cb5db0ad5dbc
+- name: github.com/spaolacci/murmur3
+  version: 0d12bf811670bf6a1a63828dfbd003eded177fce
+- name: github.com/twinj/uuid
+  version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
+- name: github.com/uber/jaeger-client-go
+  version: d021e646f5187d77b55592c3efee1a2810e895d7
+  subpackages:
+  - config
+  - internal/spanlog
+  - log
+  - rpcmetrics
+  - thrift-gen/agent
+  - thrift-gen/jaeger
+  - thrift-gen/sampling
+  - thrift-gen/zipkincore
+  - utils
+- name: github.com/uber/jaeger-lib
+  version: ac31d434ba1061771d338557e4ec2d80d0a960b9
+  subpackages:
+  - metrics
+- name: golang.org/x/crypto
+  version: 1351f936d976c60a0a48d728281922cf63eafb8d
+  subpackages:
+  - ssh/terminal
+- name: golang.org/x/net
+  version: e90d6d0afc4c315a0d87a568ae68577cc15149a0
+  subpackages:
+  - context
+  - http2
+  - http2/hpack
+  - internal/timeseries
+  - lex/httplex
+  - trace
+- name: golang.org/x/sys
+  version: a646d33e2ee3172a661fc09bca23bb4889a41bc8
+  subpackages:
+  - unix
+- name: golang.org/x/text
+  version: 836efe42bb4aa16aaa17b9c155d8813d336ed720
+  subpackages:
+  - encoding
+  - encoding/charmap
+  - encoding/internal
+  - encoding/internal/identifier
+  - encoding/japanese
+  - encoding/korean
+  - encoding/simplifiedchinese
+  - encoding/traditionalchinese
+  - encoding/unicode
+  - internal/utf8internal
+  - runes
+  - transform
+- name: google.golang.org/appengine
+  version: b1f26356af11148e710935ed1ac8a7f5702c7612
+  subpackages:
+  - cloudsql
+- name: google.golang.org/genproto
+  version: 09f6ed296fc66555a25fe4ce95173148778dfa85
+  subpackages:
+  - googleapis/rpc/status
+- name: google.golang.org/grpc
+  version: 6b51017f791ae1cfbec89c52efdf444b13b550ef
+  subpackages:
+  - balancer
+  - balancer/base
+  - balancer/roundrobin
+  - codes
+  - connectivity
+  - credentials
+  - encoding
+  - grpclb/grpc_lb_v1/messages
+  - grpclog
+  - internal
+  - keepalive
+  - metadata
+  - naming
+  - peer
+  - resolver
+  - resolver/dns
+  - resolver/passthrough
+  - stats
+  - status
+  - tap
+  - transport
+- name: gopkg.in/natefinch/lumberjack.v2
+  version: dd45e6a67c53f673bb49ca8a001fd3a63ceb640e
+testImports:
+- name: github.com/pingcap/check
+  version: 9b266636177e249ec28b0aeffe8e86bc272bb481
