@@ -180,9 +180,9 @@ func (rc *RestoreControlloer) restoreTable(ctx context.Context, t *TableRestore)
 		err := task.Run(ctx)
 		if err != nil {
 			log.Errorf("[%s] region %s run task error %s", table, task.region.Name(), errors.ErrorStack(err))
+			continue
 		}
-		log.Infof("[%s] restore data takes %v", table, time.Since(timer))
-		return errors.Trace(err)
+		log.Infof("[%s] restore region %s takes %v", table, task.region.Name(), time.Since(timer))
 	}
 
 	// 2. compact level 1
@@ -569,7 +569,7 @@ func (tr *TableRestore) loadRegions() {
 	tr.id2regions = id2regions
 	tr.tasks = tasks
 
-	log.Infof("[%s] load regions takes %v", table, time.Since(timer))
+	log.Infof("[%s] load %d regions takes %v", table, len(regions), time.Since(timer))
 	return
 }
 

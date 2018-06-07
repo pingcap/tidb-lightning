@@ -604,10 +604,9 @@ func (c *KVDeliverClient) Compact(start, end []byte, level int32) error {
 // Do compaction for specific table. `start` and `end`` key can be got in the following way:
 // start key = GenTablePrefix(tableID)
 // end key = GenTablePrefix(tableID + 1)
-func (c *KVDeliverClient) callCompact(start, end []byte) error {
 func (c *KVDeliverClient) callCompact(start, end []byte, level int32) error {
 	timer := time.Now()
-	log.Infof("compact [%v, %v)", start, end)
+	log.Infof("compact [%v, %v) level %d", start, end, level)
 	req := &importpb.CompactRequest{
 		PdAddr: c.pdAddr,
 		Request: &sstpb.CompactRequest{
@@ -616,7 +615,7 @@ func (c *KVDeliverClient) callCompact(start, end []byte, level int32) error {
 		},
 	}
 	_, err := c.cli.Compact(c.ctx, req)
-	log.Infof("compact [%v, %v) takes %v", start, end, time.Since(timer))
+	log.Infof("compact [%v, %v) level %d takes %v", start, end, level, time.Since(timer))
 
 	return errors.Trace(err)
 }
