@@ -12,6 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
+	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
@@ -37,7 +38,7 @@ func init() {
 	kv.InitMembufCap(defReadBlockSize)
 }
 
-type RestoreControlloer struct {
+type RestoreController struct {
 	mux sync.RWMutex
 	wg  sync.WaitGroup
 
@@ -50,12 +51,12 @@ type RestoreControlloer struct {
 	// tablesProgress map[string]*TableProgress
 }
 
-func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *RestoreControlloer {
+func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *RestoreController {
 	// store := cfg.ProgressStore
 	// statDB := ConnectDB(store.Host, store.Port, store.User, store.Psw)
 	// statDbms := NewProgressDBMS(statDB, store.Database)
 
-	return &RestoreControlloer{
+	return &RestoreController{
 		cfg:    cfg,
 		dbMeta: dbMeta,
 		// statDB: statDB,
@@ -63,17 +64,18 @@ func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *R
 	}
 }
 
-func (rc *RestoreControlloer) Close() {
+func (rc *RestoreController) Close() {
 	// rc.statDB.Close()
 }
 
-func (rc *RestoreControlloer) Run(ctx context.Context) {
+func (rc *RestoreController) Run(ctx context.Context) {
 	opts := []func(context.Context) error{
+		rc.switchToImportMode,
 		rc.restoreSchema,
-		// rc.recoverProgress,
 		rc.restoreTables,
 		rc.fullCompact,
 		rc.analyze,
+		rc.switchToNormalMode,
 	}
 
 	for _, process := range opts {
@@ -94,7 +96,7 @@ func (rc *RestoreControlloer) Run(ctx context.Context) {
 	return
 }
 
-func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
+func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB)
 	if err != nil {
 		return errors.Trace(err)
@@ -124,7 +126,7 @@ func (rc *RestoreControlloer) restoreSchema(ctx context.Context) error {
 	return nil
 }
 
-func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
+func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	timer := time.Now()
 	var wg sync.WaitGroup
 	workers := NewRestoreWorkerPool(rc.cfg.App.WorkerPoolSize)
@@ -163,7 +165,7 @@ func (rc *RestoreControlloer) restoreTables(ctx context.Context) error {
 }
 
 //FIXME: it seems that we don't need to split table into multiple regions.
-func (rc *RestoreControlloer) restoreTable(ctx context.Context, t *TableRestore) error {
+func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) error {
 	defer t.Close()
 	timer := time.Now()
 
@@ -204,11 +206,11 @@ func (rc *RestoreControlloer) restoreTable(ctx context.Context, t *TableRestore)
 }
 
 // do full compaction for the whole data.
-func (rc *RestoreControlloer) fullCompact(ctx context.Context) error {
+func (rc *RestoreController) fullCompact(ctx context.Context) error {
 	return errors.Trace(rc.doCompact(ctx, -1))
 }
 
-func (rc *RestoreControlloer) doCompact(ctx context.Context, level int32) error {
+func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
 	if !rc.cfg.PostRestore.Compact {
 		log.Info("Skip compaction.")
 		return nil
@@ -227,19 +229,38 @@ func (rc *RestoreControlloer) doCompact(ctx context.Context, level int32) error 
 }
 
 // analyze will analyze table for all tables.
-func (rc *RestoreControlloer) analyze(ctx context.Context) error {
+func (rc *RestoreController) analyze(ctx context.Context) error {
 	if !rc.cfg.PostRestore.Analyze {
 		log.Info("Skip analyze table.")
 		return nil
 	}
 
 	tables := rc.getTables()
-	analyzeTable(rc.cfg.TiDB, tables)
-
-	return nil
+	err := analyzeTable(rc.cfg.TiDB, tables)
+	return errors.Trace(err)
 }
 
-func (rc *RestoreControlloer) getTables() []string {
+func (rc *RestoreController) switchToImportMode(ctx context.Context) error {
+	log.Info("switch to tikv import mode")
+	return errors.Trace(rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import))
+}
+
+func (rc *RestoreController) switchToNormalMode(ctx context.Context) error {
+	log.Info("switch to tikv normal mode")
+	return errors.Trace(rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal))
+}
+
+func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) error {
+	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr, "")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cli.Close()
+
+	return errors.Trace(cli.Switch(mode))
+}
+
+func (rc *RestoreController) getTables() []string {
 	tables := make([]string, 0, len(rc.dbMeta.Tables))
 	dbInfo := rc.dbInfo
 	for tbl := range rc.dbMeta.Tables {

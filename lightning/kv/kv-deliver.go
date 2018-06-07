@@ -392,6 +392,7 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 /* ps : not thread safe !!! */
 
 type KVDeliverClient struct {
+	// FIXME: it seems we shouldn't put ctx inside a struct
 	ctx context.Context
 
 	importServerAddr string
@@ -646,4 +647,16 @@ func (c *KVDeliverClient) callImport() error {
 	}
 
 	return errors.Errorf("[%s] [%s] import reach max retry %d and still failed", c.txn.tag, c.txn.uuid, maxRetryTimes)
+}
+
+// Switch switches tikv mode.
+func (c *KVDeliverClient) Switch(mode sstpb.SwitchMode) error {
+	req := &importpb.SwitchRequest{
+		PdAddr: c.pdAddr,
+		Request: &sstpb.SwitchRequest{
+			Mode: mode,
+		},
+	}
+	_, err := c.cli.Switch(c.ctx, req)
+	return errors.Trace(err)
 }
