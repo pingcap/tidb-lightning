@@ -290,7 +290,7 @@ func (rc *RestoreControlloer) getTables() []string {
 func analyzeTable(dsn config.DBStore, tables []string) error {
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
-		log.Warnf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually", err)
+		log.Errorf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually", err)
 		return nil
 	}
 	defer db.Close()
@@ -662,7 +662,7 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
 		// let it failed and record it to log.
-		log.Warnf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, rowID)
+		log.Errorf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, rowID)
 		return nil
 	}
 	defer db.Close()
@@ -784,23 +784,6 @@ func increaseGCLifeTime(db *sql.DB) (oriGCLifeTime string, err error) {
 	}
 
 	return oriGCLifeTime, nil
-}
-
-// not used now.
-func (tr *TableRestore) excCheckTable() error {
-	log.Infof("verify by execute `admin check table` : %s", tr.tableMeta.Name)
-
-	dsn := tr.cfg.TiDB
-	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer db.Close()
-
-	// verify datas completion via command "admin check table"
-	query := fmt.Sprintf("ADMIN CHECK TABLE %s.%s", tr.tableMeta.DB, tr.tableMeta.Name)
-	err = common.ExecWithRetry(db, []string{query})
-	return errors.Trace(err)
 }
 
 ////////////////////////////////////////////////////////////////

@@ -24,7 +24,7 @@ var (
 const (
 	_G               uint64 = 1 << 30
 	flushSizeLimit   uint64 = 1 * _G
-	maxRetryTimes    int    = 3 // tikv-importer has done retry internally. so we don't too many retry times.
+	maxRetryTimes    int    = 3 // tikv-importer has done retry internally. so we don't retry many times.
 	retryBackoffTime        = time.Second * 3
 )
 

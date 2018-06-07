@@ -20,7 +20,7 @@ import (
 const (
 	retryTimeout = 3 * time.Second
 
-	defaultMaxRetry = 100
+	defaultMaxRetry = 3
 )
 
 func Percent(a int, b int) string {
