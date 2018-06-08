@@ -117,12 +117,10 @@ func (l *Lightning) doCompact() error {
 	}
 	defer cli.Close()
 
-	start := time.Now()
-	if err := cli.Compact([]byte{}, []byte{}, -1); err != nil {
+	if err := cli.Compact(-1); err != nil {
 		return errors.Trace(err)
 	}
 
-	fmt.Println("compact takes", time.Since(start))
 	return nil
 }
 

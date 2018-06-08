@@ -218,7 +218,7 @@ func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
 	}
 	defer cli.Close()
 
-	if err := cli.Compact([]byte{}, []byte{}, level); err != nil {
+	if err := cli.Compact(level); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

@@ -38,7 +38,7 @@ type KVDeliver interface {
 	Put([]kvec.KvPair) error
 	Flush() error // + Import() error
 	Cleanup() error
-	Compact(start, end []byte, level int32) error
+	Compact(level int32) error
 	Close() error
 }
 
@@ -293,14 +293,14 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	return cli
 }
 
-func (k *KVDeliverKeeper) Compact(start, end []byte, level int32) error {
+func (k *KVDeliverKeeper) Compact(level int32) error {
 	cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.importServerAddr, k.pdAddr, "")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cli.Close()
 
-	return cli.Compact(start, end, level)
+	return cli.Compact(level)
 }
 
 func (k *KVDeliverKeeper) Flush() error {
@@ -598,25 +598,25 @@ func (c *KVDeliverClient) Flush() error {
 	return nil
 }
 
-func (c *KVDeliverClient) Compact(start, end []byte, level int32) error {
-	return errors.Trace(c.callCompact(start, end, level))
+func (c *KVDeliverClient) Compact(level int32) error {
+	return errors.Trace(c.callCompact(level))
 }
 
 // Do compaction for specific table. `start` and `end`` key can be got in the following way:
 // start key = GenTablePrefix(tableID)
 // end key = GenTablePrefix(tableID + 1)
-func (c *KVDeliverClient) callCompact(start, end []byte, level int32) error {
+func (c *KVDeliverClient) callCompact(level int32) error {
 	timer := time.Now()
-	log.Infof("compact [%v, %v) level %d", start, end, level)
+	log.Infof("compact level %d", level)
 	req := &importpb.CompactRequest{
 		PdAddr: c.pdAddr,
 		Request: &sstpb.CompactRequest{
-			Range:       &sstpb.Range{Start: start, End: end},
+			// No need to set Range here.
 			OutputLevel: level,
 		},
 	}
 	_, err := c.cli.Compact(c.ctx, req)
-	log.Infof("compact [%v, %v) level %d takes %v", start, end, level, time.Since(timer))
+	log.Infof("compact level %d takes %v", level, time.Since(timer))
 
 	return errors.Trace(err)
 }
