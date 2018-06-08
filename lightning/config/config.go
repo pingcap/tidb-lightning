@@ -40,7 +40,7 @@ type Config struct {
 	TiDB DBStore   `toml:"tidb" json:"tidb"`
 
 	// not implemented yet.
-	ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
+	// ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
 
 	Mydumper     MydumperRuntime `toml:"mydumper" json:"mydumper"`
 	TikvImporter TikvImporter    `toml:"tikv-importer" json:"tikv-importer"`

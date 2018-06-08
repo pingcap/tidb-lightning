@@ -237,12 +237,10 @@ func (rc *RestoreController) analyze(ctx context.Context) error {
 }
 
 func (rc *RestoreController) switchToImportMode(ctx context.Context) error {
-	log.Info("switch to tikv import mode")
 	return errors.Trace(rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import))
 }
 
 func (rc *RestoreController) switchToNormalMode(ctx context.Context) error {
-	log.Info("switch to tikv normal mode")
 	return errors.Trace(rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal))
 }
 
