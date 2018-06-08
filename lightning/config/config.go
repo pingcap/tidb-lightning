@@ -14,6 +14,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	// ImportMode defines mode of import for tikv.
+	ImportMode = "import"
+	// NormalMode defines mode of normal for tikv.
+	NormalMode = "normal"
+)
+
 type DBStore struct {
 	Host                   string `toml:"host" json:"host"`
 	Port                   int    `toml:"port" json:"port"`
@@ -42,6 +49,7 @@ type Config struct {
 	// command line flags
 	ConfigFile   string `json:"config-file"`
 	DoCompact    bool   `json:"-"`
+	SwitchMode   string `json:"-"`
 	printVersion bool
 }
 
@@ -97,7 +105,8 @@ func LoadConfig(args []string) (*Config, error) {
 	fs := cfg.FlagSet
 
 	fs.StringVar(&cfg.ConfigFile, "c", "tidb-lightning.toml", "tidb-lightning configuration file")
-	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compaction on the target cluster")
+	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compaction on the target cluster, run then exit")
+	fs.StringVar(&cfg.SwitchMode, "switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal'], run then exit")
 	fs.BoolVar(&cfg.printVersion, "V", false, "print version of lightning")
 
 	if err := fs.Parse(args); err != nil {
