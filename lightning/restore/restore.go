@@ -267,11 +267,11 @@ func (rc *RestoreControlloer) analyze(ctx context.Context) error {
 	}
 
 	tables := rc.getTables()
-	analyzeTable(rc.cfg.TiDB, tables)
-
-	return nil
+	err := analyzeTable(rc.cfg.TiDB, tables)
+	return errors.Trace(err)
 }
 
+// getTables returns a table list, which table format is `db`.`table`.
 func (rc *RestoreControlloer) getTables() []string {
 	tables := make([]string, 0, len(rc.dbMeta.Tables))
 	dbInfo := rc.dbInfo
@@ -291,7 +291,7 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
 		log.Errorf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually", err)
-		return nil
+		return errors.Trace(err)
 	}
 	defer db.Close()
 
@@ -305,7 +305,7 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 		query := fmt.Sprintf("ANALYZE TABLE %s", table)
 		err := common.ExecWithRetry(db, []string{query})
 		if err != nil {
-			log.Errorf("analyze table %s error %s", table, errors.ErrorStack(err))
+			log.Errorf("%s error %s", query, errors.ErrorStack(err))
 			continue
 		}
 		log.Infof("[%s] analyze takes %v", table, time.Since(timer))
@@ -663,7 +663,7 @@ func (tr *TableRestore) restoreTableMeta(rowID int64) error {
 	if err != nil {
 		// let it failed and record it to log.
 		log.Errorf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, rowID)
-		return nil
+		return errors.Trace(err)
 	}
 	defer db.Close()
 
