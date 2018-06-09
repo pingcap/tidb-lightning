@@ -185,7 +185,8 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 
 	// 2. compact level 1
 	if err := rc.doCompact(ctx, 1); err != nil {
-		return errors.Annotatef(err, "[%s] do compact failed", table)
+		// log it and continue
+		log.Warnf("[%s] do compact failed err", table, errors.ErrorStack(err))
 	}
 
 	// 3. alter table set auto_increment
