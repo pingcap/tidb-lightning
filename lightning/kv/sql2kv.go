@@ -107,7 +107,7 @@ func (kvcodec *TableKVEncoder) ResetRowID(rowID int64) {
 }
 
 func (kvcodec *TableKVEncoder) Close() error {
-	return kvcodec.encoder.Close()
+	return errors.Trace(kvcodec.encoder.Close())
 }
 
 func (kvcodec *TableKVEncoder) NextRowID() int64 {
