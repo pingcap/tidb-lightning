@@ -1,5 +1,5 @@
 hash: 549997270b5e0b41469bd475b48889f8524d213bc1ec4b3049464dde524dca7b
-updated: 2018-06-11T16:23:06.843673537+08:00
+updated: 2018-06-11T16:51:34.217990607+08:00
 imports:
 - name: github.com/apache/thrift
   version: b2a4d4ae21c789b689dd162deb819665567f481c
@@ -65,8 +65,6 @@ imports:
   version: c12348ce28de40eed0136aa2b644d0ee0650e56c
   subpackages:
   - pbutil
-- name: github.com/ngaut/log
-  version: cec23d3e10b016363780d894a0eb732a12c06e02
 - name: github.com/ngaut/pools
   version: b7bc8c42aac787667ba45adea78233f53f548443
 - name: github.com/ngaut/sync2
