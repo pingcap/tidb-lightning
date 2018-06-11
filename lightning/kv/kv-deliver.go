@@ -602,9 +602,6 @@ func (c *KVDeliverClient) Compact(level int32) error {
 	return errors.Trace(c.callCompact(level))
 }
 
-// Do compaction for specific table. `start` and `end`` key can be got in the following way:
-// start key = GenTablePrefix(tableID)
-// end key = GenTablePrefix(tableID + 1)
 func (c *KVDeliverClient) callCompact(level int32) error {
 	timer := time.Now()
 	log.Infof("compact level %d", level)
@@ -659,7 +656,8 @@ func (c *KVDeliverClient) Switch(mode sstpb.SwitchMode) error {
 		},
 	}
 	_, err := c.cli.Switch(c.ctx, req)
-
+		return errors.Trace(err)
+	}
 	log.Infof("switch to tikv %s mode takes %v", mode, time.Since(timer))
-	return errors.Trace(err)
+	return nil
 }

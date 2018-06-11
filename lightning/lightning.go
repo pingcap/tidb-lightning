@@ -78,7 +78,7 @@ func (l *Lightning) Run() {
 		case config.NormalMode:
 			err = l.switchMode(sstpb.SwitchMode_Normal)
 		default:
-			log.Fatalf("invalid switch mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
+			log.Fatalf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
 		}
 		if err != nil {
 			log.Fatalf("switch mode error %v", errors.ErrorStack(err))
