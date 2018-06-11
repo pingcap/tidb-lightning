@@ -656,6 +656,7 @@ func (c *KVDeliverClient) Switch(mode sstpb.SwitchMode) error {
 		},
 	}
 	_, err := c.cli.Switch(c.ctx, req)
+	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Infof("switch to tikv %s mode takes %v", mode, time.Since(timer))
