@@ -89,4 +89,4 @@ endif
 
 clean_vendor:
 	@echo "removing test files"
-	@glide vc --use-lock-file --only-code --no-tests --keep "**/*.y"
+	@glide vc --use-lock-file --only-code --no-tests
