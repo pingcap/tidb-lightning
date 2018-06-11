@@ -329,7 +329,7 @@ func makeKVDeliver(
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo) (kv.KVDeliver, error) {
 
-	uuid := uuid.Must(uuid.NewV4())
+	uuid := uuid.Must(uuid.NewV4(), nil)
 	return kv.NewKVDeliverClient(ctx, uuid, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 }
 
