@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -20,7 +21,7 @@ import (
 const (
 	retryTimeout = 3 * time.Second
 
-	defaultMaxRetry = 100
+	defaultMaxRetry = 3
 )
 
 func Percent(a int, b int) string {
@@ -101,7 +102,7 @@ func ListFiles(dir string) map[string]string {
 	return files
 }
 
-func QueryRowWithRetry(db *sql.DB, query string, dest ...interface{}) (err error) {
+func QueryRowWithRetry(ctx context.Context, db *sql.DB, query string, dest ...interface{}) (err error) {
 	maxRetry := defaultMaxRetry
 	for i := 0; i < maxRetry; i++ {
 		if i > 0 {
@@ -109,7 +110,7 @@ func QueryRowWithRetry(db *sql.DB, query string, dest ...interface{}) (err error
 			time.Sleep(retryTimeout)
 		}
 
-		err = db.QueryRow(query).Scan(dest...)
+		err = db.QueryRowContext(ctx, query).Scan(dest...)
 		if err != nil {
 			if !isRetryableError(err) {
 				return errors.Trace(err)
@@ -125,7 +126,7 @@ func QueryRowWithRetry(db *sql.DB, query string, dest ...interface{}) (err error
 }
 
 // ExecWithRetry executes sqls with optional retry.
-func ExecWithRetry(db *sql.DB, sqls []string) error {
+func ExecWithRetry(ctx context.Context, db *sql.DB, sqls []string) error {
 	maxRetry := defaultMaxRetry
 
 	if len(sqls) == 0 {
@@ -139,7 +140,7 @@ func ExecWithRetry(db *sql.DB, sqls []string) error {
 			time.Sleep(retryTimeout)
 		}
 
-		if err = executeSQLImp(db, sqls); err != nil {
+		if err = executeSQLImp(ctx, db, sqls); err != nil {
 			if isRetryableError(err) {
 				continue
 			}
@@ -153,8 +154,8 @@ func ExecWithRetry(db *sql.DB, sqls []string) error {
 	return errors.Errorf("exec sqls [%v] failed, err:%s", sqls, err.Error())
 }
 
-func executeSQLImp(db *sql.DB, sqls []string) error {
-	txn, err := db.Begin()
+func executeSQLImp(ctx context.Context, db *sql.DB, sqls []string) error {
+	txn, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		log.Errorf("exec sqls [%v] begin failed %v", sqls, errors.ErrorStack(err))
 		return errors.Trace(err)
@@ -163,7 +164,7 @@ func executeSQLImp(db *sql.DB, sqls []string) error {
 	for i := range sqls {
 		log.Debugf("[exec][sql] %s", sqls[i])
 
-		_, err = txn.Exec(sqls[i])
+		_, err = txn.ExecContext(ctx, sqls[i])
 		if err != nil {
 			log.Warnf("[exec][sql] %s [error]%v", sqls[i], err)
 			rerr := txn.Rollback()

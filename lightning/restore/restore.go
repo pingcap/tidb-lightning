@@ -101,13 +101,13 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 		for tbl, tblMeta := range rc.dbMeta.Tables {
 			tablesSchema[tbl] = tblMeta.GetSchema()
 		}
-		err = tidbMgr.InitSchema(database, tablesSchema)
+		err = tidbMgr.InitSchema(ctx, database, tablesSchema)
 		if err != nil {
 			return errors.Errorf("db schema failed to init : %v", err)
 		}
 		log.Infof("restore table schema for `%s` takes %v", rc.dbMeta.Name, time.Since(timer))
 	}
-	dbInfo, err := tidbMgr.LoadSchemaInfo(database)
+	dbInfo, err := tidbMgr.LoadSchemaInfo(ctx, database)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -190,7 +190,7 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 	}
 
 	// 3. alter table set auto_increment
-	if err := t.restoreTableMeta(); err != nil {
+	if err := t.restoreTableMeta(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -233,7 +233,7 @@ func (rc *RestoreController) analyze(ctx context.Context) error {
 	}
 
 	tables := rc.getTables()
-	err := analyzeTable(rc.cfg.TiDB, tables)
+	err := analyzeTable(ctx, rc.cfg.TiDB, tables)
 	return errors.Trace(err)
 }
 
@@ -270,27 +270,27 @@ func (rc *RestoreController) getTables() []string {
 	return tables
 }
 
-func analyzeTable(dsn config.DBStore, tables []string) error {
+func analyzeTable(ctx context.Context, dsn config.DBStore, tables []string) error {
 	totalTimer := time.Now()
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
-		log.Warnf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually", err)
-		return nil
+		log.Errorf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually", err)
+		return errors.Trace(err)
 	}
 	defer db.Close()
 
 	// speed up executing analyze table temporarily
-	setSessionVarInt(db, "tidb_build_stats_concurrency", 16)
-	setSessionVarInt(db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
+	setSessionVarInt(ctx, db, "tidb_build_stats_concurrency", 16)
+	setSessionVarInt(ctx, db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
 
 	// TODO: do it concurrently.
 	for _, table := range tables {
 		timer := time.Now()
 		log.Infof("[%s] analyze", table)
 		query := fmt.Sprintf("ANALYZE TABLE %s", table)
-		err := common.ExecWithRetry(db, []string{query})
+		err := common.ExecWithRetry(ctx, db, []string{query})
 		if err != nil {
-			log.Errorf("analyze table %s error %s", table, errors.ErrorStack(err))
+			log.Errorf("%s error %s", query, errors.ErrorStack(err))
 			continue
 		}
 		log.Infof("[%s] analyze takes %v", table, time.Since(timer))
@@ -302,9 +302,9 @@ func analyzeTable(dsn config.DBStore, tables []string) error {
 
 ////////////////////////////////////////////////////////////////
 
-func setSessionVarInt(db *sql.DB, name string, value int) {
+func setSessionVarInt(ctx context.Context, db *sql.DB, name string, value int) {
 	stmt := fmt.Sprintf("set session %s = %d", name, value)
-	if err := common.ExecWithRetry(db, []string{stmt}); err != nil {
+	if err := common.ExecWithRetry(ctx, db, []string{stmt}); err != nil {
 		log.Warnf("failed to set variable @%s to %d: %s", name, value, err.Error())
 	}
 }
@@ -344,7 +344,7 @@ const (
 	statFailed   string = "failed"
 )
 
-type restoreCallback func(regionID int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error
+type restoreCallback func(ctx context.Context, regionID int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error
 
 type regionRestoreTask struct {
 	status   string
@@ -386,7 +386,7 @@ func (t *regionRestoreTask) Run(ctx context.Context) error {
 	}
 
 	log.Infof("[%s] restore region [%s] takes %v", table, region.Name(), time.Since(timer))
-	err = t.callback(region.ID, maxRowID, rows, checksum)
+	err = t.callback(ctx, region.ID, maxRowID, rows, checksum)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -589,7 +589,7 @@ func (tr *TableRestore) loadRegions() {
 	return
 }
 
-func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error {
+func (tr *TableRestore) onRegionFinished(ctx context.Context, id int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error {
 	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
 	tr.mux.Lock()
 	defer tr.mux.Unlock()
@@ -604,7 +604,7 @@ func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, ch
 	handled := len(tr.handledRegions)
 	log.Infof("[%s] handled region count = %d (%s)", table, handled, common.Percent(handled, total))
 	if handled == len(tr.tasks) {
-		err := tr.onFinished()
+		err := tr.onFinished(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -613,7 +613,7 @@ func (tr *TableRestore) onRegionFinished(id int, maxRowID int64, rows uint64, ch
 	return nil
 }
 
-func (tr *TableRestore) onFinished() error {
+func (tr *TableRestore) onFinished(ctx context.Context) error {
 	// flush all kvs into TiKV
 	if err := tr.importKV(); err != nil {
 		return errors.Trace(err)
@@ -638,7 +638,7 @@ func (tr *TableRestore) onFinished() error {
 	return nil
 }
 
-func (tr *TableRestore) restoreTableMeta() error {
+func (tr *TableRestore) restoreTableMeta(ctx context.Context) error {
 	timer := time.Now()
 	dsn := tr.cfg.TiDB
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
@@ -649,7 +649,7 @@ func (tr *TableRestore) restoreTableMeta() error {
 	}
 	defer db.Close()
 
-	err = AlterAutoIncrement(db, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
+	err = AlterAutoIncrement(ctx, db, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -686,7 +686,7 @@ func (tr *TableRestore) checksum(ctx context.Context) error {
 		return nil
 	}
 
-	remoteChecksum, err := DoChecksum(tr.cfg.TiDB, table)
+	remoteChecksum, err := DoChecksum(ctx, tr.cfg.TiDB, table)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -721,7 +721,7 @@ func (c *RemoteChecksum) String() string {
 
 // DoChecksum do checksum for tables.
 // table should be in <db>.<table>, format.  e.g. foo.bar
-func DoChecksum(dsn config.DBStore, table string) (*RemoteChecksum, error) {
+func DoChecksum(ctx context.Context, dsn config.DBStore, table string) (*RemoteChecksum, error) {
 	timer := time.Now()
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
@@ -729,13 +729,13 @@ func DoChecksum(dsn config.DBStore, table string) (*RemoteChecksum, error) {
 	}
 	defer db.Close()
 
-	ori, err := increaseGCLifeTime(db)
+	ori, err := increaseGCLifeTime(ctx, db)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// set it back finally
 	defer func() {
-		err = UpdateGCLifeTime(db, ori)
+		err = UpdateGCLifeTime(ctx, db, ori)
 		if err != nil {
 			log.Errorf("[%s] update tikv_gc_life_time error %s", table, errors.ErrorStack(err))
 		}
@@ -743,8 +743,8 @@ func DoChecksum(dsn config.DBStore, table string) (*RemoteChecksum, error) {
 
 	// speed up executing checksum table temporarily
 	// FIXME: now we do table checksum separately, will it be too frequent to update these variables?
-	setSessionVarInt(db, "tidb_checksum_table_concurrency", 16)
-	setSessionVarInt(db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
+	setSessionVarInt(ctx, db, "tidb_checksum_table_concurrency", 16)
+	setSessionVarInt(ctx, db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
 
 	// ADMIN CHECKSUM TABLE <table>,<table>  example.
 	// 	mysql> admin checksum table test.t;
@@ -757,7 +757,7 @@ func DoChecksum(dsn config.DBStore, table string) (*RemoteChecksum, error) {
 	cs := RemoteChecksum{}
 	log.Infof("[%s] doing remote checksum", table)
 	query := fmt.Sprintf("ADMIN CHECKSUM TABLE %s", table)
-	common.QueryRowWithRetry(db, query, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
+	common.QueryRowWithRetry(ctx, db, query, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -766,10 +766,10 @@ func DoChecksum(dsn config.DBStore, table string) (*RemoteChecksum, error) {
 	return &cs, nil
 }
 
-func increaseGCLifeTime(db *sql.DB) (oriGCLifeTime string, err error) {
+func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, err error) {
 	// checksum command usually takes a long time to execute,
 	// so here need to increase the gcLifeTime for single transaction.
-	oriGCLifeTime, err = ObtainGCLifeTime(db)
+	oriGCLifeTime, err = ObtainGCLifeTime(ctx, db)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -788,30 +788,13 @@ func increaseGCLifeTime(db *sql.DB) (oriGCLifeTime string, err error) {
 	}
 
 	if increaseGCLifeTime {
-		err = UpdateGCLifeTime(db, defaultGCLifeTime.String())
+		err = UpdateGCLifeTime(ctx, db, defaultGCLifeTime.String())
 		if err != nil {
 			return "", errors.Trace(err)
 		}
 	}
 
 	return oriGCLifeTime, nil
-}
-
-// not used now.
-func (tr *TableRestore) excCheckTable() error {
-	log.Infof("verify by execute `admin check table` : %s", tr.tableMeta.Name)
-
-	dsn := tr.cfg.TiDB
-	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer db.Close()
-
-	// verify datas completion via command "admin check table"
-	query := fmt.Sprintf("ADMIN CHECK TABLE %s.%s", tr.tableMeta.DB, tr.tableMeta.Name)
-	err = common.ExecWithRetry(db, []string{query})
-	return errors.Trace(err)
 }
 
 ////////////////////////////////////////////////////////////////

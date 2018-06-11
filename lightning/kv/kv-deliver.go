@@ -25,7 +25,7 @@ var (
 const (
 	_G               uint64 = 1 << 30
 	flushSizeLimit   uint64 = 1 * _G
-	maxRetryTimes    int    = 3 // tikv-importer has done retry internally. so we don't too many retry times.
+	maxRetryTimes    int    = 3 // tikv-importer has done retry internally. so we don't retry many times.
 	retryBackoffTime        = time.Second * 3
 )
 
@@ -75,21 +75,21 @@ const (
 )
 
 type deliverTxn struct {
-	tag     string
-	mux     sync.RWMutex
-	uuid    uuid.UUID
-	stat    int
-	kvSize  int64
-	kvPairs int64
+	uniqueTable string
+	mux         sync.RWMutex
+	uuid        uuid.UUID
+	stat        int
+	kvSize      int64
+	kvPairs     int64
 }
 
-func newDeliverTxn(uuid uuid.UUID, tag string) *deliverTxn {
+func newDeliverTxn(uuid uuid.UUID, uniqueTable string) *deliverTxn {
 	return &deliverTxn{
-		tag:     tag,
-		uuid:    uuid,
-		stat:    txnPutting,
-		kvSize:  0,
-		kvPairs: 0,
+		uniqueTable: uniqueTable,
+		uuid:        uuid,
+		stat:        txnPutting,
+		kvSize:      0,
+		kvPairs:     0,
 	}
 }
 
@@ -134,7 +134,7 @@ type KVDeliverKeeper struct {
 
 	txnIDCounter int // TODO : need to update to another algorithm
 	txnBoard     map[uuid.UUID]*txnInfo
-	txns         map[string][]*deliverTxn // map[tag]{*txn, *txn, *txn ...}
+	txns         map[string][]*deliverTxn // map[uniqueTable]{*txn, *txn, *txn ...}
 
 	flushWg       sync.WaitGroup
 	txnFlushQueue chan *deliverTxn
@@ -195,9 +195,9 @@ func (k *KVDeliverKeeper) newTxn(db string, table string) *deliverTxn {
 	k.txnIDCounter++
 	uuid := uuid.Must(uuid.NewV4())
 
-	tag := common.UniqueTable(db, table)
-	txn := newDeliverTxn(uuid, tag)
-	log.Infof("[deliver-keeper] [%s] new txn (UUID = %s) ", tag, txn.uuid)
+	uniqueTable := common.UniqueTable(db, table)
+	txn := newDeliverTxn(uuid, uniqueTable)
+	log.Infof("[deliver-keeper] [%s] new txn (UUID = %s) ", uniqueTable, txn.uuid)
 
 	return txn
 }
@@ -206,8 +206,8 @@ func (k *KVDeliverKeeper) applyTxn(db string, table string) *deliverTxn {
 	var txn *deliverTxn
 
 	// try to choose a valid deliver txn to join
-	tag := common.UniqueTable(db, table)
-	tagTxns, ok := k.txns[tag]
+	uniqueTable := common.UniqueTable(db, table)
+	tagTxns, ok := k.txns[uniqueTable]
 	if ok {
 		for _, tx := range tagTxns {
 			if k.validate(tx) {
@@ -223,8 +223,8 @@ func (k *KVDeliverKeeper) applyTxn(db string, table string) *deliverTxn {
 
 		tagTxns = make([]*deliverTxn, 0, 4)
 		tagTxns = append(tagTxns, txn)
-		k.txns[tag] = tagTxns
-		log.Infof("[deliver-keeper] [%s] holds txn count = %d", tag, len(tagTxns))
+		k.txns[uniqueTable] = tagTxns
+		log.Infof("[deliver-keeper] [%s] holds txn count = %d", uniqueTable, len(tagTxns))
 
 		k.txnBoard[txn.uuid] = &txnInfo{
 			txn:     txn,
@@ -232,7 +232,7 @@ func (k *KVDeliverKeeper) applyTxn(db string, table string) *deliverTxn {
 			table:   table,
 			clients: 0,
 		}
-		log.Infof("[deliver-keeper] [%s] holds txn total = %d", tag, len(k.txnBoard))
+		log.Infof("[deliver-keeper] [%s] holds txn total = %d", uniqueTable, len(k.txnBoard))
 	}
 
 	return txn
@@ -351,9 +351,9 @@ func (k *KVDeliverKeeper) flushTxn(txn *deliverTxn) {
 
 func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 	doFlush := func(txn *deliverTxn) {
-		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.importServerAddr, k.pdAddr, txn.tag)
+		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.importServerAddr, k.pdAddr, txn.uniqueTable)
 		if err != nil {
-			log.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", txn.tag, txn.uuid, err.Error())
+			log.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", txn.uniqueTable, txn.uuid, err.Error())
 			return
 		}
 		defer func() {
@@ -362,12 +362,12 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 		}()
 
 		if err := cli.Flush(); err != nil {
-			log.Errorf("[deliver-keeper] [%s] txn (UUID = %s) flush failed : %s ", txn.tag, txn.uuid, err.Error())
+			log.Errorf("[deliver-keeper] [%s] txn (UUID = %s) flush failed : %s ", txn.uniqueTable, txn.uuid, err.Error())
 			return
 		}
 		err = cli.Cleanup()
 		if err != nil {
-			log.Warnf("[deliver-keeper] [%s] txn (UUID = %s) cleanup failed: %s", txn.tag, txn.uuid, err.Error())
+			log.Warnf("[deliver-keeper] [%s] txn (UUID = %s) cleanup failed: %s", txn.uniqueTable, txn.uuid, err.Error())
 		}
 	}
 
@@ -377,12 +377,12 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 			return
 		case txn := <-k.txnFlushQueue:
 			now := time.Now()
-			log.Infof("[deliver-keeper] [%s] start flushing txn (UUID = %s) ... ", txn.tag, txn.uuid)
+			log.Infof("[deliver-keeper] [%s] start flushing txn (UUID = %s) ... ", txn.uniqueTable, txn.uuid)
 
 			doFlush(txn)
 
 			k.flushWg.Done()
-			log.Infof("[deliver-keeper] [%s] finished flushing txn (UUID = %s), takes %v", txn.tag, txn.uuid, time.Since(now))
+			log.Infof("[deliver-keeper] [%s] finished flushing txn (UUID = %s), takes %v", txn.uniqueTable, txn.uuid, time.Since(now))
 		}
 	}
 }
@@ -560,7 +560,7 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 		if sendErr == nil {
 			break
 		}
-		log.Errorf("[kv-deliver] [%s] write stream failed to send: %s", c.txn.tag, sendErr.Error())
+		log.Errorf("[kv-deliver] [%s] write stream failed to send: %s", c.txn.uniqueTable, sendErr.Error())
 		time.Sleep(retryBackoffTime)
 	}
 	if sendErr != nil {
@@ -623,10 +623,10 @@ func (c *KVDeliverClient) callCompact(level int32) error {
 
 func (c *KVDeliverClient) callClose() error {
 	timer := time.Now()
-	log.Infof("[%s] [%s] close", c.txn.tag, c.txn.uuid)
+	log.Infof("[%s] [%s] close", c.txn.uniqueTable, c.txn.uuid)
 	req := &importpb.CloseRequest{Uuid: c.txn.uuid.Bytes()}
 	_, err := c.cli.Close(c.ctx, req)
-	log.Infof("[%s] [%s] close takes %v", c.txn.tag, c.txn.uuid, time.Since(timer))
+	log.Infof("[%s] [%s] close takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 
 	return errors.Trace(err)
 }
@@ -635,18 +635,18 @@ func (c *KVDeliverClient) callImport() error {
 	// TODO ... no matter what, to enusure available to import, call close first !
 	for i := 0; i < maxRetryTimes; i++ {
 		timer := time.Now()
-		log.Infof("[%s] [%s] import", c.txn.tag, c.txn.uuid)
+		log.Infof("[%s] [%s] import", c.txn.uniqueTable, c.txn.uuid)
 		req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
 		_, err := c.cli.Import(c.ctx, req)
-		log.Infof("[%s] [%s] import takes %v", c.txn.tag, c.txn.uuid, time.Since(timer))
+		log.Infof("[%s] [%s] import takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[%s] [%s] import failed and retry %d time, err %v", c.txn.tag, c.txn.uuid, i+1, err)
+		log.Warnf("[%s] [%s] import failed and retry %d time, err %v", c.txn.uniqueTable, c.txn.uuid, i+1, err)
 		time.Sleep(retryBackoffTime)
 	}
 
-	return errors.Errorf("[%s] [%s] import reach max retry %d and still failed", c.txn.tag, c.txn.uuid, maxRetryTimes)
+	return errors.Errorf("[%s] [%s] import reach max retry %d and still failed", c.txn.uniqueTable, c.txn.uuid, maxRetryTimes)
 }
 
 // Switch switches tikv mode.
