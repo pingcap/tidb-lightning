@@ -204,15 +204,15 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 
 // do full compaction for the whole data.
 func (rc *RestoreController) fullCompact(ctx context.Context) error {
+	if !rc.cfg.PostRestore.Compact {
+		log.Info("Skip full compaction.")
+		return nil
+	}
+
 	return errors.Trace(rc.doCompact(ctx, -1))
 }
 
 func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
-	if !rc.cfg.PostRestore.Compact {
-		log.Info("Skip compaction.")
-		return nil
-	}
-
 	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr, "")
 	if err != nil {
 		return errors.Trace(err)
