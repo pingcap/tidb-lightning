@@ -649,13 +649,13 @@ func (c *KVDeliverClient) callImport() error {
 // Switch switches tikv mode.
 func (c *KVDeliverClient) Switch(mode sstpb.SwitchMode) error {
 	timer := time.Now()
-	req := &importpb.SwitchRequest{
+	req := &importpb.SwitchModeRequest{
 		PdAddr: c.pdAddr,
-		Request: &sstpb.SwitchRequest{
+		Request: &sstpb.SwitchModeRequest{
 			Mode: mode,
 		},
 	}
-	_, err := c.cli.Switch(c.ctx, req)
+	_, err := c.cli.SwitchMode(c.ctx, req)
 	if err != nil {
 		return errors.Trace(err)
 	}
