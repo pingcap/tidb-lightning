@@ -138,6 +138,8 @@ type KVDeliverKeeper struct {
 
 	flushWg       sync.WaitGroup
 	txnFlushQueue chan *deliverTxn
+	compactWg     sync.WaitGroup
+	compactQueue  chan int32
 }
 
 type txnInfo struct {
@@ -162,9 +164,11 @@ func NewKVDeliverKeeper(importServerAddr, pdAddr string) *KVDeliverKeeper {
 		txns:          make(map[string][]*deliverTxn),
 		txnBoard:      make(map[uuid.UUID]*txnInfo),
 		txnFlushQueue: make(chan *deliverTxn, 64),
+		compactQueue:  make(chan int32, 64),
 	}
 
 	go keeper.handleTxnFlush(keeper.ctx)
+	go keeper.handleCompact(keeper.ctx)
 
 	return keeper
 }
@@ -294,13 +298,32 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 }
 
 func (k *KVDeliverKeeper) Compact(level int32) error {
-	cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.importServerAddr, k.pdAddr, "")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer cli.Close()
+	k.compactWg.Add(1)
+	k.compactQueue <- level
+	k.compactWg.Wait()
+	return nil
+}
 
-	return cli.Compact(level)
+func (k *KVDeliverKeeper) handleCompact(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case level := <-k.compactQueue:
+			cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.importServerAddr, k.pdAddr, "")
+			if err != nil {
+				log.Errorf("create KVDeliverClient error %v", errors.ErrorStack(err))
+				return
+			}
+			defer cli.Close()
+
+			err = cli.Compact(level)
+			if err != nil {
+				log.Errorf("compact level %d error %v", level, errors.ErrorStack(err))
+			}
+			k.compactWg.Done()
+		}
+	}
 }
 
 func (k *KVDeliverKeeper) Flush() error {
@@ -376,13 +399,8 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case txn := <-k.txnFlushQueue:
-			now := time.Now()
-			log.Infof("[deliver-keeper] [%s] start flushing txn (UUID = %s) ... ", txn.uniqueTable, txn.uuid)
-
 			doFlush(txn)
-
 			k.flushWg.Done()
-			log.Infof("[deliver-keeper] [%s] finished flushing txn (UUID = %s), takes %v", txn.uniqueTable, txn.uuid, time.Since(now))
 		}
 	}
 }
@@ -578,20 +596,29 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 }
 
 func (c *KVDeliverClient) Cleanup() error {
+	timer := time.Now()
 	c.closeWriteStream()
 
+	log.Infof("[%s] [%s] cleanup ", c.txn.uniqueTable, c.txn.uuid)
 	req := &importpb.CleanupRequest{Uuid: c.txn.uuid.Bytes()}
 	_, err := c.cli.Cleanup(c.ctx, req)
+	log.Infof("[%s] [%s] cleanup takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 	return errors.Trace(err)
 }
 
 func (c *KVDeliverClient) Flush() error {
 	c.closeWriteStream()
 
-	ops := []func() error{c.callClose, c.callImport}
-	for step, fn := range ops {
-		if err := fn(); err != nil {
-			log.Errorf("[kv-deliver] flush stage with error (step = %d) : %s", step, err.Error())
+	ops := []struct {
+		fn   func() error
+		name string
+	}{
+		{c.callClose, "close"},
+		{c.callImport, "import"},
+	}
+	for _, op := range ops {
+		if err := op.fn(); err != nil {
+			log.Errorf("[kv-deliver] flush stage with error (step = %s) : %v", op.name, err)
 			return errors.Trace(err)
 		}
 	}
@@ -629,7 +656,7 @@ func (c *KVDeliverClient) callClose() error {
 }
 
 func (c *KVDeliverClient) callImport() error {
-	// TODO ... no matter what, to enusure available to import, call close first !
+	// TODO ... no matter what, to ensure available to import, call close first !
 	for i := 0; i < maxRetryTimes; i++ {
 		timer := time.Now()
 		log.Infof("[%s] [%s] import", c.txn.uniqueTable, c.txn.uuid)

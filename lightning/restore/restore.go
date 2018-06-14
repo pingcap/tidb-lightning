@@ -21,6 +21,11 @@ import (
 	"golang.org/x/net/context"
 )
 
+const (
+	FullLevelCompact = -1
+	Level1Compact    = 1
+)
+
 var (
 	errCtxAborted = errors.New("context aborted error")
 	metrics       = common.NewMetrics()
@@ -43,6 +48,7 @@ type RestoreController struct {
 	dbInfo        *TidbDBInfo
 	tableWorkers  *RestoreWorkerPool
 	regionWorkers *RestoreWorkerPool
+	deliverMgr    *kv.KVDeliverKeeper
 }
 
 func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *RestoreController {
@@ -51,10 +57,12 @@ func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *R
 		dbMeta:        dbMeta,
 		tableWorkers:  NewRestoreWorkerPool(cfg.App.WorkerPoolSize),
 		regionWorkers: NewRestoreWorkerPool(cfg.App.WorkerPoolSize),
+		deliverMgr:    kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
 	}
 }
 
 func (rc *RestoreController) Close() {
+	rc.deliverMgr.Close()
 }
 
 func (rc *RestoreController) Run(ctx context.Context) {
@@ -126,7 +134,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			return errors.Errorf("table info %s not found", tbl)
 		}
 
-		tr := NewTableRestore(ctx, dbInfo, tableInfo, tableMeta, rc.cfg)
+		tr := NewTableRestore(ctx, dbInfo, tableInfo, tableMeta, rc.cfg, rc.deliverMgr)
 
 		select {
 		case <-ctx.Done():
@@ -148,7 +156,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	}
 
 	wg.Wait()
-	log.Infof("restore tables data takes %v", time.Since(timer))
+	log.Infof("restore all tables data takes %v", time.Since(timer))
 
 	return nil
 }
@@ -184,7 +192,7 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 	log.Infof("[%s] restore table data takes %v", table, time.Since(timer))
 
 	// 2. compact level 1
-	if err := rc.doCompact(ctx, 1); err != nil {
+	if err := t.deliversMgr.Compact(Level1Compact); err != nil {
 		// log it and continue
 		log.Warnf("[%s] do compact failed err", table, errors.ErrorStack(err))
 	}
@@ -209,20 +217,13 @@ func (rc *RestoreController) fullCompact(ctx context.Context) error {
 		return nil
 	}
 
-	return errors.Trace(rc.doCompact(ctx, -1))
-}
-
-func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
 	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr, "")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cli.Close()
 
-	if err := cli.Compact(level); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return errors.Trace(cli.Compact(FullLevelCompact))
 }
 
 // analyze will analyze table for all tables.
@@ -534,6 +535,7 @@ func NewTableRestore(
 	tableInfo *TidbTableInfo,
 	tableMeta *mydump.MDTableMeta,
 	cfg *config.Config,
+	deliverMgr *kv.KVDeliverKeeper,
 ) *TableRestore {
 
 	encoders := newKvEncoderPool(dbInfo, tableInfo, tableMeta, cfg.TiDB.SQLMode)
@@ -546,7 +548,7 @@ func NewTableRestore(
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
 		encoders:       encoders,
-		deliversMgr:    kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
+		deliversMgr:    deliverMgr,
 		handledRegions: make(map[int]*regionStat),
 	}
 	tr.loadRegions()
@@ -665,11 +667,11 @@ func (tr *TableRestore) importKV() error {
 
 	start := time.Now()
 	defer func() {
-		kvDeliver.Close()
 		metrics.MarkTiming(fmt.Sprintf("[%s]_kv_flush", table), start)
 		log.Infof("[%s] kv deliver all flushed !", table)
 	}()
 
+	// BUG: what if flush failed?
 	if err := kvDeliver.Flush(); err != nil {
 		log.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
 		return errors.Trace(err)

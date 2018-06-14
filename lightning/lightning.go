@@ -107,6 +107,7 @@ func (l *Lightning) run() {
 	defer procedure.Close()
 
 	procedure.Run(l.ctx)
+	procedure.Close()
 	return
 }
 
@@ -117,7 +118,7 @@ func (l *Lightning) doCompact() error {
 	}
 	defer cli.Close()
 
-	if err := cli.Compact(-1); err != nil {
+	if err := cli.Compact(restore.FullLevelCompact); err != nil {
 		return errors.Trace(err)
 	}
 
