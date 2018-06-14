@@ -45,7 +45,7 @@ distsql-scan-concurrency = 16
 
 # post-restore provide some options which will be executed after all kv data has been imported into the tikv cluster.
 # the execution order are(if set true): checksum -> compact -> analyze
-[post-restore
+[post-restore]
 # if set true, checksum will do ADMIN CHECKSUM TABLE <table> for each table.
 checksum = true
 # if set true, compact will do compaction to tikv data.
