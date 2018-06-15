@@ -516,7 +516,6 @@ type TableRestore struct {
 	deliversMgr *kv.KVDeliverKeeper
 
 	regions        []*mydump.TableRegion
-	id2regions     map[int]*mydump.TableRegion
 	tasks          []*regionRestoreTask
 	handledRegions map[int]*regionStat
 	localChecksum  *verify.KVChecksum
@@ -570,10 +569,8 @@ func (tr *TableRestore) loadRegions() {
 	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
 	regions := founder.MakeTableRegions(tr.tableMeta)
 
-	id2regions := make(map[int]*mydump.TableRegion)
 	for _, region := range regions {
 		log.Debugf("[%s] region - %s", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name), region.Name())
-		id2regions[region.ID] = region
 	}
 
 	tasks := make([]*regionRestoreTask, 0, len(regions))
@@ -584,7 +581,6 @@ func (tr *TableRestore) loadRegions() {
 	}
 
 	tr.regions = regions
-	tr.id2regions = id2regions
 	tr.tasks = tasks
 
 	log.Infof("[%s] load %d regions takes %v", table, len(regions), time.Since(timer))
