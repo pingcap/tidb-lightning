@@ -107,7 +107,6 @@ func (l *Lightning) run() {
 	defer procedure.Close()
 
 	procedure.Run(l.ctx)
-	procedure.Close()
 	return
 }
 
