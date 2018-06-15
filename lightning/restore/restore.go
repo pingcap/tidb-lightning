@@ -43,22 +43,27 @@ func init() {
 }
 
 type RestoreController struct {
-	cfg           *config.Config
-	dbMeta        *mydump.MDDatabaseMeta
-	dbInfo        *TidbDBInfo
-	tableWorkers  *RestoreWorkerPool
-	regionWorkers *RestoreWorkerPool
-	deliverMgr    *kv.KVDeliverKeeper
+	cfg              *config.Config
+	dbMeta           *mydump.MDDatabaseMeta
+	dbInfo           *TidbDBInfo
+	tableWorkers     *RestoreWorkerPool
+	regionWorkers    *RestoreWorkerPool
+	deliverMgr       *kv.KVDeliverKeeper
+	postProcessQueue chan *TableRestore
 }
 
-func NewRestoreControlloer(dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *RestoreController {
-	return &RestoreController{
-		cfg:           cfg,
-		dbMeta:        dbMeta,
-		tableWorkers:  NewRestoreWorkerPool(cfg.App.WorkerPoolSize),
-		regionWorkers: NewRestoreWorkerPool(cfg.App.WorkerPoolSize),
-		deliverMgr:    kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
+func NewRestoreControlloer(ctx context.Context, dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *RestoreController {
+	rc := &RestoreController{
+		cfg:              cfg,
+		dbMeta:           dbMeta,
+		tableWorkers:     NewRestoreWorkerPool(cfg.App.WorkerPoolSize / 2),
+		regionWorkers:    NewRestoreWorkerPool(cfg.App.WorkerPoolSize),
+		deliverMgr:       kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
+		postProcessQueue: make(chan *TableRestore),
 	}
+
+	go rc.handlePostProcessing(ctx)
+	return rc
 }
 
 func (rc *RestoreController) Close() {
@@ -191,15 +196,62 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 	wg.Wait()
 	log.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
 
+	var (
+		tableRows uint64
+		checksum  = verify.NewKVChecksum(0)
+	)
+	for _, regStat := range t.handledRegions {
+		tableRows += regStat.rows
+		if regStat.maxRowID > t.tableMaxRowID {
+			t.tableMaxRowID = regStat.maxRowID
+		}
+		checksum.Add(regStat.checksum)
+	}
+	t.localChecksum = checksum
+	t.tableRows = tableRows
+
+	err := rc.postProcessing(t)
+	return errors.Trace(err)
+}
+
+func (rc *RestoreController) postProcessing(t *TableRestore) error {
+	postProcessError := make(chan error, 1)
+	t.postProcessError = postProcessError
+	rc.postProcessQueue <- t
+	if err := <-postProcessError; err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (rc *RestoreController) handlePostProcessing(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case table := <-rc.postProcessQueue:
+			err := rc.doPostProcessing(ctx, table)
+			if err != nil {
+				table.postProcessError <- err
+			} else {
+				table.postProcessError <- nil
+			}
+		}
+	}
+}
+
+func (rc *RestoreController) doPostProcessing(ctx context.Context, t *TableRestore) error {
+	uniqueTable := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
 	// 1. close engine, then calling import
 	if err := t.importKV(); err != nil {
 		return errors.Trace(err)
 	}
+	log.Infof("[%s] local checksum %s, has imported %d rows", uniqueTable, t.localChecksum, t.tableRows)
 
 	// 2. compact level 1
-	if err := t.deliversMgr.Compact(Level1Compact); err != nil {
+	if err := rc.doCompact(ctx, Level1Compact); err != nil {
 		// log it and continue
-		log.Warnf("[%s] do compact failed err", table, errors.ErrorStack(err))
+		log.Warnf("[%s] do compact %d failed err %v", uniqueTable, Level1Compact, errors.ErrorStack(err))
 	}
 
 	// 3. alter table set auto_increment
@@ -222,13 +274,17 @@ func (rc *RestoreController) fullCompact(ctx context.Context) error {
 		return nil
 	}
 
+	return errors.Trace(rc.doCompact(ctx, FullLevelCompact))
+}
+
+func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
 	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr, "")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cli.Close()
 
-	return errors.Trace(cli.Compact(FullLevelCompact))
+	return errors.Trace(cli.Compact(level))
 }
 
 // analyze will analyze table for all tables.
@@ -521,11 +577,13 @@ type TableRestore struct {
 	encoders    *kvEncoderPool
 	deliversMgr *kv.KVDeliverKeeper
 
-	regions        []*mydump.TableRegion
-	tasks          []*regionRestoreTask
-	handledRegions map[int]*regionStat
-	localChecksum  *verify.KVChecksum
-	tableMaxRowID  int64
+	regions          []*mydump.TableRegion
+	tasks            []*regionRestoreTask
+	handledRegions   map[int]*regionStat
+	localChecksum    *verify.KVChecksum
+	tableMaxRowID    int64
+	tableRows        uint64
+	postProcessError chan error
 }
 
 type regionStat struct {
@@ -641,24 +699,10 @@ func (tr *TableRestore) importKV() error {
 	}()
 
 	// FIXME: flush is an asynchronous operation, what if flush failed?
-	if err := tr.deliversMgr.Flush(); err != nil {
+	if err := tr.deliversMgr.Flush(table); err != nil {
 		log.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
 		return errors.Trace(err)
 	}
-
-	var (
-		tableRows uint64
-		checksum  = verify.NewKVChecksum(0)
-	)
-	for _, regStat := range tr.handledRegions {
-		tableRows += regStat.rows
-		if regStat.maxRowID > tr.tableMaxRowID {
-			tr.tableMaxRowID = regStat.maxRowID
-		}
-		checksum.Add(regStat.checksum)
-	}
-	tr.localChecksum = checksum
-	log.Infof("[%s] local checksum %s, has imported %d rows", table, checksum, tableRows)
 
 	return nil
 }
