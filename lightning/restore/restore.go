@@ -189,7 +189,12 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 		}(worker, task)
 	}
 	wg.Wait()
-	log.Infof("[%s] restore table data takes %v", table, time.Since(timer))
+	log.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
+
+	// 1. close engine, then calling import
+	if err := t.importKV(); err != nil {
+		return errors.Trace(err)
+	}
 
 	// 2. compact level 1
 	if err := t.deliversMgr.Compact(Level1Compact); err != nil {
@@ -401,6 +406,7 @@ func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVC
 	defer t.encoders.Recycle(kvEncoder)
 
 	kvDeliver := t.delivers.AcquireClient(t.executor.dbInfo.Name, t.executor.tableInfo.Name)
+	// cause bug here.
 	defer t.delivers.RecycleClient(kvDeliver)
 
 	nextRowID, affectedRows, checksum, err := t.executor.Run(ctx, t.region, kvEncoder, kvDeliver)
@@ -601,38 +607,7 @@ func (tr *TableRestore) onRegionFinished(ctx context.Context, id int, maxRowID i
 	total := len(tr.regions)
 	handled := len(tr.handledRegions)
 	log.Infof("[%s] handled region count = %d (%s)", table, handled, common.Percent(handled, total))
-	if handled == len(tr.tasks) {
-		err := tr.onFinished(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 
-	return nil
-}
-
-func (tr *TableRestore) onFinished(ctx context.Context) error {
-	// flush all kvs into TiKV
-	if err := tr.importKV(); err != nil {
-		return errors.Trace(err)
-	}
-
-	// generate meta kv
-	var (
-		tableRows uint64
-		checksum  = verify.NewKVChecksum(0)
-	)
-	for _, regStat := range tr.handledRegions {
-		tableRows += regStat.rows
-		if regStat.maxRowID > tr.tableMaxRowID {
-			tr.tableMaxRowID = regStat.maxRowID
-		}
-		checksum.Add(regStat.checksum)
-	}
-	tr.localChecksum = checksum
-	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
-	log.Infof("[%s] local checksum %s", table, checksum)
-	log.Infof("[%s] has imported %d rows", table, tableRows)
 	return nil
 }
 
@@ -659,19 +634,31 @@ func (tr *TableRestore) importKV() error {
 	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
 	log.Infof("[%s] flush kv deliver ...", table)
 
-	kvDeliver := tr.deliversMgr
-
 	start := time.Now()
 	defer func() {
 		metrics.MarkTiming(fmt.Sprintf("[%s]_kv_flush", table), start)
 		log.Infof("[%s] kv deliver all flushed !", table)
 	}()
 
-	// BUG: what if flush failed?
-	if err := kvDeliver.Flush(); err != nil {
+	// FIXME: flush is an asynchronous operation, what if flush failed?
+	if err := tr.deliversMgr.Flush(); err != nil {
 		log.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
 		return errors.Trace(err)
 	}
+
+	var (
+		tableRows uint64
+		checksum  = verify.NewKVChecksum(0)
+	)
+	for _, regStat := range tr.handledRegions {
+		tableRows += regStat.rows
+		if regStat.maxRowID > tr.tableMaxRowID {
+			tr.tableMaxRowID = regStat.maxRowID
+		}
+		checksum.Add(regStat.checksum)
+	}
+	tr.localChecksum = checksum
+	log.Infof("[%s] local checksum %s, has imported %d rows", table, checksum, tableRows)
 
 	return nil
 }
