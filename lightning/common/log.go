@@ -1,4 +1,4 @@
-package log
+package common
 
 import (
 	"bytes"
@@ -11,7 +11,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 
-	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -134,7 +133,7 @@ func InitLogger(cfg *LogConfig, tidbLoglevel string) error {
 	logutil.InitLogger(&logutil.LogConfig{Level: tidbLoglevel})
 
 	if len(cfg.File) > 0 {
-		if common.IsDirExists(cfg.File) {
+		if IsDirExists(cfg.File) {
 			return errors.Errorf("can't use directory as log file name : %s", cfg.File)
 		}
 
