@@ -2,10 +2,10 @@ package kv
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	"github.com/pingcap/tidb/kv"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -41,7 +41,7 @@ func NewTableKVEncoder(
 
 	kvEncoder, err := kvec.New(db, idAlloc)
 	if err != nil {
-		log.Errorf("[sql2kv] kv encoder create failed : %v", err)
+		common.AppLogger.Errorf("[sql2kv] kv encoder create failed : %v", err)
 		return nil, errors.Trace(err)
 	}
 
@@ -49,7 +49,7 @@ func NewTableKVEncoder(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	log.Debugf("set sql_mode=%s", sqlMode)
+	common.AppLogger.Debugf("set sql_mode=%s", sqlMode)
 
 	kvcodec := &TableKVEncoder{
 		db:          db,
@@ -71,7 +71,7 @@ func NewTableKVEncoder(
 
 func (kvcodec *TableKVEncoder) init() error {
 	if err := kvcodec.encoder.ExecDDLSQL(kvcodec.tableSchema); err != nil {
-		log.Errorf("[sql2kv] tableSchema execute failed : %v", err)
+		common.AppLogger.Errorf("[sql2kv] tableSchema execute failed : %v", err)
 		return errors.Trace(err)
 	}
 
@@ -121,13 +121,13 @@ func (kvcodec *TableKVEncoder) SQL2KV(sql []byte) ([]kvec.KvPair, uint64, error)
 		if err == nil {
 			return kvPairs, rowsAffected, nil
 		}
-		log.Warnf("[sql2kv] stmt encode err : %s", err.Error())
+		common.AppLogger.Warnf("[sql2kv] stmt encode err : %s", err.Error())
 	}
 
 	// via sql execution
 	kvPairs, rowsAffected, err := kvcodec.encoder.Encode(string(sql), kvcodec.tableID)
 	if err != nil {
-		log.Errorf("[sql2kv] sql encode error = %v", err)
+		common.AppLogger.Errorf("[sql2kv] sql encode error = %v", err)
 		return nil, 0, errors.Trace(err)
 	}
 
@@ -142,7 +142,7 @@ func (kvcodec *TableKVEncoder) encodeViaPstmt(sql []byte) ([]kvec.KvPair, uint64
 
 	err := sqltool.ParseInsertStmt(sql, &values)
 	if err != nil {
-		log.Errorf("[sql->kv] stmt mode encode failed : %s", err.Error())
+		common.AppLogger.Errorf("[sql->kv] stmt mode encode failed : %s", err.Error())
 		return nil, 0, errors.Trace(err)
 	}
 
@@ -151,7 +151,7 @@ func (kvcodec *TableKVEncoder) encodeViaPstmt(sql []byte) ([]kvec.KvPair, uint64
 	if len(values)%cols > 0 {
 		err = errors.Errorf("[sql->kv] stmt values num not match (%d %% %d = %d) !",
 			len(values), cols, len(values)%cols)
-		log.Errorf(err.Error())
+		common.AppLogger.Errorf(err.Error())
 		return nil, 0, errors.Trace(err)
 	}
 
@@ -199,7 +199,7 @@ func (kvcodec *TableKVEncoder) prepareStatment(rows int) (uint32, error) {
 	stmt := sqltool.MakePrepareStatement(kvcodec.table, kvcodec.columns, rows)
 	stmtID, err := kvcodec.encoder.PrepareStmt(stmt)
 	if err != nil {
-		log.Errorf("[sql2kv] prepare stmt failed : %s", err.Error())
+		common.AppLogger.Errorf("[sql2kv] prepare stmt failed : %s", err.Error())
 		return stmtID, errors.Trace(err)
 	}
 

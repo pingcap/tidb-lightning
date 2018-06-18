@@ -8,9 +8,9 @@ import (
 	"syscall"
 
 	"github.com/juju/errors"
-	log "github.com/sirupsen/logrus"
 
 	"github.com/pingcap/tidb-lightning/lightning"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb/plan"
 )
@@ -26,7 +26,7 @@ func onExitSignal() {
 		syscall.SIGQUIT)
 
 	sig := <-sc
-	log.Infof("Got signal %d to exit.", sig)
+	common.AppLogger.Infof("Got signal %d to exit.", sig)
 }
 
 func setGlobalVars() {
@@ -44,7 +44,7 @@ func main() {
 	case flag.ErrHelp:
 		os.Exit(0)
 	default:
-		log.Fatalf("parse cmd flags error: %s", err)
+		common.AppLogger.Fatalf("parse cmd flags error: %s", err)
 	}
 
 	app := lightning.New(cfg)
@@ -52,6 +52,6 @@ func main() {
 
 	// TODO : onExitSignal() --> mainloop.Stop()
 
-	log.Info("tidb lightning exit.")
+	common.AppLogger.Info("tidb lightning exit.")
 	return
 }

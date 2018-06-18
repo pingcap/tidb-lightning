@@ -6,6 +6,7 @@ import (
 	"path"
 	"runtime"
 	"strings"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	log "github.com/sirupsen/logrus"
@@ -125,10 +126,22 @@ func isSkippedPackageName(name string) bool {
 		strings.Contains(name, "github.com/coreos/pkg/capnslog")
 }
 
+// AppLogger is a logger for lightning, different from tidb logger.
+var AppLogger = log.New()
+
+func SetLevel(level log.Level) {
+	atomic.StoreUint32((*uint32)(&AppLogger.Level), uint32(level))
+}
+
+func GetLevel() (level log.Level) {
+	return log.Level(atomic.LoadUint32((*uint32)(&AppLogger.Level)))
+}
+
 func InitLogger(cfg *LogConfig, tidbLoglevel string) error {
-	log.SetLevel(stringToLogLevel(cfg.Level))
-	log.AddHook(&contextHook{})
-	log.SetFormatter(&SimpleTextFormater{})
+	SetLevel(stringToLogLevel(cfg.Level))
+
+	AppLogger.Hooks.Add(&contextHook{})
+	AppLogger.Formatter = &SimpleTextFormater{}
 
 	logutil.InitLogger(&logutil.LogConfig{Level: tidbLoglevel})
 
@@ -146,7 +159,7 @@ func InitLogger(cfg *LogConfig, tidbLoglevel string) error {
 			LocalTime:  true,
 		}
 
-		log.SetOutput(output)
+		AppLogger.Out = output
 	}
 
 	return nil
