@@ -63,8 +63,8 @@ func (c *Config) String() string {
 
 type Lightning struct {
 	log.LogConfig
-	ProfilePort    int `toml:"pprof-port" json:"json"`
 	WorkerPoolSize int `toml:"worker-pool-size" json:"worker-pool-size"`
+	ProfilePort       int `toml:"pprof-port" json:"pprof-port"`
 }
 
 // PostRestore has some options which will be executed after kv restored.
