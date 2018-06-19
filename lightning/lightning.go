@@ -16,8 +16,10 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
 	applog "github.com/pingcap/tidb-lightning/lightning/log"
+	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type Lightning struct {
@@ -36,7 +38,8 @@ func initEnv(cfg *config.Config) error {
 	kv.ConfigDeliverTxnBatchSize(cfg.TikvImporter.BatchSize)
 
 	if cfg.App.ProfilePort > 0 {
-		go func() { // TODO : config to enable it in debug mode
+		go func() {
+			http.Handle("/metrics", prometheus.Handler())
 			log.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.App.ProfilePort), nil))
 		}()
 	}
@@ -61,6 +64,7 @@ func (l *Lightning) Run() {
 	common.PrintInfo("lightning", func() {
 		log.Infof("cfg %s", l.cfg)
 	})
+	metric.CalcCPUUsageBackground()
 
 	if l.cfg.DoCompact {
 		err := l.doCompact()
