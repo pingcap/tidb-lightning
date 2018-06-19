@@ -191,7 +191,7 @@ func (k *KVDeliverKeeper) validate(txn *deliverTxn) bool {
 
 func (k *KVDeliverKeeper) newTxn(db string, table string) *deliverTxn {
 	k.txnIDCounter++
-	uuid := uuid.Must(uuid.NewV4(), nil)
+	uuid := uuid.NewV4()
 
 	uniqueTable := common.UniqueTable(db, table)
 	txn := newDeliverTxn(uuid, uniqueTable)
