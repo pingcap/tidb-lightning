@@ -4,10 +4,10 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/datasource/base"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
-	log "github.com/sirupsen/logrus"
 )
 
 type TableKVEncoder struct {
@@ -35,7 +35,7 @@ func NewTableKVEncoder(
 
 	kvEncoder, err := kvec.New(db, idAlloc)
 	if err != nil {
-		log.Errorf("[sql2kv] kv encoder create failed : %v", err)
+		common.AppLogger.Errorf("[sql2kv] kv encoder create failed : %v", err)
 		return nil, errors.Trace(err)
 	}
 
@@ -43,7 +43,7 @@ func NewTableKVEncoder(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	log.Debugf("set sql_mode=%s", sqlMode)
+	common.AppLogger.Debugf("set sql_mode=%s", sqlMode)
 
 	enc := &TableKVEncoder{
 		db:             db,
@@ -68,7 +68,7 @@ func NewTableKVEncoder(
 
 func (enc *TableKVEncoder) init() error {
 	if err := enc.encoder.ExecDDLSQL(enc.tableSchema); err != nil {
-		log.Errorf("[sql2kv] tableSchema execute failed : %v", err)
+		common.AppLogger.Errorf("[sql2kv] tableSchema execute failed : %v", err)
 		return errors.Trace(err)
 	}
 
@@ -86,7 +86,7 @@ func (enc *TableKVEncoder) ResetRowID(rowID int64) {
 }
 
 func (enc *TableKVEncoder) Close() error {
-	return enc.encoder.Close()
+	return errors.Trace(enc.encoder.Close())
 }
 
 func (enc *TableKVEncoder) NextRowID() int64 {
@@ -106,7 +106,7 @@ func (enc *TableKVEncoder) SQL2KV(payload *base.Payload) ([]kvec.KvPair, uint64,
 	// via sql execution
 	kvPairs, rowsAffected, err := enc.encoder.Encode(payload.SQL, enc.tableID)
 	if err != nil {
-		log.Errorf("[sql2kv] sql encode error = %v", err)
+		common.AppLogger.Errorf("[sql2kv] sql encode error = %v", err)
 		return nil, 0, errors.Trace(err)
 	}
 
@@ -138,7 +138,7 @@ func (enc *TableKVEncoder) applyStmtID(rows int) (uint32, error) {
 	enc.stmtIDs.mu.RUnlock()
 
 	// lazy prepare
-	log.Infof("make prepare statement for %d rows", rows)
+	common.AppLogger.Infof("make prepare statement for %d rows", rows)
 	stmtID, err := enc.makeStatements(rows)
 	if err != nil {
 		return 0, errors.Trace(err)

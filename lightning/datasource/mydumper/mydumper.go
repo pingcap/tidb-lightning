@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/datasource/base"
 )
 
@@ -83,7 +83,7 @@ func (r *MDDataReader) skipAnnotation(offset int64) int64 {
 	br := bufio.NewReader(r.fd)
 	for skipSize := 0; ; {
 		line, err := br.ReadString('\n')
-		if err == io.EOF {
+		if errors.Cause(err) == io.EOF {
 			break
 		}
 
@@ -146,7 +146,7 @@ func (r *MDDataReader) SplitRegions(regionSize int64) ([]*base.TableRegion, erro
 func getInsertStatementHeader(file string) []byte {
 	f, err := os.Open(file)
 	if err != nil {
-		log.Errorf("open file failed (%s) : %v", file, err)
+		common.AppLogger.Errorf("open file failed (%s) : %v", file, err)
 		return []byte{}
 	}
 	defer f.Close()
@@ -155,7 +155,7 @@ func getInsertStatementHeader(file string) []byte {
 	br := bufio.NewReader(f)
 	for {
 		line, err := br.ReadString('\n')
-		if err == io.EOF {
+		if errors.Cause(err) == io.EOF {
 			break
 		}
 
@@ -196,7 +196,7 @@ func (r *MDDataReader) Read(minSize int64, endPos int64) ([]*base.Payload, error
 
 			// check prefix
 			if !bytes.HasPrefix(sql, r.stmtHeader) {
-				log.Errorf("Unexpect sql starting : '%s ..'", string(sql)[:10])
+				common.AppLogger.Errorf("Unexpect sql starting : '%s ..'", string(sql)[:10])
 				return
 			}
 			if sqlLen == len(r.stmtHeader) {
@@ -208,7 +208,7 @@ func (r *MDDataReader) Read(minSize int64, endPos int64) ([]*base.Payload, error
 				if bytes.HasSuffix(sql, []byte(",")) {
 					sql[sqlLen-1] = ';'
 				} else {
-					log.Errorf("Unexpect sql ending : '.. %s'", string(sql)[sqlLen-10:])
+					common.AppLogger.Errorf("Unexpect sql ending : '.. %s'", string(sql)[sqlLen-10:])
 					return
 				}
 			}

@@ -9,14 +9,12 @@ import (
 
 	"github.com/juju/errors"
 	uuid "github.com/satori/go.uuid"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/datasource"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
-	applog "github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
 )
 
@@ -29,7 +27,7 @@ type Lightning struct {
 }
 
 func initEnv(cfg *config.Config) error {
-	if err := applog.InitLogger(&cfg.App.LogConfig, cfg.TiDB.LogLevel); err != nil {
+	if err := common.InitLogger(&cfg.App.LogConfig, cfg.TiDB.LogLevel); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -37,7 +35,7 @@ func initEnv(cfg *config.Config) error {
 
 	if cfg.App.ProfilePort > 0 {
 		go func() { // TODO : config to enable it in debug mode
-			log.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.App.ProfilePort), nil))
+			common.AppLogger.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.App.ProfilePort), nil))
 		}()
 	}
 
@@ -59,13 +57,13 @@ func New(cfg *config.Config) *Lightning {
 func (l *Lightning) Run() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	common.PrintInfo("lightning", func() {
-		log.Infof("cfg %s", l.cfg)
+		common.AppLogger.Infof("cfg %s", l.cfg)
 	})
 
 	if l.cfg.DoCompact {
 		err := l.doCompact()
 		if err != nil {
-			log.Errorf("compact error %s", errors.ErrorStack(err))
+			common.AppLogger.Errorf("compact error %s", errors.ErrorStack(err))
 		}
 		return
 	}
@@ -81,7 +79,7 @@ func (l *Lightning) Run() {
 func (l *Lightning) run() {
 	ds, err := datasource.New(l.cfg)
 	if err != nil {
-		log.Errorf("failed to load mydumper source : %s", errors.ErrorStack(err))
+		common.AppLogger.Errorf("failed to load mydumper source : %s", errors.ErrorStack(err))
 		return
 	}
 
@@ -94,7 +92,7 @@ func (l *Lightning) run() {
 }
 
 func (l *Lightning) doCompact() error {
-	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, l.cfg.TikvImporter.Addr, l.cfg.TiDB.PdAddr)
+	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, l.cfg.TikvImporter.Addr, l.cfg.TiDB.PdAddr, "")
 	if err != nil {
 		return errors.Trace(err)
 	}

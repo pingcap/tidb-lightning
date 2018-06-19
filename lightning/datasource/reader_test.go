@@ -92,7 +92,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 
 			for {
 				statements, err := reader.Read(minBlockSize)
-				if errors.Trace(err) == io.EOF {
+				if errors.Cause(err) == io.EOF {
 					break
 				}
 				for _, stmt := range statements {

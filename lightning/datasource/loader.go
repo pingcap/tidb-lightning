@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/datasource/base"
-	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -27,10 +26,10 @@ type MDDatabaseMeta struct {
 	Tables     map[string]*MDTableMeta
 }
 
-func (meta *MDDatabaseMeta) String() string {
-	v, err := json.Marshal(meta)
+func (m *MDDatabaseMeta) String() string {
+	v, err := json.Marshal(m)
 	if err != nil {
-		log.Error("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
+		common.AppLogger.Error("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
 	}
 	return string(v)
 }
@@ -38,7 +37,7 @@ func (meta *MDDatabaseMeta) String() string {
 func (m *MDDatabaseMeta) GetSchema() string {
 	schema, err := ExportStatement(m.SchemaFile)
 	if err != nil {
-		log.Errorf("failed to extract database schema (%s) : %s", m.SchemaFile, err.Error())
+		common.AppLogger.Errorf("failed to extract database schema (%s) : %s", m.SchemaFile, err.Error())
 		return ""
 	}
 	return string(schema)
@@ -54,7 +53,7 @@ type MDTableMeta struct {
 func (m *MDTableMeta) GetSchema() string {
 	schema, err := ExportStatement(m.SchemaFile)
 	if err != nil {
-		log.Errorf("failed to extract table schema (%s) : %s", m.SchemaFile, err.Error())
+		common.AppLogger.Errorf("failed to extract table schema (%s) : %s", m.SchemaFile, err.Error())
 		return ""
 	}
 	return string(schema)
@@ -79,7 +78,7 @@ func New(cfg *config.Config) (*DataSource, error) {
 	}
 
 	if err := ds.setup(ds.dir); err != nil {
-		// log.Errorf("init mydumper loader failed : %s\n", err.Error())
+		// common.AppLogger.Errorf("init mydumper loader failed : %s\n", err.Error())
 		return nil, errors.Trace(err)
 	}
 
@@ -99,7 +98,7 @@ func (ds *DataSource) setup(dir string) error {
 
 	files := common.ListFiles(dir)
 
-	log.Debugf("Files detected : %+v", files)
+	common.AppLogger.Debugf("Files detected : %+v", files)
 
 	if !ds.noSchema {
 		// DB : [table , table ...]
@@ -150,7 +149,7 @@ func (ds *DataSource) setupTables(files map[string]string) error {
 		name := fname[:idx]
 		fields := strings.Split(name, ".")
 		if len(fields) != 2 {
-			log.Warnf("invalid table schema file - %s", fpath)
+			common.AppLogger.Warnf("invalid table schema file - %s", fpath)
 			continue
 		}
 
@@ -195,7 +194,7 @@ func (ds *DataSource) setupTablesData(files map[string]string) error {
 		if strings.Index(fname, "-schema-view.sql") >= 0 ||
 			strings.Index(fname, "-schema-triggers.sql") >= 0 ||
 			strings.Index(fname, "-schema-post.sql") >= 0 {
-			log.Warnf("[loader] ignore unsupport view/trigger: %s", fpath)
+			common.AppLogger.Warnf("[loader] ignore unsupport view/trigger: %s", fpath)
 			continue
 		}
 
@@ -203,7 +202,7 @@ func (ds *DataSource) setupTablesData(files map[string]string) error {
 		name := fname[:idx]
 		fields := strings.Split(name, ".")
 		if len(fields) < 2 {
-			log.Warnf("invalid db table sql file - %s", fpath)
+			common.AppLogger.Warnf("invalid db table sql file - %s", fpath)
 			continue
 		}
 
@@ -233,8 +232,6 @@ func (ds *DataSource) setupTablesData(files map[string]string) error {
 		}
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fpath)
 	}
-
-	log.Infof("datafiles %+v", ds.dbs)
 
 	// sort all tables' data files by file-name
 	for _, dbMeta := range ds.dbs {

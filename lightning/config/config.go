@@ -10,8 +10,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/sirupsen/logrus"
 )
 
 // DBStore contains tidb informations.
@@ -50,14 +48,14 @@ type Config struct {
 func (c *Config) String() string {
 	bytes, err := json.Marshal(c)
 	if err != nil {
-		logrus.Errorf("marshal config to json error %v", err)
+		common.AppLogger.Errorf("marshal config to json error %v", err)
 	}
 	return string(bytes)
 }
 
 // Lightning contains the configuration about the application itself.
 type Lightning struct {
-	log.LogConfig
+	common.LogConfig
 	ProfilePort    int `toml:"pprof-port" json:"json"`
 	WorkerPoolSize int `toml:"worker-pool-size" json:"worker-pool-size"`
 }
