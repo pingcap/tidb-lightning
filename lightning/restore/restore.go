@@ -71,6 +71,7 @@ func (rc *RestoreController) Close() {
 }
 
 func (rc *RestoreController) Run(ctx context.Context) {
+	timer := time.Now()
 	opts := []func(context.Context) error{
 		rc.switchToImportMode,
 		rc.restoreSchema,
@@ -94,6 +95,7 @@ func (rc *RestoreController) Run(ctx context.Context) {
 	// show metrics
 	statistic := metrics.DumpTiming()
 	log.Infof("Timing statistic :\n%s", statistic)
+	log.Infof("the whole procedure takes %v", time.Since(timer))
 
 	return
 }
