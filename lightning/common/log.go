@@ -139,7 +139,6 @@ func GetLevel() (level log.Level) {
 
 func InitLogger(cfg *LogConfig, tidbLoglevel string) error {
 	SetLevel(stringToLogLevel(cfg.Level))
-
 	AppLogger.Hooks.Add(&contextHook{})
 	AppLogger.Formatter = &SimpleTextFormater{}
 
