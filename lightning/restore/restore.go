@@ -9,7 +9,6 @@ import (
 
 	"github.com/juju/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/satori/go.uuid"
 	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -20,7 +19,6 @@ import (
 	tidbcfg "github.com/pingcap/tidb/config"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	"github.com/satori/go.uuid"
-	"golang.org/x/net/context"
 )
 
 const (
