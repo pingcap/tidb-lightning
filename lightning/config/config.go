@@ -10,8 +10,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -56,15 +54,15 @@ type Config struct {
 func (c *Config) String() string {
 	bytes, err := json.Marshal(c)
 	if err != nil {
-		logrus.Errorf("marshal config to json error %v", err)
+		common.AppLogger.Errorf("marshal config to json error %v", err)
 	}
 	return string(bytes)
 }
 
 type Lightning struct {
-	log.LogConfig
+	common.LogConfig
 	WorkerPoolSize int `toml:"worker-pool-size" json:"worker-pool-size"`
-	ProfilePort       int `toml:"pprof-port" json:"pprof-port"`
+	ProfilePort    int `toml:"pprof-port" json:"pprof-port"`
 }
 
 // PostRestore has some options which will be executed after kv restored.

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 var (
@@ -146,7 +146,7 @@ func (r *MDDataReader) Tell() int64 {
 func (r *MDDataReader) currOffset() int64 {
 	off, err := r.fd.Seek(0, io.SeekCurrent)
 	if err != nil {
-		log.Errorf("get file offset failed (%s) : %v", r.file, err)
+		common.AppLogger.Errorf("get file offset failed (%s) : %v", r.file, err)
 		return -1
 	}
 	return off
@@ -155,7 +155,7 @@ func (r *MDDataReader) currOffset() int64 {
 func getInsertStatmentHeader(file string) []byte {
 	f, err := os.Open(file)
 	if err != nil {
-		log.Errorf("open file failed (%s) : %v", file, err)
+		common.AppLogger.Errorf("open file failed (%s) : %v", file, err)
 		return []byte{}
 	}
 	defer f.Close()
@@ -205,7 +205,7 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 
 			// check prefix
 			if !bytes.HasPrefix(sql, r.stmtHeader) {
-				log.Errorf("Unexpect sql starting : '%s ..'", string(sql)[:10])
+				common.AppLogger.Errorf("Unexpect sql starting : '%s ..'", string(sql)[:10])
 				return
 			}
 			if sqlLen == len(r.stmtHeader) {
@@ -217,7 +217,7 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 				if bytes.HasSuffix(sql, []byte(",")) {
 					sql[sqlLen-1] = ';'
 				} else {
-					log.Errorf("Unexpect sql ending : '.. %s'", string(sql)[sqlLen-10:])
+					common.AppLogger.Errorf("Unexpect sql ending : '.. %s'", string(sql)[sqlLen-10:])
 					return
 				}
 			}
@@ -294,7 +294,7 @@ type RegionReader struct {
 }
 
 func NewRegionReader(file string, offset int64, size int64) (*RegionReader, error) {
-	log.Debugf("[%s] offset = %d / size = %d", file, offset, size)
+	common.AppLogger.Debugf("[%s] offset = %d / size = %d", file, offset, size)
 
 	fileReader, err := NewMDDataReader(file, offset)
 	if err != nil {

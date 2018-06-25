@@ -15,7 +15,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	tmysql "github.com/pingcap/tidb/mysql"
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -80,7 +79,7 @@ func ListFiles(dir string) map[string]string {
 	files := make(map[string]string)
 	filepath.Walk(dir, func(path string, f os.FileInfo, err error) error {
 		if err != nil {
-			log.Errorf("list file failed : %s", err.Error())
+			AppLogger.Errorf("list file failed : %s", err.Error())
 			return nil
 		}
 
@@ -106,7 +105,7 @@ func QueryRowWithRetry(ctx context.Context, db *sql.DB, query string, dest ...in
 	maxRetry := defaultMaxRetry
 	for i := 0; i < maxRetry; i++ {
 		if i > 0 {
-			log.Warnf("query %s retry %d", query, i)
+			AppLogger.Warnf("query %s retry %d", query, i)
 			time.Sleep(retryTimeout)
 		}
 
@@ -115,7 +114,7 @@ func QueryRowWithRetry(ctx context.Context, db *sql.DB, query string, dest ...in
 			if !isRetryableError(err) {
 				return errors.Trace(err)
 			}
-			log.Warnf("query %s [error] %v", query, err)
+			AppLogger.Warnf("query %s [error] %v", query, err)
 			continue
 		}
 
@@ -136,7 +135,7 @@ func ExecWithRetry(ctx context.Context, db *sql.DB, sqls []string) error {
 	var err error
 	for i := 0; i < maxRetry; i++ {
 		if i > 0 {
-			log.Warnf("sql stmt_exec retry %d: %v", i, sqls)
+			AppLogger.Warnf("sql stmt_exec retry %d: %v", i, sqls)
 			time.Sleep(retryTimeout)
 		}
 
@@ -144,7 +143,7 @@ func ExecWithRetry(ctx context.Context, db *sql.DB, sqls []string) error {
 			if isRetryableError(err) {
 				continue
 			}
-			log.Errorf("[exec][sql] %s [error] %v", sqls, err)
+			AppLogger.Errorf("[exec][sql] %s [error] %v", sqls, err)
 			return errors.Trace(err)
 		}
 
@@ -157,19 +156,19 @@ func ExecWithRetry(ctx context.Context, db *sql.DB, sqls []string) error {
 func executeSQLImp(ctx context.Context, db *sql.DB, sqls []string) error {
 	txn, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Errorf("exec sqls [%v] begin failed %v", sqls, errors.ErrorStack(err))
+		AppLogger.Errorf("exec sqls [%v] begin failed %v", sqls, errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 
 	for i := range sqls {
-		log.Debugf("[exec][sql] %s", sqls[i])
+		AppLogger.Debugf("[exec][sql] %s", sqls[i])
 
 		_, err = txn.ExecContext(ctx, sqls[i])
 		if err != nil {
-			log.Warnf("[exec][sql] %s [error]%v", sqls[i], err)
+			AppLogger.Warnf("[exec][sql] %s [error]%v", sqls[i], err)
 			rerr := txn.Rollback()
 			if rerr != nil {
-				log.Errorf("[exec][sql] %s [error] %v", sqls[i], rerr)
+				AppLogger.Errorf("[exec][sql] %s [error] %v", sqls[i], rerr)
 			}
 			// we should return the exec err, instead of the rollback rerr.
 			return errors.Trace(err)
@@ -177,7 +176,7 @@ func executeSQLImp(ctx context.Context, db *sql.DB, sqls []string) error {
 	}
 	err = txn.Commit()
 	if err != nil {
-		log.Errorf("exec sqls [%v] commit failed %v", sqls, errors.ErrorStack(err))
+		AppLogger.Errorf("exec sqls [%v] commit failed %v", sqls, errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 	return nil

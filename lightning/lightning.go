@@ -7,19 +7,18 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
+	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/prometheus/client_golang/prometheus"
 	uuid "github.com/satori/go.uuid"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 
-	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
-	applog "github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 type Lightning struct {
@@ -31,7 +30,7 @@ type Lightning struct {
 }
 
 func initEnv(cfg *config.Config) error {
-	if err := applog.InitLogger(&cfg.App.LogConfig, cfg.TiDB.LogLevel); err != nil {
+	if err := common.InitLogger(&cfg.App.LogConfig, cfg.TiDB.LogLevel); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -40,7 +39,7 @@ func initEnv(cfg *config.Config) error {
 	if cfg.App.ProfilePort > 0 {
 		go func() {
 			http.Handle("/metrics", prometheus.Handler())
-			log.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.App.ProfilePort), nil))
+			common.AppLogger.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.App.ProfilePort), nil))
 		}()
 	}
 
@@ -62,14 +61,14 @@ func New(cfg *config.Config) *Lightning {
 func (l *Lightning) Run() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	common.PrintInfo("lightning", func() {
-		log.Infof("cfg %s", l.cfg)
+		common.AppLogger.Infof("cfg %s", l.cfg)
 	})
 	metric.CalcCPUUsageBackground()
 
 	if l.cfg.DoCompact {
 		err := l.doCompact()
 		if err != nil {
-			log.Fatalf("compact error %s", errors.ErrorStack(err))
+			common.AppLogger.Fatalf("compact error %s", errors.ErrorStack(err))
 		}
 		return
 	}
@@ -102,7 +101,7 @@ func (l *Lightning) Run() {
 func (l *Lightning) run() {
 	mdl, err := mydump.NewMyDumpLoader(l.cfg)
 	if err != nil {
-		log.Errorf("failed to load mydumper source : %s", errors.ErrorStack(err))
+		common.AppLogger.Errorf("failed to load mydumper source : %s", errors.ErrorStack(err))
 		return
 	}
 

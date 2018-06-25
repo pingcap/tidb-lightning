@@ -15,7 +15,7 @@ LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GoVersion=$(sh
 
 LIGHTNING_BIN := bin/tidb-lightning
 
-TIDBDIR := $(GOPATH)/src/github.com/pingcap/tidb
+TIDBDIR := vendor/github.com/pingcap/tidb
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
@@ -68,13 +68,25 @@ parserlib: parser/parser.go
 parser/parser.go: $(TIDBDIR)/parser/parser.y
 	make parser
 
-RACE_FLAG =
+RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
-	GOBUILD   = GOPATH=$(TIDBDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
+	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
-lightning: parserlib
-	@if [ -d $(TIDBDIR)/vendor/golang.org/x/net/trace ]; then mv $(TIDBDIR)/vendor/golang.org/x/net/trace $(TIDBDIR)/vendor/golang.org/x/net/_trace; fi
-	-$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/main.go
-	@if [ -d $(TIDBDIR)/vendor/golang.org/x/net/_trace ]; then mv $(TIDBDIR)/vendor/golang.org/x/net/_trace $(TIDBDIR)/vendor/golang.org/x/net/trace; fi 
+lightning: 
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/main.go
+
+update: update_vendor parserlib clean_vendor
+update_vendor:
+	@which glide >/dev/null || curl https://glide.sh/get | sh
+	@which glide-vc || go get -v -u github.com/sgotti/glide-vc
+ifdef PKG
+	@glide get -s -v --skip-test ${PKG}
+else
+	@glide update -s -v -u --skip-test
+endif
+
+clean_vendor:
+	@echo "removing test files"
+	@glide vc --use-lock-file --only-code --no-tests

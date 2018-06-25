@@ -14,7 +14,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb/model"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -77,7 +76,7 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 		if err = safeCreateTable(ctx, timgr.db, sqlCreateTable); err != nil {
 			return errors.Trace(err)
 		}
-		log.Infof("%s takes %v", sqlCreateTable, time.Since(timer))
+		common.AppLogger.Infof("%s takes %v", sqlCreateTable, time.Since(timer))
 	}
 
 	return nil
@@ -218,7 +217,7 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, schema string, table string, incr int64) error {
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d", schema, table, incr)
-	log.Infof("[%s.%s] %s", schema, table, query)
+	common.AppLogger.Infof("[%s.%s] %s", schema, table, query)
 	err := common.ExecWithRetry(ctx, db, []string{query})
 	if err != nil {
 		log.Errorf("query failed %v, you should do it manually", query, err)

@@ -10,7 +10,6 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
-	log "github.com/sirupsen/logrus"
 
 	"github.com/satori/go.uuid"
 	"golang.org/x/net/context"
@@ -192,11 +191,11 @@ func (k *KVDeliverKeeper) validate(txn *deliverTxn) bool {
 
 func (k *KVDeliverKeeper) newTxn(db string, table string) *deliverTxn {
 	k.txnIDCounter++
-	uuid := uuid.Must(uuid.NewV4())
+	uuid := uuid.NewV4()
 
 	uniqueTable := common.UniqueTable(db, table)
 	txn := newDeliverTxn(uuid, uniqueTable)
-	log.Infof("[deliver-keeper] [%s] new txn (UUID = %s) ", uniqueTable, txn.uuid)
+	common.AppLogger.Infof("[deliver-keeper] [%s] new txn (UUID = %s) ", uniqueTable, txn.uuid)
 
 	return txn
 }
@@ -223,7 +222,7 @@ func (k *KVDeliverKeeper) applyTxn(db string, table string) *deliverTxn {
 		tagTxns = make([]*deliverTxn, 0, 4)
 		tagTxns = append(tagTxns, txn)
 		k.txns[uniqueTable] = tagTxns
-		log.Infof("[deliver-keeper] [%s] holds txn count = %d", uniqueTable, len(tagTxns))
+		common.AppLogger.Infof("[deliver-keeper] [%s] holds txn count = %d", uniqueTable, len(tagTxns))
 
 		k.txnBoard[txn.uuid] = &txnInfo{
 			txn:     txn,
@@ -231,7 +230,7 @@ func (k *KVDeliverKeeper) applyTxn(db string, table string) *deliverTxn {
 			table:   table,
 			clients: 0,
 		}
-		log.Infof("[deliver-keeper] [%s] holds txn total = %d", uniqueTable, len(k.txnBoard))
+		common.AppLogger.Infof("[deliver-keeper] [%s] holds txn total = %d", uniqueTable, len(k.txnBoard))
 	}
 
 	return txn
@@ -243,13 +242,13 @@ func (k *KVDeliverKeeper) RecycleClient(cli *KVDeliverClient) {
 
 	// reusing client / connection
 	k.clientsPool = append(k.clientsPool, cli)
-	// log.Debugf("after recycle, clients = %d", len(k.clientsPool))
+	// common.AppLogger.Debugf("after recycle, clients = %d", len(k.clientsPool))
 
 	// update txn to check whether to do flushing
 	txn := cli.txn
 	txnInfo, ok := k.txnBoard[txn.uuid]
 	if !ok {
-		log.Warnf("Impossible, txn not found (UUID = %s)", txn.uuid)
+		common.AppLogger.Warnf("Impossible, txn not found (UUID = %s)", txn.uuid)
 		return
 	}
 
@@ -274,7 +273,7 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	if size == 0 {
 		cli, err := NewKVDeliverClient(k.ctx, txn.uuid, k.importServerAddr, k.pdAddr, common.UniqueTable(db, table))
 		if err != nil {
-			log.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", common.UniqueTable(db, table), txn.uuid, err.Error())
+			common.AppLogger.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", common.UniqueTable(db, table), txn.uuid, err.Error())
 			return nil
 		}
 
@@ -344,7 +343,7 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 	doFlush := func(txn *deliverTxn) {
 		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.importServerAddr, k.pdAddr, txn.uniqueTable)
 		if err != nil {
-			log.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", txn.uniqueTable, txn.uuid, err.Error())
+			common.AppLogger.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", txn.uniqueTable, txn.uuid, err.Error())
 			return
 		}
 		defer func() {
@@ -353,12 +352,12 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 		}()
 
 		if err := cli.Flush(); err != nil {
-			log.Errorf("[deliver-keeper] [%s] txn (UUID = %s) flush failed : %s ", txn.uniqueTable, txn.uuid, errors.ErrorStack(err))
+			common.AppLogger.Errorf("[deliver-keeper] [%s] txn (UUID = %s) flush failed : %s ", txn.uniqueTable, txn.uuid, errors.ErrorStack(err))
 			return
 		}
 		err = cli.Cleanup()
 		if err != nil {
-			log.Warnf("[deliver-keeper] [%s] txn (UUID = %s) cleanup failed: %s", txn.uniqueTable, txn.uuid, err.Error())
+			common.AppLogger.Warnf("[deliver-keeper] [%s] txn (UUID = %s) cleanup failed: %s", txn.uniqueTable, txn.uuid, err.Error())
 		}
 	}
 
@@ -425,7 +424,7 @@ func (c *KVDeliverClient) Close() error {
 }
 
 func (c *KVDeliverClient) bind(txn *deliverTxn) {
-	log.Debugf("Bind kv client with txn (UUID = %s)", txn.uuid)
+	common.AppLogger.Debugf("Bind kv client with txn (UUID = %s)", txn.uuid)
 
 	if c.txn.uuid != txn.uuid {
 		// So as to update stream bound to a new uuid,
@@ -438,7 +437,7 @@ func (c *KVDeliverClient) bind(txn *deliverTxn) {
 }
 
 func (c *KVDeliverClient) exitTxn() {
-	log.Debugf("Release kv client from txn (UUID = %s)", c.txn.uuid)
+	common.AppLogger.Debugf("Release kv client from txn (UUID = %s)", c.txn.uuid)
 	c.closeWriteStream()
 	c.txn = newDeliverTxn(invalidUUID, "")
 	return
@@ -492,7 +491,7 @@ func (c *KVDeliverClient) closeWriteStream() error {
 	}()
 
 	if _, err := c.wstream.CloseAndRecv(); err != nil {
-		log.Errorf("close write stream cause failed : %v", err)
+		common.AppLogger.Errorf("close write stream cause failed : %v", err)
 		return errors.Trace(err)
 	}
 	return nil
@@ -502,7 +501,7 @@ func (c *KVDeliverClient) getWriteStream() (importpb.ImportKV_WriteEngineClient,
 	if c.wstream == nil {
 		wstream, err := c.newWriteStream()
 		if err != nil {
-			log.Errorf("[kv-deliver] failed to build write stream : %s", err.Error())
+			common.AppLogger.Errorf("[kv-deliver] failed to build write stream : %s", err.Error())
 			return nil, errors.Trace(err)
 		}
 		c.wstream = wstream
@@ -547,7 +546,7 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 		if sendErr == nil {
 			break
 		}
-		log.Errorf("[kv-deliver] [%s] write stream failed to send: %s", c.txn.uniqueTable, sendErr.Error())
+		common.AppLogger.Errorf("[kv-deliver] [%s] write stream failed to send: %s", c.txn.uniqueTable, sendErr.Error())
 		time.Sleep(retryBackoffTime)
 	}
 	if sendErr != nil {
@@ -568,10 +567,10 @@ func (c *KVDeliverClient) Cleanup() error {
 	timer := time.Now()
 	c.closeWriteStream()
 
-	log.Infof("[%s] [%s] cleanup ", c.txn.uniqueTable, c.txn.uuid)
+	common.AppLogger.Infof("[%s] [%s] cleanup ", c.txn.uniqueTable, c.txn.uuid)
 	req := &importpb.CleanupEngineRequest{Uuid: c.txn.uuid.Bytes()}
 	_, err := c.cli.CleanupEngine(c.ctx, req)
-	log.Infof("[%s] [%s] cleanup takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
+	common.AppLogger.Infof("[%s] [%s] cleanup takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 	return errors.Trace(err)
 }
 
@@ -587,7 +586,7 @@ func (c *KVDeliverClient) Flush() error {
 	}
 	for _, op := range ops {
 		if err := op.fn(); err != nil {
-			log.Errorf("[kv-deliver] flush stage with error (step = %s) : %v", op.name, err)
+			common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = %s) : %v", op.name, err)
 			return errors.Trace(err)
 		}
 	}
@@ -600,7 +599,7 @@ func (c *KVDeliverClient) Compact(level int32) error {
 
 func (c *KVDeliverClient) callCompact(level int32) error {
 	timer := time.Now()
-	log.Infof("compact level %d", level)
+	common.AppLogger.Infof("compact level %d", level)
 	req := &importpb.CompactClusterRequest{
 		PdAddr: c.pdAddr,
 		Request: &sstpb.CompactRequest{
@@ -609,20 +608,20 @@ func (c *KVDeliverClient) callCompact(level int32) error {
 		},
 	}
 	_, err := c.cli.CompactCluster(c.ctx, req)
-	log.Infof("compact level %d takes %v", level, time.Since(timer))
+	common.AppLogger.Infof("compact level %d takes %v", level, time.Since(timer))
 
 	return errors.Trace(err)
 }
 
 func (c *KVDeliverClient) callClose() error {
 	timer := time.Now()
-	log.Infof("[%s] [%s] close", c.txn.uniqueTable, c.txn.uuid)
+	common.AppLogger.Infof("[%s] [%s] close", c.txn.uniqueTable, c.txn.uuid)
 	req := &importpb.CloseEngineRequest{Uuid: c.txn.uuid.Bytes()}
 	_, err := c.cli.CloseEngine(c.ctx, req)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Infof("[%s] [%s] close takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
+	common.AppLogger.Infof("[%s] [%s] close takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 
 	return nil
 }
@@ -631,14 +630,14 @@ func (c *KVDeliverClient) callImport() error {
 	// TODO ... no matter what, to ensure available to import, call close first !
 	for i := 0; i < maxRetryTimes; i++ {
 		timer := time.Now()
-		log.Infof("[%s] [%s] import", c.txn.uniqueTable, c.txn.uuid)
+		common.AppLogger.Infof("[%s] [%s] import", c.txn.uniqueTable, c.txn.uuid)
 		req := &importpb.ImportEngineRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
 		_, err := c.cli.ImportEngine(c.ctx, req)
 		if err == nil {
-			log.Infof("[%s] [%s] import takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
+			common.AppLogger.Infof("[%s] [%s] import takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 			return nil
 		}
-		log.Warnf("[%s] [%s] import failed and retry %d time, err %v", c.txn.uniqueTable, c.txn.uuid, i+1, err)
+		common.AppLogger.Warnf("[%s] [%s] import failed and retry %d time, err %v", c.txn.uniqueTable, c.txn.uuid, i+1, err)
 		time.Sleep(retryBackoffTime)
 	}
 
@@ -658,6 +657,6 @@ func (c *KVDeliverClient) Switch(mode sstpb.SwitchMode) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Infof("switch to tikv %s mode takes %v", mode, time.Since(timer))
+	common.AppLogger.Infof("switch to tikv %s mode takes %v", mode, time.Since(timer))
 	return nil
 }

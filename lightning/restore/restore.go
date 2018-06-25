@@ -9,6 +9,9 @@ import (
 
 	"github.com/juju/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/satori/go.uuid"
+	"golang.org/x/net/context"
+
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
@@ -17,7 +20,6 @@ import (
 	tidbcfg "github.com/pingcap/tidb/config"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	"github.com/satori/go.uuid"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -87,15 +89,15 @@ func (rc *RestoreController) Run(ctx context.Context) {
 			break
 		}
 		if err != nil {
-			log.Errorf("run cause error : %s", errors.ErrorStack(err))
+			common.AppLogger.Errorf("run cause error : %s", errors.ErrorStack(err))
 			break // ps : not continue
 		}
 	}
 
 	// show metrics
 	statistic := metrics.DumpTiming()
-	log.Infof("Timing statistic :\n%s", statistic)
-	log.Infof("the whole procedure takes %v", time.Since(timer))
+	common.AppLogger.Infof("Timing statistic :\n%s", statistic)
+	common.AppLogger.Infof("the whole procedure takes %v", time.Since(timer))
 
 	return
 }
@@ -111,7 +113,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 
 	if !rc.cfg.Mydumper.NoSchema {
 		timer := time.Now()
-		log.Infof("restore table schema for `%s`", rc.dbMeta.Name)
+		common.AppLogger.Infof("restore table schema for `%s`", rc.dbMeta.Name)
 		tablesSchema := make(map[string]string)
 		for tbl, tblMeta := range rc.dbMeta.Tables {
 			tablesSchema[tbl] = tblMeta.GetSchema()
@@ -120,7 +122,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 		if err != nil {
 			return errors.Errorf("db schema failed to init : %v", err)
 		}
-		log.Infof("restore table schema for `%s` takes %v", rc.dbMeta.Name, time.Since(timer))
+		common.AppLogger.Infof("restore table schema for `%s` takes %v", rc.dbMeta.Name, time.Since(timer))
 	}
 	dbInfo, err := tidbMgr.LoadSchemaInfo(ctx, database)
 	if err != nil {
@@ -157,13 +159,13 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
 			err := rc.restoreTable(ctx, tr)
 			if err != nil {
-				log.Errorf("[%s] restore error %v", table, errors.ErrorStack(err))
+				common.AppLogger.Errorf("[%s] restore error %v", table, errors.ErrorStack(err))
 			}
 		}(worker, tr)
 	}
 
 	wg.Wait()
-	log.Infof("restore all tables data takes %v", time.Since(timer))
+	common.AppLogger.Infof("restore all tables data takes %v", time.Since(timer))
 
 	return nil
 }
@@ -191,12 +193,12 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 			defer wg.Done()
 			err := t.Run(ctx)
 			if err != nil {
-				log.Errorf("[%s] region %s run task error %s", table, t.region.Name(), errors.ErrorStack(err))
+				common.AppLogger.Errorf("[%s] region %s run task error %s", table, t.region.Name(), errors.ErrorStack(err))
 			}
 		}(worker, task)
 	}
 	wg.Wait()
-	log.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
+	common.AppLogger.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
 
 	var (
 		tableRows uint64
@@ -248,12 +250,12 @@ func (rc *RestoreController) doPostProcessing(ctx context.Context, t *TableResto
 	if err := t.importKV(); err != nil {
 		return errors.Trace(err)
 	}
-	log.Infof("[%s] local checksum %s, has imported %d rows", uniqueTable, t.localChecksum, t.tableRows)
+	common.AppLogger.Infof("[%s] local checksum %s, has imported %d rows", uniqueTable, t.localChecksum, t.tableRows)
 
 	// 2. compact level 1
 	if err := rc.doCompact(ctx, Level1Compact); err != nil {
 		// log it and continue
-		log.Warnf("[%s] do compact %d failed err %v", uniqueTable, Level1Compact, errors.ErrorStack(err))
+		common.AppLogger.Warnf("[%s] do compact %d failed err %v", uniqueTable, Level1Compact, errors.ErrorStack(err))
 	}
 
 	// 3. alter table set auto_increment
@@ -272,7 +274,7 @@ func (rc *RestoreController) doPostProcessing(ctx context.Context, t *TableResto
 // do full compaction for the whole data.
 func (rc *RestoreController) fullCompact(ctx context.Context) error {
 	if !rc.cfg.PostRestore.Compact {
-		log.Info("Skip full compaction.")
+		common.AppLogger.Info("Skip full compaction.")
 		return nil
 	}
 
@@ -292,7 +294,7 @@ func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
 // analyze will analyze table for all tables.
 func (rc *RestoreController) analyze(ctx context.Context) error {
 	if !rc.cfg.PostRestore.Analyze {
-		log.Info("Skip analyze table.")
+		common.AppLogger.Info("Skip analyze table.")
 		return nil
 	}
 
@@ -326,7 +328,7 @@ func (rc *RestoreController) getTables() []string {
 		// FIXME: it seems a little bit of redundance. Simplify it in the future.  @chendahui
 		_, ok := dbInfo.Tables[tbl]
 		if !ok {
-			log.Warnf("table info not found : %s", tbl)
+			common.AppLogger.Warnf("table info not found : %s", tbl)
 			continue
 		}
 		tables = append(tables, common.UniqueTable(dbInfo.Name, tbl))
@@ -338,7 +340,7 @@ func analyzeTable(ctx context.Context, dsn config.DBStore, tables []string) erro
 	totalTimer := time.Now()
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
-		log.Errorf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually", err)
+		common.AppLogger.Errorf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually", err)
 		return errors.Trace(err)
 	}
 	defer db.Close()
@@ -350,17 +352,17 @@ func analyzeTable(ctx context.Context, dsn config.DBStore, tables []string) erro
 	// TODO: do it concurrently.
 	for _, table := range tables {
 		timer := time.Now()
-		log.Infof("[%s] analyze", table)
+		common.AppLogger.Infof("[%s] analyze", table)
 		query := fmt.Sprintf("ANALYZE TABLE %s", table)
 		err := common.ExecWithRetry(ctx, db, []string{query})
 		if err != nil {
-			log.Errorf("%s error %s", query, errors.ErrorStack(err))
+			common.AppLogger.Errorf("%s error %s", query, errors.ErrorStack(err))
 			continue
 		}
-		log.Infof("[%s] analyze takes %v", table, time.Since(timer))
+		common.AppLogger.Infof("[%s] analyze takes %v", table, time.Since(timer))
 	}
 
-	log.Infof("doing all tables analyze takes %v", time.Since(totalTimer))
+	common.AppLogger.Infof("doing all tables analyze takes %v", time.Since(totalTimer))
 	return nil
 }
 
@@ -369,7 +371,7 @@ func analyzeTable(ctx context.Context, dsn config.DBStore, tables []string) erro
 func setSessionVarInt(ctx context.Context, db *sql.DB, name string, value int) {
 	stmt := fmt.Sprintf("set session %s = %d", name, value)
 	if err := common.ExecWithRetry(ctx, db, []string{stmt}); err != nil {
-		log.Warnf("failed to set variable @%s to %d: %s", name, value, err.Error())
+		common.AppLogger.Warnf("failed to set variable @%s to %d: %s", name, value, err.Error())
 	}
 }
 
@@ -441,7 +443,7 @@ func (t *regionRestoreTask) Run(ctx context.Context) error {
 	timer := time.Now()
 	region := t.region
 	table := common.UniqueTable(region.DB, region.Table)
-	log.Infof("[%s] restore region [%s]", table, region.Name())
+	common.AppLogger.Infof("[%s] restore region [%s]", table, region.Name())
 
 	t.status = statRunning
 	maxRowID, rows, checksum, err := t.run(ctx)
@@ -449,7 +451,7 @@ func (t *regionRestoreTask) Run(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	log.Infof("[%s] restore region [%s] takes %v", table, region.Name(), time.Since(timer))
+	common.AppLogger.Infof("[%s] restore region [%s] takes %v", table, region.Name(), time.Since(timer))
 	err = t.callback(ctx, region.ID, maxRowID, rows, checksum)
 	if err != nil {
 		return errors.Trace(err)
@@ -534,7 +536,7 @@ func (p *kvEncoderPool) Apply() *kv.TableKVEncoder {
 			p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
 			p.tableInfo.Columns, p.tableInfo.CreateTableStmt, p.sqlMode, p.idAlloc)
 		if err != nil {
-			log.Errorf("failed to new kv encoder (%s) : %s", p.dbInfo.Name, err.Error())
+			common.AppLogger.Errorf("failed to new kv encoder (%s) : %s", p.dbInfo.Name, err.Error())
 			return nil
 		}
 
@@ -624,19 +626,19 @@ func NewTableRestore(
 func (tr *TableRestore) Close() {
 	// TODO : flush table meta right now ~
 	tr.encoders.Clear()
-	log.Infof("[%s] restore done", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name))
+	common.AppLogger.Infof("[%s] restore done", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name))
 }
 
 func (tr *TableRestore) loadRegions() {
 	timer := time.Now()
 	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
-	log.Infof("[%s] load regions", table)
+	common.AppLogger.Infof("[%s] load regions", table)
 
 	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
 	regions := founder.MakeTableRegions(tr.tableMeta)
 
 	for _, region := range regions {
-		log.Debugf("[%s] region - %s", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name), region.Name())
+		common.AppLogger.Debugf("[%s] region - %s", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name), region.Name())
 	}
 
 	tasks := make([]*regionRestoreTask, 0, len(regions))
@@ -649,7 +651,7 @@ func (tr *TableRestore) loadRegions() {
 	tr.regions = regions
 	tr.tasks = tasks
 
-	log.Infof("[%s] load %d regions takes %v", table, len(regions), time.Since(timer))
+	common.AppLogger.Infof("[%s] load %d regions takes %v", table, len(regions), time.Since(timer))
 	return
 }
 
@@ -666,7 +668,7 @@ func (tr *TableRestore) onRegionFinished(ctx context.Context, id int, maxRowID i
 
 	total := len(tr.regions)
 	handled := len(tr.handledRegions)
-	log.Infof("[%s] handled region count = %d (%s)", table, handled, common.Percent(handled, total))
+	common.AppLogger.Infof("[%s] handled region count = %d (%s)", table, handled, common.Percent(handled, total))
 
 	return nil
 }
@@ -677,7 +679,7 @@ func (tr *TableRestore) restoreTableMeta(ctx context.Context) error {
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
 		// let it failed and record it to log.
-		log.Warnf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
+		common.AppLogger.Warnf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
 		return nil
 	}
 	defer db.Close()
@@ -686,23 +688,23 @@ func (tr *TableRestore) restoreTableMeta(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Infof("[%s] alter table set auto_id takes %v", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name), time.Since(timer))
+	common.AppLogger.Infof("[%s] alter table set auto_id takes %v", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name), time.Since(timer))
 	return nil
 }
 
 func (tr *TableRestore) importKV() error {
 	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
-	log.Infof("[%s] flush kv deliver ...", table)
+	common.AppLogger.Infof("[%s] flush kv deliver ...", table)
 
 	start := time.Now()
 	defer func() {
 		metrics.MarkTiming(fmt.Sprintf("[%s]_kv_flush", table), start)
-		log.Infof("[%s] kv deliver all flushed !", table)
+		common.AppLogger.Infof("[%s] kv deliver all flushed !", table)
 	}()
 
 	// FIXME: flush is an asynchronous operation, what if flush failed?
 	if err := tr.deliversMgr.Flush(table); err != nil {
-		log.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
+		common.AppLogger.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
 		return errors.Trace(err)
 	}
 
@@ -713,7 +715,7 @@ func (tr *TableRestore) importKV() error {
 func (tr *TableRestore) checksum(ctx context.Context) error {
 	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
 	if !tr.cfg.PostRestore.Checksum {
-		log.Infof("[%s] Skip checksum.", table)
+		common.AppLogger.Infof("[%s] Skip checksum.", table)
 		return nil
 	}
 
@@ -724,16 +726,16 @@ func (tr *TableRestore) checksum(ctx context.Context) error {
 
 	localChecksum := tr.localChecksum
 	if localChecksum == nil {
-		log.Warnf("[%s] no local checksum, remote checksum is %+v", table, remoteChecksum)
+		common.AppLogger.Warnf("[%s] no local checksum, remote checksum is %+v", table, remoteChecksum)
 		return nil
 	}
 	if remoteChecksum.Checksum != localChecksum.Sum() || remoteChecksum.TotalKVs != localChecksum.SumKVS() || remoteChecksum.TotalBytes != localChecksum.SumSize() {
-		log.Errorf("[%s] checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
+		common.AppLogger.Errorf("[%s] checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
 			table, remoteChecksum.Checksum, localChecksum.Sum(), remoteChecksum.TotalKVs, localChecksum.SumKVS(), remoteChecksum.TotalBytes, localChecksum.SumSize())
 		return nil
 	}
 
-	log.Infof("[%s] checksum pass", table)
+	common.AppLogger.Infof("[%s] checksum pass", table)
 	return nil
 }
 
@@ -768,7 +770,7 @@ func DoChecksum(ctx context.Context, dsn config.DBStore, table string) (*RemoteC
 	defer func() {
 		err = UpdateGCLifeTime(ctx, db, ori)
 		if err != nil {
-			log.Errorf("[%s] update tikv_gc_life_time error %s", table, errors.ErrorStack(err))
+			common.AppLogger.Errorf("[%s] update tikv_gc_life_time error %s", table, errors.ErrorStack(err))
 		}
 	}()
 
@@ -786,13 +788,13 @@ func DoChecksum(ctx context.Context, dsn config.DBStore, table string) (*RemoteC
 	// +---------+------------+---------------------+-----------+-------------+
 
 	cs := RemoteChecksum{}
-	log.Infof("[%s] doing remote checksum", table)
+	common.AppLogger.Infof("[%s] doing remote checksum", table)
 	query := fmt.Sprintf("ADMIN CHECKSUM TABLE %s", table)
 	common.QueryRowWithRetry(ctx, db, query, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	log.Infof("[%s] do checksum takes %v", table, time.Since(timer))
+	common.AppLogger.Infof("[%s] do checksum takes %v", table, time.Since(timer))
 
 	return &cs, nil
 }
@@ -907,9 +909,9 @@ func (exc *RegionRestoreExectuor) Run(
 			start = time.Now()
 			kvs, affectedRows, err := kvEncoder.SQL2KV(stmt)
 			metrics.MarkTiming(encodeMark, start)
-			log.Debugf("len(kvs) %d, len(sql) %d", len(kvs), len(stmt))
+			common.AppLogger.Debugf("len(kvs) %d, len(sql) %d", len(kvs), len(stmt))
 			if err != nil {
-				log.Errorf("kv encode failed = %s\n", err.Error())
+				common.AppLogger.Errorf("kv encode failed = %s\n", err.Error())
 				return kvEncoder.NextRowID(), rows, checksum, errors.Trace(err)
 			}
 
@@ -920,7 +922,7 @@ func (exc *RegionRestoreExectuor) Run(
 
 			if err != nil {
 				// TODO : retry ~
-				log.Errorf("kv deliver failed = %s\n", err.Error())
+				common.AppLogger.Errorf("kv deliver failed = %s\n", err.Error())
 				return kvEncoder.NextRowID(), rows, checksum, errors.Trace(err)
 			}
 

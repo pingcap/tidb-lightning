@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 type TableRegion struct {
@@ -80,7 +80,7 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 	for _, dataFile := range meta.DataFiles {
 		wg.Add(1)
 		go func(pid int, file string) {
-			log.Debugf("[%s] loading file's region (%s) ...", table, file)
+			common.AppLogger.Debugf("[%s] loading file's region (%s) ...", table, file)
 
 			var regions []*TableRegion
 			regions = splitFuzzyRegion(db, table, file, minRegionSize)
@@ -107,7 +107,7 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 func splitFuzzyRegion(db string, table string, file string, minRegionSize int64) []*TableRegion {
 	reader, err := NewMDDataReader(file, 0)
 	if err != nil {
-		log.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
+		common.AppLogger.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
 		return nil
 	}
 	defer reader.Close()
