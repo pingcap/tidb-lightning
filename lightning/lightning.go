@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/prometheus/client_golang/prometheus"
 	uuid "github.com/satori/go.uuid"
@@ -81,12 +80,12 @@ func (l *Lightning) Run() {
 		case config.NormalMode:
 			err = l.switchMode(sstpb.SwitchMode_Normal)
 		default:
-			log.Fatalf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
+			common.AppLogger.Fatalf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
 		}
 		if err != nil {
-			log.Fatalf("switch mode error %v", errors.ErrorStack(err))
+			common.AppLogger.Fatalf("switch mode error %v", errors.ErrorStack(err))
 		}
-		log.Infof("switch mode to %s", mode)
+		common.AppLogger.Infof("switch mode to %s", mode)
 		return
 	}
 
