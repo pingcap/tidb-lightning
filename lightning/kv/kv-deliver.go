@@ -388,7 +388,7 @@ type KVDeliverClient struct {
 
 	conn    *grpc.ClientConn
 	cli     importpb.ImportKVClient
-	wstream importpb.ImportKV_WriteClient
+	wstream importpb.ImportKV_WriteEngineClient
 }
 
 func newImportClient(importServerAddr string) (*grpc.ClientConn, importpb.ImportKVClient, error) {
@@ -445,11 +445,11 @@ func (c *KVDeliverClient) exitTxn() {
 }
 
 func (c *KVDeliverClient) open(uuid uuid.UUID) error {
-	openRequest := &importpb.OpenRequest{
+	openRequest := &importpb.OpenEngineRequest{
 		Uuid: c.txn.uuid.Bytes(),
 	}
 
-	_, err := c.cli.Open(c.ctx, openRequest)
+	_, err := c.cli.OpenEngine(c.ctx, openRequest)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -457,19 +457,19 @@ func (c *KVDeliverClient) open(uuid uuid.UUID) error {
 	return nil
 }
 
-func (c *KVDeliverClient) newWriteStream() (importpb.ImportKV_WriteClient, error) {
+func (c *KVDeliverClient) newWriteStream() (importpb.ImportKV_WriteEngineClient, error) {
 	if err := c.open(c.txn.uuid); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	wstream, err := c.cli.Write(c.ctx)
+	wstream, err := c.cli.WriteEngine(c.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// Bind uuid for this write request
-	req := &importpb.WriteRequest{
-		Chunk: &importpb.WriteRequest_Head{
+	req := &importpb.WriteEngineRequest{
+		Chunk: &importpb.WriteEngineRequest_Head{
 			Head: &importpb.WriteHead{
 				Uuid: c.txn.uuid.Bytes(),
 			},
@@ -498,7 +498,7 @@ func (c *KVDeliverClient) closeWriteStream() error {
 	return nil
 }
 
-func (c *KVDeliverClient) getWriteStream() (importpb.ImportKV_WriteClient, error) {
+func (c *KVDeliverClient) getWriteStream() (importpb.ImportKV_WriteEngineClient, error) {
 	if c.wstream == nil {
 		wstream, err := c.newWriteStream()
 		if err != nil {
@@ -522,6 +522,7 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 	//		* buffer pool []*importpb.Mutation
 	// 		* handle partial transportation -- rollback ? clear ?
 	pairNum := len(kvs)
+	// use pool ?
 	mutations := make([]*importpb.Mutation, 0, pairNum)
 	for _, pair := range kvs {
 		mutations = append(mutations, &importpb.Mutation{
@@ -531,8 +532,8 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 		})
 	}
 
-	write := &importpb.WriteRequest{
-		Chunk: &importpb.WriteRequest_Batch{
+	write := &importpb.WriteEngineRequest{
+		Chunk: &importpb.WriteEngineRequest_Batch{
 			Batch: &importpb.WriteBatch{
 				CommitTs:  c.ts,
 				Mutations: mutations,
@@ -568,8 +569,8 @@ func (c *KVDeliverClient) Cleanup() error {
 	c.closeWriteStream()
 
 	log.Infof("[%s] [%s] cleanup ", c.txn.uniqueTable, c.txn.uuid)
-	req := &importpb.CleanupRequest{Uuid: c.txn.uuid.Bytes()}
-	_, err := c.cli.Cleanup(c.ctx, req)
+	req := &importpb.CleanupEngineRequest{Uuid: c.txn.uuid.Bytes()}
+	_, err := c.cli.CleanupEngine(c.ctx, req)
 	log.Infof("[%s] [%s] cleanup takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 	return errors.Trace(err)
 }
@@ -600,14 +601,14 @@ func (c *KVDeliverClient) Compact(level int32) error {
 func (c *KVDeliverClient) callCompact(level int32) error {
 	timer := time.Now()
 	log.Infof("compact level %d", level)
-	req := &importpb.CompactRequest{
+	req := &importpb.CompactClusterRequest{
 		PdAddr: c.pdAddr,
 		Request: &sstpb.CompactRequest{
 			// No need to set Range here.
 			OutputLevel: level,
 		},
 	}
-	_, err := c.cli.Compact(c.ctx, req)
+	_, err := c.cli.CompactCluster(c.ctx, req)
 	log.Infof("compact level %d takes %v", level, time.Since(timer))
 
 	return errors.Trace(err)
@@ -616,8 +617,8 @@ func (c *KVDeliverClient) callCompact(level int32) error {
 func (c *KVDeliverClient) callClose() error {
 	timer := time.Now()
 	log.Infof("[%s] [%s] close", c.txn.uniqueTable, c.txn.uuid)
-	req := &importpb.CloseRequest{Uuid: c.txn.uuid.Bytes()}
-	_, err := c.cli.Close(c.ctx, req)
+	req := &importpb.CloseEngineRequest{Uuid: c.txn.uuid.Bytes()}
+	_, err := c.cli.CloseEngine(c.ctx, req)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -631,8 +632,8 @@ func (c *KVDeliverClient) callImport() error {
 	for i := 0; i < maxRetryTimes; i++ {
 		timer := time.Now()
 		log.Infof("[%s] [%s] import", c.txn.uniqueTable, c.txn.uuid)
-		req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
-		_, err := c.cli.Import(c.ctx, req)
+		req := &importpb.ImportEngineRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
+		_, err := c.cli.ImportEngine(c.ctx, req)
 		if err == nil {
 			log.Infof("[%s] [%s] import takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 			return nil
