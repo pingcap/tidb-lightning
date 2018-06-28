@@ -9,7 +9,7 @@ pprof-port = 10089
 
 # logging
 level = "info"
-file = "lightning.log"
+file = "tidb-lightning.log"
 max-size = 128 # MB
 max-days = 28
 max-backups = 14
