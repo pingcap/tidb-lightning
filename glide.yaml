@@ -77,7 +77,7 @@ import:
   - jsonpb
   - proto
 - package: github.com/pingcap/kvproto
-  version: 5ef8fa297ea3547b015ef5069cb500bba67b0d94
+  version: 716bb0d730ba0dbc7249a5b157bef5669027ae4f
 - package: github.com/coreos/etcd
   version: v3.2.18
 - package: github.com/pingcap/tipb

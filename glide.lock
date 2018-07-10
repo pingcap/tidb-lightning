@@ -1,5 +1,5 @@
-hash: 549997270b5e0b41469bd475b48889f8524d213bc1ec4b3049464dde524dca7b
-updated: 2018-06-11T16:51:34.217990607+08:00
+hash: 08e0621c1dd951e797d0c49fc583e1df24c41fdc8af42d4314a53b5709fafc46
+updated: 2018-07-10T20:06:59.334246857+08:00
 imports:
 - name: github.com/apache/thrift
   version: b2a4d4ae21c789b689dd162deb819665567f481c
@@ -90,11 +90,13 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: 5ef8fa297ea3547b015ef5069cb500bba67b0d94
+  version: 716bb0d730ba0dbc7249a5b157bef5669027ae4f
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
   - pkg/errorpb
+  - pkg/import_kvpb
+  - pkg/import_sstpb
   - pkg/kvrpcpb
   - pkg/metapb
   - pkg/pdpb
