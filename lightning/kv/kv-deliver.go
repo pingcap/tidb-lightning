@@ -343,7 +343,7 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 	doFlush := func(txn *deliverTxn) {
 		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.importServerAddr, k.pdAddr, txn.uniqueTable)
 		if err != nil {
-			common.AppLogger.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", txn.uniqueTable, txn.uuid, err.Error())
+			common.AppLogger.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", txn.uniqueTable, txn.uuid, errors.ErrorStack(err))
 			return
 		}
 		defer func() {
@@ -357,7 +357,7 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 		}
 		err = cli.Cleanup()
 		if err != nil {
-			common.AppLogger.Warnf("[deliver-keeper] [%s] txn (UUID = %s) cleanup failed: %s", txn.uniqueTable, txn.uuid, err.Error())
+			common.AppLogger.Warnf("[deliver-keeper] [%s] txn (UUID = %s) cleanup failed: %s", txn.uniqueTable, txn.uuid, errors.ErrorStack(err))
 		}
 	}
 
