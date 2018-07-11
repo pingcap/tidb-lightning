@@ -220,7 +220,7 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, schema string, table st
 	common.AppLogger.Infof("[%s.%s] %s", schema, table, query)
 	err := common.ExecWithRetry(ctx, db, []string{query})
 	if err != nil {
-		common.AppLogger.Errorf("query failed %v, you should do it manually", query, err)
+		common.AppLogger.Errorf("query failed %v, you should do it manually, err %v", query, err)
 	}
 	return errors.Annotatef(err, "%s", query)
 }

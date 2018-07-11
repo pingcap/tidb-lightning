@@ -232,12 +232,7 @@ func (rc *RestoreController) handlePostProcessing(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case table := <-rc.postProcessQueue:
-			err := rc.doPostProcessing(ctx, table)
-			if err != nil {
-				table.postProcessError <- err
-			} else {
-				table.postProcessError <- nil
-			}
+			table.postProcessError <- rc.doPostProcessing(ctx, table)
 		}
 	}
 }
@@ -635,15 +630,12 @@ func (tr *TableRestore) loadRegions() {
 	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
 	regions := founder.MakeTableRegions(tr.tableMeta)
 
-	for _, region := range regions {
-		common.AppLogger.Debugf("[%s] region - %s", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name), region.Name())
-	}
-
 	tasks := make([]*regionRestoreTask, 0, len(regions))
 	for _, region := range regions {
 		executor := NewRegionRestoreExectuor(tr.cfg, tr.dbInfo, tr.tableInfo, tr.tableMeta)
 		task := newRegionRestoreTask(region, executor, tr.encoders, tr.deliversMgr, tr.onRegionFinished)
 		tasks = append(tasks, task)
+		common.AppLogger.Debugf("[%s] region - %s", table, region.Name())
 	}
 
 	tr.regions = regions
