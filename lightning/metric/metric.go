@@ -21,10 +21,18 @@ var (
 			Help:      "the cpu usage of lightning process",
 		},
 	)
+
+	IdleWorkersGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "lightning",
+			Name:      "idle_workers",
+			Help:      "counting idle workers",
+		}, []string{"name"})
 )
 
 func init() {
 	prometheus.MustRegister(cpuUsageGauge)
+	prometheus.MustRegister(IdleWorkersGauge)
 }
 
 func CalcCPUUsageBackground() {

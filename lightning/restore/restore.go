@@ -10,15 +10,16 @@ import (
 	"github.com/juju/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"golang.org/x/net/context"
-
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
+	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	"github.com/satori/go.uuid"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -56,8 +57,8 @@ func NewRestoreControlloer(ctx context.Context, dbMeta *mydump.MDDatabaseMeta, c
 	rc := &RestoreController{
 		cfg:              cfg,
 		dbMeta:           dbMeta,
-		tableWorkers:     NewRestoreWorkerPool(cfg.App.WorkerPoolSize / 2),
-		regionWorkers:    NewRestoreWorkerPool(cfg.App.WorkerPoolSize),
+		tableWorkers:     NewRestoreWorkerPool(cfg.App.WorkerPoolSize/2, "table"),
+		regionWorkers:    NewRestoreWorkerPool(cfg.App.WorkerPoolSize, "region"),
 		deliverMgr:       kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
 		postProcessQueue: make(chan *TableRestore),
 	}
@@ -152,10 +153,9 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		worker := rc.tableWorkers.Apply()
 		wg.Add(1)
 		go func(w *RestoreWorker, t *TableRestore) {
-			defer rc.tableWorkers.Recycle(w)
 			defer wg.Done()
 			table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
-			err := rc.restoreTable(ctx, tr)
+			err := rc.restoreTable(ctx, tr, w)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] restore error %v", table, errors.ErrorStack(err))
 			}
@@ -169,7 +169,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 }
 
 //FIXME: it seems that we don't need to split table into multiple regions.
-func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) error {
+func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, w *RestoreWorker) error {
 	defer t.Close()
 	timer := time.Now()
 	table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
@@ -202,6 +202,8 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 		}(worker, task)
 	}
 	wg.Wait()
+	// recycle table worker in advance to prevent so many idle region workers and promote CPU utilization.
+	rc.tableWorkers.Recycle(w)
 	common.AppLogger.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
 
 	var (
@@ -379,21 +381,37 @@ func setSessionVarInt(ctx context.Context, db *sql.DB, name string, value int) {
 type RestoreWorkerPool struct {
 	limit   int
 	workers chan *RestoreWorker
+	name    string
 }
 
 type RestoreWorker struct {
 	ID int64
 }
 
-func NewRestoreWorkerPool(limit int) *RestoreWorkerPool {
+func NewRestoreWorkerPool(limit int, name string) *RestoreWorkerPool {
 	workers := make(chan *RestoreWorker, limit)
 	for i := 0; i < limit; i++ {
 		workers <- &RestoreWorker{ID: int64(i + 1)}
 	}
 
-	return &RestoreWorkerPool{
+	pool := &RestoreWorkerPool{
 		limit:   limit,
 		workers: workers,
+		name:    name,
+	}
+	go pool.reportMetric()
+	return pool
+}
+
+func (pool *RestoreWorkerPool) reportMetric() {
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+
+	for {
+		metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+		select {
+		case <-ticker.C:
+		}
 	}
 }
 
