@@ -6,6 +6,10 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	// hack for vendor update
+	_ "github.com/pingcap/kvproto/pkg/import_kvpb"
+	_ "github.com/pingcap/kvproto/pkg/import_sstpb"
+
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/importpb"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
