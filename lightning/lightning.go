@@ -64,12 +64,25 @@ func (l *Lightning) Run() {
 	})
 	metric.CalcCPUUsageBackground()
 
+	if l.handleCommandFlagsAndExits() {
+		return
+	}
+
+	l.wg.Add(1)
+	go func() {
+		defer l.wg.Done()
+		l.run()
+	}()
+	l.wg.Wait()
+}
+
+func (l *Lightning) handleCommandFlagsAndExits() (exits bool) {
 	if l.cfg.DoCompact {
 		err := l.doCompact()
 		if err != nil {
 			common.AppLogger.Fatalf("compact error %s", errors.ErrorStack(err))
 		}
-		return
+		return true
 	}
 
 	if mode := l.cfg.SwitchMode; mode != "" {
@@ -86,15 +99,9 @@ func (l *Lightning) Run() {
 			common.AppLogger.Fatalf("switch mode error %v", errors.ErrorStack(err))
 		}
 		common.AppLogger.Infof("switch mode to %s", mode)
-		return
+		return true
 	}
-
-	l.wg.Add(1)
-	go func() {
-		defer l.wg.Done()
-		l.run()
-	}()
-	l.wg.Wait()
+	return false
 }
 
 func (l *Lightning) run() {
