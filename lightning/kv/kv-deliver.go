@@ -122,7 +122,6 @@ func (txn *deliverTxn) inStatus(stat int) bool {
 
 type KVDeliverKeeper struct {
 	mux      sync.Mutex
-	wg       sync.WaitGroup
 	ctx      context.Context
 	shutdown context.CancelFunc
 
@@ -172,7 +171,6 @@ func (k *KVDeliverKeeper) Close() error {
 	defer k.mux.Unlock()
 
 	k.shutdown()
-	k.wg.Wait()
 
 	// close all client/connection
 	for _, cli := range k.clientsPool {
