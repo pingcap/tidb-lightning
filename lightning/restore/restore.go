@@ -174,6 +174,7 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 	timer := time.Now()
 	table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
 
+	skipTables := make(map[string]struct{})
 	var wg sync.WaitGroup
 
 	//1. restore table data
@@ -189,9 +190,14 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore) 
 		go func(w *RestoreWorker, t *regionRestoreTask) {
 			defer rc.regionWorkers.Recycle(w)
 			defer wg.Done()
+			if _, ok := skipTables[table]; ok {
+				common.AppLogger.Infof("something wrong with table %s before, so skip region %s", table, t.region.Name())
+				return
+			}
 			err := t.Run(ctx)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] region %s run task error %s", table, t.region.Name(), errors.ErrorStack(err))
+				skipTables[table] = struct{}{}
 			}
 		}(worker, task)
 	}
