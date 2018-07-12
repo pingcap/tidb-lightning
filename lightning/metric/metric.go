@@ -1,10 +1,15 @@
 package metric
 
 import (
+	"context"
 	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+)
+
+const (
+	ReportMetricInterval = time.Second * 10
 )
 
 var (
@@ -35,19 +40,28 @@ func init() {
 	prometheus.MustRegister(IdleWorkersGauge)
 }
 
-func CalcCPUUsageBackground() {
+func CalcCPUUsageBackground(ctx context.Context) {
 	go func() {
-		ticker := time.NewTicker(time.Second * 10)
-		defer ticker.Stop()
-
-		for {
+		reportCPU := func() {
 			calcCPUUsage()
 			cpuUsageGauge.Set(cpuUsage)
-			select {
-			case <-ticker.C:
-			}
 		}
+		ReportMetricPeriodically(ctx, reportCPU)
 	}()
+}
+
+func ReportMetricPeriodically(ctx context.Context, metricFunc func()) {
+	ticker := time.NewTicker(ReportMetricInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			metricFunc()
+		}
+	}
 }
 
 func calcCPUUsage() {

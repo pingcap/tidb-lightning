@@ -62,7 +62,7 @@ func (l *Lightning) Run() {
 	common.PrintInfo("lightning", func() {
 		common.AppLogger.Infof("cfg %s", l.cfg)
 	})
-	metric.CalcCPUUsageBackground()
+	metric.CalcCPUUsageBackground(l.ctx)
 
 	if l.handleCommandFlagsAndExits() {
 		return
