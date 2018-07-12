@@ -519,7 +519,6 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 	//		* buffer pool []*importpb.Mutation
 	// 		* handle partial transportation -- rollback ? clear ?
 	pairNum := len(kvs)
-	// use pool ?
 	mutations := make([]*importpb.Mutation, 0, pairNum)
 	for _, pair := range kvs {
 		mutations = append(mutations, &importpb.Mutation{
