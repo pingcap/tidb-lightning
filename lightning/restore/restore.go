@@ -44,18 +44,18 @@ func init() {
 
 type RestoreController struct {
 	cfg              *config.Config
-	dbMeta           *mydump.MDDatabaseMeta
-	dbInfo           *TidbDBInfo
+	dbMetas          map[string]*mydump.MDDatabaseMeta
+	dbInfos          map[string]*TidbDBInfo
 	tableWorkers     *RestoreWorkerPool
 	regionWorkers    *RestoreWorkerPool
 	deliverMgr       *kv.KVDeliverKeeper
 	postProcessQueue chan *TableRestore
 }
 
-func NewRestoreControlloer(ctx context.Context, dbMeta *mydump.MDDatabaseMeta, cfg *config.Config) *RestoreController {
+func NewRestoreControlloer(ctx context.Context, dbMetas map[string]*mydump.MDDatabaseMeta, cfg *config.Config) *RestoreController {
 	rc := &RestoreController{
 		cfg:              cfg,
-		dbMeta:           dbMeta,
+		dbMetas:          dbMetas,
 		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.WorkerPoolSize/2, "table"),
 		regionWorkers:    NewRestoreWorkerPool(ctx, cfg.App.WorkerPoolSize, "region"),
 		deliverMgr:       kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
@@ -107,58 +107,65 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	}
 	defer tidbMgr.Close()
 
-	database := rc.dbMeta.Name
-
 	if !rc.cfg.Mydumper.NoSchema {
-		timer := time.Now()
-		common.AppLogger.Infof("restore table schema for `%s`", rc.dbMeta.Name)
-		tablesSchema := make(map[string]string)
-		for tbl, tblMeta := range rc.dbMeta.Tables {
-			tablesSchema[tbl] = tblMeta.GetSchema()
+		for db, dbMeta := range rc.dbMetas {
+			timer := time.Now()
+			common.AppLogger.Infof("restore table schema for `%s`", dbMeta.Name)
+			tablesSchema := make(map[string]string)
+			for tbl, tblMeta := range dbMeta.Tables {
+				tablesSchema[tbl] = tblMeta.GetSchema()
+			}
+			err = tidbMgr.InitSchema(ctx, db, tablesSchema)
+			if err != nil {
+				return errors.Errorf("db schema failed to init : %v", err)
+			}
+			common.AppLogger.Infof("restore table schema for `%s` takes %v", dbMeta.Name, time.Since(timer))
 		}
-		err = tidbMgr.InitSchema(ctx, database, tablesSchema)
-		if err != nil {
-			return errors.Errorf("db schema failed to init : %v", err)
-		}
-		common.AppLogger.Infof("restore table schema for `%s` takes %v", rc.dbMeta.Name, time.Since(timer))
 	}
-	dbInfo, err := tidbMgr.LoadSchemaInfo(ctx, database)
+	dbInfos, err := tidbMgr.LoadSchemaInfo(ctx, rc.dbMetas)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rc.dbInfo = dbInfo
+	rc.dbInfos = dbInfos
 	return nil
 }
 
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	timer := time.Now()
-	dbInfo := rc.dbInfo
+	// dbInfo := rc.dbInfo
 	var wg sync.WaitGroup
 
-	for tbl, tableMeta := range rc.dbMeta.Tables {
-		tableInfo, ok := dbInfo.Tables[tbl]
+	for dbName, dbMeta := range rc.dbMetas {
+		dbInfo, ok := rc.dbInfos[dbName]
 		if !ok {
-			return errors.Errorf("table info %s not found", tbl)
+			common.AppLogger.Errorf("database %s not found in rc.dbInfos", dbName)
+			continue
 		}
-
-		tr := NewTableRestore(ctx, dbInfo, tableInfo, tableMeta, rc.cfg, rc.deliverMgr)
-
-		select {
-		case <-ctx.Done():
-			return errCtxAborted
-		default:
-		}
-
-		worker := rc.tableWorkers.Apply()
-		wg.Add(1)
-		go func(w *RestoreWorker, t *TableRestore) {
-			defer wg.Done()
-			table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
-			err := rc.restoreTable(ctx, tr, w)
-			if err != nil {
-				common.AppLogger.Errorf("[%s] restore error %v", table, errors.ErrorStack(err))
+		for tbl, tableMeta := range dbMeta.Tables {
+			tableInfo, ok := dbInfo.Tables[tbl]
+			if !ok {
+				return errors.Errorf("table info %s not found", tbl)
 			}
-		}(worker, tr)
+
+			tr := NewTableRestore(ctx, dbInfo, tableInfo, tableMeta, rc.cfg, rc.deliverMgr)
+
+			select {
+			case <-ctx.Done():
+				return errCtxAborted
+			default:
+			}
+
+			worker := rc.tableWorkers.Apply()
+			wg.Add(1)
+			go func(w *RestoreWorker, t *TableRestore) {
+				defer wg.Done()
+				table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
+				err := rc.restoreTable(ctx, tr, w)
+				if err != nil {
+					common.AppLogger.Errorf("[%s] restore error %v", table, errors.ErrorStack(err))
+				}
+			}(worker, tr)
+		}
 	}
 
 	wg.Wait()
@@ -322,17 +329,18 @@ func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.Swit
 }
 
 func (rc *RestoreController) getTables() []string {
-	tables := make([]string, 0, len(rc.dbMeta.Tables))
-	dbInfo := rc.dbInfo
-	for tbl := range rc.dbMeta.Tables {
-		// FIXME: it seems a little bit of redundance. Simplify it in the future.  @chendahui
-		_, ok := dbInfo.Tables[tbl]
-		if !ok {
-			common.AppLogger.Warnf("table info not found : %s", tbl)
-			continue
-		}
-		tables = append(tables, common.UniqueTable(dbInfo.Name, tbl))
+	var numOfTables int
+	for _, dbMeta := range rc.dbMetas {
+		numOfTables += len(dbMeta.Tables)
 	}
+	tables := make([]string, 0, numOfTables)
+
+	for _, dbMeta := range rc.dbMetas {
+		for tbl := range dbMeta.Tables {
+			tables = append(tables, common.UniqueTable(dbMeta.Name, tbl))
+		}
+	}
+
 	return tables
 }
 
@@ -472,7 +480,7 @@ func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVC
 	kvEncoder := t.encoders.Apply()
 	defer t.encoders.Recycle(kvEncoder)
 
-	kvDeliver := t.delivers.AcquireClient(t.executor.dbInfo.Name, t.executor.tableInfo.Name)
+	kvDeliver := t.delivers.AcquireClient(t.executor.tableMeta.DB, t.executor.tableMeta.Name)
 	// cause bug here.
 	defer t.delivers.RecycleClient(kvDeliver)
 
@@ -646,7 +654,7 @@ func (tr *TableRestore) loadRegions() {
 
 	tasks := make([]*regionRestoreTask, 0, len(regions))
 	for _, region := range regions {
-		executor := NewRegionRestoreExectuor(tr.cfg, tr.dbInfo, tr.tableInfo, tr.tableMeta)
+		executor := NewRegionRestoreExectuor(tr.cfg, tr.tableMeta)
 		task := newRegionRestoreTask(region, executor, tr.encoders, tr.deliversMgr, tr.onRegionFinished)
 		tasks = append(tasks, task)
 		common.AppLogger.Debugf("[%s] region - %s", table, region.Name())
@@ -839,21 +847,21 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 type RegionRestoreExectuor struct {
 	cfg *config.Config
 
-	dbInfo    *TidbDBInfo
-	tableInfo *TidbTableInfo
+	// dbInfo    *TidbDBInfo
+	// tableInfo *TidbTableInfo
 	tableMeta *mydump.MDTableMeta
 }
 
 func NewRegionRestoreExectuor(
 	cfg *config.Config,
-	dbInfo *TidbDBInfo,
-	tableInfo *TidbTableInfo,
+	// dbInfo *TidbDBInfo,
+	// tableInfo *TidbTableInfo,
 	tableMeta *mydump.MDTableMeta) *RegionRestoreExectuor {
 
 	exc := &RegionRestoreExectuor{
-		cfg:       cfg,
-		dbInfo:    dbInfo,
-		tableInfo: tableInfo,
+		cfg: cfg,
+		// dbInfo:    dbInfo,
+		// tableInfo: tableInfo,
 		tableMeta: tableMeta,
 	}
 

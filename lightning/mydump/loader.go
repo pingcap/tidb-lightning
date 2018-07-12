@@ -230,10 +230,6 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 	return nil
 }
 
-func (l *MDLoader) GetDatabase() *MDDatabaseMeta {
-	// TODO: support multiple databases.
-	for db := range l.dbs {
-		return l.dbs[db]
-	}
-	return nil
+func (l *MDLoader) GetDatabases() map[string]*MDDatabaseMeta {
+	return l.dbs
 }
