@@ -219,5 +219,8 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, schema string, table st
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d", schema, table, incr)
 	common.AppLogger.Infof("[%s.%s] %s", schema, table, query)
 	err := common.ExecWithRetry(ctx, db, []string{query})
+	if err != nil {
+		common.AppLogger.Errorf("query failed %v, you should do it manually, err %v", query, err)
+	}
 	return errors.Annotatef(err, "%s", query)
 }
