@@ -9,7 +9,6 @@ import (
 
 	"github.com/juju/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"golang.org/x/net/context"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
@@ -57,8 +56,8 @@ func NewRestoreControlloer(ctx context.Context, dbMeta *mydump.MDDatabaseMeta, c
 	rc := &RestoreController{
 		cfg:              cfg,
 		dbMeta:           dbMeta,
-		tableWorkers:     NewRestoreWorkerPool(cfg.App.WorkerPoolSize/2, "table"),
-		regionWorkers:    NewRestoreWorkerPool(cfg.App.WorkerPoolSize, "region"),
+		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.WorkerPoolSize/2, "table"),
+		regionWorkers:    NewRestoreWorkerPool(ctx, cfg.App.WorkerPoolSize, "region"),
 		deliverMgr:       kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
 		postProcessQueue: make(chan *TableRestore),
 	}
@@ -388,7 +387,7 @@ type RestoreWorker struct {
 	ID int64
 }
 
-func NewRestoreWorkerPool(limit int, name string) *RestoreWorkerPool {
+func NewRestoreWorkerPool(ctx context.Context, limit int, name string) *RestoreWorkerPool {
 	workers := make(chan *RestoreWorker, limit)
 	for i := 0; i < limit; i++ {
 		workers <- &RestoreWorker{ID: int64(i + 1)}
@@ -399,20 +398,11 @@ func NewRestoreWorkerPool(limit int, name string) *RestoreWorkerPool {
 		workers: workers,
 		name:    name,
 	}
-	go pool.reportMetric()
-	return pool
-}
-
-func (pool *RestoreWorkerPool) reportMetric() {
-	ticker := time.NewTicker(time.Second * 10)
-	defer ticker.Stop()
-
-	for {
+	reportFunc := func() {
 		metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
-		select {
-		case <-ticker.C:
-		}
 	}
+	go metric.ReportMetricPeriodically(ctx, reportFunc)
+	return pool
 }
 
 func (pool *RestoreWorkerPool) Apply() *RestoreWorker         { return <-pool.workers }
