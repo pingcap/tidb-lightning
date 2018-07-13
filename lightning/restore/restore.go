@@ -577,7 +577,6 @@ func (p *kvEncoderPool) Clear() {
 ////////////////////////////////////////////////////////////////
 
 type TableRestore struct {
-	wg  sync.WaitGroup
 	mux sync.Mutex
 	ctx context.Context
 

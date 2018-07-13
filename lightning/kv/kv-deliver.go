@@ -17,8 +17,7 @@ import (
 )
 
 var (
-	errInvalidUUID = errors.New("uuid length must be 16")
-	invalidUUID    = uuid.Nil
+	invalidUUID = uuid.Nil
 )
 
 const (
