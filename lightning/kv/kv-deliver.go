@@ -46,23 +46,6 @@ func ConfigDeliverTxnBatchSize(kvBatchSize int64) {
 	}
 }
 
-/////////////////////// KV Deliver Manager ///////////////////////
-
-const (
-	opPut int = iota
-	opFlush
-	opImport
-	opCleanup
-)
-
-type deliverTask struct {
-	op    int
-	kvs   []kvec.KvPair
-	retry int
-
-	// TODO .. callback ?
-}
-
 /////////////////////// KV Deliver Transaction ///////////////////////
 
 const (
