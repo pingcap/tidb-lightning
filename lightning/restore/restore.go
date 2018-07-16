@@ -176,6 +176,11 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	skipTables := make(map[string]struct{})
 	var wg sync.WaitGroup
 
+	// if it's empty table, return it
+	if len(t.tasks) == 0 {
+		return nil
+	}
+
 	//1. restore table data
 	for _, task := range t.tasks {
 		select {
@@ -707,7 +712,6 @@ func (tr *TableRestore) importKV() error {
 
 	// FIXME: flush is an asynchronous operation, what if flush failed?
 	if err := tr.deliversMgr.Flush(table); err != nil {
-		common.AppLogger.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
 		return errors.Trace(err)
 	}
 

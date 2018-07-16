@@ -107,7 +107,11 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 func splitFuzzyRegion(db string, table string, file string, minRegionSize int64) []*TableRegion {
 	reader, err := NewMDDataReader(file, 0)
 	if err != nil {
-		common.AppLogger.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
+		if err == ErrInsertStatementNotFound {
+			common.AppLogger.Warnf("failed to generate file's regions  (%s) : %s", file, err.Error())
+		} else {
+			common.AppLogger.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
+		}
 		return nil
 	}
 	defer reader.Close()

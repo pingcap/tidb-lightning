@@ -16,6 +16,10 @@ var (
 	insStmtRegex = regexp.MustCompile(`INSERT INTO .* VALUES`)
 )
 
+var (
+	ErrInsertStatementNotFound = errors.New("insert statement not found")
+)
+
 func ExportStatement(sqlFile string) ([]byte, error) {
 	fd, err := os.Open(sqlFile)
 	if err != nil {
@@ -95,7 +99,7 @@ func NewMDDataReader(file string, offset int64) (*MDDataReader, error) {
 	}
 
 	if len(mdr.stmtHeader) == 0 {
-		return nil, errors.New("can not find any insert statment")
+		return nil, ErrInsertStatementNotFound
 	}
 
 	mdr.skipAnnotation(offset)
