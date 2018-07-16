@@ -6,12 +6,9 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	// hack for vendor update
-	_ "github.com/pingcap/kvproto/pkg/import_kvpb"
-	_ "github.com/pingcap/kvproto/pkg/import_sstpb"
-
+	importpb "github.com/pingcap/kvproto/pkg/import_kvpb"
+	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pingcap/tidb-lightning/lightning/importpb"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 
 	"github.com/satori/go.uuid"
@@ -20,13 +17,11 @@ import (
 )
 
 var (
-	errInvalidUUID = errors.New("uuid length must be 16")
-	invalidUUID    = uuid.Nil
+	invalidUUID = uuid.Nil
 )
 
 const (
 	_G               uint64 = 1 << 30
-	flushSizeLimit   uint64 = 1 * _G
 	maxRetryTimes    int    = 3 // tikv-importer has done retry internally. so we don't retry many times.
 	retryBackoffTime        = time.Second * 3
 )
@@ -40,7 +35,7 @@ type KVDeliver interface {
 	Put([]kvec.KvPair) error
 	Flush() error // + Import() error
 	Cleanup() error
-	Compact(start, end []byte) error
+	Compact(level int32) error
 	Close() error
 }
 
@@ -48,23 +43,6 @@ func ConfigDeliverTxnBatchSize(kvBatchSize int64) {
 	if kvBatchSize > 0 {
 		DeliverTxnSizeLimit = int64(uint64(kvBatchSize) * _G)
 	}
-}
-
-/////////////////////// KV Deliver Manager ///////////////////////
-
-const (
-	opPut int = iota
-	opFlush
-	opImport
-	opCleanup
-)
-
-type deliverTask struct {
-	op    int
-	kvs   []kvec.KvPair
-	retry int
-
-	// TODO .. callback ?
 }
 
 /////////////////////// KV Deliver Transaction ///////////////////////
@@ -126,7 +104,6 @@ func (txn *deliverTxn) inStatus(stat int) bool {
 
 type KVDeliverKeeper struct {
 	mux      sync.Mutex
-	wg       sync.WaitGroup
 	ctx      context.Context
 	shutdown context.CancelFunc
 
@@ -163,7 +140,7 @@ func NewKVDeliverKeeper(importServerAddr, pdAddr string) *KVDeliverKeeper {
 		txnIDCounter:  0, // TODO : need to update to another algorithm
 		txns:          make(map[string][]*deliverTxn),
 		txnBoard:      make(map[uuid.UUID]*txnInfo),
-		txnFlushQueue: make(chan *deliverTxn, 64),
+		txnFlushQueue: make(chan *deliverTxn),
 	}
 
 	go keeper.handleTxnFlush(keeper.ctx)
@@ -176,7 +153,6 @@ func (k *KVDeliverKeeper) Close() error {
 	defer k.mux.Unlock()
 
 	k.shutdown()
-	k.wg.Wait()
 
 	// close all client/connection
 	for _, cli := range k.clientsPool {
@@ -295,25 +271,17 @@ func (k *KVDeliverKeeper) AcquireClient(db string, table string) *KVDeliverClien
 	return cli
 }
 
-func (k *KVDeliverKeeper) Compact(start, end []byte) error {
-	cli, err := NewKVDeliverClient(k.ctx, uuid.Nil, k.importServerAddr, k.pdAddr, "")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer cli.Close()
-
-	return cli.Compact(start, end)
-}
-
-func (k *KVDeliverKeeper) Flush() error {
+func (k *KVDeliverKeeper) Flush(uniqueTable string) error {
 	k.mux.Lock()
 	defer k.mux.Unlock()
 
-	for _, ttxns := range k.txns {
-		for _, t := range ttxns {
-			if t.inStatus(txnPutting) {
-				k.flushTxn(t)
-			}
+	txns, ok := k.txns[uniqueTable]
+	if !ok {
+		return errors.Errorf("table %s not found in k.txns %+v", uniqueTable, k.txns)
+	}
+	for _, t := range txns {
+		if t.inStatus(txnPutting) {
+			k.flushTxn(t)
 		}
 	}
 
@@ -355,7 +323,7 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 	doFlush := func(txn *deliverTxn) {
 		cli, err := NewKVDeliverClient(ctx, txn.uuid, k.importServerAddr, k.pdAddr, txn.uniqueTable)
 		if err != nil {
-			common.AppLogger.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", txn.uniqueTable, txn.uuid, err.Error())
+			common.AppLogger.Errorf("[deliver-keeper] [%s] failed to create deliver client (UUID = %s) : %s ", txn.uniqueTable, txn.uuid, errors.ErrorStack(err))
 			return
 		}
 		defer func() {
@@ -364,12 +332,12 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 		}()
 
 		if err := cli.Flush(); err != nil {
-			common.AppLogger.Errorf("[deliver-keeper] [%s] txn (UUID = %s) flush failed : %s ", txn.uniqueTable, txn.uuid, err.Error())
+			common.AppLogger.Errorf("[deliver-keeper] [%s] txn (UUID = %s) flush failed : %s ", txn.uniqueTable, txn.uuid, errors.ErrorStack(err))
 			return
 		}
 		err = cli.Cleanup()
 		if err != nil {
-			common.AppLogger.Warnf("[deliver-keeper] [%s] txn (UUID = %s) cleanup failed: %s", txn.uniqueTable, txn.uuid, err.Error())
+			common.AppLogger.Warnf("[deliver-keeper] [%s] txn (UUID = %s) cleanup failed: %s", txn.uniqueTable, txn.uuid, errors.ErrorStack(err))
 		}
 	}
 
@@ -378,13 +346,8 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case txn := <-k.txnFlushQueue:
-			now := time.Now()
-			common.AppLogger.Infof("[deliver-keeper] [%s] start flushing txn (UUID = %s) ... ", txn.uniqueTable, txn.uuid)
-
 			doFlush(txn)
-
 			k.flushWg.Done()
-			common.AppLogger.Infof("[deliver-keeper] [%s] finished flushing txn (UUID = %s), takes %v", txn.uniqueTable, txn.uuid, time.Since(now))
 		}
 	}
 }
@@ -394,6 +357,7 @@ func (k *KVDeliverKeeper) handleTxnFlush(ctx context.Context) {
 /* ps : not thread safe !!! */
 
 type KVDeliverClient struct {
+	// FIXME: it seems we shouldn't put ctx inside a struct
 	ctx context.Context
 
 	importServerAddr string
@@ -403,7 +367,7 @@ type KVDeliverClient struct {
 
 	conn    *grpc.ClientConn
 	cli     importpb.ImportKVClient
-	wstream importpb.ImportKV_WriteClient
+	wstream importpb.ImportKV_WriteEngineClient
 }
 
 func newImportClient(importServerAddr string) (*grpc.ClientConn, importpb.ImportKVClient, error) {
@@ -460,11 +424,11 @@ func (c *KVDeliverClient) exitTxn() {
 }
 
 func (c *KVDeliverClient) open(uuid uuid.UUID) error {
-	openRequest := &importpb.OpenRequest{
+	openRequest := &importpb.OpenEngineRequest{
 		Uuid: c.txn.uuid.Bytes(),
 	}
 
-	_, err := c.cli.Open(c.ctx, openRequest)
+	_, err := c.cli.OpenEngine(c.ctx, openRequest)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -472,19 +436,19 @@ func (c *KVDeliverClient) open(uuid uuid.UUID) error {
 	return nil
 }
 
-func (c *KVDeliverClient) newWriteStream() (importpb.ImportKV_WriteClient, error) {
+func (c *KVDeliverClient) newWriteStream() (importpb.ImportKV_WriteEngineClient, error) {
 	if err := c.open(c.txn.uuid); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	wstream, err := c.cli.Write(c.ctx)
+	wstream, err := c.cli.WriteEngine(c.ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// Bind uuid for this write request
-	req := &importpb.WriteRequest{
-		Chunk: &importpb.WriteRequest_Head{
+	req := &importpb.WriteEngineRequest{
+		Chunk: &importpb.WriteEngineRequest_Head{
 			Head: &importpb.WriteHead{
 				Uuid: c.txn.uuid.Bytes(),
 			},
@@ -513,7 +477,7 @@ func (c *KVDeliverClient) closeWriteStream() error {
 	return nil
 }
 
-func (c *KVDeliverClient) getWriteStream() (importpb.ImportKV_WriteClient, error) {
+func (c *KVDeliverClient) getWriteStream() (importpb.ImportKV_WriteEngineClient, error) {
 	if c.wstream == nil {
 		wstream, err := c.newWriteStream()
 		if err != nil {
@@ -546,8 +510,8 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 		})
 	}
 
-	write := &importpb.WriteRequest{
-		Chunk: &importpb.WriteRequest_Batch{
+	write := &importpb.WriteEngineRequest{
+		Chunk: &importpb.WriteEngineRequest_Batch{
 			Batch: &importpb.WriteBatch{
 				CommitTs:  c.ts,
 				Mutations: mutations,
@@ -579,39 +543,51 @@ func (c *KVDeliverClient) Put(kvs []kvec.KvPair) error {
 }
 
 func (c *KVDeliverClient) Cleanup() error {
+	timer := time.Now()
 	c.closeWriteStream()
 
-	req := &importpb.CleanupRequest{Uuid: c.txn.uuid.Bytes()}
-	_, err := c.cli.Cleanup(c.ctx, req)
+	common.AppLogger.Infof("[%s] [%s] cleanup ", c.txn.uniqueTable, c.txn.uuid)
+	req := &importpb.CleanupEngineRequest{Uuid: c.txn.uuid.Bytes()}
+	_, err := c.cli.CleanupEngine(c.ctx, req)
+	common.AppLogger.Infof("[%s] [%s] cleanup takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 	return errors.Trace(err)
 }
 
 func (c *KVDeliverClient) Flush() error {
 	c.closeWriteStream()
 
-	ops := []func() error{c.callClose, c.callImport}
-	for step, fn := range ops {
-		if err := fn(); err != nil {
-			common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = %d) : %s", step, err.Error())
+	ops := []struct {
+		fn   func() error
+		name string
+	}{
+		{c.callClose, "close"},
+		{c.callImport, "import"},
+	}
+	for _, op := range ops {
+		if err := op.fn(); err != nil {
+			common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = %s) : %v", op.name, err)
 			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
-func (c *KVDeliverClient) Compact(start, end []byte) error {
-	return errors.Trace(c.callCompact(start, end))
+func (c *KVDeliverClient) Compact(level int32) error {
+	return errors.Trace(c.callCompact(level))
 }
 
-// Do compaction for specific table. `start` and `end`` key can be got in the following way:
-// start key = GenTablePrefix(tableID)
-// end key = GenTablePrefix(tableID + 1)
-func (c *KVDeliverClient) callCompact(start, end []byte) error {
+func (c *KVDeliverClient) callCompact(level int32) error {
 	timer := time.Now()
-	common.AppLogger.Infof("compact [%v, %v)", start, end)
-	req := &importpb.CompactRequest{PdAddr: c.pdAddr, Range: &importpb.Range{Start: start, End: end}}
-	_, err := c.cli.Compact(c.ctx, req)
-	common.AppLogger.Infof("compact [%v, %v) takes %v", start, end, time.Since(timer))
+	common.AppLogger.Infof("compact level %d", level)
+	req := &importpb.CompactClusterRequest{
+		PdAddr: c.pdAddr,
+		Request: &sstpb.CompactRequest{
+			// No need to set Range here.
+			OutputLevel: level,
+		},
+	}
+	_, err := c.cli.CompactCluster(c.ctx, req)
+	common.AppLogger.Infof("compact level %d takes %v", level, time.Since(timer))
 
 	return errors.Trace(err)
 }
@@ -619,22 +595,25 @@ func (c *KVDeliverClient) callCompact(start, end []byte) error {
 func (c *KVDeliverClient) callClose() error {
 	timer := time.Now()
 	common.AppLogger.Infof("[%s] [%s] close", c.txn.uniqueTable, c.txn.uuid)
-	req := &importpb.CloseRequest{Uuid: c.txn.uuid.Bytes()}
-	_, err := c.cli.Close(c.ctx, req)
+	req := &importpb.CloseEngineRequest{Uuid: c.txn.uuid.Bytes()}
+	_, err := c.cli.CloseEngine(c.ctx, req)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	common.AppLogger.Infof("[%s] [%s] close takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 
-	return errors.Trace(err)
+	return nil
 }
 
 func (c *KVDeliverClient) callImport() error {
-	// TODO ... no matter what, to enusure available to import, call close first !
+	// TODO ... no matter what, to ensure available to import, call close first !
 	for i := 0; i < maxRetryTimes; i++ {
 		timer := time.Now()
 		common.AppLogger.Infof("[%s] [%s] import", c.txn.uniqueTable, c.txn.uuid)
-		req := &importpb.ImportRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
-		_, err := c.cli.Import(c.ctx, req)
-		common.AppLogger.Infof("[%s] [%s] import takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
+		req := &importpb.ImportEngineRequest{Uuid: c.txn.uuid.Bytes(), PdAddr: c.pdAddr}
+		_, err := c.cli.ImportEngine(c.ctx, req)
 		if err == nil {
+			common.AppLogger.Infof("[%s] [%s] import takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 			return nil
 		}
 		common.AppLogger.Warnf("[%s] [%s] import failed and retry %d time, err %v", c.txn.uniqueTable, c.txn.uuid, i+1, err)
@@ -642,4 +621,21 @@ func (c *KVDeliverClient) callImport() error {
 	}
 
 	return errors.Errorf("[%s] [%s] import reach max retry %d and still failed", c.txn.uniqueTable, c.txn.uuid, maxRetryTimes)
+}
+
+// Switch switches tikv mode.
+func (c *KVDeliverClient) Switch(mode sstpb.SwitchMode) error {
+	timer := time.Now()
+	req := &importpb.SwitchModeRequest{
+		PdAddr: c.pdAddr,
+		Request: &sstpb.SwitchModeRequest{
+			Mode: mode,
+		},
+	}
+	_, err := c.cli.SwitchMode(c.ctx, req)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	common.AppLogger.Infof("switch to tikv %s mode takes %v", mode, time.Since(timer))
+	return nil
 }
