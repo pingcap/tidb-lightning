@@ -172,16 +172,16 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 
 func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, w *RestoreWorker) error {
 	defer t.Close()
+	// if it's empty table, return it
+	if len(t.tasks) == 0 {
+		return nil
+	}
+
 	timer := time.Now()
 	table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
 
 	skipTables := make(map[string]struct{})
 	var wg sync.WaitGroup
-
-	// if it's empty table, return it
-	if len(t.tasks) == 0 {
-		return nil
-	}
 
 	//1. restore table data
 	for _, task := range t.tasks {
