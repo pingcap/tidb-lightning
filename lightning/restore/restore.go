@@ -149,6 +149,9 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		default:
 		}
 
+		// Note: We still need tableWorkers to control the concurrency of tables. In the future, we will investigate more about
+		// the difference between restoring tables concurrently and restoring tables one by one.
+
 		worker := rc.tableWorkers.Apply()
 		wg.Add(1)
 		go func(w *RestoreWorker, t *TableRestore) {
@@ -167,7 +170,6 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	return nil
 }
 
-//FIXME: it seems that we don't need to split table into multiple regions.
 func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, w *RestoreWorker) error {
 	defer t.Close()
 	timer := time.Now()
