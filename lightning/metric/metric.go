@@ -40,12 +40,21 @@ var (
 			Name:      "idle_workers",
 			Help:      "counting idle workers",
 		}, []string{"name"})
+
+	KvEncoderCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "lightning",
+			Name:      "kv_encoder",
+			Help:      "counting kv open and closed kv encoder",
+		}, []string{"type"},
+	)
 )
 
 func init() {
 	prometheus.MustRegister(cpuUsageGauge)
 	prometheus.MustRegister(IdleWorkersGauge)
 	prometheus.MustRegister(EngineCounter)
+	prometheus.MustRegister(KvEncoderCounter)
 }
 
 func CalcCPUUsageBackground(ctx context.Context) {

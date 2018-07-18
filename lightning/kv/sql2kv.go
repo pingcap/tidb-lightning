@@ -3,6 +3,7 @@ package kv
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/metric"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	"github.com/pingcap/tidb/kv"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
@@ -66,6 +67,8 @@ func NewTableKVEncoder(
 		return nil, errors.Trace(err)
 	}
 
+	metric.KvEncoderCounter.WithLabelValues("open").Inc()
+
 	return kvcodec, nil
 }
 
@@ -107,6 +110,7 @@ func (kvcodec *TableKVEncoder) ResetRowID(rowID int64) {
 }
 
 func (kvcodec *TableKVEncoder) Close() error {
+	metric.KvEncoderCounter.WithLabelValues("closed").Inc()
 	return errors.Trace(kvcodec.encoder.Close())
 }
 
