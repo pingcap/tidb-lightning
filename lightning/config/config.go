@@ -12,6 +12,13 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
+const (
+	// ImportMode defines mode of import for tikv.
+	ImportMode = "import"
+	// NormalMode defines mode of normal for tikv.
+	NormalMode = "normal"
+)
+
 type DBStore struct {
 	Host                   string `toml:"host" json:"host"`
 	Port                   int    `toml:"port" json:"port"`
@@ -31,7 +38,7 @@ type Config struct {
 	TiDB DBStore   `toml:"tidb" json:"tidb"`
 
 	// not implemented yet.
-	ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
+	// ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
 
 	Mydumper     MydumperRuntime `toml:"mydumper" json:"mydumper"`
 	TikvImporter TikvImporter    `toml:"tikv-importer" json:"tikv-importer"`
@@ -40,6 +47,7 @@ type Config struct {
 	// command line flags
 	ConfigFile   string `json:"config-file"`
 	DoCompact    bool   `json:"-"`
+	SwitchMode   string `json:"-"`
 	printVersion bool
 }
 
@@ -53,8 +61,10 @@ func (c *Config) String() string {
 
 type Lightning struct {
 	common.LogConfig
-	ProfilePort    int `toml:"pprof-port" json:"json"`
-	WorkerPoolSize int `toml:"worker-pool-size" json:"worker-pool-size"`
+	WorkerPoolSize    int `toml:"worker-pool-size" json:"worker-pool-size"`
+	TableConcurrency  int `toml:"table-concurrency" json:"table-concurrency"`
+	RegionConcurrency int `toml:"region-concurrency" json:"region-concurrency"`
+	ProfilePort       int `toml:"pprof-port" json:"pprof-port"`
 }
 
 // PostRestore has some options which will be executed after kv restored.
@@ -79,7 +89,9 @@ type TikvImporter struct {
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
-			WorkerPoolSize: runtime.NumCPU(),
+			WorkerPoolSize:    runtime.NumCPU(),
+			RegionConcurrency: runtime.NumCPU(),
+			TableConcurrency:  8,
 		},
 		TiDB: DBStore{
 			SQLMode:                "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
@@ -95,7 +107,8 @@ func LoadConfig(args []string) (*Config, error) {
 	fs := cfg.FlagSet
 
 	fs.StringVar(&cfg.ConfigFile, "c", "tidb-lightning.toml", "tidb-lightning configuration file")
-	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compaction on the target cluster")
+	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compaction on the target cluster, run then exit")
+	fs.StringVar(&cfg.SwitchMode, "switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal'], run then exit")
 	fs.BoolVar(&cfg.printVersion, "V", false, "print version of lightning")
 
 	if err := fs.Parse(args); err != nil {

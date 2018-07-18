@@ -5,15 +5,17 @@ import (
 	"net/http"
 	"runtime"
 	"sync"
-	"time"
 
 	"github.com/juju/errors"
+	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/prometheus/client_golang/prometheus"
 	uuid "github.com/satori/go.uuid"
 	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
+	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
 )
@@ -34,7 +36,8 @@ func initEnv(cfg *config.Config) error {
 	kv.ConfigDeliverTxnBatchSize(cfg.TikvImporter.BatchSize)
 
 	if cfg.App.ProfilePort > 0 {
-		go func() { // TODO : config to enable it in debug mode
+		go func() {
+			http.Handle("/metrics", prometheus.Handler())
 			common.AppLogger.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.App.ProfilePort), nil))
 		}()
 	}
@@ -59,12 +62,9 @@ func (l *Lightning) Run() {
 	common.PrintInfo("lightning", func() {
 		common.AppLogger.Infof("cfg %s", l.cfg)
 	})
+	metric.CalcCPUUsageBackground(l.ctx)
 
-	if l.cfg.DoCompact {
-		err := l.doCompact()
-		if err != nil {
-			common.AppLogger.Errorf("compact error %s", errors.ErrorStack(err))
-		}
+	if l.handleCommandFlagsAndExits() {
 		return
 	}
 
@@ -76,6 +76,34 @@ func (l *Lightning) Run() {
 	l.wg.Wait()
 }
 
+func (l *Lightning) handleCommandFlagsAndExits() (exits bool) {
+	if l.cfg.DoCompact {
+		err := l.doCompact()
+		if err != nil {
+			common.AppLogger.Fatalf("compact error %s", errors.ErrorStack(err))
+		}
+		return true
+	}
+
+	if mode := l.cfg.SwitchMode; mode != "" {
+		var err error
+		switch mode {
+		case config.ImportMode:
+			err = l.switchMode(sstpb.SwitchMode_Import)
+		case config.NormalMode:
+			err = l.switchMode(sstpb.SwitchMode_Normal)
+		default:
+			common.AppLogger.Fatalf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
+		}
+		if err != nil {
+			common.AppLogger.Fatalf("switch mode error %v", errors.ErrorStack(err))
+		}
+		common.AppLogger.Infof("switch mode to %s", mode)
+		return true
+	}
+	return false
+}
+
 func (l *Lightning) run() {
 	mdl, err := mydump.NewMyDumpLoader(l.cfg)
 	if err != nil {
@@ -84,7 +112,7 @@ func (l *Lightning) run() {
 	}
 
 	dbMeta := mdl.GetDatabase()
-	procedure := restore.NewRestoreControlloer(dbMeta, l.cfg)
+	procedure := restore.NewRestoreControlloer(l.ctx, dbMeta, l.cfg)
 	defer procedure.Close()
 
 	procedure.Run(l.ctx)
@@ -98,13 +126,21 @@ func (l *Lightning) doCompact() error {
 	}
 	defer cli.Close()
 
-	start := time.Now()
-	if err := cli.Compact([]byte{}, []byte{}); err != nil {
+	if err := cli.Compact(restore.FullLevelCompact); err != nil {
 		return errors.Trace(err)
 	}
 
-	fmt.Println("compact takes", time.Since(start))
 	return nil
+}
+
+func (l *Lightning) switchMode(mode sstpb.SwitchMode) error {
+	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, l.cfg.TikvImporter.Addr, l.cfg.TiDB.PdAddr, "")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cli.Close()
+
+	return errors.Trace(cli.Switch(mode))
 }
 
 func (l *Lightning) Stop() {
