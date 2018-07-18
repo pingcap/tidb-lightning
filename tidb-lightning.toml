@@ -6,6 +6,9 @@ pprof-port = 10089
 
 # number of workers to restore tables (default to `runtime.NumCPU()`).
 # worker-pool-size =
+table-concurrency = 8
+# region-concurrency default to runtime.NumCPU()
+# region-concurrency =  
 
 # logging
 level = "info"

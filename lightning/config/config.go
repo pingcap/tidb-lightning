@@ -61,8 +61,10 @@ func (c *Config) String() string {
 
 type Lightning struct {
 	common.LogConfig
-	WorkerPoolSize int `toml:"worker-pool-size" json:"worker-pool-size"`
-	ProfilePort    int `toml:"pprof-port" json:"pprof-port"`
+	WorkerPoolSize    int `toml:"worker-pool-size" json:"worker-pool-size"`
+	TableConcurrency  int `toml:"table-concurrency" json:"table-concurrency"`
+	RegionConcurrency int `toml:"region-concurrency" json:"region-concurrency"`
+	ProfilePort       int `toml:"pprof-port" json:"pprof-port"`
 }
 
 // PostRestore has some options which will be executed after kv restored.
@@ -87,7 +89,9 @@ type TikvImporter struct {
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
-			WorkerPoolSize: runtime.NumCPU(),
+			WorkerPoolSize:    runtime.NumCPU(),
+			RegionConcurrency: runtime.NumCPU(),
+			TableConcurrency:  8,
 		},
 		TiDB: DBStore{
 			SQLMode:                "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",

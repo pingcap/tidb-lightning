@@ -56,8 +56,8 @@ func NewRestoreControlloer(ctx context.Context, dbMeta *mydump.MDDatabaseMeta, c
 	rc := &RestoreController{
 		cfg:              cfg,
 		dbMeta:           dbMeta,
-		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.WorkerPoolSize/2, "table"),
-		regionWorkers:    NewRestoreWorkerPool(ctx, cfg.App.WorkerPoolSize, "region"),
+		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
+		regionWorkers:    NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
 		deliverMgr:       kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
 		postProcessQueue: make(chan *TableRestore),
 	}
