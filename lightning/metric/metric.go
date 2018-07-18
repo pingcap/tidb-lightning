@@ -27,6 +27,13 @@ var (
 		},
 	)
 
+	EngineCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "lightning",
+			Name:      "importer_engine",
+			Help:      "counting open and closed importer engines",
+		}, []string{"type"})
+
 	IdleWorkersGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "lightning",
@@ -38,6 +45,7 @@ var (
 func init() {
 	prometheus.MustRegister(cpuUsageGauge)
 	prometheus.MustRegister(IdleWorkersGauge)
+	prometheus.MustRegister(EngineCounter)
 }
 
 func CalcCPUUsageBackground(ctx context.Context) {

@@ -9,6 +9,7 @@ import (
 	importpb "github.com/pingcap/kvproto/pkg/import_kvpb"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/metric"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 
 	"github.com/satori/go.uuid"
@@ -428,6 +429,8 @@ func (c *KVDeliverClient) open(uuid uuid.UUID) error {
 		Uuid: c.txn.uuid.Bytes(),
 	}
 
+	metric.EngineCounter.WithLabelValues("open").Inc()
+	common.AppLogger.Infof("[%s] open engine %s", c.txn.uniqueTable, c.txn.uuid)
 	_, err := c.cli.OpenEngine(c.ctx, openRequest)
 	if err != nil {
 		return errors.Trace(err)
@@ -594,13 +597,14 @@ func (c *KVDeliverClient) callCompact(level int32) error {
 
 func (c *KVDeliverClient) callClose() error {
 	timer := time.Now()
-	common.AppLogger.Infof("[%s] [%s] close", c.txn.uniqueTable, c.txn.uuid)
+	common.AppLogger.Infof("[%s] [%s] engine close", c.txn.uniqueTable, c.txn.uuid)
 	req := &importpb.CloseEngineRequest{Uuid: c.txn.uuid.Bytes()}
+	metric.EngineCounter.WithLabelValues("closed").Inc()
 	_, err := c.cli.CloseEngine(c.ctx, req)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	common.AppLogger.Infof("[%s] [%s] close takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
+	common.AppLogger.Infof("[%s] [%s] engine close takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 
 	return nil
 }

@@ -56,8 +56,8 @@ func NewRestoreControlloer(ctx context.Context, dbMeta *mydump.MDDatabaseMeta, c
 	rc := &RestoreController{
 		cfg:              cfg,
 		dbMeta:           dbMeta,
-		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.WorkerPoolSize/2, "table"),
-		regionWorkers:    NewRestoreWorkerPool(ctx, cfg.App.WorkerPoolSize, "region"),
+		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
+		regionWorkers:    NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
 		deliverMgr:       kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
 		postProcessQueue: make(chan *TableRestore),
 	}
@@ -149,6 +149,9 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		default:
 		}
 
+		// Note: We still need tableWorkers to control the concurrency of tables. In the future, we will investigate more about
+		// the difference between restoring tables concurrently and restoring tables one by one.
+
 		worker := rc.tableWorkers.Apply()
 		wg.Add(1)
 		go func(w *RestoreWorker, t *TableRestore) {
@@ -167,7 +170,6 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	return nil
 }
 
-//FIXME: it seems that we don't need to split table into multiple regions.
 func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, w *RestoreWorker) error {
 	defer t.Close()
 	timer := time.Now()
@@ -712,6 +714,7 @@ func (tr *TableRestore) importKV() error {
 
 	// FIXME: flush is an asynchronous operation, what if flush failed?
 	if err := tr.deliversMgr.Flush(table); err != nil {
+		common.AppLogger.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
 		return errors.Trace(err)
 	}
 
