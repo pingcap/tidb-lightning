@@ -1,2 +1,6 @@
-bin
+bin/
+test_*/
+*.log
+*.tar.gz
 .idea
+*.local
