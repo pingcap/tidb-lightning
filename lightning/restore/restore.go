@@ -847,21 +847,15 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 type RegionRestoreExectuor struct {
 	cfg *config.Config
 
-	// dbInfo    *TidbDBInfo
-	// tableInfo *TidbTableInfo
 	tableMeta *mydump.MDTableMeta
 }
 
 func NewRegionRestoreExectuor(
 	cfg *config.Config,
-	// dbInfo *TidbDBInfo,
-	// tableInfo *TidbTableInfo,
 	tableMeta *mydump.MDTableMeta) *RegionRestoreExectuor {
 
 	exc := &RegionRestoreExectuor{
-		cfg: cfg,
-		// dbInfo:    dbInfo,
-		// tableInfo: tableInfo,
+		cfg:       cfg,
 		tableMeta: tableMeta,
 	}
 
