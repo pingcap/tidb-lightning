@@ -111,8 +111,8 @@ func (l *Lightning) run() {
 		return
 	}
 
-	dbMeta := mdl.GetDatabase()
-	procedure := restore.NewRestoreControlloer(l.ctx, dbMeta, l.cfg)
+	dbMetas := mdl.GetDatabases()
+	procedure := restore.NewRestoreControlloer(l.ctx, dbMetas, l.cfg)
 	defer procedure.Close()
 
 	procedure.Run(l.ctx)

@@ -13,6 +13,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb/model"
 	"golang.org/x/net/context"
 )
@@ -161,38 +162,42 @@ func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
 	return tables, errors.Annotatef(err, "get tables for schema %s", schema)
 }
 
-func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schema string) (*TidbDBInfo, error) {
-	tables, err := timgr.getTables(schema)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	dbInfo := &TidbDBInfo{
-		Name:   schema,
-		Tables: make(map[string]*TidbTableInfo),
-	}
-
-	for _, tbl := range tables {
-		tableName := tbl.Name.String()
-		if tbl.State != model.StatePublic {
-			return nil, errors.Errorf("table [%s.%s] state is not public", schema, tableName)
-		}
-		createTableStmt, err := timgr.getCreateTableStmt(ctx, schema, tableName)
+func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas map[string]*mydump.MDDatabaseMeta) (map[string]*TidbDBInfo, error) {
+	result := make(map[string]*TidbDBInfo, len(schemas))
+	for schema := range schemas {
+		tables, err := timgr.getTables(schema)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		tableInfo := &TidbTableInfo{
-			ID:              tbl.ID,
-			Name:            tableName,
-			Columns:         len(tbl.Columns),
-			Indices:         len(tbl.Indices),
-			CreateTableStmt: createTableStmt,
-			core:            tbl,
-		}
-		dbInfo.Tables[tableName] = tableInfo
-	}
 
-	return dbInfo, nil
+		dbInfo := &TidbDBInfo{
+			Name:   schema,
+			Tables: make(map[string]*TidbTableInfo),
+		}
+
+		for _, tbl := range tables {
+			tableName := tbl.Name.String()
+			if tbl.State != model.StatePublic {
+				return nil, errors.Errorf("table [%s.%s] state is not public", schema, tableName)
+			}
+			createTableStmt, err := timgr.getCreateTableStmt(ctx, schema, tableName)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tableInfo := &TidbTableInfo{
+				ID:              tbl.ID,
+				Name:            tableName,
+				Columns:         len(tbl.Columns),
+				Indices:         len(tbl.Indices),
+				CreateTableStmt: createTableStmt,
+				core:            tbl,
+			}
+			dbInfo.Tables[tableName] = tableInfo
+		}
+
+		result[schema] = dbInfo
+	}
+	return result, nil
 }
 
 func (timgr *TiDBManager) getCreateTableStmt(ctx context.Context, schema, table string) (string, error) {
