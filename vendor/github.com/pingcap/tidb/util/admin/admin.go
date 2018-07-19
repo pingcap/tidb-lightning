@@ -137,9 +137,12 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 // MaxHistoryJobs is exported for testing.
 const MaxHistoryJobs = 10
 
+// DefNumHistoryJobs is default value of the default number of history job
+const DefNumHistoryJobs = 10
+
 // GetHistoryDDLJobs returns the DDL history jobs and an error.
-// The maximum count of history jobs is MaxHistoryJobs.
-func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+// The maximum count of history jobs is num.
+func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	jobs, err := t.GetAllHistoryDDLJobs()
 	if err != nil {
@@ -147,8 +150,8 @@ func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	}
 
 	jobsLen := len(jobs)
-	if jobsLen > MaxHistoryJobs {
-		start := jobsLen - MaxHistoryJobs
+	if jobsLen > maxNumJobs {
+		start := jobsLen - maxNumJobs
 		jobs = jobs[start:]
 	}
 	jobsLen = len(jobs)
@@ -292,14 +295,14 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			return errors.Trace(err)
 		}
 
-		vals1, err = tablecodec.UnflattenDatums(vals1, fieldTypes, sessCtx.GetSessionVars().GetTimeZone())
+		vals1, err = tablecodec.UnflattenDatums(vals1, fieldTypes, sessCtx.GetSessionVars().Location())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		vals2, err := rowWithCols(sessCtx, txn, t, h, cols)
 		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}
-			err = errDateNotEqual.Gen("index:%v != record:%v", record, nil)
+			err = errDateNotEqual.Gen("index:%#v != record:%#v", record, nil)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -307,7 +310,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if !reflect.DeepEqual(vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}
-			return errDateNotEqual.Gen("index:%v != record:%v", record1, record2)
+			return errDateNotEqual.Gen("index:%#v != record:%#v", record1, record2)
 		}
 	}
 
@@ -342,14 +345,14 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
-			return false, errDateNotEqual.Gen("index:%v != record:%v", record2, record1)
+			return false, errDateNotEqual.Gen("index:%#v != record:%#v", record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
-			return false, errDateNotEqual.Gen("index:%v != record:%v", nil, record)
+			return false, errDateNotEqual.Gen("index:%#v != record:%#v", nil, record)
 		}
 
 		return true, nil
@@ -437,7 +440,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 		vals2, ok := m[h]
 		if !ok {
 			record := &RecordData{Handle: h, Values: vals}
-			return false, errDateNotEqual.Gen("data:%v != record:%v", nil, record)
+			return false, errDateNotEqual.Gen("data:%#v != record:%#v", nil, record)
 		}
 		if !exact {
 			delete(m, h)
@@ -447,7 +450,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 		if !reflect.DeepEqual(vals, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals2}
 			record2 := &RecordData{Handle: h, Values: vals}
-			return false, errDateNotEqual.Gen("data:%v != record:%v", record1, record2)
+			return false, errDateNotEqual.Gen("data:%#v != record:%#v", record1, record2)
 		}
 
 		delete(m, h)
@@ -461,7 +464,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 
 	for h, vals := range m {
 		record := &RecordData{Handle: h, Values: vals}
-		return errDateNotEqual.Gen("data:%v != record:%v", record, nil)
+		return errDateNotEqual.Gen("data:%#v != record:%#v", record, nil)
 	}
 
 	return nil
@@ -492,7 +495,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	row, err := tablecodec.DecodeRow(value, colTps, sessCtx.GetSessionVars().GetTimeZone())
+	row, err := tablecodec.DecodeRow(value, colTps, sessCtx.GetSessionVars().Location())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -553,7 +556,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, sessCtx.GetSessionVars().GetTimeZone())
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, sessCtx.GetSessionVars().Location())
 		if err != nil {
 			return errors.Trace(err)
 		}

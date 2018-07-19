@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -38,6 +39,9 @@ type Plan interface {
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() sessionctx.Context
+
+	// StatsInfo will return the statsInfo for this plan.
+	StatsInfo() *statsInfo
 }
 
 // taskType is the type of execution task.
@@ -77,6 +81,21 @@ type requiredProp struct {
 	expectedCnt float64
 	// hashcode stores the hash code of a requiredProp, will be lazily calculated when function "hashCode()" being called.
 	hashcode []byte
+	// whether need to enforce property.
+	enforced bool
+}
+
+func (p *requiredProp) enforceProperty(tsk task, ctx sessionctx.Context) task {
+	if p.isEmpty() || tsk.plan() == nil {
+		return tsk
+	}
+	tsk = finishCopTask(ctx, tsk)
+	sortReqProp := &requiredProp{taskTp: rootTaskType, cols: p.cols, expectedCnt: math.MaxFloat64}
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx, tsk.plan().StatsInfo(), sortReqProp)
+	for _, col := range p.cols {
+		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
+	}
+	return sort.attach2Task(tsk)
 }
 
 func (p *requiredProp) allColsFromSchema(schema *expression.Schema) bool {
@@ -115,9 +134,14 @@ func (p *requiredProp) hashCode() []byte {
 	if p.hashcode != nil {
 		return p.hashcode
 	}
-	hashcodeSize := 8 + 8 + 8 + 16*len(p.cols)
+	hashcodeSize := 8 + 8 + 8 + 16*len(p.cols) + 8
 	p.hashcode = make([]byte, 0, hashcodeSize)
 	if p.desc {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+	}
+	if p.enforced {
 		p.hashcode = codec.EncodeInt(p.hashcode, 1)
 	} else {
 		p.hashcode = codec.EncodeInt(p.hashcode, 0)
@@ -204,9 +228,6 @@ type PhysicalPlan interface {
 
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *requiredProp
-
-	// StatsInfo will return the statsInfo for this plan.
-	StatsInfo() *statsInfo
 
 	// Get all the children.
 	Children() []PhysicalPlan
@@ -326,6 +347,11 @@ func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
 // ID implements Plan ID interface.
 func (p *basePlan) ID() int {
 	return p.id
+}
+
+// StatsInfo implements the Plan interface.
+func (p *basePlan) StatsInfo() *statsInfo {
+	return p.stats
 }
 
 func (p *basePlan) ExplainID() string {

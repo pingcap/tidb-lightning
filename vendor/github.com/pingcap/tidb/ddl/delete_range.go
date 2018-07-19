@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
@@ -49,19 +50,23 @@ type delRangeManager interface {
 }
 
 type delRange struct {
-	d            *ddl
+	store        kv.Storage
 	ctxPool      *pools.ResourcePool
 	storeSupport bool
 	emulatorCh   chan struct{}
 	keys         []kv.Key
+	quitCh       chan struct{}
+
+	wait sync.WaitGroup // wait is only used when storeSupport is false.
 }
 
 // newDelRangeManager returns a delRangeManager.
-func newDelRangeManager(d *ddl, ctxPool *pools.ResourcePool, supportDelRange bool) delRangeManager {
+func newDelRangeManager(store kv.Storage, ctxPool *pools.ResourcePool) delRangeManager {
 	dr := &delRange{
-		d:            d,
+		store:        store,
 		ctxPool:      ctxPool,
-		storeSupport: supportDelRange,
+		storeSupport: store.SupportDeleteRange(),
+		quitCh:       make(chan struct{}),
 	}
 	if !dr.storeSupport {
 		dr.emulatorCh = make(chan struct{}, delBackLog)
@@ -95,7 +100,7 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 // start implements delRangeManager interface.
 func (dr *delRange) start() {
 	if !dr.storeSupport {
-		dr.d.wait.Add(1)
+		dr.wait.Add(1)
 		go dr.startEmulator()
 	}
 }
@@ -103,6 +108,8 @@ func (dr *delRange) start() {
 // clear implements delRangeManager interface.
 func (dr *delRange) clear() {
 	log.Infof("[ddl] closing delRange session pool")
+	close(dr.quitCh)
+	dr.wait.Wait()
 	dr.ctxPool.Close()
 }
 
@@ -110,12 +117,12 @@ func (dr *delRange) clear() {
 // delete-range. The emulator fetches records from gc_delete_range table and
 // deletes all keys in each DelRangeTask.
 func (dr *delRange) startEmulator() {
-	defer dr.d.wait.Done()
+	defer dr.wait.Done()
 	log.Infof("[ddl] start delRange emulator")
 	for {
 		select {
 		case <-dr.emulatorCh:
-		case <-dr.d.quitCh:
+		case <-dr.quitCh:
 			return
 		}
 		err := dr.doDelRangeWork()
@@ -155,7 +162,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 	for {
 		finish := true
 		dr.keys = dr.keys[:0]
-		err := kv.RunInNewTxn(dr.d.store, false, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(dr.store, false, func(txn kv.Transaction) error {
 			iter, err := txn.Seek(oldStartKey)
 			if err != nil {
 				return errors.Trace(err)
@@ -234,6 +241,14 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
+	case model.ActionDropTablePartition:
+		var partitionID int64
+		if err := job.DecodeArgs(&partitionID); err != nil {
+			return errors.Trace(err)
+		}
+		startKey := tablecodec.EncodeTablePrefix(partitionID)
+		endKey := tablecodec.EncodeTablePrefix(partitionID + 1)
+		return doInsert(s, job.ID, partitionID, startKey, endKey, now)
 	// ActionAddIndex needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex:
 		tableID := job.TableID
