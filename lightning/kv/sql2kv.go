@@ -35,20 +35,26 @@ type TableKVEncoder struct {
 }
 
 func NewTableKVEncoder(
-	kvEncoder kvec.KvEncoder,
-	idAlloc *kvec.Allocator,
-	table string, tableID int64,
+	dbName string,
+	table string, tableSchema string, tableID int64,
 	columns int, sqlMode string) (*TableKVEncoder, error) {
+
+	idAlloc := kvec.NewAllocator()
+	encoder, err := kvec.New(dbName, idAlloc)
+	if err != nil {
+		common.AppLogger.Errorf("err %s", errors.ErrorStack(err))
+		return nil, errors.Trace(err)
+	}
 
 	kvcodec := &TableKVEncoder{
 		table:       table,
 		tableID:     tableID,
-		encoder:     kvEncoder,
+		encoder:     encoder,
 		idAllocator: idAlloc,
 		columns:     columns,
 	}
 
-	if err := kvcodec.init(); err != nil {
+	if err := kvcodec.init(tableSchema, sqlMode); err != nil {
 		kvcodec.Close()
 		return nil, errors.Trace(err)
 	}
@@ -58,21 +64,17 @@ func NewTableKVEncoder(
 	return kvcodec, nil
 }
 
-func InitialEncoder(encoder kvec.KvEncoder, tableSchema string, sqlMode string) error {
-	if err := encoder.ExecDDLSQL(tableSchema); err != nil {
+func (kvcodec *TableKVEncoder) init(tableSchema string, sqlMode string) error {
+	if err := kvcodec.encoder.ExecDDLSQL(tableSchema); err != nil {
 		common.AppLogger.Errorf("[sql2kv] tableSchema execute failed : %v", errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 
-	err := encoder.SetSystemVariable("sql_mode", sqlMode)
+	err := kvcodec.encoder.SetSystemVariable("sql_mode", sqlMode)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	common.AppLogger.Debugf("set sql_mode=%s", sqlMode)
-	return nil
-}
-
-func (kvcodec *TableKVEncoder) init() error {
 	if PrepareStmtMode {
 		reserve := (encodeBatchRows * kvcodec.columns) << 1 // TODO : rows x ( cols + indices )
 		kvcodec.bufValues = make([]interface{}, 0, reserve)
