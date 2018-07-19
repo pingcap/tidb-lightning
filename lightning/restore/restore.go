@@ -437,8 +437,8 @@ type regionRestoreTask struct {
 	status   string
 	region   *mydump.TableRegion
 	executor *RegionRestoreExectuor
-	// encoders *kvEncoderPool
-	encoder  *kv.TableKVEncoder
+	encoder  kvec.KvEncoder
+	idAlloc  *kvec.Allocator
 	delivers *kv.KVDeliverKeeper
 	// TODO : progress ...
 	callback  restoreCallback
@@ -450,8 +450,8 @@ type regionRestoreTask struct {
 func newRegionRestoreTask(
 	region *mydump.TableRegion,
 	executor *RegionRestoreExectuor,
-	// encoders *kvEncoderPool,
-	// encoder *kv.TableKVEncoder,
+	encoder kvec.KvEncoder,
+	idAlloc *kvec.Allocator,
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
 	cfg *config.Config,
@@ -467,9 +467,9 @@ func newRegionRestoreTask(
 		dbInfo:    dbInfo,
 		tableInfo: tableInfo,
 		cfg:       cfg,
-		// encoders: encoders,
-		// encoder:  encoder,
-		callback: callback,
+		encoder:   encoder,
+		idAlloc:   idAlloc,
+		callback:  callback,
 	}
 }
 
@@ -496,17 +496,11 @@ func (t *regionRestoreTask) Run(ctx context.Context) error {
 }
 
 func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVChecksum, error) {
-	// kvEncoder := t.encoders.Apply()
-	// defer t.encoders.Recycle(kvEncoder)
-
-	idAllocator := kvec.NewAllocator()
 	kvEncoder, err := kv.NewTableKVEncoder(
-		t.dbInfo.Name, t.tableInfo.Name, t.tableInfo.ID,
-		t.tableInfo.Columns, t.tableInfo.CreateTableStmt, t.cfg.TiDB.SQLMode, idAllocator)
+		t.encoder, t.idAlloc, t.tableInfo.Name, t.tableInfo.ID,
+		t.tableInfo.Columns, t.cfg.TiDB.SQLMode)
 	if err != nil {
 		common.AppLogger.Errorf("failed to new kv encoder (%s) : %s", t.dbInfo.Name, err.Error())
-		// return nil
-		// panic("err")
 		return 0, 0, nil, errors.Trace(err)
 	}
 	defer kvEncoder.Close()
@@ -519,102 +513,6 @@ func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVC
 	return nextRowID, affectedRows, checksum, errors.Trace(err)
 }
 
-////////////////////////////////////////////////////////////////
-
-// type kvEncoderPool struct {
-// 	mux       sync.Mutex
-// 	dbInfo    *TidbDBInfo
-// 	tableInfo *TidbTableInfo
-// 	tableMeta *mydump.MDTableMeta
-// 	encoders  []*kv.TableKVEncoder
-// 	sqlMode   string
-// 	idAlloc   *kvec.Allocator
-// }
-
-// func newKvEncoderPool(
-// 	dbInfo *TidbDBInfo,
-// 	tableInfo *TidbTableInfo,
-// 	tableMeta *mydump.MDTableMeta, sqlMode string) *kvEncoderPool {
-
-// 	idAllocator := kvec.NewAllocator()
-
-// 	return &kvEncoderPool{
-// 		dbInfo:    dbInfo,
-// 		tableInfo: tableInfo,
-// 		tableMeta: tableMeta,
-// 		encoders:  []*kv.TableKVEncoder{},
-// 		sqlMode:   sqlMode,
-// 		idAlloc:   idAllocator,
-// 	}
-// }
-
-// func (p *kvEncoderPool) init(size int) *kvEncoderPool {
-// 	p.mux.Lock()
-// 	defer p.mux.Unlock()
-
-// 	p.encoders = make([]*kv.TableKVEncoder, 0, size)
-
-// 	var wg sync.WaitGroup
-// 	defer wg.Wait()
-// 	for i := 0; i < size; i++ {
-// 		wg.Add(1)
-// 		go func() {
-// 			defer wg.Done()
-// 			ec, err := kv.NewTableKVEncoder(
-// 				p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-// 				p.tableInfo.Columns, p.tableInfo.CreateTableStmt, p.sqlMode, p.idAlloc)
-// 			if err == nil {
-// 				p.encoders = append(p.encoders, ec)
-// 			}
-// 		}()
-// 	}
-
-// 	return p
-// }
-
-// func (p *kvEncoderPool) Apply() *kv.TableKVEncoder {
-// 	p.mux.Lock()
-// 	defer p.mux.Unlock()
-
-// 	size := len(p.encoders)
-// 	if size == 0 {
-// 		encoder, err := kv.NewTableKVEncoder(
-// 			p.dbInfo.Name, p.tableInfo.Name, p.tableInfo.ID,
-// 			p.tableInfo.Columns, p.tableInfo.CreateTableStmt, p.sqlMode, p.idAlloc)
-// 		if err != nil {
-// 			common.AppLogger.Errorf("failed to new kv encoder (%s) : %s", p.dbInfo.Name, err.Error())
-// 			return nil
-// 		}
-
-// 		p.encoders = append(p.encoders, encoder)
-// 		size = 1
-// 	}
-
-// 	encoder := p.encoders[size-1]
-// 	p.encoders = p.encoders[:size-1]
-// 	return encoder
-// }
-
-// func (p *kvEncoderPool) Recycle(encoder *kv.TableKVEncoder) {
-// 	if encoder != nil {
-// 		p.mux.Lock()
-// 		p.encoders = append(p.encoders, encoder)
-// 		p.mux.Unlock()
-// 	}
-// }
-
-// func (p *kvEncoderPool) Clear() {
-// 	p.mux.Lock()
-// 	defer p.mux.Unlock()
-
-// 	for _, encoder := range p.encoders {
-// 		encoder.Close()
-// 	}
-// 	p.encoders = p.encoders[:0]
-// }
-
-////////////////////////////////////////////////////////////////
-
 type TableRestore struct {
 	mux sync.Mutex
 	ctx context.Context
@@ -624,7 +522,8 @@ type TableRestore struct {
 	tableInfo *TidbTableInfo
 	tableMeta *mydump.MDTableMeta
 	// encoders    *kvEncoderPool
-	encoder     *kv.TableKVEncoder
+	encoder     kvec.KvEncoder
+	idAlloc     *kvec.Allocator
 	deliversMgr *kv.KVDeliverKeeper
 
 	regions          []*mydump.TableRegion
@@ -651,8 +550,18 @@ func NewTableRestore(
 	deliverMgr *kv.KVDeliverKeeper,
 ) *TableRestore {
 
-	// encoders := newKvEncoderPool(dbInfo, tableInfo, tableMeta, cfg.TiDB.SQLMode)
-	// encoders.init(cfg.App.WorkerPoolSize)
+	idAlloc := kvec.NewAllocator()
+	encoder, err := kvec.New(dbInfo.Name, idAlloc)
+	if err != nil {
+		common.AppLogger.Errorf("err %s", errors.ErrorStack(err))
+		return nil
+	}
+
+	err = kv.InitialEncoder(encoder, tableInfo.CreateTableStmt, cfg.TiDB.SQLMode)
+	if err != nil {
+		common.AppLogger.Errorf("err %s", errors.ErrorStack(err))
+		return nil
+	}
 
 	tr := &TableRestore{
 		ctx:       ctx,
@@ -660,7 +569,8 @@ func NewTableRestore(
 		dbInfo:    dbInfo,
 		tableInfo: tableInfo,
 		tableMeta: tableMeta,
-		// encoders:       encoders,
+		encoder:        encoder,
+		idAlloc:        idAlloc,
 		deliversMgr:    deliverMgr,
 		handledRegions: make(map[int]*regionStat),
 	}
@@ -670,9 +580,6 @@ func NewTableRestore(
 }
 
 func (tr *TableRestore) Close() {
-	// TODO : flush table meta right now ~
-	// tr.encoders.Clear()
-
 	common.AppLogger.Infof("[%s] restore done", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name))
 }
 
@@ -687,7 +594,7 @@ func (tr *TableRestore) loadRegions() {
 	tasks := make([]*regionRestoreTask, 0, len(regions))
 	for _, region := range regions {
 		executor := NewRegionRestoreExectuor(tr.cfg, tr.tableMeta)
-		task := newRegionRestoreTask(region, executor, tr.dbInfo, tr.tableInfo, tr.cfg, tr.deliversMgr, tr.onRegionFinished)
+		task := newRegionRestoreTask(region, executor, tr.encoder, tr.idAlloc, tr.dbInfo, tr.tableInfo, tr.cfg, tr.deliversMgr, tr.onRegionFinished)
 		tasks = append(tasks, task)
 		common.AppLogger.Debugf("[%s] region - %s", table, region.Name())
 	}

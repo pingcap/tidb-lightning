@@ -23,11 +23,9 @@ func InitMembufCap(batchSQLLength int64) {
 }
 
 type TableKVEncoder struct {
-	db          string
-	table       string
-	tableID     int64
-	tableSchema string
-	columns     int
+	table   string
+	tableID int64
+	columns int
 
 	stmtIds   []uint32
 	bufValues []interface{}
@@ -37,32 +35,20 @@ type TableKVEncoder struct {
 }
 
 func NewTableKVEncoder(
-	db string, table string, tableID int64,
-	columns int, tableSchema string, sqlMode string, idAlloc *kvec.Allocator) (*TableKVEncoder, error) {
-
-	kvEncoder, err := kvec.New(db, idAlloc)
-	if err != nil {
-		common.AppLogger.Errorf("[sql2kv] kv encoder create failed : %v", err)
-		return nil, errors.Trace(err)
-	}
-
-	err = kvEncoder.SetSystemVariable("sql_mode", sqlMode)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	common.AppLogger.Debugf("set sql_mode=%s", sqlMode)
+	kvEncoder kvec.KvEncoder,
+	idAlloc *kvec.Allocator,
+	table string, tableID int64,
+	columns int, sqlMode string) (*TableKVEncoder, error) {
 
 	kvcodec := &TableKVEncoder{
-		db:          db,
 		table:       table,
 		tableID:     tableID,
 		encoder:     kvEncoder,
 		idAllocator: idAlloc,
-		tableSchema: tableSchema,
 		columns:     columns,
 	}
 
-	if err = kvcodec.init(); err != nil {
+	if err := kvcodec.init(); err != nil {
 		kvcodec.Close()
 		return nil, errors.Trace(err)
 	}
@@ -72,12 +58,21 @@ func NewTableKVEncoder(
 	return kvcodec, nil
 }
 
-func (kvcodec *TableKVEncoder) init() error {
-	if err := kvcodec.encoder.ExecDDLSQL(kvcodec.tableSchema); err != nil {
-		common.AppLogger.Errorf("[sql2kv] tableSchema execute failed : %v", err)
+func InitialEncoder(encoder kvec.KvEncoder, tableSchema string, sqlMode string) error {
+	if err := encoder.ExecDDLSQL(tableSchema); err != nil {
+		common.AppLogger.Errorf("[sql2kv] tableSchema execute failed : %v", errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 
+	err := encoder.SetSystemVariable("sql_mode", sqlMode)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	common.AppLogger.Debugf("set sql_mode=%s", sqlMode)
+	return nil
+}
+
+func (kvcodec *TableKVEncoder) init() error {
 	if PrepareStmtMode {
 		reserve := (encodeBatchRows * kvcodec.columns) << 1 // TODO : rows x ( cols + indices )
 		kvcodec.bufValues = make([]interface{}, 0, reserve)
