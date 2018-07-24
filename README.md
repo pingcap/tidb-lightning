@@ -27,7 +27,7 @@ TiDB Lightning has two components:
 4. `tikv-importer` splits and schedules the TiKV data of the target cluster and then imports the data to the TiKV cluster.
 5. `tidb-lightning` transforms and imports the source data continuously until it finishes importing the data in the source data directory.
 6. `tidb-lightning` performs the `Compact`, `Checksum`, and `Analyze` operation on tables in the target cluster.
-7. `tidb-lightning` automatically switches the TiKV mode to the normal mode. Then the TiDB cluster can provide services.
+7. `tidb-lightning` automatically switches the TiKV mode to the normal mode. Then the TiDB cluster can provide services normally.
 
 ## Deploy process
 
