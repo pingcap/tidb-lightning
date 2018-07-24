@@ -2,7 +2,7 @@
 
 TiDB Lightning is a data import tool which is used to fast import a large amount of data to the TiDB cluster. Currently, it only supports source data in the Mydumper file format and in the future it will support more formats like CSV.
 
-Now TiDB Lightning only supports full import of new tables. During the importing process, the cluster stops the service; as a result, TiDB Lightning is not suitable for importing data online.
+Now TiDB Lightning only supports full import of new tables. During the importing process, the cluster cannot provide services normally; as a result, TiDB Lightning is not suitable for importing data online.
 
 ## TiDB Lightning architecture
 
