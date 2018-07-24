@@ -63,6 +63,7 @@ In the limited condition, you can deploy `tidb-lightning` and `tikv-importer` (o
 - 10 Gigabit network card
 
 > **Note:** `tidb-lightning` is CPU bound. If you use mixed deployment for it, you need to configure `worker-pool-size` to limit the number of occupied CPU cores of `tidb-lightning`. Otherwise other applications may be affected.
+
 >   You can configure the `worker-pool-size` parameter of `tidb-lightning` to allocate 75% of CPU resources to `tidb-lightning`. For example, if CPU has 32 logical cores, you can set `worker-pool-size` to 24.
 
 ### Prepare
