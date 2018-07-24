@@ -22,7 +22,7 @@ TiDB Lightning has two components:
 ## TiDB Lightning workflow
 
 1. Before importing data, `tidb-lightning` automatically switches the TiKV mode to the import mode via API.
-2. `tidb-lightning` transforms the source data into KV data and then writes the data into `tikv-importer`.
+2. `tidb-lightning` obtains data from the data source, transforms the source data into KV data, and then writes the data into `tikv-importer`.
 3. When the data written by `tidb-lightning` reaches a specific size, `tidb-lightning` sends the `Import` command to `tikv-importer`.
 4. `tikv-importer` splits and schedules the TiKV data of the target cluster and then imports the data to the TiKV cluster.
 5. `tidb-lightning` transforms and imports the source data continuously until it finishes importing the data in the source data directory.
