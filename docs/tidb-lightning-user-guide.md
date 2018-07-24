@@ -2,7 +2,7 @@
 
 TiDB Lightning is a data import tool which is used to fast import a large amount of data to the TiDB cluster. Currently, it only supports source data in the Mydumper file format and in the future it will support more formats like CSV.
 
-Now TiDB Lightning only supports full import of new tables. During the importing process, the cluster stops the service; as a result, TiDB Lightning is not suitable for importing data online.
+Now TiDB Lightning only supports full import of new tables. During the importing process, the cluster cannot provide services normally; as a result, TiDB Lightning is not suitable for importing data online.
 
 ## TiDB Lightning architecture
 
@@ -27,7 +27,7 @@ TiDB Lightning has two components:
 4. `tikv-importer` splits and schedules the TiKV data of the target cluster and then imports the data to the TiKV cluster.
 5. `tidb-lightning` transforms and imports the source data continuously until it finishes importing the data in the source data directory.
 6. `tidb-lightning` performs the `Compact`, `Checksum`, and `Analyze` operation on tables in the target cluster.
-7. `tidb-lightning` automatically switches the TiKV mode to the normal mode. Then the TiDB cluster can provide services.
+7. `tidb-lightning` automatically switches the TiKV mode to the normal mode. Then the TiDB cluster can provide services normally.
 
 ## Deploy process
 
@@ -220,7 +220,7 @@ For details, see [Deploy TiDB Using Ansible](https://pingcap.com/docs/op-guide/a
 
 ### Notes
 
-- When TiDB Lightning is running, the TiDB cluster cannot provide services.
+- When TiDB Lightning is running, the TiDB cluster cannot provide services normally.
 - When you import data using TiDB Lightning, you cannot check some source data constraints such as the primary key conflict and unique index conflict. If needed, you can check using `ADMIN CHECK TABLE` via the MySQL client after importing, but it may take a long time.
 - Currently，TiDB Lightning does not support breakpoint. If any error occurs during importing, delete the data using `DROP TABLE` and import the data again.
 - If TiDB Lightning exits abnormally, you need to use the `-swtich-mode` command line parameter of `tidb-lightning` to manually close the import mode of the TiKV cluster and change it to the normal mode:
