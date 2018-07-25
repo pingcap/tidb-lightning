@@ -10,59 +10,73 @@ The following diagram shows the architecture of TiDB Lightning:
 
 ![](./media/tidb-lightning-architecture.png)
 
-TiDB Lightning has two components:
+One set of TiDB Lightning has two components:
 
 - `tidb-lightning`
     
     The front-end part of TiDB Lightning. It transforms the source data into Key-Value (KV) pairs and writes the data into `tikv-importer`.
+    
 - `tikv-importer`
     
-    The back-end part of TiDB Lightning. It caches, sorts, and splits the KV pairs written by `tidb-lightning` and imports the KV pairs to the TiKV cluster.
+    The back-end part of TiDB Lightning. It caches, sorts, and divides the KV pairs written by `tidb-lightning` and imports the KV pairs to the TiKV cluster.
 
 ## TiDB Lightning workflow
 
 1. Before importing data, `tidb-lightning` automatically switches the TiKV mode to the import mode via API.
 2. `tidb-lightning` obtains data from the data source, transforms the source data into KV data, and then writes the data into `tikv-importer`.
 3. When the data written by `tidb-lightning` reaches a specific size, `tidb-lightning` sends the `Import` command to `tikv-importer`.
-4. `tikv-importer` splits and schedules the TiKV data of the target cluster and then imports the data to the TiKV cluster.
+4. `tikv-importer` divides and schedules the TiKV data of the target cluster and then imports the data to the TiKV cluster.
 5. `tidb-lightning` transforms and imports the source data continuously until it finishes importing the data in the source data directory.
 6. `tidb-lightning` performs the `Compact`, `Checksum`, and `Analyze` operation on tables in the target cluster.
 7. `tidb-lightning` automatically switches the TiKV mode to the normal mode. Then the TiDB cluster can provide services normally.
 
 ## Deploy process
 
+### Notes
+
+Before deploying TiDB Lightning, you should take note that:
+
+- When TiDB Lightning is running, the TiDB cluster cannot provide services normally.
+- When you import data using TiDB Lightning, you cannot check some source data constraints such as the primary key conflict and unique index conflict. If needed, you can check using `ADMIN CHECK TABLE` via the MySQL client after importing, but it may take a long time.
+- Currently，TiDB Lightning does not support breakpoint. If any error occurs during importing, delete the data from the target cluster using `DROP TABLE` and import the data again.
+- If TiDB Lightning exits abnormally, you need to use the `-swtich-mode` command line parameter of `tidb-lightning` to manually close the import mode of the TiKV cluster and change it to the normal mode:
+
+    ```
+    ./bin/tidb-lightning -switch-mode normal
+    ```
+
 ### Hardware requirements
 
 #### Hardware requirements for separate deployment
 
-The following are the hardware requirements for deploying one set of TiDB Lighting. If you have enough machines, you can deploy multiple sets of `tidb-lightning` and `tikv-importer`, split the source code based on the table grain and then import the data concurrently.
+The following are the hardware requirements for deploying one set of TiDB Lighting. If you have enough machines, you can deploy multiple sets of TiDB Lightning, divide the source code based on the table grain and then import the data concurrently.
 
 - tidb-lightning
   
-   - CPU bound, with over 32 logical cores
+   - 32+ logical core CPU
    - 16 GB+ memory
    - 1 TB+ SSD
    - 10 Gigabit network card
-   - Use standalone deployment because CPU will be fully occupied by default in the operation process. In the limited condition, you can deploy it along with another component (like `tidb-server`) on one machine and configure to limit the CPU usage of `tidb-lightning`. See the `worker-pool-size` part in the first step of [Deploy `tidb-lightning`](#deploy-tidb-lightning). 
+   - Need to be deployed separately from the online business because TiDB Lighting fully consumes the CPU during runtime. Under certain circumstances, you can deploy it along with another component (like `tidb-server`) on one machine and configure to limit the CPU usage of `tidb-lightning`. See the `worker-pool-size` part in the first step of [Deploy `tidb-lightning`](#deploy-tidb-lightning). 
 
 - tikv-importer
  
-   - CPU bound and I/O bound, CPU with over 32 logical cores
+   - 32+ logical core CPU
    - 32 GB+ memory
    - 1 TB+ SSD
    - 10 Gigabit network card
-   - Use standalone deployment because CPU, I/O and the network bandwidth might be fully occupied in the operation process. In the limited condition, you can deploy it along with other component (like `tikv-server`) on one machine, but the importing speed may be affected.
+   - Need to be deployed separately from the online business because TiDB Lighting fully consumes the CPU, I/O and the network bandwidth during runtime. Under certain circumstances, you can deploy it along with other component (like `tikv-server`) on one machine, but the importing speed may be affected.
 
 #### Hardware requirements for mixed deployment
 
 In the limited condition, you can deploy `tidb-lightning` and `tikv-importer` (or another application) mixedly on one machine.
       
-- CPU with over 32 logical cores
+- 32+ logical core CPU
 - 32 GB+ memory
 - 1 TB+ SSD
 - 10 Gigabit network card
 
-> **Note:** `tidb-lightning` is CPU bound. If you use mixed deployment for it, you need to configure `worker-pool-size` to limit the number of occupied CPU cores of `tidb-lightning`. Otherwise other applications may be affected.
+> **Note:** `tidb-lightning` is CPU intensive. If you use mixed deployment for it, you need to configure `worker-pool-size` to limit the number of occupied CPU cores of `tidb-lightning`. Otherwise other applications may be affected.
 
 >   You can configure the `worker-pool-size` parameter of `tidb-lightning` to allocate 75% of CPU resources to `tidb-lightning`. For example, if CPU has 32 logical cores, you can set `worker-pool-size` to 24.
 
@@ -174,7 +188,7 @@ For details, see [Deploy TiDB Using Ansible](https://pingcap.com/docs/op-guide/a
     [mydumper]
     # block size of file reading
     read-block-size = 4096 # Byte (default = 4 KB)
-    # split source data file into multiple Region/chunk to execute restoring in parallel
+    # divide source data file into multiple Region/chunk to execute restoring in parallel
     region-min-size = 268435456 # Byte (default = 256 MB)
     # the source data directory of Mydumper. tidb-lightning will automatically create the corresponding database and tables based on the schema file in the directory.
     data-source-dir = "/data/mydumper"
@@ -216,15 +230,4 @@ For details, see [Deploy TiDB Using Ansible](https://pingcap.com/docs/op-guide/a
 
     ```
     nohup ./tidb-lightning -c tidb-lightning.toml > nohup.out &
-    ```
-
-### Notes
-
-- When TiDB Lightning is running, the TiDB cluster cannot provide services normally.
-- When you import data using TiDB Lightning, you cannot check some source data constraints such as the primary key conflict and unique index conflict. If needed, you can check using `ADMIN CHECK TABLE` via the MySQL client after importing, but it may take a long time.
-- Currently，TiDB Lightning does not support breakpoint. If any error occurs during importing, delete the data using `DROP TABLE` and import the data again.
-- If TiDB Lightning exits abnormally, you need to use the `-swtich-mode` command line parameter of `tidb-lightning` to manually close the import mode of the TiKV cluster and change it to the normal mode:
-
-    ```
-    ./bin/tidb-lightning -switch-mode normal
     ```
