@@ -38,7 +38,7 @@ Before deploying TiDB Lightning, you should take note that:
 
 - When TiDB Lightning is running, the TiDB cluster cannot provide services normally.
 - When you import data using TiDB Lightning, you cannot check some source data constraints such as the primary key conflict and unique index conflict. If needed, you can check using `ADMIN CHECK TABLE` via the MySQL client after importing, but it may take a long time.
-- Currently，TiDB Lightning does not support breakpoint. If any error occurs during importing, delete the data from the target cluster using `DROP TABLE` and import the data again.
+- Currently, TiDB Lightning does not support breakpoint. If any error occurs during importing, delete the data from the target cluster using `DROP TABLE` and import the data again.
 - If TiDB Lightning exits abnormally, you need to use the `-swtich-mode` command line parameter of `tidb-lightning` to manually close the import mode of the TiKV cluster and change it to the normal mode:
 
     ```
