@@ -179,6 +179,8 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	defer t.Close()
 	// if it's empty table, return it
 	if len(t.tasks) == 0 {
+		// recycle table worker in advance to prevent so many idle region workers and promote CPU utilization.
+		rc.tableWorkers.Recycle(w)
 		return nil
 	}
 
