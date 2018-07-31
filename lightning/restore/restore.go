@@ -180,7 +180,6 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	defer t.Close()
 	// if it's empty table, return it
 	if len(t.tasks) == 0 {
-		// recycle table worker in advance to prevent so many idle region workers and promote CPU utilization.
 		rc.tableWorkers.Recycle(w)
 		return nil
 	}
@@ -191,11 +190,13 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	skipTables := make(map[string]struct{})
 	var wg sync.WaitGroup
 
+	var ctxAborted bool
 	//1. restore table data
 	for _, task := range t.tasks {
 		select {
 		case <-ctx.Done():
-			return errCtxAborted
+			ctxAborted = true
+			break
 		default:
 		}
 
@@ -218,6 +219,9 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	wg.Wait()
 	// recycle table worker in advance to prevent so many idle region workers and promote CPU utilization.
 	rc.tableWorkers.Recycle(w)
+	if ctxAborted {
+		return errCtxAborted
+	}
 	common.AppLogger.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
 
 	var (

@@ -15,20 +15,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 )
 
-func onExitSignal() {
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc,
-		os.Kill,
-		os.Interrupt,
-		syscall.SIGHUP,
-		syscall.SIGINT,
-		syscall.SIGTERM,
-		syscall.SIGQUIT)
-
-	sig := <-sc
-	common.AppLogger.Infof("Got signal %d to exit.", sig)
-}
-
 func setGlobalVars() {
 	// hardcode it
 	plan.PreparedPlanCacheEnabled = true
@@ -48,9 +34,22 @@ func main() {
 	}
 
 	app := lightning.New(cfg)
-	app.Run()
 
-	// TODO : onExitSignal() --> mainloop.Stop()
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc,
+		os.Kill,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT)
+
+	go func() {
+		sig := <-sc
+		common.AppLogger.Infof("Got signal %v to exit.", sig)
+		app.Stop()
+	}()
+
+	app.Run()
 
 	common.AppLogger.Info("tidb lightning exit.")
 	return
