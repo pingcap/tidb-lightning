@@ -36,7 +36,7 @@ type TableKVEncoder struct {
 
 func NewTableKVEncoder(
 	dbName string,
-	table string, tableSchema string, tableID int64,
+	table string, tableID int64,
 	columns int, sqlMode string) (*TableKVEncoder, error) {
 
 	idAlloc := kvec.NewAllocator()
@@ -54,7 +54,7 @@ func NewTableKVEncoder(
 		columns:     columns,
 	}
 
-	if err := kvcodec.init(tableSchema, sqlMode); err != nil {
+	if err := kvcodec.init(sqlMode); err != nil {
 		kvcodec.Close()
 		return nil, errors.Trace(err)
 	}
@@ -64,12 +64,7 @@ func NewTableKVEncoder(
 	return kvcodec, nil
 }
 
-func (kvcodec *TableKVEncoder) init(tableSchema string, sqlMode string) error {
-	if err := kvcodec.encoder.ExecDDLSQL(tableSchema); err != nil {
-		common.AppLogger.Errorf("[sql2kv] tableSchema execute failed : %v", errors.ErrorStack(err))
-		return errors.Trace(err)
-	}
-
+func (kvcodec *TableKVEncoder) init(sqlMode string) error {
 	err := kvcodec.encoder.SetSystemVariable("sql_mode", sqlMode)
 	if err != nil {
 		return errors.Trace(err)
