@@ -468,7 +468,6 @@ func newRegionRestoreTask(
 		dbInfo.Name, tableInfo.Name, tableInfo.ID,
 		tableInfo.Columns, cfg.TiDB.SQLMode)
 	if err != nil {
-		common.AppLogger.Errorf("failed to new kv encoder (%s) : %s", dbInfo.Name, err.Error())
 		return nil, errors.Trace(err)
 	}
 
@@ -487,6 +486,11 @@ func newRegionRestoreTask(
 }
 
 func (t *regionRestoreTask) Run(ctx context.Context) error {
+	defer func() {
+		if err := t.encoder.Close(); err != nil {
+			common.AppLogger.Errorf("close encoder err %v", errors.ErrorStack(err))
+		}
+	}()
 	timer := time.Now()
 	region := t.region
 	table := common.UniqueTable(region.DB, region.Table)
@@ -504,8 +508,7 @@ func (t *regionRestoreTask) Run(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	t.status = statFinished
-	err = t.encoder.Close()
-	return errors.Trace(err)
+	return nil
 }
 
 func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVChecksum, error) {
