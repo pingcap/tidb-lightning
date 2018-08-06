@@ -487,12 +487,9 @@ func newRegionRestoreTask(
 
 func (t *regionRestoreTask) Run(ctx context.Context) (err error) {
 	defer func() {
-		if err != nil {
-			common.AppLogger.Errorf("restore region task err %v", errors.ErrorStack(err))
-		}
 		closeErr := t.encoder.Close()
 		if closeErr != nil {
-			err = closeErr
+			common.AppLogger.Errorf("restore region task err %v", errors.ErrorStack(closeErr))
 		}
 	}()
 	timer := time.Now()
