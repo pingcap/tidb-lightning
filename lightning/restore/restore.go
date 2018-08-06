@@ -462,11 +462,12 @@ func newRegionRestoreTask(
 	tableInfo *TidbTableInfo,
 	cfg *config.Config,
 	delivers *kv.KVDeliverKeeper,
+	alloc *kvenc.Allocator,
 	callback restoreCallback) (*regionRestoreTask, error) {
 
 	encoder, err := kv.NewTableKVEncoder(
 		dbInfo.Name, tableInfo.Name, tableInfo.ID,
-		tableInfo.Columns, cfg.TiDB.SQLMode)
+		tableInfo.Columns, cfg.TiDB.SQLMode, alloc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -530,6 +531,7 @@ type TableRestore struct {
 	tableInfo   *TidbTableInfo
 	tableMeta   *mydump.MDTableMeta
 	encoder     kvenc.KvEncoder
+	alloc       *kvenc.Allocator
 	deliversMgr *kv.KVDeliverKeeper
 
 	regions          []*mydump.TableRegion
@@ -574,6 +576,7 @@ func NewTableRestore(
 		tableInfo:      tableInfo,
 		tableMeta:      tableMeta,
 		encoder:        encoder,
+		alloc:          idAlloc,
 		deliversMgr:    deliverMgr,
 		handledRegions: make(map[int]*regionStat),
 	}
@@ -600,7 +603,7 @@ func (tr *TableRestore) loadRegions() error {
 	tasks := make([]*regionRestoreTask, 0, len(regions))
 	for _, region := range regions {
 		executor := NewRegionRestoreExectuor(tr.cfg, tr.tableMeta)
-		task, err := newRegionRestoreTask(region, executor, tr.dbInfo, tr.tableInfo, tr.cfg, tr.deliversMgr, tr.onRegionFinished)
+		task, err := newRegionRestoreTask(region, executor, tr.dbInfo, tr.tableInfo, tr.cfg, tr.deliversMgr, tr.alloc, tr.onRegionFinished)
 		if err != nil {
 			return errors.Trace(err)
 		}
