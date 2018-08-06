@@ -37,10 +37,9 @@ type TableKVEncoder struct {
 func NewTableKVEncoder(
 	dbName string,
 	table string, tableID int64,
-	columns int, sqlMode string) (*TableKVEncoder, error) {
+	columns int, sqlMode string, alloc *kvec.Allocator) (*TableKVEncoder, error) {
 
-	idAlloc := kvec.NewAllocator()
-	encoder, err := kvec.New(dbName, idAlloc)
+	encoder, err := kvec.New(dbName, alloc)
 	if err != nil {
 		common.AppLogger.Errorf("err %s", errors.ErrorStack(err))
 		return nil, errors.Trace(err)
@@ -50,7 +49,7 @@ func NewTableKVEncoder(
 		table:       table,
 		tableID:     tableID,
 		encoder:     encoder,
-		idAllocator: idAlloc,
+		idAllocator: alloc,
 		columns:     columns,
 	}
 
