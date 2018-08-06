@@ -33,7 +33,7 @@ ifeq ("$(WITH_RACE)", "1")
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
-.PHONY: all build parser clean parserlib lightning
+.PHONY: all build parser clean lightning
 
 default: clean lightning checksuccess
 
