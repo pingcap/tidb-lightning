@@ -3,6 +3,7 @@ package kv
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/metric"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	"github.com/pingcap/tidb/kv"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
@@ -22,11 +23,9 @@ func InitMembufCap(batchSQLLength int64) {
 }
 
 type TableKVEncoder struct {
-	db          string
-	table       string
-	tableID     int64
-	tableSchema string
-	columns     int
+	table   string
+	tableID int64
+	columns int
 
 	stmtIds   []uint32
 	bufValues []interface{}
@@ -36,45 +35,41 @@ type TableKVEncoder struct {
 }
 
 func NewTableKVEncoder(
-	db string, table string, tableID int64,
-	columns int, tableSchema string, sqlMode string, idAlloc *kvec.Allocator) (*TableKVEncoder, error) {
+	dbName string,
+	table string, tableID int64,
+	columns int, sqlMode string) (*TableKVEncoder, error) {
 
-	kvEncoder, err := kvec.New(db, idAlloc)
+	idAlloc := kvec.NewAllocator()
+	encoder, err := kvec.New(dbName, idAlloc)
 	if err != nil {
-		common.AppLogger.Errorf("[sql2kv] kv encoder create failed : %v", err)
+		common.AppLogger.Errorf("err %s", errors.ErrorStack(err))
 		return nil, errors.Trace(err)
 	}
-
-	err = kvEncoder.SetSystemVariable("sql_mode", sqlMode)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	common.AppLogger.Debugf("set sql_mode=%s", sqlMode)
 
 	kvcodec := &TableKVEncoder{
-		db:          db,
 		table:       table,
 		tableID:     tableID,
-		encoder:     kvEncoder,
+		encoder:     encoder,
 		idAllocator: idAlloc,
-		tableSchema: tableSchema,
 		columns:     columns,
 	}
 
-	if err = kvcodec.init(); err != nil {
+	if err := kvcodec.init(sqlMode); err != nil {
 		kvcodec.Close()
 		return nil, errors.Trace(err)
 	}
 
+	metric.KvEncoderCounter.WithLabelValues("open").Inc()
+
 	return kvcodec, nil
 }
 
-func (kvcodec *TableKVEncoder) init() error {
-	if err := kvcodec.encoder.ExecDDLSQL(kvcodec.tableSchema); err != nil {
-		common.AppLogger.Errorf("[sql2kv] tableSchema execute failed : %v", err)
+func (kvcodec *TableKVEncoder) init(sqlMode string) error {
+	err := kvcodec.encoder.SetSystemVariable("sql_mode", sqlMode)
+	if err != nil {
 		return errors.Trace(err)
 	}
-
+	common.AppLogger.Debugf("set sql_mode=%s", sqlMode)
 	if PrepareStmtMode {
 		reserve := (encodeBatchRows * kvcodec.columns) << 1 // TODO : rows x ( cols + indices )
 		kvcodec.bufValues = make([]interface{}, 0, reserve)
@@ -107,6 +102,7 @@ func (kvcodec *TableKVEncoder) ResetRowID(rowID int64) {
 }
 
 func (kvcodec *TableKVEncoder) Close() error {
+	metric.KvEncoderCounter.WithLabelValues("closed").Inc()
 	return errors.Trace(kvcodec.encoder.Close())
 }
 
