@@ -1,5 +1,5 @@
-hash: 08e0621c1dd951e797d0c49fc583e1df24c41fdc8af42d4314a53b5709fafc46
-updated: 2018-07-10T20:06:59.334246857+08:00
+hash: d736a54ef013e31430514d62ab9191789a6670f0d43603220ee5abd25f21a885
+updated: 2018-07-19T11:33:36.611727327+08:00
 imports:
 - name: github.com/apache/thrift
   version: b2a4d4ae21c789b689dd162deb819665567f481c
@@ -107,7 +107,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tidb
-  version: 1e82cb9632346d35b61e416eae0264447cb3a855
+  version: 8058fd644b57089640502d946466ae84fd490e25
   subpackages:
   - ast
   - config
@@ -116,6 +116,7 @@ imports:
   - distsql
   - domain
   - executor
+  - executor/aggfuncs
   - expression
   - expression/aggregation
   - infoschema
@@ -174,7 +175,7 @@ imports:
   - util/sqlexec
   - util/stringutil
 - name: github.com/pingcap/tipb
-  version: 2d5073e5521a10f8db2adc0eaab2c46ca0a151d9
+  version: 015341a07dc30de16a7cca0fc77231ccacc4b397
   subpackages:
   - go-binlog
   - go-tipb
@@ -217,7 +218,7 @@ imports:
   - thrift-gen/zipkincore
   - utils
 - name: github.com/uber/jaeger-lib
-  version: ac31d434ba1061771d338557e4ec2d80d0a960b9
+  version: 34d9cc24e47ab70783050b52f79c06eb3ac850ba
   subpackages:
   - metrics
 - name: golang.org/x/net
