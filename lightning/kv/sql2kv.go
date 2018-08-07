@@ -18,12 +18,7 @@ func InitMembufCap(batchSQLLength int64) {
 }
 
 type TableKVEncoder struct {
-	table   string
 	tableID int64
-	columns int
-
-	stmtIds   []uint32
-	bufValues []interface{}
 
 	encoder     kvec.KvEncoder
 	idAllocator *kvec.Allocator
@@ -31,8 +26,9 @@ type TableKVEncoder struct {
 
 func NewTableKVEncoder(
 	dbName string,
-	table string, tableID int64,
-	columns int, sqlMode string, alloc *kvec.Allocator) (*TableKVEncoder, error) {
+	tableID int64,
+	sqlMode string,
+	alloc *kvec.Allocator) (*TableKVEncoder, error) {
 
 	encoder, err := kvec.New(dbName, alloc)
 	if err != nil {
@@ -41,11 +37,9 @@ func NewTableKVEncoder(
 	}
 
 	kvcodec := &TableKVEncoder{
-		table:       table,
 		tableID:     tableID,
 		encoder:     encoder,
 		idAllocator: alloc,
-		columns:     columns,
 	}
 
 	if err := kvcodec.init(sqlMode); err != nil {
