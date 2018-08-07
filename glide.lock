@@ -1,5 +1,5 @@
-hash: 23113fe7662de08ee29fbf2724eff14782f5d893d5c9a5a736378966b97fbdc0
-updated: 2018-08-07T15:57:15.378749803+08:00
+hash: 8119c9a11c792c5aea0a678b73b44b796de6dfb8b9f096d66a85b83fc7479e8c
+updated: 2018-08-07T18:05:13.851795482+08:00
 imports:
 - name: github.com/apache/thrift
   version: b2a4d4ae21c789b689dd162deb819665567f481c
@@ -12,7 +12,7 @@ imports:
 - name: github.com/BurntSushi/toml
   version: b26d9c308763d68093482582cea63d69be07a0f0
 - name: github.com/codahale/hdrhistogram
-  version: 3a0bb77429bd3a61596f5e8a3172445844342120
+  version: f8ad88b59a584afeee9d334eff879b104439117b
 - name: github.com/coreos/etcd
   version: eddf599c689ec85f4752060edff5a72e81e9106a
   subpackages:
@@ -52,7 +52,7 @@ imports:
 - name: github.com/google/btree
   version: 316fb6d3f031ae8f4d457c6c5186b9e3ded70435
 - name: github.com/grpc-ecosystem/go-grpc-middleware
-  version: e9c5d9645c437ab1b204cff969a2c0fb16cd4276
+  version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
   subpackages:
   - tags
   - tracing/opentracing
@@ -103,7 +103,7 @@ imports:
   - pkg/raft_serverpb
   - pkg/tikvpb
 - name: github.com/pingcap/pd
-  version: 8fc28dd7ff4c5c729f8064593bed12d13c4a245d
+  version: eed819b6999186a4bf2d25255f8d61b371a450d6
   subpackages:
   - pd-client
 - name: github.com/pingcap/tidb
@@ -204,6 +204,10 @@ imports:
   version: abf152e5f3e97f2fafac028d2cc06c1feb87ffa5
 - name: github.com/satori/go.uuid
   version: f58768cc1a7a7e77a3bd49e98cdd21419399b6a3
+- name: github.com/siddontang/go
+  version: cb568a3e5cc06256f91a2da5a87455f717eb33f4
+  subpackages:
+  - sync2
 - name: github.com/sirupsen/logrus
   version: 3bcb09397d6d88e7676a9bc8433ca11ba5304837
 - name: github.com/spaolacci/murmur3
