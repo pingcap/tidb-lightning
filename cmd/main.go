@@ -45,11 +45,13 @@ func main() {
 	go func() {
 		sig := <-sc
 		common.AppLogger.Infof("Got signal %v to exit.", sig)
-		app.Stop()
+		app.Close()
 	}()
 
-	app.Run()
-
+	if err := app.Run(); err != nil {
+		common.AppLogger.Infof("running err %v", errors.ErrorStack(err))
+	}
+	app.Close()
 	common.AppLogger.Info("tidb lightning exit.")
 	return
 }

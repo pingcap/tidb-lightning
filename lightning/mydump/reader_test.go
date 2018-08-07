@@ -12,6 +12,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+//TODO: the tests is stale and it may take long time to fix them. It's better to refactor the mydump package and rewrite the tests in the future.
+
 const (
 	utestDB         string = "_mydump_reader_utest_"
 	utestDataSrouce string = "./examples"

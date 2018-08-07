@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
-	"sync"
 
 	"github.com/juju/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -18,14 +17,14 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
+	"github.com/siddontang/go/sync2"
 )
 
 type Lightning struct {
 	cfg      *config.Config
 	ctx      context.Context
 	shutdown context.CancelFunc
-
-	wg sync.WaitGroup
+	closed   sync2.AtomicBool
 }
 
 func initEnv(cfg *config.Config) error {
@@ -57,7 +56,7 @@ func New(cfg *config.Config) *Lightning {
 	}
 }
 
-func (l *Lightning) Run() {
+func (l *Lightning) Run() error {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	common.PrintInfo("lightning", func() {
 		common.AppLogger.Infof("cfg %s", l.cfg)
@@ -65,15 +64,10 @@ func (l *Lightning) Run() {
 	metric.CalcCPUUsageBackground(l.ctx)
 
 	if l.handleCommandFlagsAndExits() {
-		return
+		return nil
 	}
 
-	l.wg.Add(1)
-	go func() {
-		defer l.wg.Done()
-		l.run()
-	}()
-	l.wg.Wait()
+	return errors.Trace(l.run())
 }
 
 func (l *Lightning) handleCommandFlagsAndExits() (exits bool) {
@@ -104,19 +98,17 @@ func (l *Lightning) handleCommandFlagsAndExits() (exits bool) {
 	return false
 }
 
-func (l *Lightning) run() {
+func (l *Lightning) run() error {
 	mdl, err := mydump.NewMyDumpLoader(l.cfg)
 	if err != nil {
-		common.AppLogger.Errorf("failed to load mydumper source : %s", errors.ErrorStack(err))
-		return
+		return errors.Trace(err)
 	}
 
 	dbMetas := mdl.GetDatabases()
 	procedure := restore.NewRestoreControlloer(l.ctx, dbMetas, l.cfg)
 	defer procedure.Close()
 
-	procedure.Run(l.ctx)
-	return
+	return errors.Trace(procedure.Run(l.ctx))
 }
 
 func (l *Lightning) doCompact() error {
@@ -143,7 +135,11 @@ func (l *Lightning) switchMode(mode sstpb.SwitchMode) error {
 	return errors.Trace(cli.Switch(mode))
 }
 
-func (l *Lightning) Stop() {
+func (l *Lightning) Close() {
+	if l.closed.Get() {
+		return
+	}
 	l.shutdown()
 	l.wg.Wait()
+	l.closed.Set(true)
 }

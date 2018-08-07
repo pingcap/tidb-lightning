@@ -8,6 +8,8 @@ import (
 	md "github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
+//TODO: the tests is stale and it may take long time to fix them. It's better to refactor the mydump package and rewrite the tests in the future.
+
 var _ = Suite(&testMydumpLoaderSuite{})
 
 func TestMydumps(t *testing.T) {
