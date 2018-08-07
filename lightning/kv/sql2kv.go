@@ -75,9 +75,9 @@ func (kvcodec *TableKVEncoder) NextRowID() int64 {
 	return kvcodec.idAllocator.Base() + 1
 }
 
-func (kvcodec *TableKVEncoder) SQL2KV(sql []byte) ([]kvec.KvPair, uint64, error) {
+func (kvcodec *TableKVEncoder) SQL2KV(sql string) ([]kvec.KvPair, uint64, error) {
 	// via sql execution
-	kvPairs, rowsAffected, err := kvcodec.encoder.Encode(string(sql), kvcodec.tableID)
+	kvPairs, rowsAffected, err := kvcodec.encoder.Encode(sql, kvcodec.tableID)
 	if err != nil {
 		common.AppLogger.Errorf("[sql2kv] sql encode error = %v", err)
 		return nil, 0, errors.Trace(err)

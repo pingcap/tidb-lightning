@@ -105,7 +105,10 @@ func (l *Lightning) run() error {
 	}
 
 	dbMetas := mdl.GetDatabases()
-	procedure := restore.NewRestoreControlloer(l.ctx, dbMetas, l.cfg)
+	procedure, err := restore.NewRestoreControlloer(l.ctx, dbMetas, l.cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer procedure.Close()
 
 	return errors.Trace(procedure.Run(l.ctx))
@@ -140,6 +143,5 @@ func (l *Lightning) Close() {
 		return
 	}
 	l.shutdown()
-	l.wg.Wait()
 	l.closed.Set(true)
 }

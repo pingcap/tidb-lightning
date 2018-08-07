@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"runtime"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-tools/pkg/table-router"
 )
 
 const (
@@ -40,9 +42,10 @@ type Config struct {
 	// not implemented yet.
 	// ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
 
-	Mydumper     MydumperRuntime `toml:"mydumper" json:"mydumper"`
-	TikvImporter TikvImporter    `toml:"tikv-importer" json:"tikv-importer"`
-	PostRestore  PostRestore     `toml:"post-restore" json:"post-restore"`
+	Mydumper     MydumperRuntime     `toml:"mydumper" json:"mydumper"`
+	TikvImporter TikvImporter        `toml:"tikv-importer" json:"tikv-importer"`
+	PostRestore  PostRestore         `toml:"post-restore" json:"post-restore"`
+	RouteRules   []*router.TableRule `toml:"route-rules" json:"route-rules"`
 
 	// command line flags
 	ConfigFile   string `json:"config-file"`
@@ -139,6 +142,13 @@ func LoadConfig(args []string) (*Config, error) {
 	if cfg.TikvImporter.BatchSize <= 0 {
 		cfg.TikvImporter.BatchSize = KVMaxBatchSize
 	}
+
+	routeRules := make([]*router.TableRule, 0, len(cfg.RouteRules))
+	for _, rule := range cfg.RouteRules {
+		rule.SchemaPattern = strings.ToLower(rule.SchemaPattern)
+		rule.TablePattern = strings.ToLower(rule.TablePattern)
+	}
+	cfg.RouteRules = routeRules
 
 	return cfg, nil
 }

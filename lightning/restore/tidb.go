@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
+	"github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb/model"
 	"golang.org/x/net/context"
 )
@@ -60,8 +61,11 @@ func (timgr *TiDBManager) Close() {
 	timgr.db.Close()
 }
 
-func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, tablesSchema map[string]string) error {
+func (timgr *TiDBManager) InitSchema(ctx context.Context, router *router.Table, database string, tablesSchema map[string]string) error {
+	originalDatabase := database
+	database, _ = fetchMatchedLiteral(router, database, "")
 	createDatabase := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
+	common.AppLogger.Infof("create database statement: %s", createDatabase)
 	err := common.ExecWithRetry(ctx, timgr.db, []string{createDatabase})
 	if err != nil {
 		return errors.Trace(err)
@@ -72,21 +76,29 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 		return errors.Trace(err)
 	}
 
-	for _, sqlCreateTable := range tablesSchema {
-		timer := time.Now()
-		if err = safeCreateTable(ctx, timgr.db, sqlCreateTable); err != nil {
+	for table, sqlCreateTable := range tablesSchema {
+		if err = safeCreateTable(ctx, router, timgr.db, originalDatabase, table, sqlCreateTable); err != nil {
 			return errors.Trace(err)
 		}
-		common.AppLogger.Infof("%s takes %v", sqlCreateTable, time.Since(timer))
 	}
 
 	return nil
 }
 
-func createTableIfNotExistsStmt(createTable string) string {
-	upCreateTable := strings.ToUpper(createTable)
-	if strings.Index(upCreateTable, "CREATE TABLE IF NOT EXISTS") < 0 {
-		substrs := strings.SplitN(upCreateTable, "CREATE TABLE", 2)
+func safeCreateTable(ctx context.Context, router *router.Table, db *sql.DB, schema string, table string, createTable string) error {
+	createTable = createTableIfNotExistsStmt(router, schema, table, createTable)
+
+	timer := time.Now()
+	err := common.ExecWithRetry(ctx, db, []string{createTable})
+	common.AppLogger.Infof("%s takes %v", createTable, time.Since(timer))
+	return errors.Trace(err)
+}
+
+func createTableIfNotExistsStmt(router *router.Table, schema string, table string, createTable string) string {
+	createTable = strings.ToUpper(createTable)
+	if strings.Index(createTable, "CREATE TABLE IF NOT EXISTS") < 0 {
+		substrs := strings.SplitN(createTable, "CREATE TABLE", 2)
+		// TODO: rename table
 		if len(substrs) == 2 {
 			prefix := substrs[0] // ps : annotation might be
 			schema := substrs[1] // ps : schema definition in detail
@@ -94,13 +106,10 @@ func createTableIfNotExistsStmt(createTable string) string {
 		}
 	}
 
-	return createTable
-}
+	_, targetTable := fetchMatchedLiteral(router, schema, table)
+	createTable = renameShardingTable(createTable, table, targetTable)
 
-func safeCreateTable(ctx context.Context, db *sql.DB, createTable string) error {
-	createTable = createTableIfNotExistsStmt(createTable)
-	err := common.ExecWithRetry(ctx, db, []string{createTable})
-	return errors.Trace(err)
+	return createTable
 }
 
 func (timgr *TiDBManager) GetSchemas() ([]*model.DBInfo, error) {

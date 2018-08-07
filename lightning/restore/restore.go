@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
+	"github.com/pingcap/tidb-tools/pkg/table-router"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/satori/go.uuid"
@@ -50,9 +51,14 @@ type RestoreController struct {
 	regionWorkers    *RestoreWorkerPool
 	deliverMgr       *kv.KVDeliverKeeper
 	postProcessQueue chan *TableRestore
+	router           *router.Table
 }
 
-func NewRestoreControlloer(ctx context.Context, dbMetas map[string]*mydump.MDDatabaseMeta, cfg *config.Config) *RestoreController {
+func NewRestoreControlloer(ctx context.Context, dbMetas map[string]*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
+	router, err := router.NewTableRouter(nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	rc := &RestoreController{
 		cfg:              cfg,
 		dbMetas:          dbMetas,
@@ -60,17 +66,33 @@ func NewRestoreControlloer(ctx context.Context, dbMetas map[string]*mydump.MDDat
 		regionWorkers:    NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
 		deliverMgr:       kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
 		postProcessQueue: make(chan *TableRestore),
+		router:           router,
 	}
 
 	go rc.handlePostProcessing(ctx)
-	return rc
+	return rc, nil
+}
+
+func (rc *RestoreController) genRules() error {
+	for _, rule := range rc.cfg.RouteRules {
+		err := rc.router.AddRule(rule)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (rc *RestoreController) Close() {
 	rc.deliverMgr.Close()
 }
 
-func (rc *RestoreController) Run(ctx context.Context) {
+func (rc *RestoreController) Run(ctx context.Context) error {
+	err := rc.genRules()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	timer := time.Now()
 	opts := []func(context.Context) error{
 		rc.switchToImportMode,
@@ -97,7 +119,7 @@ func (rc *RestoreController) Run(ctx context.Context) {
 	common.AppLogger.Infof("Timing statistic :\n%s", statistic)
 	common.AppLogger.Infof("the whole procedure takes %v", time.Since(timer))
 
-	return
+	return nil
 }
 
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
@@ -115,7 +137,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			for tbl, tblMeta := range dbMeta.Tables {
 				tablesSchema[tbl] = tblMeta.GetSchema()
 			}
-			err = tidbMgr.InitSchema(ctx, db, tablesSchema)
+			err = tidbMgr.InitSchema(ctx, rc.router, db, tablesSchema)
 			if err != nil {
 				return errors.Errorf("db schema failed to init : %v", err)
 			}
@@ -466,8 +488,8 @@ func newRegionRestoreTask(
 	callback restoreCallback) (*regionRestoreTask, error) {
 
 	encoder, err := kv.NewTableKVEncoder(
-		dbInfo.Name, tableInfo.Name, tableInfo.ID,
-		tableInfo.Columns, cfg.TiDB.SQLMode, alloc)
+		dbInfo.Name, tableInfo.ID,
+		cfg.TiDB.SQLMode, alloc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -478,11 +500,9 @@ func newRegionRestoreTask(
 		executor: executor,
 		delivers: delivers,
 
-		dbInfo:    dbInfo,
-		tableInfo: tableInfo,
-		cfg:       cfg,
-		encoder:   encoder,
-		callback:  callback,
+		cfg:      cfg,
+		encoder:  encoder,
+		callback: callback,
 	}, nil
 }
 
@@ -864,7 +884,10 @@ func (exc *RegionRestoreExectuor) Run(
 		for _, stmt := range sqls {
 			// sql -> kv
 			start = time.Now()
-			kvs, affectedRows, err := kvEncoder.SQL2KV(stmt)
+			// TODO: rename table
+			// TODO: we should generate target table before, not here.
+			sql := renameShardingTable(string(stmt), "", "") //TODO
+			kvs, affectedRows, err := kvEncoder.SQL2KV(sql)
 			metrics.MarkTiming(encodeMark, start)
 			common.AppLogger.Debugf("len(kvs) %d, len(sql) %d", len(kvs), len(stmt))
 			if err != nil {
