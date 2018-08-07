@@ -97,6 +97,8 @@ import:
   version: 1eb03e3cc9d345307a45ec82bd3016cde4bd4464
 - package: github.com/cznic/y
   version: 9fdf92d4aac058959f814606bb729ed50f5e4240
+- package: github.com/pingcap/tidb-tools
+  version: b605dbc412c4ffb8082d4e21829c60e68533f576
 testImport:
 - package: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
