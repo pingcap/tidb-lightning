@@ -8,6 +8,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/model"
 )
 
 var (
@@ -20,6 +21,9 @@ type MDDatabaseMeta struct {
 	Name       string
 	SchemaFile string
 	Tables     map[string]*MDTableMeta
+	// dbInfo will be set later
+	// TODO: lock?
+	dbInfo *model.DBInfo
 }
 
 func (m *MDDatabaseMeta) String() string {
@@ -28,6 +32,14 @@ func (m *MDDatabaseMeta) String() string {
 		common.AppLogger.Error("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
 	}
 	return string(v)
+}
+
+func (m *MDDatabaseMeta) SetDBInfo(dbInfo *model.DBInfo) {
+	m.dbInfo = dbInfo
+}
+
+func (m *MDDatabaseMeta) GetDBInfo() *model.DBInfo {
+	return m.dbInfo
 }
 
 func (m *MDDatabaseMeta) GetSchema() string {
@@ -44,6 +56,17 @@ type MDTableMeta struct {
 	Name       string
 	SchemaFile string
 	DataFiles  []string
+	// tableInfo will be set later.
+	// TODO: lock?
+	tableInfo *model.TableInfo
+}
+
+func (m *MDTableMeta) SetTableInfo(tableInfo *model.TableInfo) {
+	m.tableInfo = tableInfo
+}
+
+func (m *MDTableMeta) GetTableInfo() *model.TableInfo {
+	return m.tableInfo
 }
 
 func (m *MDTableMeta) GetSchema() string {

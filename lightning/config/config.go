@@ -147,6 +147,7 @@ func LoadConfig(args []string) (*Config, error) {
 	for _, rule := range cfg.RouteRules {
 		rule.SchemaPattern = strings.ToLower(rule.SchemaPattern)
 		rule.TablePattern = strings.ToLower(rule.TablePattern)
+		routeRules = append(routeRules, rule)
 	}
 	cfg.RouteRules = routeRules
 

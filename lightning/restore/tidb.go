@@ -13,6 +13,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	tidb "github.com/pingcap/tidb-lightning/lightning/model"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb/model"
@@ -23,20 +24,6 @@ type TiDBManager struct {
 	db      *sql.DB
 	client  *http.Client
 	baseURL *url.URL
-}
-
-type TidbDBInfo struct {
-	Name   string
-	Tables map[string]*TidbTableInfo
-}
-
-type TidbTableInfo struct {
-	ID              int64
-	Name            string
-	Columns         int
-	Indices         int
-	CreateTableStmt string
-	core            *model.TableInfo
 }
 
 func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
@@ -61,7 +48,7 @@ func (timgr *TiDBManager) Close() {
 	timgr.db.Close()
 }
 
-func (timgr *TiDBManager) InitSchema(ctx context.Context, router *router.Table, database string, tablesSchema map[string]string) error {
+func (timgr *TiDBManager) InitSchema(ctx context.Context, router *router.Table, database string, tableSchemas map[string]string) error {
 	originalDatabase := database
 	database, _ = fetchMatchedLiteral(router, database, "")
 	createDatabase := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
@@ -76,7 +63,7 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, router *router.Table, 
 		return errors.Trace(err)
 	}
 
-	for table, sqlCreateTable := range tablesSchema {
+	for table, sqlCreateTable := range tableSchemas {
 		if err = safeCreateTable(ctx, router, timgr.db, originalDatabase, table, sqlCreateTable); err != nil {
 			return errors.Trace(err)
 		}
@@ -119,7 +106,7 @@ func (timgr *TiDBManager) GetSchemas() ([]*model.DBInfo, error) {
 	}
 	// schema.Tables is empty, we need to set them manually.
 	for _, schema := range schemas {
-		tables, err := timgr.getTables(schema.Name.String())
+		tables, err := timgr.getTables(schema.Name.L)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -171,42 +158,68 @@ func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
 	return tables, errors.Annotatef(err, "get tables for schema %s", schema)
 }
 
-func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas map[string]*mydump.MDDatabaseMeta) (map[string]*TidbDBInfo, error) {
-	result := make(map[string]*TidbDBInfo, len(schemas))
-	for schema := range schemas {
-		tables, err := timgr.getTables(schema)
-		if err != nil {
-			return nil, errors.Trace(err)
+func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, router *router.Table, schemas map[string]*mydump.MDDatabaseMeta) (err error) {
+	tableInfoCache := make(map[string][]*model.TableInfo)
+	for srcSchema, dbMeta := range schemas {
+
+		targetSchema, _ := fetchMatchedLiteral(router, srcSchema, "")
+
+		tables, ok := tableInfoCache[targetSchema]
+		if !ok {
+			tables, err = timgr.getTables(targetSchema)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tableInfoCache[targetSchema] = tables
 		}
 
-		dbInfo := &TidbDBInfo{
-			Name:   schema,
-			Tables: make(map[string]*TidbTableInfo),
+		dbInfo := &tidb.DBInfo{
+			Name:   targetSchema,
+			Tables: make(map[string]*tidb.TableInfo),
 		}
 
 		for _, tbl := range tables {
-			tableName := tbl.Name.String()
+			tableName := tbl.Name.L
 			if tbl.State != model.StatePublic {
-				return nil, errors.Errorf("table [%s.%s] state is not public", schema, tableName)
+				return errors.Errorf("table [%s.%s] state is not public", targetSchema, tableName)
 			}
-			createTableStmt, err := timgr.getCreateTableStmt(ctx, schema, tableName)
+
+			createTableStmt, err := timgr.getCreateTableStmt(ctx, targetSchema, tableName)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
-			tableInfo := &TidbTableInfo{
+
+			tableInfo := &tidb.TableInfo{
 				ID:              tbl.ID,
 				Name:            tableName,
 				Columns:         len(tbl.Columns),
 				Indices:         len(tbl.Indices),
 				CreateTableStmt: createTableStmt,
-				core:            tbl,
+				Core:            tbl,
 			}
+
 			dbInfo.Tables[tableName] = tableInfo
 		}
 
-		result[schema] = dbInfo
+		// set TableInfo
+		common.AppLogger.Infof("meta tables %+v", dbMeta.Tables)
+		for srcTable, tableMeta := range dbMeta.Tables {
+			_, targetTable := fetchMatchedLiteral(router, srcSchema, srcTable)
+			common.AppLogger.Infof("srcSchema %s, srcTable %s, targetTable %s", srcSchema, srcTable, targetTable)
+			common.AppLogger.Infof("dbinfo.tables %+v", dbInfo.Tables)
+			for _, tableInfo := range dbInfo.Tables {
+				common.AppLogger.Infof("set table info %+v", tableInfo)
+				if tableInfo.Name == targetTable {
+					tableMeta.SetTableInfo(tableInfo)
+				}
+			}
+		}
+
+		// set DBInfo
+		common.AppLogger.Infof("set dbinfo info %+v", dbInfo)
+		dbMeta.SetDBInfo(dbInfo)
 	}
-	return result, nil
+	return nil
 }
 
 func (timgr *TiDBManager) getCreateTableStmt(ctx context.Context, schema, table string) (string, error) {
