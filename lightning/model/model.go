@@ -11,6 +11,7 @@ type DBInfo struct {
 // TableInfo represents table information.
 type TableInfo struct {
 	ID              int64
+	DBName          string
 	Name            string
 	Columns         int
 	Indices         int

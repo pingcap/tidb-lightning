@@ -191,6 +191,7 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, router *router.Tab
 
 			tableInfo := &tidb.TableInfo{
 				ID:              tbl.ID,
+				DBName:          targetSchema,
 				Name:            tableName,
 				Columns:         len(tbl.Columns),
 				Indices:         len(tbl.Indices),
@@ -242,9 +243,9 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 	return errors.Annotatef(err, "%s", query)
 }
 
-func AlterAutoIncrement(ctx context.Context, db *sql.DB, schema string, table string, incr int64) error {
-	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d", schema, table, incr)
-	common.AppLogger.Infof("[%s.%s] %s", schema, table, query)
+func AlterAutoIncrement(ctx context.Context, db *sql.DB, uniqueTable string, incr int64) error {
+	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", uniqueTable, incr)
+	common.AppLogger.Infof("[%s] %s", uniqueTable, query)
 	err := common.ExecWithRetry(ctx, db, []string{query})
 	if err != nil {
 		common.AppLogger.Errorf("query failed %v, you should do it manually, err %v", query, err)

@@ -52,6 +52,23 @@ type RestoreController struct {
 	deliverMgr       *kv.KVDeliverKeeper
 	postProcessQueue chan *TableRestore
 	router           *router.Table
+
+	allocMu struct {
+		sync.RWMutex
+		allocators map[string]*kvenc.Allocator
+	}
+
+	localDataMu struct {
+		sync.RWMutex
+		checksums      map[string]*verify.KVChecksum
+		tableMaxRowIDs map[string]int64
+		tableRows      map[string]uint64
+	}
+
+	shardingCounterMu struct {
+		sync.RWMutex
+		counters map[string]int64
+	}
 }
 
 func NewRestoreControlloer(ctx context.Context, dbMetas map[string]*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
@@ -68,6 +85,12 @@ func NewRestoreControlloer(ctx context.Context, dbMetas map[string]*mydump.MDDat
 		postProcessQueue: make(chan *TableRestore),
 		router:           router,
 	}
+
+	rc.allocMu.allocators = make(map[string]*kvenc.Allocator)
+	rc.localDataMu.checksums = make(map[string]*verify.KVChecksum)
+	rc.localDataMu.tableMaxRowIDs = make(map[string]int64)
+	rc.localDataMu.tableRows = make(map[string]uint64)
+	rc.shardingCounterMu.counters = make(map[string]int64)
 
 	go rc.handlePostProcessing(ctx)
 	return rc, nil
@@ -156,11 +179,22 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	timer := time.Now()
 	var wg sync.WaitGroup
 
+	rc.createAllocators()
+	rc.countShardingTables()
+
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo := dbMeta.GetDBInfo()
 		for _, tableMeta := range dbMeta.Tables {
+			uniqueTable := common.UniqueTable(tableMeta.GetTableInfo().DBName, tableMeta.GetTableInfo().Name)
+			rc.allocMu.RLock()
 
-			tr, err := NewTableRestore(ctx, dbInfo, tableMeta, rc.cfg, rc.deliverMgr)
+			alloc, ok := rc.allocMu.allocators[uniqueTable]
+			if !ok {
+				rc.allocMu.RUnlock()
+				return errors.Errorf("not found allocator for table %s", uniqueTable)
+			}
+			rc.allocMu.RUnlock()
+			tr, err := NewTableRestore(ctx, dbInfo, tableMeta, rc.cfg, rc.deliverMgr, alloc)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -191,6 +225,28 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	common.AppLogger.Infof("restore all tables data takes %v", time.Since(timer))
 
 	return nil
+}
+
+func (rc *RestoreController) createAllocators() {
+	uniqueTables := rc.getUniqueTables()
+	rc.allocMu.Lock()
+	for _, table := range uniqueTables {
+		rc.allocMu.allocators[table] = kvenc.NewAllocator()
+	}
+	rc.allocMu.Unlock()
+}
+
+func (rc *RestoreController) countShardingTables() {
+	rc.shardingCounterMu.Lock()
+
+	for _, dbMeta := range rc.dbMetas {
+		for _, tableMeta := range dbMeta.Tables {
+			uniqueTable := common.UniqueTable(tableMeta.GetTableInfo().DBName, tableMeta.GetTableInfo().Name)
+			rc.shardingCounterMu.counters[uniqueTable]++
+		}
+	}
+
+	rc.shardingCounterMu.Unlock()
 }
 
 func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, w *RestoreWorker) error {
@@ -242,21 +298,53 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	common.AppLogger.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
 
 	var (
-		tableRows uint64
-		checksum  = verify.NewKVChecksum(0)
+		tableRows     uint64
+		tableMaxRowID int64
+		checksum      = verify.NewKVChecksum(0)
 	)
+
 	for _, regStat := range t.handledRegions {
 		tableRows += regStat.rows
-		if regStat.maxRowID > t.tableMaxRowID {
-			t.tableMaxRowID = regStat.maxRowID
+		if regStat.maxRowID > tableMaxRowID {
+			tableMaxRowID = regStat.maxRowID
 		}
 		checksum.Add(regStat.checksum)
 	}
-	t.localChecksum = checksum
-	t.tableRows = tableRows
+	common.AppLogger.Infof("[%s] local checksum %s which has %d rows", table, checksum, tableRows)
+
+	uniqueTable := common.UniqueTable(t.tableMeta.GetTableInfo().DBName, t.tableMeta.GetTableInfo().Name)
+	rc.setLocaldata(uniqueTable, tableRows, tableMaxRowID, checksum)
 
 	err := rc.postProcessing(t)
 	return errors.Trace(err)
+}
+
+func (rc *RestoreController) setLocaldata(uniqueTable string, tableRows uint64, tableMaxRowID int64, checksum *verify.KVChecksum) {
+	rc.localDataMu.Lock()
+
+	// set tableRows
+	_, ok := rc.localDataMu.tableRows[uniqueTable]
+	if !ok {
+		rc.localDataMu.tableRows[uniqueTable] = tableRows
+	} else {
+		rc.localDataMu.tableRows[uniqueTable] += tableRows
+	}
+
+	// set tableMaxRowID
+	maxRowID, ok := rc.localDataMu.tableMaxRowIDs[uniqueTable]
+	if !ok || tableMaxRowID > maxRowID {
+		rc.localDataMu.tableMaxRowIDs[uniqueTable] = tableMaxRowID
+	}
+
+	// set checksum
+	localChecksum, ok := rc.localDataMu.checksums[uniqueTable]
+	if !ok {
+		rc.localDataMu.checksums[uniqueTable] = checksum
+	} else {
+		localChecksum.Add(checksum)
+	}
+
+	rc.localDataMu.Unlock()
 }
 
 func (rc *RestoreController) postProcessing(t *TableRestore) error {
@@ -281,27 +369,39 @@ func (rc *RestoreController) handlePostProcessing(ctx context.Context) {
 }
 
 func (rc *RestoreController) doPostProcessing(ctx context.Context, t *TableRestore) error {
-	uniqueTable := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
-	// 1. close engine, then calling import
+	// 1. close the engine, then calling import
 	if err := t.importKV(); err != nil {
 		return errors.Trace(err)
 	}
-	common.AppLogger.Infof("[%s] local checksum %s, has imported %d rows", uniqueTable, t.localChecksum, t.tableRows)
 
 	// 2. compact level 1
 	if err := rc.doCompact(ctx, Level1Compact); err != nil {
 		// log it and continue
-		common.AppLogger.Warnf("[%s] do compact %d failed err %v", uniqueTable, Level1Compact, errors.ErrorStack(err))
+		common.AppLogger.Warnf("[%s] do compact %d failed err %v", common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name), Level1Compact, errors.ErrorStack(err))
 	}
 
-	// 3. alter table set auto_increment
-	if err := t.restoreTableMeta(ctx); err != nil {
-		return errors.Trace(err)
-	}
+	uniqueTable := common.UniqueTable(t.tableMeta.GetTableInfo().DBName, t.tableMeta.GetTableInfo().Name)
 
-	// 4. do table checksum
-	if err := t.checksum(ctx); err != nil {
-		return errors.Trace(err)
+	rc.shardingCounterMu.Lock()
+	counter, ok := rc.shardingCounterMu.counters[uniqueTable]
+	if !ok {
+		rc.shardingCounterMu.Unlock()
+		return errors.Errorf("[%s] counter not found", uniqueTable)
+	}
+	counter--
+	rc.shardingCounterMu.counters[uniqueTable] = counter
+	rc.shardingCounterMu.Unlock()
+
+	// counter == 0 means the sharding tables for a specific target table are all finished.
+	if counter == 0 {
+		// 3. alter table set auto_increment
+		if err := rc.setAutoIncrement(ctx, t.tableMeta); err != nil {
+			return errors.Trace(err)
+		}
+		// 4. do table checksum
+		if err := rc.doChecksum(ctx, t.tableMeta); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
@@ -361,11 +461,11 @@ func (rc *RestoreController) getUniqueTables() []string {
 	uniqueTables := make(map[string]struct{})
 	for _, dbMeta := range rc.dbMetas {
 		for _, table := range dbMeta.Tables {
-			name := table.GetTableInfo().Name
-			if _, ok := uniqueTables[name]; ok {
+			uniqueTable := common.UniqueTable(table.GetTableInfo().DBName, table.GetTableInfo().Name)
+			if _, ok := uniqueTables[uniqueTable]; ok {
 				continue
 			}
-			uniqueTables[name] = struct{}{}
+			uniqueTables[uniqueTable] = struct{}{}
 		}
 	}
 	tables := make([]string, 0, len(uniqueTables))
@@ -545,9 +645,6 @@ type TableRestore struct {
 	regions          []*mydump.TableRegion
 	tasks            []*regionRestoreTask
 	handledRegions   map[int]*regionStat
-	localChecksum    *verify.KVChecksum
-	tableMaxRowID    int64
-	tableRows        uint64
 	postProcessError chan error
 }
 
@@ -563,8 +660,8 @@ func NewTableRestore(
 	tableMeta *mydump.MDTableMeta,
 	cfg *config.Config,
 	deliverMgr *kv.KVDeliverKeeper,
+	idAlloc *kvenc.Allocator,
 ) (*TableRestore, error) {
-	idAlloc := kvenc.NewAllocator()
 	encoder, err := kvenc.New(dbInfo.Name, idAlloc)
 	if err != nil {
 		common.AppLogger.Errorf("err %s", errors.ErrorStack(err))
@@ -642,22 +739,35 @@ func (tr *TableRestore) onRegionFinished(ctx context.Context, id int, maxRowID i
 	return nil
 }
 
-func (tr *TableRestore) restoreTableMeta(ctx context.Context) error {
+func (rc *RestoreController) setAutoIncrement(ctx context.Context, tableMeta *mydump.MDTableMeta) error {
 	timer := time.Now()
-	dsn := tr.cfg.TiDB
+	dsn := rc.cfg.TiDB
+
+	tableName := tableMeta.GetTableInfo().Name
+	dbName := tableMeta.GetTableInfo().DBName
+	uniqueTable := common.UniqueTable(dbName, tableName)
+
+	rc.localDataMu.RLock()
+	tableMaxRowID, ok := rc.localDataMu.tableMaxRowIDs[uniqueTable]
+	if !ok {
+		rc.localDataMu.RUnlock()
+		return errors.Errorf("[%s] tableMaxRowID not found", uniqueTable)
+	}
+	rc.localDataMu.RUnlock()
+
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
 		// let it failed and record it to log.
-		common.AppLogger.Warnf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
+		common.AppLogger.Warnf("connect db failed %v, the next operation is: ALTER TABLE %s AUTO_INCREMENT=%d; you should do it manually", err, uniqueTable, tableMaxRowID)
 		return nil
 	}
 	defer db.Close()
 
-	err = AlterAutoIncrement(ctx, db, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
+	err = AlterAutoIncrement(ctx, db, uniqueTable, tableMaxRowID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	common.AppLogger.Infof("[%s] alter table set auto_id takes %v", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name), time.Since(timer))
+	common.AppLogger.Infof("[%s] alter table set auto_id takes %v", uniqueTable, time.Since(timer))
 	return nil
 }
 
@@ -680,31 +790,42 @@ func (tr *TableRestore) importKV() error {
 	return nil
 }
 
+// TODO: checksum
 // do checksum for each table.
-func (tr *TableRestore) checksum(ctx context.Context) error {
-	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
-	if !tr.cfg.PostRestore.Checksum {
-		common.AppLogger.Infof("[%s] Skip checksum.", table)
+func (rc *RestoreController) doChecksum(ctx context.Context, tableMeta *mydump.MDTableMeta) error {
+	dbName := tableMeta.GetTableInfo().DBName
+	tableName := tableMeta.GetTableInfo().Name
+	uniqueTable := common.UniqueTable(dbName, tableName)
+
+	if !rc.cfg.PostRestore.Checksum {
+		common.AppLogger.Infof("[%s] Skip checksum.", uniqueTable)
 		return nil
 	}
 
-	remoteChecksum, err := DoChecksum(ctx, tr.cfg.TiDB, table)
+	remoteChecksum, err := DoChecksum(ctx, rc.cfg.TiDB, uniqueTable)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	localChecksum := tr.localChecksum
+	rc.localDataMu.RLock()
+	localChecksum, ok := rc.localDataMu.checksums[uniqueTable]
+	if !ok {
+		rc.localDataMu.RUnlock()
+		return errors.Errorf("[%s] local checksum not found", uniqueTable)
+	}
+	rc.localDataMu.RUnlock()
+
 	if localChecksum == nil {
-		common.AppLogger.Warnf("[%s] no local checksum, remote checksum is %+v", table, remoteChecksum)
+		common.AppLogger.Warnf("[%s] no local checksum, remote checksum is %+v", uniqueTable, remoteChecksum)
 		return nil
 	}
 	if remoteChecksum.Checksum != localChecksum.Sum() || remoteChecksum.TotalKVs != localChecksum.SumKVS() || remoteChecksum.TotalBytes != localChecksum.SumSize() {
 		common.AppLogger.Errorf("[%s] checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
-			table, remoteChecksum.Checksum, localChecksum.Sum(), remoteChecksum.TotalKVs, localChecksum.SumKVS(), remoteChecksum.TotalBytes, localChecksum.SumSize())
+			uniqueTable, remoteChecksum.Checksum, localChecksum.Sum(), remoteChecksum.TotalKVs, localChecksum.SumKVS(), remoteChecksum.TotalBytes, localChecksum.SumSize())
 		return nil
 	}
 
-	common.AppLogger.Infof("[%s] checksum pass", table)
+	common.AppLogger.Infof("[%s] checksum pass", uniqueTable)
 	return nil
 }
 

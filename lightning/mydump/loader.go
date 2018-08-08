@@ -21,7 +21,6 @@ type MDDatabaseMeta struct {
 	Name       string
 	SchemaFile string
 	Tables     map[string]*MDTableMeta
-	// dbInfo will be set later
 	// TODO: lock?
 	dbInfo *model.DBInfo
 }
@@ -32,6 +31,10 @@ func (m *MDDatabaseMeta) String() string {
 		common.AppLogger.Error("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
 	}
 	return string(v)
+}
+
+func (m *MDDatabaseMeta) IsShardingDB() bool {
+	return strings.ToLower(m.Name) == strings.ToLower(m.dbInfo.Name)
 }
 
 func (m *MDDatabaseMeta) SetDBInfo(dbInfo *model.DBInfo) {
@@ -56,7 +59,6 @@ type MDTableMeta struct {
 	Name       string
 	SchemaFile string
 	DataFiles  []string
-	// tableInfo will be set later.
 	// TODO: lock?
 	tableInfo *model.TableInfo
 }
@@ -67,6 +69,10 @@ func (m *MDTableMeta) SetTableInfo(tableInfo *model.TableInfo) {
 
 func (m *MDTableMeta) GetTableInfo() *model.TableInfo {
 	return m.tableInfo
+}
+
+func (m *MDTableMeta) IsShardingTable() bool {
+	return strings.ToLower(m.Name) == strings.ToLower(m.tableInfo.Name)
 }
 
 func (m *MDTableMeta) GetSchema() string {
