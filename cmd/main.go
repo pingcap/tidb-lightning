@@ -49,7 +49,7 @@ func main() {
 	}()
 
 	if err := app.Run(); err != nil {
-		common.AppLogger.Infof("running err %v", errors.ErrorStack(err))
+		common.AppLogger.Errorf("running err %v", errors.ErrorStack(err))
 	}
 	app.Close()
 	common.AppLogger.Info("tidb lightning exit.")

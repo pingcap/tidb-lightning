@@ -85,7 +85,6 @@ func createTableIfNotExistsStmt(router *router.Table, schema string, table strin
 	createTable = strings.ToUpper(createTable)
 	if strings.Index(createTable, "CREATE TABLE IF NOT EXISTS") < 0 {
 		substrs := strings.SplitN(createTable, "CREATE TABLE", 2)
-		// TODO: rename table
 		if len(substrs) == 2 {
 			prefix := substrs[0] // ps : annotation might be
 			schema := substrs[1] // ps : schema definition in detail

@@ -33,10 +33,6 @@ func (m *MDDatabaseMeta) String() string {
 	return string(v)
 }
 
-func (m *MDDatabaseMeta) IsShardingDB() bool {
-	return strings.ToLower(m.Name) == strings.ToLower(m.dbInfo.Name)
-}
-
 func (m *MDDatabaseMeta) SetDBInfo(dbInfo *model.DBInfo) {
 	m.dbInfo = dbInfo
 }
@@ -69,10 +65,6 @@ func (m *MDTableMeta) SetTableInfo(tableInfo *model.TableInfo) {
 
 func (m *MDTableMeta) GetTableInfo() *model.TableInfo {
 	return m.tableInfo
-}
-
-func (m *MDTableMeta) IsShardingTable() bool {
-	return strings.ToLower(m.Name) == strings.ToLower(m.tableInfo.Name)
 }
 
 func (m *MDTableMeta) GetSchema() string {
