@@ -1,5 +1,5 @@
-hash: d736a54ef013e31430514d62ab9191789a6670f0d43603220ee5abd25f21a885
-updated: 2018-07-19T11:33:36.611727327+08:00
+hash: b18c4cffbc458cec813c2803c9151d971c96a19b9fdf29e29fc9bc02c1868da9
+updated: 2018-08-08T16:19:40.361535051+08:00
 imports:
 - name: github.com/apache/thrift
   version: b2a4d4ae21c789b689dd162deb819665567f481c
@@ -50,7 +50,7 @@ imports:
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
 - name: github.com/google/btree
-  version: 925471ac9e2131377a91e1595defec898166fe49
+  version: 316fb6d3f031ae8f4d457c6c5186b9e3ded70435
 - name: github.com/grpc-ecosystem/go-grpc-middleware
   version: 82921fcf811d228d2fa202bc31238b356bf9f8d5
   subpackages:
@@ -75,7 +75,7 @@ imports:
   - ext
   - log
 - name: github.com/pingcap/goleveldb
-  version: 158edde5a354460121af007d02a00b01c8d03443
+  version: b9ff6c35079e0b7925a4028005fc2dbc37aec69a
   subpackages:
   - leveldb
   - leveldb/cache
@@ -174,6 +174,11 @@ imports:
   - util/ranger
   - util/sqlexec
   - util/stringutil
+- name: github.com/pingcap/tidb-tools
+  version: b605dbc412c4ffb8082d4e21829c60e68533f576
+  subpackages:
+  - pkg/table-router
+  - pkg/table-rule-selector
 - name: github.com/pingcap/tipb
   version: 015341a07dc30de16a7cca0fc77231ccacc4b397
   subpackages:
@@ -199,12 +204,16 @@ imports:
   version: abf152e5f3e97f2fafac028d2cc06c1feb87ffa5
 - name: github.com/satori/go.uuid
   version: f58768cc1a7a7e77a3bd49e98cdd21419399b6a3
+- name: github.com/siddontang/go
+  version: cb568a3e5cc06256f91a2da5a87455f717eb33f4
+  subpackages:
+  - sync2
 - name: github.com/sirupsen/logrus
   version: 3bcb09397d6d88e7676a9bc8433ca11ba5304837
 - name: github.com/spaolacci/murmur3
-  version: 0d12bf811670bf6a1a63828dfbd003eded177fce
+  version: f09979ecbc725b9e6d41a297405f65e7e8804acc
 - name: github.com/twinj/uuid
-  version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
+  version: 7bbe408d339787c56ec15568c947c0959db1b275
 - name: github.com/uber/jaeger-client-go
   version: d021e646f5187d77b55592c3efee1a2810e895d7
   subpackages:
@@ -232,7 +241,7 @@ imports:
   - lex/httplex
   - trace
 - name: golang.org/x/sys
-  version: e48874b42435b4347fc52bdee0424a52abc974d7
+  version: 8d1157a435470616f975ff9bb013bea8d0962067
   subpackages:
   - unix
 - name: golang.org/x/text
@@ -255,11 +264,11 @@ imports:
   - unicode/bidi
   - unicode/norm
 - name: google.golang.org/appengine
-  version: b1f26356af11148e710935ed1ac8a7f5702c7612
+  version: 4216e58b9158e5f1c906f1aca75162a46a2ec88a
   subpackages:
   - cloudsql
 - name: google.golang.org/genproto
-  version: 09f6ed296fc66555a25fe4ce95173148778dfa85
+  version: b0a3dcfcd1a9bd48e63634bd8802960804cf8315
   subpackages:
   - googleapis/api/annotations
   - googleapis/rpc/status

@@ -18,6 +18,9 @@ import (
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/satori/go.uuid"
+	// hack for glide update, delete later
+	_ "github.com/pingcap/tidb-tools/pkg/table-router"
+	_ "github.com/siddontang/go/sync2"
 	"golang.org/x/net/context"
 )
 
