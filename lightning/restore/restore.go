@@ -334,7 +334,7 @@ func (rc *RestoreController) analyze(ctx context.Context) error {
 		return nil
 	}
 
-	tables := rc.getTables()
+	tables := rc.getUniqueTables()
 	err := analyzeTable(ctx, rc.cfg.TiDB, tables)
 	return errors.Trace(err)
 }
@@ -357,17 +357,20 @@ func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.Swit
 	return errors.Trace(cli.Switch(mode))
 }
 
-func (rc *RestoreController) getTables() []string {
-	var numOfTables int
+func (rc *RestoreController) getUniqueTables() []string {
+	uniqueTables := make(map[string]struct{})
 	for _, dbMeta := range rc.dbMetas {
-		numOfTables += len(dbMeta.Tables)
-	}
-	tables := make([]string, 0, numOfTables)
-
-	for _, dbMeta := range rc.dbMetas {
-		for tbl := range dbMeta.Tables {
-			tables = append(tables, common.UniqueTable(dbMeta.Name, tbl))
+		for _, table := range dbMeta.Tables {
+			name := table.GetTableInfo().Name
+			if _, ok := uniqueTables[name]; ok {
+				continue
+			}
+			uniqueTables[name] = struct{}{}
 		}
+	}
+	tables := make([]string, 0, len(uniqueTables))
+	for table := range uniqueTables {
+		tables = append(tables, table)
 	}
 
 	return tables
