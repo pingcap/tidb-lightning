@@ -55,3 +55,17 @@ checksum = true
 compact = true
 # if set true, analyze will do ANALYZE TABLE <table> for each table.
 analyze = true
+
+# route-rules is mainly used to merge sharding databases/tables into one.
+# it also can be used to rename database/table for single database/table.
+# the pattern string supports wildcard, but for now we only support * and ?
+# 1. asterisk character (*, also called "star") matches zero or more characters,
+#    for example, doc* matches doc and document but not dodo;
+#    asterisk character must be the last character of wildcard word.
+# 2. the question mark ? matches exactly one character
+#    for example, doc? matches doc1 and docs but not doc11, doc?? matches docer, doc11.
+# [[route-rules]]
+# schema-pattern = "shard_db_*"
+# table-pattern = "shard_table_*"
+# target-schema = "shard_db"
+# target-table = "shard_table"
