@@ -101,6 +101,8 @@ import:
   version: 9fdf92d4aac058959f814606bb729ed50f5e4240
 - package: github.com/pingcap/tidb-tools
   version: b605dbc412c4ffb8082d4e21829c60e68533f576
+- package: github.com/siddontang/go
+  version: cb568a3e5cc06256f91a2da5a87455f717eb33f4
 testImport:
 - package: github.com/pingcap/check
   version: 9b266636177e249ec28b0aeffe8e86bc272bb481
