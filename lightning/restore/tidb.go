@@ -90,6 +90,10 @@ func createTableIfNotExistsStmt(createTable string) string {
 		if len(substrs) == 2 {
 			prefix := substrs[0] // ps : annotation might be
 			schema := substrs[1] // ps : schema definition in detail
+			common.AppLogger.Debugf("createTable(%d): %s", len(createTable), createTable)
+			common.AppLogger.Debugf("prefix(%d): %s", len(prefix), prefix)
+			common.AppLogger.Debugf("schema(%d): %s", len(schema), schema)
+			common.AppLogger.Debugf("len(createTable)-len(schema): %d", len(createTable)-len(schema))
 			createTable = prefix + " CREATE TABLE IF NOT EXISTS " + createTable[len(createTable)-len(schema):]
 		}
 	}

@@ -71,6 +71,7 @@ func NewTableKVEncoder(
 
 func (kvcodec *TableKVEncoder) init() error {
 	if err := kvcodec.encoder.ExecDDLSQL(kvcodec.tableSchema); err != nil {
+		common.AppLogger.Errorf("[sql2kv] ExecDDLSQL for table `%s`.`%s` fail", kvcodec.db, kvcodec.table)
 		common.AppLogger.Errorf("[sql2kv] tableSchema execute failed : %v", err)
 		return errors.Trace(err)
 	}
