@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pkg/errors"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -57,16 +57,19 @@ type storage struct {
 	db       *sql.DB
 }
 
-func newStorage() *storage {
+func newStorage() (*storage, error) {
 	database := "_test_parser_"
-	db := common.ConnectDB("localhost", 3306, "root", "")
+	db, err := common.ConnectDB("localhost", 3306, "root", "")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	db.Exec("create database if not exists " + database)
 	db.Exec("use " + database)
 
 	return &storage{
 		database: database,
 		db:       db,
-	}
+	}, nil
 }
 
 func (s *storage) close() {
@@ -151,15 +154,16 @@ func sql2storage(c *C, sql []byte, store *storage) {
 }
 
 func (s *testParserSuite) testParseRealFile(c *C) {
-	store := newStorage()
+	store, err := newStorage()
+	c.Assert(err, IsNil)
 	defer store.close()
 
-	cfg := &config.Config{SourceDir: "../mydump/examples"}
-	loader := NewMyDumpLoader(cfg)
-
-	dbMeta := loader.GetTree()
+	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "../mydump/examples"}}
+	loader, err := NewMyDumpLoader(cfg)
+	c.Assert(err, IsNil)
+	dbMeta := loader.GetDatabases()["mocker_test"]
 	for _, tblMeta := range dbMeta.Tables {
-		sqlCreteTable, _ := ExportStatment(tblMeta.SchemaFile)
+		sqlCreteTable, _ := ExportStatement(tblMeta.SchemaFile)
 		store.init(string(sqlCreteTable))
 
 		// read from file

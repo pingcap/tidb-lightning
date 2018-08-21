@@ -26,6 +26,7 @@ GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
+PACKAGES  := $$(go list ./...| grep -vE 'vendor|cmd|test|proto|diff')
 
 RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")
@@ -72,6 +73,10 @@ parser: goyacc
 
 lightning: 
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/main.go
+
+test:
+	@export log_level=error;\
+	$(GOTEST) -cover $(PACKAGES)
 
 update: update_vendor parser clean_vendor
 update_vendor:

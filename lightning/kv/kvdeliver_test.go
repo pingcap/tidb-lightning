@@ -8,18 +8,21 @@ import (
 
 	. "github.com/pingcap/tidb-lightning/lightning/kv"
 	. "github.com/pingcap/tidb/util/kvencoder"
+	uuidPkg "github.com/satori/go.uuid"
 )
 
+// Please run a (fake) PD and importServer before starting this test.
 const (
-	uuid             string = "0123456789abcdef"
-	importServerAddr string = "172.16.10.2:18309"
-	pdAddr           string = "172.16.10.2:18101"
+	importServerAddr string = "127.0.0.1:18309"
+	pdAddr           string = "127.0.0.1:18101"
 )
+
+var uuid = uuidPkg.Must(uuidPkg.FromString("aebd1201-e6d3-41d5-9186-8885b342d47f"))
 
 func TestWriteFlush(t *testing.T) {
 	ctx := context.Background()
 
-	c, _ := NewKVDeliverClient(ctx, uuid, importServerAddr)
+	c, _ := NewKVDeliverClient(ctx, uuid, importServerAddr, pdAddr, "")
 	defer c.Close()
 
 	kvs := make([]KvPair, 0, 0)
@@ -41,6 +44,7 @@ func TestWriteFlush(t *testing.T) {
 	fmt.Println("basic finish !")
 }
 
+/*
 func TestManager(t *testing.T) {
 	p, _ := NewPipeKvDeliver(uuid, importServerAddr)
 	defer p.Close()
@@ -67,3 +71,4 @@ func TestManager(t *testing.T) {
 
 	fmt.Println("manager finish !")
 }
+*/

@@ -28,8 +28,7 @@ func (s *testMydumpLoaderSuite) TestLoader(c *C) {
 	mdl, err = md.NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)
 
-	dbMeta := mdl.GetDatabase()
-	c.Assert(dbMeta.Name, Equals, "mocker_test")
+	dbMeta := mdl.GetDatabases()["mocker_test"]
 	c.Assert(len(dbMeta.Tables), Equals, 2)
 
 	for _, table := range []string{"tbl_multi_index", "tbl_autoid"} {
