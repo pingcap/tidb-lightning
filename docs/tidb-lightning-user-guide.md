@@ -169,9 +169,9 @@ For details, see [Deploy TiDB Using Ansible](https://pingcap.com/docs/op-guide/a
     pprof-port = 10089
 
 
-    # table-concurrency controls the maximum handled tables concurently while reading mydumper sql files. It can affects the tikv-importer memory usage.
+    # table-concurrency controls the maximum handled tables concurrently while reading Mydumper SQL files. It can affect the tikv-importer memory usage amount.
     table-concurrency = 8
-    # region-concurrency change the concurrency number of data. It is set to the number of logical CPU cores by default and needs no configuration.
+    # region-concurrency changes the concurrency number of data. It is set to the number of logical CPU cores by default and needs no configuration.
     # in mixed configuration, you can set it to 75% of the size of logical CPU cores.
     # region-concurrency default to runtime.NumCPU()
     # region-concurrency =  
