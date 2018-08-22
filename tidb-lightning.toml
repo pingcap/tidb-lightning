@@ -4,9 +4,11 @@
 # background profile for debuging ( 0 to disable )
 pprof-port = 10089
 
-# number of workers to restore tables (default to `runtime.NumCPU()`).
-# worker-pool-size =
+
+# table-concurrency controls the maximum handled tables concurently while reading mydumper sql files. It can affects the tikv-importer memory usage.
 table-concurrency = 8
+# region-concurrency change the concurrency number of data. It is set to the number of logical CPU cores by default and needs no configuration.
+# in mixed configuration, you can set it to 75% of the size of logical CPU cores.
 # region-concurrency default to runtime.NumCPU()
 # region-concurrency =  
 

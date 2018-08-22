@@ -57,7 +57,7 @@ The following are the hardware requirements for deploying one set of TiDB Lighti
    - 16 GB+ memory
    - 1 TB+ SSD
    - 10 Gigabit network card
-   - Need to be deployed separately from the online business because TiDB Lighting fully consumes the CPU during runtime. Under certain circumstances, you can deploy it along with another component (like `tidb-server`) on one machine and configure to limit the CPU usage of `tidb-lightning`. See the `worker-pool-size` part in the first step of [Deploy `tidb-lightning`](#deploy-tidb-lightning). 
+   - Need to be deployed separately from the online business because TiDB Lighting fully consumes the CPU during runtime. Under certain circumstances, you can deploy it along with another component (like `tidb-server`) on one machine and configure to limit the CPU usage of `tidb-lightning`. See the `region-concurrency` part in the first step of [Deploy `tidb-lightning`](#deploy-tidb-lightning). 
 
 - tikv-importer
  
@@ -76,9 +76,9 @@ Under certain circumstances, you can deploy `tidb-lightning` and `tikv-importer`
 - 1 TB+ SSD
 - 10 Gigabit network card
 
-> **Note:** `tidb-lightning` is CPU intensive. If you use mixed deployment for it, you need to configure `worker-pool-size` to limit the number of occupied CPU cores of `tidb-lightning`. Otherwise other applications may be affected.
+> **Note:** `tidb-lightning` is CPU intensive. If you use mixed deployment for it, you need to configure `region-concurrency` to limit the number of occupied CPU cores of `tidb-lightning`. Otherwise other applications may be affected.
 
->   You can configure the `worker-pool-size` parameter of `tidb-lightning` to allocate 75% of CPU resources to `tidb-lightning`. For example, if CPU has 32 logical cores, you can set `worker-pool-size` to 24.
+>   You can configure the `region-concurrency` parameter of `tidb-lightning` to allocate 75% of CPU resources to `tidb-lightning`. For example, if CPU has 32 logical cores, you can set `region-concurrency` to 24.
 
 ### Prepare
 
@@ -168,9 +168,14 @@ For details, see [Deploy TiDB Using Ansible](https://pingcap.com/docs/op-guide/a
     # background profile for debugging ( 0 to disable )
     pprof-port = 10089
 
-    # change the concurrency number of data. It is set to the number of logical CPU cores by default and needs no configuration.
+
+    # table-concurrency controls the maximum handled tables concurently while reading mydumper sql files. It can affects the tikv-importer memory usage.
+    table-concurrency = 8
+    # region-concurrency change the concurrency number of data. It is set to the number of logical CPU cores by default and needs no configuration.
     # in mixed configuration, you can set it to 75% of the size of logical CPU cores.
-    # worker-pool-size =
+    # region-concurrency default to runtime.NumCPU()
+    # region-concurrency =  
+
 
     # logging
     level = "info"
