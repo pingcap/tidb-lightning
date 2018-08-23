@@ -25,6 +25,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
@@ -567,6 +568,10 @@ func (d *Datum) compareBytes(sc *stmtctx.StatementContext, b []byte) (int, error
 
 func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (int, error) {
 	switch d.k {
+	case KindNull, KindMinNotNull:
+		return -1, nil
+	case KindMaxValue:
+		return 1, nil
 	case KindMysqlDecimal:
 		return d.GetMysqlDecimal().Compare(dec), nil
 	case KindString, KindBytes:
@@ -574,11 +579,11 @@ func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal
 		err := sc.HandleTruncate(dDec.FromString(d.GetBytes()))
 		return dDec.Compare(dec), errors.Trace(err)
 	default:
-		fVal, err := dec.ToFloat64()
+		dVal, err := d.ConvertTo(sc, NewFieldType(mysql.TypeNewDecimal))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return d.compareFloat64(sc, fVal)
+		return dVal.GetMysqlDecimal().Compare(dec), nil
 	}
 }
 
@@ -1573,7 +1578,7 @@ func (d *Datum) ToMysqlJSON() (j json.BinaryJSON, err error) {
 }
 
 func invalidConv(d *Datum, tp byte) (Datum, error) {
-	return Datum{}, errors.Errorf("cannot convert datum from %s to type %s.", TypeStr(d.Kind()), TypeStr(tp))
+	return Datum{}, errors.Errorf("cannot convert datum from %s to type %s.", KindStr(d.Kind()), TypeStr(tp))
 }
 
 func (d *Datum) convergeType(hasUint, hasDecimal, hasFloat *bool) (x Datum) {
@@ -1823,12 +1828,21 @@ func handleTruncateError(sc *stmtctx.StatementContext) error {
 }
 
 // DatumsToString converts several datums to formatted string.
-func DatumsToString(datums []Datum, handleNULL bool) (string, error) {
+func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 	var strs []string
 	for _, datum := range datums {
-		if datum.Kind() == KindNull && handleNULL {
-			strs = append(strs, "NULL")
-			continue
+		if handleSpecialValue {
+			switch datum.Kind() {
+			case KindNull:
+				strs = append(strs, "NULL")
+				continue
+			case KindMinNotNull:
+				strs = append(strs, "-inf")
+				continue
+			case KindMaxValue:
+				strs = append(strs, "+inf")
+				continue
+			}
 		}
 		str, err := datum.ToString()
 		if err != nil {
@@ -1844,8 +1858,25 @@ func DatumsToString(datums []Datum, handleNULL bool) (string, error) {
 	return strings.Join(strs, ", "), nil
 }
 
+// DatumsToStrNoErr converts some datums to a formatted string.
+// If an error occurs, it will print a log instead of returning an error.
+func DatumsToStrNoErr(datums []Datum) string {
+	str, err := DatumsToString(datums, true)
+	terror.Log(errors.Trace(err))
+	return str
+}
+
 // CopyDatum returns a new copy of the datum.
 // TODO: Abandon this function.
 func CopyDatum(datum Datum) Datum {
 	return *datum.Copy()
+}
+
+// CopyRow deep copies a Datum slice.
+func CopyRow(dr []Datum) []Datum {
+	c := make([]Datum, len(dr))
+	for i, d := range dr {
+		c[i] = *d.Copy()
+	}
+	return c
 }

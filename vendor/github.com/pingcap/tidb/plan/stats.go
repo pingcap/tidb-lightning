@@ -69,8 +69,8 @@ func newSimpleStats(rowCount float64) *statsInfo {
 	return &statsInfo{count: rowCount}
 }
 
-func (p *basePhysicalPlan) StatsInfo() *statsInfo {
-	return p.stats
+func (p *basePhysicalPlan) StatsCount() float64 {
+	return p.stats.count
 }
 
 func (p *LogicalTableDual) deriveStats() (*statsInfo, error) {
@@ -379,15 +379,6 @@ func getSingletonStats(len int) *statsInfo {
 		ret.cardinality[i] = 1
 	}
 	return ret
-}
-
-func (p *LogicalExists) deriveStats() (*statsInfo, error) {
-	_, err := p.children[0].deriveStats()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	p.stats = getSingletonStats(1)
-	return p.stats, nil
 }
 
 func (p *LogicalMaxOneRow) deriveStats() (*statsInfo, error) {

@@ -17,7 +17,7 @@ import (
 
 func setGlobalVars() {
 	// hardcode it
-	plan.PreparedPlanCacheEnabled = true
+	plan.SetPreparedPlanCache(true)
 	plan.PreparedPlanCacheCapacity = 10
 }
 
