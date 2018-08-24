@@ -74,7 +74,11 @@ parser: goyacc
 lightning:
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/main.go
 
+# FIXME: Split the unit test out from the integration test.
 test:
+	true
+
+integration_test:
 	@export log_level=error;\
 	$(GOTEST) -cover $(PACKAGES)
 
