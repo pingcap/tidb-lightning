@@ -37,11 +37,14 @@ func ExportStatement(sqlFile string) ([]byte, error) {
 	buffer := make([]byte, 0, f.Size()+1)
 	for {
 		line, err := br.ReadString('\n')
-		if errors.Cause(err) == io.EOF {
-			break
+		if errors.Cause(err) == io.EOF { // it will return EOF if there is no trailing new line.
+			if len(line) == 0 {
+				break
+			}
+		} else {
+			line = strings.TrimSpace(line[:len(line)-1])
 		}
 
-		line = strings.TrimSpace(line[:len(line)-1])
 		if len(line) == 0 {
 			continue
 		}

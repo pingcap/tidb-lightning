@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"os"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -127,3 +129,19 @@ func (s *testMydumpReaderSuite) TestReader(c *C) {
 		mydump2mysql(c, dbMeta, blockSize)
 	}
 }
+
+func (s *testMydumpReaderSuite) TestReaderNoTrailingNewLine(c *C) {
+	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	c.Assert(err, IsNil)
+	defer os.Remove(file.Name())
+
+	_, err = file.Write([]byte("CREATE DATABASE whatever;"))
+	c.Assert(err, IsNil)
+	err = file.Close()
+	c.Assert(err, IsNil)
+
+	data, err := ExportStatement(file.Name())
+	c.Assert(err, IsNil)
+	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
+}
+
