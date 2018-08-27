@@ -13,7 +13,7 @@ import:
   repo: https://github.com/natefinch/lumberjack.git
   version: v2.0.0
 - package: github.com/pingcap/tidb
-  version: 8058fd644b57089640502d946466ae84fd490e25
+  version: 1fa5669fb48ae0c6cf2d99413d62c7652f872c4e
   subpackages:
   - ast
   - ddl

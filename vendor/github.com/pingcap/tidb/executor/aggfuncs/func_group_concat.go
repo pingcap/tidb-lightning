@@ -16,7 +16,9 @@ package aggfuncs
 import (
 	"bytes"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -24,7 +26,12 @@ import (
 type baseGroupConcat4String struct {
 	baseAggFunc
 
-	sep string
+	sep    string
+	maxLen uint64
+	// According to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
+	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
+	// generated.
+	truncated bool
 }
 
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -34,6 +41,21 @@ func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context
 		return nil
 	}
 	chk.AppendString(e.ordinal, p.buffer.String())
+	return nil
+}
+
+func (e *baseGroupConcat4String) truncatePartialResultIfNeed(sctx sessionctx.Context, buffer *bytes.Buffer) (err error) {
+	if e.maxLen > 0 && uint64(buffer.Len()) > e.maxLen {
+		i := mathutil.MaxInt
+		if uint64(i) > e.maxLen {
+			i = int(e.maxLen)
+		}
+		buffer.Truncate(i)
+		if !e.truncated {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat)
+		}
+		e.truncated = true
+	}
 	return nil
 }
 
@@ -60,30 +82,50 @@ func (e *groupConcat) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4GroupConcat)(pr)
-	v, isNull, isWriteSep := "", false, false
+	v, isNull, preLen := "", false, 0
 	for _, row := range rowsInGroup {
-		isWriteSep = false
+		if p.buffer != nil && p.buffer.Len() != 0 {
+			preLen = p.buffer.Len()
+			p.buffer.WriteString(e.sep)
+		}
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if isNull {
-				continue
+				break
 			}
-			isWriteSep = true
 			if p.buffer == nil {
 				p.buffer = &bytes.Buffer{}
 			}
 			p.buffer.WriteString(v)
 		}
-		if isWriteSep {
-			p.buffer.WriteString(e.sep)
+		if isNull {
+			if p.buffer != nil {
+				p.buffer.Truncate(preLen)
+			}
+			continue
 		}
 	}
-	p.buffer.Truncate(p.buffer.Len() - len(e.sep))
-	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
-	// issue: #7034
+	if p.buffer != nil {
+		return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	}
+	return nil
+}
+
+func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4GroupConcat)(src), (*partialResult4GroupConcat)(dst)
+	if p1.buffer == nil {
+		return nil
+	}
+	if p2.buffer == nil {
+		p2.buffer = p1.buffer
+		return nil
+	}
+	p2.buffer.WriteString(e.sep)
+	p2.buffer.WriteString(p1.buffer.String())
+	e.truncatePartialResultIfNeed(sctx, p2.buffer)
 	return nil
 }
 
@@ -120,9 +162,12 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 				return errors.Trace(err)
 			}
 			if isNull {
-				continue
+				break
 			}
 			p.valsBuf.WriteString(v)
+		}
+		if isNull {
+			continue
 		}
 		joinedVals := p.valsBuf.String()
 		if p.valSet.exist(joinedVals) {
@@ -138,7 +183,8 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		// write values
 		p.buffer.WriteString(joinedVals)
 	}
-	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
-	// issue: #7034
+	if p.buffer != nil {
+		return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	}
 	return nil
 }

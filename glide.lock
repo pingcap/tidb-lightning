@@ -1,5 +1,5 @@
-hash: b18c4cffbc458cec813c2803c9151d971c96a19b9fdf29e29fc9bc02c1868da9
-updated: 2018-08-08T16:19:40.361535051+08:00
+hash: c36add823a40f155a21de23343ec94fcd75e8e78a3ae6263e6baa7ceaa0f08d3
+updated: 2018-08-23T18:40:22.074893+08:00
 imports:
 - name: github.com/apache/thrift
   version: b2a4d4ae21c789b689dd162deb819665567f481c
@@ -107,7 +107,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tidb
-  version: 8058fd644b57089640502d946466ae84fd490e25
+  version: 1fa5669fb48ae0c6cf2d99413d62c7652f872c4e
   subpackages:
   - ast
   - config
@@ -160,6 +160,7 @@ imports:
   - util/chunk
   - util/codec
   - util/encrypt
+  - util/execdetails
   - util/format
   - util/goroutine_pool
   - util/hack
@@ -186,7 +187,7 @@ imports:
   - go-tipb
   - sharedbytes
 - name: github.com/prometheus/client_golang
-  version: 967789050ba94deca04a5e84cce8ad472ce313c1
+  version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:
   - prometheus
   - prometheus/push
@@ -300,8 +301,8 @@ imports:
   - tap
   - transport
 - name: gopkg.in/natefinch/lumberjack.v2
-  version: aee4629129445bbdfb69aa565537dcfa16544311
+  version: 7d6a1875575e09256dc552b4c0e450dcd02bd10e
   repo: https://github.com/natefinch/lumberjack.git
 testImports:
 - name: github.com/pingcap/check
-  version: ""
+  version: 9b266636177e249ec28b0aeffe8e86bc272bb481

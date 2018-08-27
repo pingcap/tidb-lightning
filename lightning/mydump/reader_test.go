@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	"github.com/pingcap/tidb-lightning/lightning/mydump"
-	"github.com/pkg/errors"
+	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
 const (
@@ -23,12 +23,16 @@ type dbManager struct {
 	db       *sql.DB
 }
 
-func newDBManager() *dbManager {
+func newDBManager() (*dbManager, error) {
+	db, err := common.ConnectDB("127.0.0.1", 3306, "root", "")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	mgr := &dbManager{
 		database: utestDB,
-		db:       common.ConnectDB("localhost", 3306, "root", ""),
+		db:       db,
 	}
-	return mgr.init("")
+	return mgr.init(""), nil
 }
 
 func (d *dbManager) init(schema string) *dbManager {
@@ -73,7 +77,8 @@ func checkTableData(c *C, db *sql.DB) {
 }
 
 func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
-	dbMgr := newDBManager()
+	dbMgr, err := newDBManager()
+	c.Assert(err, IsNil)
 	defer func() {
 		dbMgr.clear().close()
 	}()
@@ -84,7 +89,7 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 		dbMgr.init(string(sqlCreteTable))
 
 		for _, file := range tblMeta.DataFiles {
-			reader, err := mydump.NewMDDataReader(file, 0)
+			reader, err := NewMDDataReader(file, 0)
 			c.Assert(err, IsNil)
 			defer reader.Close()
 
@@ -98,7 +103,9 @@ func mydump2mysql(c *C, dbMeta *MDDatabaseMeta, minBlockSize int64) {
 					c.Assert(err, IsNil)
 				}
 			}
-			c.Assert(reader.Tell(), Equals, common.GetFileSize(file))
+			fileSize, err := common.GetFileSize(file)
+			c.Assert(err, IsNil)
+			c.Assert(reader.Tell(), Equals, fileSize)
 		}
 	}
 
@@ -113,11 +120,10 @@ func (s *testMydumpReaderSuite) TestReader(c *C) {
 
 	mdl, err := NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)
-	dbMeta := mdl.GetDatabase()
+	dbMeta := mdl.GetDatabases()["mocker_test"]
 
-	var minSize int64 = 512
-	var maxSize int64 = 1024 * 128
-	for blockSize := minSize; blockSize <= maxSize; blockSize += 512 {
+	for _, blockSize := range []int64{512, 1024, 2048, 5120, 20000, 64000, 131072} {
+		c.Log("blockSize = ", blockSize)
 		mydump2mysql(c, dbMeta, blockSize)
 	}
 }

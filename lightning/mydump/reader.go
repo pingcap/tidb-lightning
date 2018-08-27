@@ -130,7 +130,13 @@ func (r *MDDataReader) skipAnnotation(offset int64) int64 {
 		line = strings.TrimSpace(line[:size-1])
 		if !(strings.HasPrefix(line, "/*") && strings.HasSuffix(line, "*/;")) {
 			// backward seek to the last pos
-			r.fd.Seek(offset+int64(skipSize), io.SeekStart)
+			// note! seeking beyond EOF won't trigger any error,
+			// and *will* cause Tell() return the wrong value. https://stackoverflow.com/q/17263830/
+			offset += int64(skipSize)
+			if offset > r.fsize {
+				offset = r.fsize
+			}
+			r.fd.Seek(offset, io.SeekStart)
 			break
 		}
 		skipSize += size
