@@ -430,12 +430,12 @@ func (c *KVDeliverClient) open(uuid uuid.UUID) error {
 		Uuid: c.txn.uuid.Bytes(),
 	}
 
-	metric.EngineCounter.WithLabelValues("open").Inc()
-	common.AppLogger.Infof("[%s] open engine %s", c.txn.uniqueTable, c.txn.uuid)
 	_, err := c.cli.OpenEngine(c.ctx, openRequest)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	metric.EngineCounter.WithLabelValues("open").Inc()
+	common.AppLogger.Infof("[%s] open engine %s", c.txn.uniqueTable, c.txn.uuid)
 
 	return nil
 }
@@ -596,11 +596,11 @@ func (c *KVDeliverClient) callClose() error {
 	timer := time.Now()
 	common.AppLogger.Infof("[%s] [%s] engine close", c.txn.uniqueTable, c.txn.uuid)
 	req := &importpb.CloseEngineRequest{Uuid: c.txn.uuid.Bytes()}
-	metric.EngineCounter.WithLabelValues("closed").Inc()
 	_, err := c.cli.CloseEngine(c.ctx, req)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	metric.EngineCounter.WithLabelValues("closed").Inc()
 	common.AppLogger.Infof("[%s] [%s] engine close takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 
 	return nil
