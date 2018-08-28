@@ -223,12 +223,23 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 		}(worker, task)
 	}
 	wg.Wait()
+	common.AppLogger.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
+
+	// ensure the engine is closed (thus the memory for tikv-importer is freed)
+	// before recycling the table workers.
+	kvDeliver := t.deliversMgr.AcquireClient(t.tableMeta.DB, t.tableMeta.Name)
+	err := kvDeliver.CloseEngine()
+	t.deliversMgr.RecycleClient(kvDeliver)
+
 	// recycle table worker in advance to prevent so many idle region workers and promote CPU utilization.
 	rc.tableWorkers.Recycle(w)
 	if ctxAborted {
 		return errCtxAborted
 	}
-	common.AppLogger.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
+	if err != nil {
+		common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %v", err)
+		return errors.Trace(err)
+	}
 
 	var (
 		tableRows uint64
@@ -244,7 +255,7 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	t.localChecksum = checksum
 	t.tableRows = tableRows
 
-	err := rc.postProcessing(t)
+	err = rc.postProcessing(t)
 	return errors.Trace(err)
 }
 

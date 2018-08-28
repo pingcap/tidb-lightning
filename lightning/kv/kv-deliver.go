@@ -238,6 +238,7 @@ func (k *KVDeliverKeeper) RecycleClient(cli *KVDeliverClient) {
 		txn.inStatus(txnPutting) &&
 		txn.isOverLimit(DeliverTxnSizeLimit, DeliverTxnPairsLimit) {
 
+		cli.CloseEngine()
 		k.flushTxn(txn)
 	}
 }
@@ -559,19 +560,11 @@ func (c *KVDeliverClient) Cleanup() error {
 func (c *KVDeliverClient) Flush() error {
 	c.closeWriteStream()
 
-	ops := []struct {
-		fn   func() error
-		name string
-	}{
-		{c.callClose, "close"},
-		{c.callImport, "import"},
+	if err := c.callImport(); err != nil {
+		common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = import) : %v", err)
+		return errors.Trace(err)
 	}
-	for _, op := range ops {
-		if err := op.fn(); err != nil {
-			common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = %s) : %v", op.name, err)
-			return errors.Trace(err)
-		}
-	}
+
 	return nil
 }
 
@@ -593,6 +586,10 @@ func (c *KVDeliverClient) callCompact(level int32) error {
 	common.AppLogger.Infof("compact level %d takes %v", level, time.Since(timer))
 
 	return errors.Trace(err)
+}
+
+func (c *KVDeliverClient) CloseEngine() error {
+	return errors.Trace(c.callClose())
 }
 
 func (c *KVDeliverClient) callClose() error {
