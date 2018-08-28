@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	insStmtRegex = regexp.MustCompile(`INSERT INTO .* VALUES`)
+	insStmtRegex = regexp.MustCompile(`(?i)INSERT INTO .* VALUES`)
 )
 
 var (
@@ -208,9 +208,7 @@ func getInsertStatmentHeader(file string) []byte {
 		if errors.Cause(err) == io.EOF {
 			break
 		}
-
-		data := strings.ToUpper(line)
-		if loc := insStmtRegex.FindStringIndex(data); len(loc) > 0 {
+		if loc := insStmtRegex.FindStringIndex(line); len(loc) > 0 {
 			header = line[loc[0]:loc[1]]
 			break
 		}

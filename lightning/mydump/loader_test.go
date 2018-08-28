@@ -29,7 +29,7 @@ func (s *testMydumpLoaderSuite) TestLoader(c *C) {
 	c.Assert(err, IsNil)
 
 	dbMeta := mdl.GetDatabases()["mocker_test"]
-	c.Assert(len(dbMeta.Tables), Equals, 2)
+	c.Assert(len(dbMeta.Tables), Equals, 4)
 
 	for _, table := range []string{"tbl_multi_index", "tbl_autoid"} {
 		c.Assert(dbMeta.Tables[table].Name, Equals, table)
