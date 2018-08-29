@@ -238,7 +238,10 @@ func (k *KVDeliverKeeper) RecycleClient(cli *KVDeliverClient) {
 		txn.inStatus(txnPutting) &&
 		txn.isOverLimit(DeliverTxnSizeLimit, DeliverTxnPairsLimit) {
 
-		cli.CloseEngine()
+		err := cli.CloseEngine()
+		if err != nil {
+			common.AppLogger.Warnf("[deliver-keeper] Should be closing engine %s before recycling client, got error instead: %s", txn.uuid, err.Error())
+		}
 		k.flushTxn(txn)
 	}
 }
