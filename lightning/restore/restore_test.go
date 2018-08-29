@@ -51,8 +51,18 @@ const (
 
 // A mock tikv-importer service which:
 //  - emits a custom error when the number of open engine exceeds the given table concurrency.
-//  - delay the import duration at 0.3s/engine to simulate accumulation of open engines in TOOL-296.
+//  - throttle the import speed at 0.3s/engine to simulate accumulation of open engines in [TOOL-296].
 //  - provides channels to let the client check if all events are properly delivered
+//
+// [TOOL-296]: https://internal.pingcap.net/jira/browse/TOOL-296
+//
+// Previously, closing an engine is placed on a serial "post-processing" queue
+// together with other time-consuming actions like import and checksum,
+// while opening an engine is done in a worker pool which will be recycled as soon as
+// all data are transferred. The effect is that the number of open engines will increase unbounded
+// as long as the post-processing serial queue is blocked.
+// In this mock service, we simulate the blocking behavior by slowing down the import operation.
+// This issue has been fixed by PR #59 which moves the close operation into the worker pool.
 type mockKVService struct {
 	engineLock              sync.Mutex
 	engineList              map[string]nop
