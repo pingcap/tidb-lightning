@@ -152,6 +152,7 @@ func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
 
 	_, err = file.Write([]byte("CREATE TABLE a (b int(11) COMMENT '"))
 	c.Assert(err, IsNil)
+	// "D7 DC B0 B8 C0 FD" is the GBK encoding of "总案例".
 	_, err = file.Write([]byte{0xD7, 0xDC, 0xB0, 0xB8, 0xC0, 0xFD})
 	c.Assert(err, IsNil)
 	_, err = file.Write([]byte("');\n"))
