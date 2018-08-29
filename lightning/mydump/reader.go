@@ -7,17 +7,28 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 var (
-	insStmtRegex = regexp.MustCompile(`INSERT INTO .* VALUES`)
+	insStmtRegex = regexp.MustCompile(`(?i)INSERT INTO .* VALUES`)
 )
 
 var (
 	ErrInsertStatementNotFound = errors.New("insert statement not found")
+)
+
+var (
+	// if there are too many encodings involved, consider switching strategy to
+	// perform `chardet` first.
+	supportedSchemaEncodings = []encoding.Encoding{
+		simplifiedchinese.GB18030,
+	}
 )
 
 func ExportStatement(sqlFile string) ([]byte, error) {
@@ -37,11 +48,14 @@ func ExportStatement(sqlFile string) ([]byte, error) {
 	buffer := make([]byte, 0, f.Size()+1)
 	for {
 		line, err := br.ReadString('\n')
-		if errors.Cause(err) == io.EOF {
-			break
+		if errors.Cause(err) == io.EOF { // it will return EOF if there is no trailing new line.
+			if len(line) == 0 {
+				break
+			}
+		} else {
+			line = strings.TrimSpace(line[:len(line)-1])
 		}
 
-		line = strings.TrimSpace(line[:len(line)-1])
 		if len(line) == 0 {
 			continue
 		}
@@ -58,7 +72,24 @@ func ExportStatement(sqlFile string) ([]byte, error) {
 		}
 	}
 
-	return data, nil
+	if utf8.Valid(data) {
+		return data, nil
+	}
+
+	for _, encoding := range supportedSchemaEncodings {
+		decoded, err := encoding.NewDecoder().Bytes(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// check for U+FFFD to see if decoding contains errors.
+		// https://groups.google.com/d/msg/golang-nuts/pENT3i4zJYk/v2X3yyiICwAJ
+		if !bytes.ContainsRune(decoded, '\ufffd') {
+			return decoded, nil
+		}
+	}
+
+	common.AppLogger.Errorf("cannot guess encoding for input file, please convert to UTF-8 manually: %s", sqlFile)
+	return nil, errors.New("invalid schema encoding")
 }
 
 type MDDataReader struct {
@@ -177,9 +208,7 @@ func getInsertStatmentHeader(file string) []byte {
 		if errors.Cause(err) == io.EOF {
 			break
 		}
-
-		data := strings.ToUpper(line)
-		if loc := insStmtRegex.FindStringIndex(data); len(loc) > 0 {
+		if loc := insStmtRegex.FindStringIndex(line); len(loc) > 0 {
 			header = line[loc[0]:loc[1]]
 			break
 		}

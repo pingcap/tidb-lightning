@@ -85,6 +85,13 @@ func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
 	dbMeta := loader.GetDatabases()["mocker_test"]
 	founder := NewRegionFounder(defMinRegionSize)
 
+	expectedTuplesCount := map[string]int{
+		"i": 1,
+		"report_case_high_risk": 1,
+		"tbl_autoid":            10000,
+		"tbl_multi_index":       10000,
+	}
+
 	for _, meta := range dbMeta.Tables {
 		regions := founder.MakeTableRegions(meta)
 
@@ -98,7 +105,7 @@ func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
 			}
 		}
 
-		c.Assert(tolValTuples, Equals, 10000)
+		c.Assert(tolValTuples, Equals, expectedTuplesCount[meta.Name])
 	}
 
 	return

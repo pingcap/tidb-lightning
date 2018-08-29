@@ -7,7 +7,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"strings"
+	"regexp"
 	"time"
 
 	"github.com/juju/errors"
@@ -83,17 +83,16 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 	return nil
 }
 
-func createTableIfNotExistsStmt(createTable string) string {
-	upCreateTable := strings.ToUpper(createTable)
-	if strings.Index(upCreateTable, "CREATE TABLE IF NOT EXISTS") < 0 {
-		substrs := strings.SplitN(upCreateTable, "CREATE TABLE", 2)
-		if len(substrs) == 2 {
-			prefix := substrs[0] // ps : annotation might be
-			schema := substrs[1] // ps : schema definition in detail
-			createTable = prefix + " CREATE TABLE IF NOT EXISTS " + createTable[len(createTable)-len(schema):]
-		}
-	}
+var createTableRegexp = regexp.MustCompile(`(?i)CREATE TABLE( IF NOT EXISTS)?`)
 
+func createTableIfNotExistsStmt(createTable string) string {
+	indices := createTableRegexp.FindStringSubmatchIndex(createTable)
+	// if the " IF NOT EXISTS" group is missing, that submatch will be empty.
+	if len(indices) == 4 && indices[2] == indices[3] {
+		before := createTable[:indices[1]]
+		after := createTable[indices[1]:]
+		createTable = before + " IF NOT EXISTS " + after
+	}
 	return createTable
 }
 

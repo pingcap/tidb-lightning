@@ -25,7 +25,7 @@ type MDDatabaseMeta struct {
 func (m *MDDatabaseMeta) String() string {
 	v, err := json.Marshal(m)
 	if err != nil {
-		common.AppLogger.Error("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
+		common.AppLogger.Errorf("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
 	}
 	return string(v)
 }
