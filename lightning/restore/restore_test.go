@@ -39,8 +39,6 @@ func Test(t *testing.T) {
 func (s *testRestoreSuite) SetUpSuite(c *C)    {}
 func (s *testRestoreSuite) TearDownSuite(c *C) {}
 
-type nop struct{}
-
 type mockKVEvent int
 
 const (
@@ -65,7 +63,7 @@ const (
 // This issue has been fixed by PR #59 which moves the close operation into the worker pool.
 type mockKVService struct {
 	engineLock              sync.Mutex
-	engineList              map[string]nop
+	engineList              map[string]int // string(uuid) -> writer count
 	events                  chan<- mockKVEvent
 	engineOverflowLimit     int
 	engineOverflowErrorFunc func() error
@@ -77,18 +75,21 @@ func (s *mockKVService) SwitchMode(context.Context, *pb.SwitchModeRequest) (*pb.
 func (s *mockKVService) OpenEngine(_ context.Context, req *pb.OpenEngineRequest) (*pb.OpenEngineResponse, error) {
 	s.engineLock.Lock()
 	defer s.engineLock.Unlock()
-	s.engineList[string(req.Uuid)] = nop{}
+	s.engineList[string(req.Uuid)] += 0
 	if len(s.engineList) > s.engineOverflowLimit {
 		return nil, s.engineOverflowErrorFunc()
 	}
 	return &pb.OpenEngineResponse{}, nil
 }
 func (s *mockKVService) WriteEngine(wes pb.ImportKV_WriteEngineServer) error {
+	var engine string
 	for {
 		req, err := wes.Recv()
 		switch err {
 		case nil:
-			if req.GetHead() != nil {
+			if head := req.GetHead(); head != nil {
+				engine = string(head.Uuid)
+				s.engineList[engine] += 1
 				s.events <- writeHeadEvent
 			} else if req.GetBatch() != nil {
 				s.events <- writeBatchEvent
@@ -96,6 +97,7 @@ func (s *mockKVService) WriteEngine(wes pb.ImportKV_WriteEngineServer) error {
 				panic("Unexpected event type?")
 			}
 		case io.EOF:
+			s.engineList[engine] -= 1
 			return wes.SendAndClose(&pb.WriteEngineResponse{Error: nil})
 		default:
 			return err
@@ -106,8 +108,12 @@ func (s *mockKVService) CloseEngine(_ context.Context, req *pb.CloseEngineReques
 	s.engineLock.Lock()
 	defer s.engineLock.Unlock()
 	uuid := string(req.Uuid)
-	if _, exists := s.engineList[uuid]; !exists {
+	writerCount, exists := s.engineList[uuid]
+	if !exists {
 		return nil, fmt.Errorf("Engine %s not found", uuid)
+	}
+	if writerCount > 0 {
+		return nil, fmt.Errorf("Engine %s still in use with %d writers left (EngineInUse)", uuid, writerCount)
 	}
 	delete(s.engineList, uuid)
 	return &pb.CloseEngineResponse{}, nil
@@ -129,7 +135,7 @@ func runMockKVServer(c *C, limit int, errorFunc func() error) (*grpc.Server, str
 	server := grpc.NewServer()
 	events := make(chan mockKVEvent, tablesCount*3)
 	pb.RegisterImportKVServer(server, &mockKVService{
-		engineList:              make(map[string]nop),
+		engineList:              make(map[string]int),
 		events:                  events,
 		engineOverflowLimit:     limit,
 		engineOverflowErrorFunc: errorFunc,

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,7 +36,8 @@ var (
 )
 
 const (
-	defaultGCLifeTime = 100 * time.Hour
+	defaultGCLifeTime   = 100 * time.Hour
+	closeEngineMaxRetry = 5
 )
 
 func init() {
@@ -228,7 +230,20 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	// ensure the engine is closed (thus the memory for tikv-importer is freed)
 	// before recycling the table workers.
 	kvDeliver := t.deliversMgr.AcquireClient(t.tableMeta.DB, t.tableMeta.Name)
-	err := kvDeliver.CloseEngine()
+	var err error
+	for i := 1; i <= closeEngineMaxRetry; i++ {
+		err = kvDeliver.CloseEngine()
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), "EngineInUse") && i < closeEngineMaxRetry {
+			common.AppLogger.Infof("engine still not fully closed, retrying after %d.0s %v", i, err)
+			time.Sleep(time.Duration(i) * time.Second)
+		} else {
+			common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %s", errors.ErrorStack(err))
+			break
+		}
+	}
 	t.deliversMgr.RecycleClient(kvDeliver)
 
 	// recycle table worker in advance to prevent so many idle region workers and promote CPU utilization.
@@ -237,7 +252,6 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 		return errCtxAborted
 	}
 	if err != nil {
-		common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %v", err)
 		return errors.Trace(err)
 	}
 

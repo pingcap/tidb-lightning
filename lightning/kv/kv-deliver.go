@@ -597,6 +597,7 @@ func (c *KVDeliverClient) CloseEngine() error {
 
 func (c *KVDeliverClient) callClose() error {
 	timer := time.Now()
+	c.closeWriteStream()
 	common.AppLogger.Infof("[%s] [%s] engine close", c.txn.uniqueTable, c.txn.uuid)
 	req := &importpb.CloseEngineRequest{Uuid: c.txn.uuid.Bytes()}
 	_, err := c.cli.CloseEngine(c.ctx, req)
