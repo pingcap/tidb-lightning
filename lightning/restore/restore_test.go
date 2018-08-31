@@ -89,7 +89,9 @@ func (s *mockKVService) WriteEngine(wes pb.ImportKV_WriteEngineServer) error {
 		case nil:
 			if head := req.GetHead(); head != nil {
 				engine = string(head.Uuid)
+				s.engineLock.Lock()
 				s.engineList[engine] += 1
+				s.engineLock.Unlock()
 				s.events <- writeHeadEvent
 			} else if req.GetBatch() != nil {
 				s.events <- writeBatchEvent
@@ -97,7 +99,9 @@ func (s *mockKVService) WriteEngine(wes pb.ImportKV_WriteEngineServer) error {
 				panic("Unexpected event type?")
 			}
 		case io.EOF:
+			s.engineLock.Lock()
 			s.engineList[engine] -= 1
+			s.engineLock.Unlock()
 			return wes.SendAndClose(&pb.WriteEngineResponse{Error: nil})
 		default:
 			return err
