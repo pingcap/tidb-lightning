@@ -238,6 +238,10 @@ func (k *KVDeliverKeeper) RecycleClient(cli *KVDeliverClient) {
 		txn.inStatus(txnPutting) &&
 		txn.isOverLimit(DeliverTxnSizeLimit, DeliverTxnPairsLimit) {
 
+		err := cli.CloseEngine()
+		if err != nil {
+			common.AppLogger.Warnf("[deliver-keeper] Should be closing engine %s before recycling client, got error instead: %s", txn.uuid, err.Error())
+		}
 		k.flushTxn(txn)
 	}
 }
@@ -429,12 +433,12 @@ func (c *KVDeliverClient) open(uuid uuid.UUID) error {
 		Uuid: c.txn.uuid.Bytes(),
 	}
 
-	metric.EngineCounter.WithLabelValues("open").Inc()
-	common.AppLogger.Infof("[%s] open engine %s", c.txn.uniqueTable, c.txn.uuid)
 	_, err := c.cli.OpenEngine(c.ctx, openRequest)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	metric.EngineCounter.WithLabelValues("open").Inc()
+	common.AppLogger.Infof("[%s] open engine %s", c.txn.uniqueTable, c.txn.uuid)
 
 	return nil
 }
@@ -559,19 +563,11 @@ func (c *KVDeliverClient) Cleanup() error {
 func (c *KVDeliverClient) Flush() error {
 	c.closeWriteStream()
 
-	ops := []struct {
-		fn   func() error
-		name string
-	}{
-		{c.callClose, "close"},
-		{c.callImport, "import"},
+	if err := c.callImport(); err != nil {
+		common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = import) : %v", err)
+		return errors.Trace(err)
 	}
-	for _, op := range ops {
-		if err := op.fn(); err != nil {
-			common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = %s) : %v", op.name, err)
-			return errors.Trace(err)
-		}
-	}
+
 	return nil
 }
 
@@ -595,15 +591,20 @@ func (c *KVDeliverClient) callCompact(level int32) error {
 	return errors.Trace(err)
 }
 
+func (c *KVDeliverClient) CloseEngine() error {
+	return errors.Trace(c.callClose())
+}
+
 func (c *KVDeliverClient) callClose() error {
 	timer := time.Now()
+	c.closeWriteStream()
 	common.AppLogger.Infof("[%s] [%s] engine close", c.txn.uniqueTable, c.txn.uuid)
 	req := &importpb.CloseEngineRequest{Uuid: c.txn.uuid.Bytes()}
-	metric.EngineCounter.WithLabelValues("closed").Inc()
 	_, err := c.cli.CloseEngine(c.ctx, req)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	metric.EngineCounter.WithLabelValues("closed").Inc()
 	common.AppLogger.Infof("[%s] [%s] engine close takes %v", c.txn.uniqueTable, c.txn.uuid, time.Since(timer))
 
 	return nil
