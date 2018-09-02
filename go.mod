@@ -6,6 +6,7 @@ require (
 	github.com/beorn7/perks v0.0.0-20160804104726-4c0e84591b9a // indirect
 	github.com/codahale/hdrhistogram v0.0.0-20160425231609-f8ad88b59a58 // indirect
 	github.com/coreos/etcd v3.2.18+incompatible // indirect
+	github.com/coreos/go-semver v0.2.0
 	github.com/cznic/golex v0.0.0-20160422121650-da5a7153a510 // indirect
 	github.com/cznic/mathutil v0.0.0-20160613104831-78ad7f262603
 	github.com/cznic/parser v0.0.0-20160622100904-31edd927e5b1
