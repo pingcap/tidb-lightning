@@ -14,9 +14,11 @@ import (
 	"time"
 
 	pb "github.com/pingcap/kvproto/pkg/import_kvpb"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
+	"github.com/satori/go.uuid"
 
 	. "github.com/pingcap/check"
 	"golang.org/x/net/context"
@@ -25,7 +27,7 @@ import (
 
 const (
 	tablesCount = 35
-	importDelay = 150 * time.Millisecond
+	importDelay = 500 * time.Millisecond
 )
 
 var _ = Suite(&testRestoreSuite{})
@@ -69,16 +71,27 @@ type mockKVService struct {
 	engineOverflowErrorFunc func() error
 }
 
+func formatUuid(uuidBytes []byte) string {
+	uuidValue, err := uuid.FromBytes(uuidBytes)
+	if err != nil {
+		panic(err)
+	}
+	return uuidValue.String()
+}
+
 func (s *mockKVService) SwitchMode(context.Context, *pb.SwitchModeRequest) (*pb.SwitchModeResponse, error) {
 	return &pb.SwitchModeResponse{}, nil
 }
 func (s *mockKVService) OpenEngine(_ context.Context, req *pb.OpenEngineRequest) (*pb.OpenEngineResponse, error) {
 	s.engineLock.Lock()
 	defer s.engineLock.Unlock()
-	s.engineList[string(req.Uuid)] += 0
+	uuid := formatUuid(req.Uuid)
+	s.engineList[uuid] += 0
 	if len(s.engineList) > s.engineOverflowLimit {
+		common.AppLogger.Errorf("[mock-importer] more than %d engines open: %v", s.engineOverflowLimit, s.engineList)
 		return nil, s.engineOverflowErrorFunc()
 	}
+	common.AppLogger.Infof("[mock-importer] opened engine %s; %v", uuid, s.engineList)
 	return &pb.OpenEngineResponse{}, nil
 }
 func (s *mockKVService) WriteEngine(wes pb.ImportKV_WriteEngineServer) error {
@@ -88,7 +101,8 @@ func (s *mockKVService) WriteEngine(wes pb.ImportKV_WriteEngineServer) error {
 		switch err {
 		case nil:
 			if head := req.GetHead(); head != nil {
-				engine = string(head.Uuid)
+				engine = formatUuid(head.Uuid)
+				common.AppLogger.Infof("[mock-importer] start write to engine %s", engine)
 				s.engineLock.Lock()
 				s.engineList[engine] += 1
 				s.engineLock.Unlock()
@@ -99,6 +113,7 @@ func (s *mockKVService) WriteEngine(wes pb.ImportKV_WriteEngineServer) error {
 				panic("Unexpected event type?")
 			}
 		case io.EOF:
+			common.AppLogger.Infof("[mock-importer] end write to engine %s", engine)
 			s.engineLock.Lock()
 			s.engineList[engine] -= 1
 			s.engineLock.Unlock()
@@ -111,7 +126,7 @@ func (s *mockKVService) WriteEngine(wes pb.ImportKV_WriteEngineServer) error {
 func (s *mockKVService) CloseEngine(_ context.Context, req *pb.CloseEngineRequest) (*pb.CloseEngineResponse, error) {
 	s.engineLock.Lock()
 	defer s.engineLock.Unlock()
-	uuid := string(req.Uuid)
+	uuid := formatUuid(req.Uuid)
 	writerCount, exists := s.engineList[uuid]
 	if !exists {
 		return nil, fmt.Errorf("Engine %s not found", uuid)
@@ -120,10 +135,17 @@ func (s *mockKVService) CloseEngine(_ context.Context, req *pb.CloseEngineReques
 		return nil, fmt.Errorf("Engine %s still in use with %d writers left (EngineInUse)", uuid, writerCount)
 	}
 	delete(s.engineList, uuid)
+	common.AppLogger.Infof("[mock-importer] removed engine %s; %v", uuid, s.engineList)
 	return &pb.CloseEngineResponse{}, nil
 }
 func (s *mockKVService) ImportEngine(context.Context, *pb.ImportEngineRequest) (*pb.ImportEngineResponse, error) {
-	time.Sleep(importDelay)
+	s.engineLock.Lock()
+	defer s.engineLock.Unlock()
+	if len(s.engineList) > 0 {
+		// only simulate the slow import when multiple engines are open.
+		// this should speed up the test while still catching the original problem.
+		time.Sleep(importDelay)
+	}
 	s.events <- importEvent
 	return &pb.ImportEngineResponse{}, nil
 }
@@ -137,7 +159,7 @@ func (s *mockKVService) CompactCluster(context.Context, *pb.CompactClusterReques
 // Runs the mock tikv-importer gRPC service. Returns the server and its listening address.
 func runMockKVServer(c *C, limit int, errorFunc func() error) (*grpc.Server, string, <-chan mockKVEvent) {
 	server := grpc.NewServer()
-	events := make(chan mockKVEvent, tablesCount*3)
+	events := make(chan mockKVEvent, tablesCount*4)
 	pb.RegisterImportKVServer(server, &mockKVService{
 		engineList:              make(map[string]int),
 		events:                  events,
