@@ -61,9 +61,10 @@ func (c *Config) String() string {
 
 type Lightning struct {
 	common.LogConfig
-	TableConcurrency  int `toml:"table-concurrency" json:"table-concurrency"`
-	RegionConcurrency int `toml:"region-concurrency" json:"region-concurrency"`
-	ProfilePort       int `toml:"pprof-port" json:"pprof-port"`
+	TableConcurrency  int  `toml:"table-concurrency" json:"table-concurrency"`
+	RegionConcurrency int  `toml:"region-concurrency" json:"region-concurrency"`
+	ProfilePort       int  `toml:"pprof-port" json:"pprof-port"`
+	CheckRequirements bool `toml:"check-requirements" json:"check-requirements"`
 }
 
 // PostRestore has some options which will be executed after kv restored.
@@ -90,6 +91,7 @@ func NewConfig() *Config {
 		App: Lightning{
 			RegionConcurrency: runtime.NumCPU(),
 			TableConcurrency:  8,
+			CheckRequirements: true,
 		},
 		TiDB: DBStore{
 			SQLMode:                "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",

@@ -186,6 +186,7 @@ func createAppConfig(serverAddr string, concurrency int) *config.Config {
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Addr = serverAddr
 	cfg.App.TableConcurrency = concurrency
+	cfg.App.CheckRequirements = false
 	// TODO Get rid of the TiDB test dependency!
 	cfg.TiDB.Host = "127.0.0.1"
 	cfg.TiDB.Port = 3306
