@@ -2,8 +2,11 @@ package common
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -209,4 +212,22 @@ func isRetryableError(err error) bool {
 // UniqueTable returns an unique table name.
 func UniqueTable(schema string, table string) string {
 	return fmt.Sprintf("`%s`.`%s`", schema, table)
+}
+
+func GetJSON(client *http.Client, url string, v interface{}) error {
+	resp, err := client.Get(url)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return errors.Errorf("get %s http status code != 200, message %s", url, string(body))
+	}
+
+	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
 }
