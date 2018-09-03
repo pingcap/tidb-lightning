@@ -214,6 +214,18 @@ func UniqueTable(schema string, table string) string {
 	return fmt.Sprintf("`%s`.`%s`", schema, table)
 }
 
+// GetJSON fetches a page and parses it as JSON. The parsed result will be
+// stored into the `v`. The variable `v` must be a pointer to a type that can be
+// unmarshalled from JSON.
+//
+// Example:
+//
+//	client := &http.Client{}
+//	var resp struct { IP string }
+//	if err := util.GetJSON(client, "http://api.ipify.org/?format=json", &resp); err != nil {
+//		return errors.Trace(err)
+//	}
+//	fmt.Println(resp.IP)
 func GetJSON(client *http.Client, url string, v interface{}) error {
 	resp, err := client.Get(url)
 	if err != nil {
