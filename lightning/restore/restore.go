@@ -418,12 +418,17 @@ func (rc *RestoreController) checkTiDBVersion(client *http.Client) error {
 	}
 
 	// version format: "5.7.10-TiDB-v2.1.0-rc.1-7-g38c939f"
-	versions := strings.SplitN(status.Version, "-TiDB-v", 2)
-	if len(versions) != 2 {
+	//                               ^~~~~~~~~^ we only want this part
+	// version format: "5.7.10-TiDB-v2.0.4-1-g06a0bf5"
+	//                               ^~~~^
+	versions := strings.Split(status.Version, "-")
+	if len(versions) < 5 {
 		return errors.Errorf("not a valid TiDB version: %s", status.Version)
 	}
+	rawVersion := strings.Join(versions[2:len(versions)-2], "-")
+	rawVersion = strings.TrimPrefix(rawVersion, "v")
 
-	version, err := semver.NewVersion(versions[1])
+	version, err := semver.NewVersion(rawVersion)
 	if err != nil {
 		return errors.Trace(err)
 	}
