@@ -20,8 +20,8 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := CGO_ENABLED=0 $(GO) build
-GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
+GOBUILD   := GO111MODULE=off CGO_ENABLED=0 $(GO) build
+GOTEST    := GO111MODULE=off CGO_ENABLED=1 $(GO) test -p 3
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -51,8 +51,13 @@ checksuccess:
 		echo "Lightning build successfully :-) !" ; \
 	fi
 
-goyacc:
-	$(GOBUILD) -o $(TIDBDIR)/bin/goyacc $(TIDBDIR)/parser/goyacc/main.go
+# FIXME: move this to pingcap/goyacc so we could `go get` it instead?
+$(TIDBDIR)/bin/goyacc:
+	mkdir -p $(TIDBDIR)/bin
+	curl -f -L -o $(TIDBDIR)/bin/main.go https://raw.githubusercontent.com/pingcap/tidb/master/parser/goyacc/main.go
+	$(GOBUILD) -o $(TIDBDIR)/bin/goyacc $(TIDBDIR)/bin/main.go
+
+goyacc: $(TIDBDIR)/bin/goyacc
 
 parser: goyacc
 	$(TIDBDIR)/bin/goyacc -o /dev/null $(TIDBDIR)/parser/parser.y
@@ -84,14 +89,9 @@ integration_test:
 
 update: update_vendor parser clean_vendor
 update_vendor:
-	@which glide >/dev/null || curl https://glide.sh/get | sh
-	@which glide-vc || go get -v github.com/sgotti/glide-vc
-ifdef PKG
-	@glide get -v ${PKG}
-else
-	@glide update -v
-endif
+	rm -rf vendor/
+	GO111MODULE=on go mod verify
+	GO111MODULE=on go mod vendor
 
 clean_vendor:
-	@echo "removing test files"
-	@glide vc --use-lock-file --only-code --no-tests
+	hack/clean_vendor.sh
