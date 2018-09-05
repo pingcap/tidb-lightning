@@ -1,7 +1,10 @@
 package kv
 
 import (
+	"fmt"
 	"math"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -639,6 +642,9 @@ func (c *KVDeliverClient) Switch(mode sstpb.SwitchMode) error {
 	}
 	_, err := c.cli.SwitchMode(c.ctx, req)
 	if err != nil {
+		if strings.Contains(err.Error(), "status: Unimplemented") {
+			fmt.Fprintln(os.Stderr, "Error: The TiKV instance does not support mode switching. Please make sure the TiKV version is 2.0.4 or above.")
+		}
 		return errors.Trace(err)
 	}
 	common.AppLogger.Infof("switch to tikv %s mode takes %v", mode, time.Since(timer))
