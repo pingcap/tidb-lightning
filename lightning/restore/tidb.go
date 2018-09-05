@@ -11,6 +11,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb/model"
 	"golang.org/x/net/context"
@@ -156,9 +157,12 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas map[string
 		for _, tbl := range tables {
 			tableName := tbl.Name.String()
 			if tbl.State != model.StatePublic {
-				return nil, errors.Errorf("table [%s.%s] state is not public", schema, tableName)
+				err := errors.Errorf("table [%s.%s] state is not public", schema, tableName)
+				metric.RecordTableCount("pending", err)
+				return nil, err
 			}
 			createTableStmt, err := timgr.getCreateTableStmt(ctx, schema, tableName)
+			metric.RecordTableCount("pending", err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

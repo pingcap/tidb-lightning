@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
-	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
 )
@@ -62,7 +61,6 @@ func (l *Lightning) Run() {
 	common.PrintInfo("lightning", func() {
 		common.AppLogger.Infof("cfg %s", l.cfg)
 	})
-	metric.CalcCPUUsageBackground(l.ctx)
 
 	if l.handleCommandFlagsAndExits() {
 		return
