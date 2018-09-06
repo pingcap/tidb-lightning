@@ -39,8 +39,9 @@ var (
 )
 
 const (
-	defaultGCLifeTime   = 100 * time.Hour
-	closeEngineMaxRetry = 5
+	defaultGCLifeTime           = 100 * time.Hour
+	closeEngineRetryDuration    = 6 * time.Second
+	closeEngineRetryMaxDuration = 30 * time.Second
 )
 
 var (
@@ -239,7 +240,7 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	common.AppLogger.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
 
 	// recycle table worker in advance to prevent so many idle region workers and promote CPU utilization.
-	err := t.closeWithRetry()
+	err := t.closeWithRetry(ctx)
 	rc.tableWorkers.Recycle(w)
 	if ctxAborted {
 		return errCtxAborted
@@ -266,7 +267,7 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	return errors.Trace(err)
 }
 
-func (t *TableRestore) closeWithRetry() error {
+func (t *TableRestore) closeWithRetry(ctx context.Context) error {
 	// ensure the engine is closed (thus the memory for tikv-importer is freed)
 	// before recycling the table workers.
 	kvDeliver := t.deliversMgr.AcquireClient(t.tableMeta.DB, t.tableMeta.Name)
@@ -274,17 +275,35 @@ func (t *TableRestore) closeWithRetry() error {
 
 	var err error
 
-	for i := 1; i <= closeEngineMaxRetry; i++ {
-		err := kvDeliver.CloseEngine()
+	closeTicker := time.NewTicker(closeEngineRetryDuration)
+	timeoutTimer := time.NewTimer(closeEngineRetryMaxDuration)
+	closeImmediately := make(chan struct{}, 1)
+	defer closeTicker.Stop()
+	defer timeoutTimer.Stop()
+	retryCount := 0
+
+	closeImmediately <- struct{}{}
+
+outside:
+	for {
+		select {
+		case <-ctx.Done():
+			return errCtxAborted
+		case <-timeoutTimer.C:
+			break outside
+		case <-closeTicker.C:
+		case <-closeImmediately:
+		}
+		err = kvDeliver.CloseEngine()
 		if err == nil {
 			return nil
 		}
-		if !strings.Contains(err.Error(), "EngineInUse") || i == closeEngineMaxRetry {
+		if !strings.Contains(err.Error(), "EngineInUse") {
 			// error cannot be recovered, return immediately
-			break
+			break outside
 		}
-		common.AppLogger.Infof("engine still not fully closed, retrying after %d.0s : %s", i, err)
-		time.Sleep(time.Duration(i) * time.Second)
+		retryCount++
+		common.AppLogger.Infof("engine still not fully closed, retry #%d after %s : %s", retryCount, closeEngineRetryDuration, err)
 	}
 
 	common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %s", errors.ErrorStack(err))
