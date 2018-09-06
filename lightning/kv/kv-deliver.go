@@ -236,6 +236,7 @@ func (k *KVDeliverKeeper) RecycleClient(cli *KVDeliverClient) {
 		return
 	}
 
+	cli.exitTxn()
 	txnInfo.clients-- // ps : simple counter to mark txn is being followed
 	if txnInfo.clients <= 0 &&
 		txn.inStatus(txnPutting) &&

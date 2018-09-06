@@ -689,7 +689,6 @@ func (t *regionRestoreTask) Run(ctx context.Context) (err error) {
 
 func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVChecksum, error) {
 	kvDeliver := t.delivers.AcquireClient(t.executor.tableMeta.DB, t.executor.tableMeta.Name)
-	// cause bug here.
 	defer t.delivers.RecycleClient(kvDeliver)
 
 	nextRowID, affectedRows, checksum, err := t.executor.Run(ctx, t.region, t.encoder, kvDeliver)
