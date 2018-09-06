@@ -20,6 +20,8 @@ type TiDBManager struct {
 	db      *sql.DB
 	client  *http.Client
 	baseURL *url.URL
+
+	ProgressBarID int
 }
 
 type TidbDBInfo struct {
@@ -51,6 +53,8 @@ func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
 		db:      db,
 		client:  &http.Client{},
 		baseURL: u,
+
+		ProgressBarID: -1,
 	}, nil
 }
 
@@ -72,7 +76,7 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 
 	for _, sqlCreateTable := range tablesSchema {
 		timer := time.Now()
-		if err = safeCreateTable(ctx, timgr.db, sqlCreateTable); err != nil {
+		if err = safeCreateTable(ctx, timgr.db, sqlCreateTable, timgr.ProgressBarID); err != nil {
 			return errors.Trace(err)
 		}
 		common.AppLogger.Infof("%s takes %v", sqlCreateTable, time.Since(timer))
@@ -94,9 +98,12 @@ func createTableIfNotExistsStmt(createTable string) string {
 	return createTable
 }
 
-func safeCreateTable(ctx context.Context, db *sql.DB, createTable string) error {
+func safeCreateTable(ctx context.Context, db *sql.DB, createTable string, progressBarID int) error {
 	createTable = createTableIfNotExistsStmt(createTable)
 	err := common.ExecWithRetry(ctx, db, []string{createTable})
+	if progressBarID >= 0 {
+		config.Progress().Inc(progressBarID)
+	}
 	return errors.Trace(err)
 }
 

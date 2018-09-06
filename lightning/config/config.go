@@ -48,6 +48,7 @@ type Config struct {
 	ConfigFile   string `json:"config-file"`
 	DoCompact    bool   `json:"-"`
 	SwitchMode   string `json:"-"`
+	Progress     bool   `json:"-"`
 	printVersion bool
 }
 
@@ -109,6 +110,7 @@ func LoadConfig(args []string) (*Config, error) {
 	fs.StringVar(&cfg.ConfigFile, "c", "tidb-lightning.toml", "tidb-lightning configuration file")
 	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compaction on the target cluster, run then exit")
 	fs.StringVar(&cfg.SwitchMode, "switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal'], run then exit")
+	fs.BoolVar(&cfg.Progress, "progress", true, "whether to print import progress")
 	fs.BoolVar(&cfg.printVersion, "V", false, "print version of lightning")
 
 	if err := fs.Parse(args); err != nil {

@@ -68,6 +68,9 @@ func (l *Lightning) Run() {
 		return
 	}
 
+	config.InitProgress(l.cfg)
+	defer config.Progress().Close()
+
 	l.wg.Add(1)
 	go func() {
 		defer l.wg.Done()

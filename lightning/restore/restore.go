@@ -71,8 +71,7 @@ func NewRestoreControlloer(ctx context.Context, dbMetas map[string]*mydump.MDDat
 	rc := &RestoreController{
 		cfg:              cfg,
 		dbMetas:          dbMetas,
-		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
-		regionWorkers:    NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
+		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table", 1),
 		deliverMgr:       kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
 		postProcessQueue: make(chan *TableRestore),
 	}
@@ -125,6 +124,18 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	defer tidbMgr.Close()
 
 	if !rc.cfg.Mydumper.NoSchema {
+		tablesCount := 0
+		for _, dbMeta := range rc.dbMetas {
+			tablesCount += len(dbMeta.Tables)
+		}
+		progress := config.Progress()
+		tidbMgr.ProgressBarID = progress.AcquireBars(1, "[=> ]")
+		defer func() {
+			progress.RecycleBars(1)
+			tidbMgr.ProgressBarID = -1
+		}()
+		progress.Reset(tidbMgr.ProgressBarID, "PREPARING", tablesCount)
+
 		for db, dbMeta := range rc.dbMetas {
 			timer := time.Now()
 			common.AppLogger.Infof("restore table schema for `%s`", dbMeta.Name)
@@ -150,6 +161,18 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	timer := time.Now()
 	var wg sync.WaitGroup
+
+	tablesCount := 0
+	for _, dbMeta := range rc.dbMetas {
+		tablesCount += len(dbMeta.Tables)
+	}
+	progress := config.Progress()
+	tableProgressBarID := progress.AcquireBars(1, "[=> ]")
+	workerStartID := progress.AcquireBars(rc.tableWorkers.limit, "[-> ]")
+	defer progress.RecycleBars(1 + rc.tableWorkers.limit)
+	progress.Reset(tableProgressBarID, "RESTORING", tablesCount)
+
+	rc.regionWorkers = NewRestoreWorkerPool(ctx, rc.cfg.App.RegionConcurrency, "region", workerStartID)
 
 	for dbName, dbMeta := range rc.dbMetas {
 		dbInfo, ok := rc.dbInfos[dbName]
@@ -183,6 +206,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				defer wg.Done()
 				table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
 				err := rc.restoreTable(ctx, tr, w)
+				progress.Inc(tableProgressBarID)
 				if err != nil {
 					common.AppLogger.Errorf("[%s] restore error %v", table, errors.ErrorStack(err))
 				}
@@ -212,6 +236,8 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 
 	var ctxAborted bool
 	//1. restore table data
+	workerID := w.ID
+	config.Progress().Reset(workerID, fmt.Sprintf("%-9.9s", t.tableMeta.Name), len(t.tasks))
 	for _, task := range t.tasks {
 		select {
 		case <-ctx.Done():
@@ -230,6 +256,7 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 				return
 			}
 			err := t.Run(ctx)
+			config.Progress().Inc(workerID)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] region %s run task error %s", table, t.region.Name(), errors.ErrorStack(err))
 				skipTables[table] = struct{}{}
@@ -580,13 +607,13 @@ type RestoreWorkerPool struct {
 }
 
 type RestoreWorker struct {
-	ID int64
+	ID int
 }
 
-func NewRestoreWorkerPool(ctx context.Context, limit int, name string) *RestoreWorkerPool {
+func NewRestoreWorkerPool(ctx context.Context, limit int, name string, startID int) *RestoreWorkerPool {
 	workers := make(chan *RestoreWorker, limit)
 	for i := 0; i < limit; i++ {
-		workers <- &RestoreWorker{ID: int64(i + 1)}
+		workers <- &RestoreWorker{ID: i + startID}
 	}
 
 	pool := &RestoreWorkerPool{
