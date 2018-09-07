@@ -4,6 +4,8 @@
 # background profile for debuging ( 0 to disable )
 pprof-port = 10089
 
+# check if the cluster satisfies the minimum requirement before starting
+# check-requirements = true
 
 # table-concurrency controls the maximum handled tables concurrently while reading Mydumper SQL files. It can affect the tikv-importer memory usage.
 table-concurrency = 8

@@ -4,10 +4,13 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/juju/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -38,6 +41,12 @@ var (
 const (
 	defaultGCLifeTime   = 100 * time.Hour
 	closeEngineMaxRetry = 5
+)
+
+var (
+	requiredTiDBVersion = *semver.New("2.0.4")
+	requiredPDVersion   = *semver.New("2.0.4")
+	requiredTiKVVersion = *semver.New("2.0.4")
 )
 
 func init() {
@@ -78,6 +87,7 @@ func (rc *RestoreController) Close() {
 func (rc *RestoreController) Run(ctx context.Context) {
 	timer := time.Now()
 	opts := []func(context.Context) error{
+		rc.checkRequirements,
 		rc.switchToImportMode,
 		rc.restoreSchema,
 		rc.restoreTables,
@@ -93,6 +103,7 @@ func (rc *RestoreController) Run(ctx context.Context) {
 		}
 		if err != nil {
 			common.AppLogger.Errorf("run cause error : %s", errors.ErrorStack(err))
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			break // ps : not continue
 		}
 	}
@@ -376,6 +387,114 @@ func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.Swit
 	defer cli.Close()
 
 	return errors.Trace(cli.Switch(mode))
+}
+
+func (rc *RestoreController) checkRequirements(_ context.Context) error {
+	// skip requirement check if explicitly turned off
+	if !rc.cfg.App.CheckRequirements {
+		return nil
+	}
+
+	client := &http.Client{}
+	if err := rc.checkTiDBVersion(client); err != nil {
+		return errors.Trace(err)
+	}
+	// TODO: Reenable the PD/TiKV version check after we upgrade the dependency to 2.1.
+	if err := rc.checkPDVersion(client); err != nil {
+		// return errors.Trace(err)
+		common.AppLogger.Infof("PD version check failed: %v", err)
+	}
+	if err := rc.checkTiKVVersion(client); err != nil {
+		// return errors.Trace(err)
+		common.AppLogger.Infof("TiKV version check failed: %v", err)
+	}
+
+	return nil
+}
+
+func (rc *RestoreController) checkTiDBVersion(client *http.Client) error {
+	url := fmt.Sprintf("http://%s:%d/status", rc.cfg.TiDB.Host, rc.cfg.TiDB.StatusPort)
+	var status struct{ Version string }
+	err := common.GetJSON(client, url, &status)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// version format: "5.7.10-TiDB-v2.1.0-rc.1-7-g38c939f"
+	//                               ^~~~~~~~~^ we only want this part
+	// version format: "5.7.10-TiDB-v2.0.4-1-g06a0bf5"
+	//                               ^~~~^
+	versions := strings.Split(status.Version, "-")
+	if len(versions) < 5 {
+		return errors.Errorf("not a valid TiDB version: %s", status.Version)
+	}
+	rawVersion := strings.Join(versions[2:len(versions)-2], "-")
+	rawVersion = strings.TrimPrefix(rawVersion, "v")
+
+	version, err := semver.NewVersion(rawVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return checkVersion("TiDB", requiredTiDBVersion, *version)
+}
+
+func (rc *RestoreController) checkPDVersion(client *http.Client) error {
+	url := fmt.Sprintf("http://%s/pd/api/v1/config/cluster-version", rc.cfg.TiDB.PdAddr)
+	var rawVersion string
+	err := common.GetJSON(client, url, &rawVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	version, err := semver.NewVersion(rawVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return checkVersion("PD", requiredPDVersion, *version)
+}
+
+func (rc *RestoreController) checkTiKVVersion(client *http.Client) error {
+	url := fmt.Sprintf("http://%s/pd/api/v1/stores", rc.cfg.TiDB.PdAddr)
+
+	var stores struct {
+		Stores []struct {
+			Store struct {
+				Address string
+				Version string
+			}
+		}
+	}
+	err := common.GetJSON(client, url, &stores)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, store := range stores.Stores {
+		version, err := semver.NewVersion(store.Store.Version)
+		if err != nil {
+			return errors.Annotate(err, store.Store.Address)
+		}
+		component := fmt.Sprintf("TiKV (at %s)", store.Store.Address)
+		err = checkVersion(component, requiredTiKVVersion, *version)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func checkVersion(component string, expected, actual semver.Version) error {
+	if actual.Compare(expected) >= 0 {
+		return nil
+	}
+	return errors.Errorf(
+		"%s version too old, expected '>=%s', found '%s'",
+		component,
+		expected,
+		actual,
+	)
 }
 
 func (rc *RestoreController) getTables() []string {

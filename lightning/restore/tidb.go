@@ -2,9 +2,7 @@ package restore
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -121,44 +119,25 @@ func (timgr *TiDBManager) GetSchemas() ([]*model.DBInfo, error) {
 func (timgr *TiDBManager) getSchemas() ([]*model.DBInfo, error) {
 	baseURL := *timgr.baseURL
 	baseURL.Path = "schema"
-	resp, err := timgr.client.Get(baseURL.String())
+
+	var schemas []*model.DBInfo
+	err := common.GetJSON(timgr.client, baseURL.String(), &schemas)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return nil, errors.Errorf("get %s http status code != 200, message %s", baseURL.String(), string(body))
-	}
-
-	var schemas []*model.DBInfo
-	err = json.NewDecoder(resp.Body).Decode(&schemas)
-	return schemas, errors.Trace(err)
+	return schemas, nil
 }
 
 func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
 	baseURL := *timgr.baseURL
 	baseURL.Path = fmt.Sprintf("schema/%s", schema)
-	resp, err := timgr.client.Get(baseURL.String())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return nil, errors.Errorf("get %s http status code !=200, message %s", baseURL.String(), string(body))
-	}
 
 	var tables []*model.TableInfo
-	err = json.NewDecoder(resp.Body).Decode(&tables)
-	return tables, errors.Annotatef(err, "get tables for schema %s", schema)
+	err := common.GetJSON(timgr.client, baseURL.String(), &tables)
+	if err != nil {
+		return nil, errors.Annotatef(errors.Trace(err), "get tables for schema %s", schema)
+	}
+	return tables, nil
 }
 
 func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas map[string]*mydump.MDDatabaseMeta) (map[string]*TidbDBInfo, error) {
