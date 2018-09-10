@@ -68,6 +68,9 @@ func (l *Lightning) Run() {
 		return
 	}
 
+	common.CaptureErrorLogs(l.ctx)
+	defer common.PrintErrorLogs()
+
 	config.InitProgress(l.cfg)
 	defer config.Progress().Close()
 

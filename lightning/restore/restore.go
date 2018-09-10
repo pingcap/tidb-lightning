@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -103,7 +102,6 @@ func (rc *RestoreController) Run(ctx context.Context) {
 		}
 		if err != nil {
 			common.AppLogger.Errorf("run cause error : %s", errors.ErrorStack(err))
-			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			break // ps : not continue
 		}
 	}
@@ -842,8 +840,8 @@ func (tr *TableRestore) restoreTableMeta(ctx context.Context) error {
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
 		// let it failed and record it to log.
-		common.AppLogger.Warnf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
-		return nil
+		common.AppLogger.Errorf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
+		return errors.Trace(err)
 	}
 	defer db.Close()
 
@@ -893,9 +891,8 @@ func (tr *TableRestore) checksum(ctx context.Context) error {
 		return nil
 	}
 	if remoteChecksum.Checksum != localChecksum.Sum() || remoteChecksum.TotalKVs != localChecksum.SumKVS() || remoteChecksum.TotalBytes != localChecksum.SumSize() {
-		common.AppLogger.Errorf("[%s] checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
+		return errors.Errorf("[%s] checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
 			table, remoteChecksum.Checksum, localChecksum.Sum(), remoteChecksum.TotalKVs, localChecksum.SumKVS(), remoteChecksum.TotalBytes, localChecksum.SumSize())
-		return nil
 	}
 
 	common.AppLogger.Infof("[%s] checksum pass", table)
