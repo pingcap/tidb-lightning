@@ -1,0 +1,24 @@
+[lightning]
+table-concurrency = 4
+check-requirements = false
+file = "/dev/stderr"
+level = "warning"
+
+[tikv-importer]
+addr = "127.0.0.1:20170"
+
+[mydumper]
+data-source-dir = "/tmp/lightning_test_result/restore.mydump"
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+log-level = "error"
+
+[post-restore]
+checksum = true
+compact = false
+analyze = false
