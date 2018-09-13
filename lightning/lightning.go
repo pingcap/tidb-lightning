@@ -107,7 +107,11 @@ func (l *Lightning) run() {
 	}
 
 	dbMetas := mdl.GetDatabases()
-	procedure := restore.NewRestoreControlloer(l.ctx, dbMetas, l.cfg)
+	procedure, err := restore.NewRestoreController(l.ctx, dbMetas, l.cfg)
+	if err != nil {
+		common.AppLogger.Errorf("failed to restore : %s", errors.ErrorStack(err))
+		return
+	}
 	defer procedure.Close()
 
 	procedure.Run(l.ctx)
