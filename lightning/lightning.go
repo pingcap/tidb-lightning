@@ -9,7 +9,6 @@ import (
 	"github.com/juju/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/prometheus/client_golang/prometheus"
-	uuid "github.com/satori/go.uuid"
 	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -31,8 +30,6 @@ func initEnv(cfg *config.Config) error {
 	if err := common.InitLogger(&cfg.App.LogConfig, cfg.TiDB.LogLevel); err != nil {
 		return errors.Trace(err)
 	}
-
-	kv.ConfigDeliverTxnBatchSize(cfg.TikvImporter.BatchSize)
 
 	if cfg.App.ProfilePort > 0 {
 		go func() {
@@ -118,13 +115,15 @@ func (l *Lightning) run() {
 }
 
 func (l *Lightning) doCompact() error {
-	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, l.cfg.TikvImporter.Addr, l.cfg.TiDB.PdAddr, "")
+	ctx := context.Background()
+
+	importer, err := kv.NewImporter(ctx, l.cfg.TikvImporter.Addr, l.cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer cli.Close()
+	defer importer.Close()
 
-	if err := cli.Compact(restore.FullLevelCompact); err != nil {
+	if err := importer.Compact(ctx, restore.FullLevelCompact); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -132,13 +131,19 @@ func (l *Lightning) doCompact() error {
 }
 
 func (l *Lightning) switchMode(mode sstpb.SwitchMode) error {
-	cli, err := kv.NewKVDeliverClient(context.Background(), uuid.Nil, l.cfg.TikvImporter.Addr, l.cfg.TiDB.PdAddr, "")
+	ctx := context.Background()
+
+	importer, err := kv.NewImporter(ctx, l.cfg.TikvImporter.Addr, l.cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer cli.Close()
+	defer importer.Close()
 
-	return errors.Trace(cli.Switch(mode))
+	if err := importer.SwitchMode(ctx, mode); err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
 }
 
 func (l *Lightning) Stop() {
