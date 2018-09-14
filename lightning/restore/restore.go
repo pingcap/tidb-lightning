@@ -160,6 +160,21 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	}
 	go rc.listenCheckpointUpdates(ctx)
 
+	// Estimate the number of chunks for progress reporting
+	estimatedChunkCount := int64(0)
+	minRegionSize := rc.cfg.Mydumper.MinRegionSize
+	for _, dbMeta := range rc.dbMetas {
+		for _, tableMeta := range dbMeta.Tables {
+			for _, dataFile := range tableMeta.DataFiles {
+				info, err := os.Stat(dataFile)
+				if err == nil {
+					estimatedChunkCount += (info.Size() + minRegionSize - 1) / minRegionSize
+				}
+			}
+		}
+	}
+	metric.ChunkCounter.WithLabelValues("estimated").Add(float64(estimatedChunkCount))
+
 	return nil
 }
 
