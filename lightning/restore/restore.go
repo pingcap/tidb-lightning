@@ -92,7 +92,7 @@ func (rc *RestoreController) Close() {
 	rc.importer.Close()
 }
 
-func (rc *RestoreController) Run(ctx context.Context) {
+func (rc *RestoreController) Run(ctx context.Context) error {
 	timer := time.Now()
 	opts := []func(context.Context) error{
 		rc.checkRequirements,
@@ -104,13 +104,15 @@ func (rc *RestoreController) Run(ctx context.Context) {
 		rc.switchToNormalMode,
 	}
 
+	var err error
 outside:
 	for _, process := range opts {
-		err := process(ctx)
+		err = process(ctx)
 		switch {
 		case err == nil:
 		case common.IsContextCanceledError(err):
 			common.AppLogger.Infof("user terminated : %v", err)
+			err = nil
 			break outside
 		default:
 			common.AppLogger.Errorf("run cause error : %s", errors.ErrorStack(err))
@@ -123,7 +125,7 @@ outside:
 	common.AppLogger.Infof("Timing statistic :\n%s", statistic)
 	common.AppLogger.Infof("the whole procedure takes %v", time.Since(timer))
 
-	return
+	return errors.Trace(err)
 }
 
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
