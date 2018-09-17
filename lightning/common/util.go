@@ -129,62 +129,65 @@ func QueryRowWithRetry(ctx context.Context, db *sql.DB, query string, dest ...in
 	return errors.Errorf("query sql [%s] failed", query)
 }
 
-// ExecWithRetry executes sqls with optional retry.
-func ExecWithRetry(ctx context.Context, db *sql.DB, sqls []string) error {
+// TransactWithRetry executes an action in a transaction, and retry if the
+// action failed with a retryable error.
+func TransactWithRetry(ctx context.Context, db *sql.DB, purpose string, action func(context.Context, *sql.Tx) error) error {
 	maxRetry := defaultMaxRetry
-
-	if len(sqls) == 0 {
-		return nil
-	}
 
 	var err error
 	for i := 0; i < maxRetry; i++ {
 		if i > 0 {
-			AppLogger.Warnf("sql stmt_exec retry %d: %v", i, sqls)
+			AppLogger.Warnf("transaction %s retry %d", purpose, i)
 			time.Sleep(retryTimeout)
 		}
 
-		if err = executeSQLImp(ctx, db, sqls); err != nil {
+		if err = transactImpl(ctx, db, purpose, action); err != nil {
 			if IsRetryableError(err) {
 				continue
 			}
-			AppLogger.Errorf("[exec][sql] %s [error] %v", sqls, err)
+			AppLogger.Errorf("transaction %s [error] %v", purpose, err)
 			return errors.Trace(err)
 		}
 
 		return nil
 	}
 
-	return errors.Errorf("exec sqls [%v] failed, err:%s", sqls, err.Error())
+	return errors.Annotatef(err, "transaction %s failed", purpose)
 }
 
-func executeSQLImp(ctx context.Context, db *sql.DB, sqls []string) error {
+func transactImpl(ctx context.Context, db *sql.DB, purpose string, action func(context.Context, *sql.Tx) error) error {
 	txn, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		AppLogger.Errorf("exec sqls [%v] begin failed %v", sqls, errors.ErrorStack(err))
+		AppLogger.Errorf("transaction %s begin failed %v", purpose, errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 
-	for i := range sqls {
-		AppLogger.Debugf("[exec][sql] %s", sqls[i])
-
-		_, err = txn.ExecContext(ctx, sqls[i])
-		if err != nil {
-			AppLogger.Warnf("[exec][sql] %s [error]%v", sqls[i], err)
-			rerr := txn.Rollback()
-			if rerr != nil {
-				AppLogger.Errorf("[exec][sql] %s [error] %v", sqls[i], rerr)
-			}
-			// we should return the exec err, instead of the rollback rerr.
-			return errors.Trace(err)
+	err = action(ctx, txn)
+	if err != nil {
+		AppLogger.Warnf("transaction %s [error]%v", purpose, err)
+		rerr := txn.Rollback()
+		if rerr != nil {
+			AppLogger.Errorf("transaction %s [error] %v", purpose, rerr)
 		}
+		// we should return the exec err, instead of the rollback rerr.
+		// no need to errors.Trace() it, as the error comes from user code anyway.
+		return err
 	}
+
 	err = txn.Commit()
 	if err != nil {
-		AppLogger.Errorf("exec sqls [%v] commit failed %v", sqls, errors.ErrorStack(err))
+		AppLogger.Errorf("transaction %s commit failed %v", purpose, errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// ExecWithRetry executes a single SQL with optional retry.
+func ExecWithRetry(ctx context.Context, db *sql.DB, purpose string, query string, args ...interface{}) error {
+	return errors.Trace(TransactWithRetry(ctx, db, purpose, func(c context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(c, query, args...)
+		return errors.Trace(err)
+	}))
 }
 
 // IsRetryableError returns whether the error is transient (e.g. network
@@ -228,7 +231,30 @@ func IsContextCanceledError(err error) bool {
 
 // UniqueTable returns an unique table name.
 func UniqueTable(schema string, table string) string {
-	return fmt.Sprintf("`%s`.`%s`", schema, table)
+	var builder strings.Builder
+	WriteMySQLIdentifier(&builder, schema)
+	builder.WriteByte('.')
+	WriteMySQLIdentifier(&builder, table)
+	return builder.String()
+}
+
+// Writes a MySQL identifier into the string builder.
+// The identifier is always escaped into the form "`foo`".
+func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
+	builder.Grow(len(identifier) + 2)
+	builder.WriteByte('`')
+
+	// use a C-style loop instead of range loop to avoid UTF-8 decoding
+	for i := 0; i < len(identifier); i++ {
+		b := identifier[i]
+		if b == '`' {
+			builder.WriteString("``")
+		} else {
+			builder.WriteByte(b)
+		}
+	}
+
+	builder.WriteByte('`')
 }
 
 // GetJSON fetches a page and parses it as JSON. The parsed result will be

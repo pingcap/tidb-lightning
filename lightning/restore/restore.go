@@ -695,7 +695,7 @@ func analyzeTable(ctx context.Context, dsn config.DBStore, tables []string) erro
 		timer := time.Now()
 		common.AppLogger.Infof("[%s] analyze", table)
 		query := fmt.Sprintf("ANALYZE TABLE %s", table)
-		err := common.ExecWithRetry(ctx, db, []string{query})
+		err := common.ExecWithRetry(ctx, db, query, query)
 		if err != nil {
 			common.AppLogger.Errorf("%s error %s", query, errors.ErrorStack(err))
 			continue
@@ -710,8 +710,8 @@ func analyzeTable(ctx context.Context, dsn config.DBStore, tables []string) erro
 ////////////////////////////////////////////////////////////////
 
 func setSessionVarInt(ctx context.Context, db *sql.DB, name string, value int) {
-	stmt := fmt.Sprintf("set session %s = %d", name, value)
-	if err := common.ExecWithRetry(ctx, db, []string{stmt}); err != nil {
+	stmt := fmt.Sprintf("set session %s = ?", name)
+	if err := common.ExecWithRetry(ctx, db, stmt, stmt, value); err != nil {
 		common.AppLogger.Warnf("failed to set variable @%s to %d: %s", name, value, err.Error())
 	}
 }
