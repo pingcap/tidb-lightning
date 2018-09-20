@@ -14,7 +14,8 @@ LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GitBranch=$(sh
 LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GoVersion=$(shell go version)"
 
 LIGHTNING_BIN := bin/tidb-lightning
-TEST_DIR := /tmp/lightning_test_result # this is hard-coded unless we want to generate *.toml on fly.
+TEST_DIR := /tmp/lightning_test_result
+# this is hard-coded unless we want to generate *.toml on fly.
 
 TIDBDIR := vendor/github.com/pingcap/tidb
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))

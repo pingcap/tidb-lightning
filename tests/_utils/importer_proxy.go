@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -235,15 +236,22 @@ func run() error {
 		shutdownCh <- struct{}{}
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("/api/v1/dump", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/v1/dump", func(w http.ResponseWriter, req *http.Request) {
 		service.lock.Lock()
 		logs := *service.logs
 		service.lock.Unlock()
 
+		since, err := strconv.ParseInt(req.URL.Query().Get("since"), 10, 64)
+		if err != nil {
+			since = 0
+		}
+
 		w.WriteHeader(http.StatusOK)
 		encoder := json.NewEncoder(w)
 		for _, log := range logs {
-			encoder.Encode(log)
+			if log.TS > time.Duration(since) {
+				encoder.Encode(log)
+			}
 		}
 	})
 	controlServer.Handler = mux
