@@ -158,11 +158,11 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas map[string
 			tableName := tbl.Name.String()
 			if tbl.State != model.StatePublic {
 				err := errors.Errorf("table [%s.%s] state is not public", schema, tableName)
-				metric.RecordTableCount("pending", err)
+				metric.RecordTableCount(metric.TableStatePending, err)
 				return nil, err
 			}
 			createTableStmt, err := timgr.getCreateTableStmt(ctx, schema, tableName)
-			metric.RecordTableCount("pending", err)
+			metric.RecordTableCount(metric.TableStatePending, err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

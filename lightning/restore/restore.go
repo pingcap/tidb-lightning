@@ -233,7 +233,7 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 			err := t.Run(ctx)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] region %s run task error %s", table, t.region.Name(), errors.ErrorStack(err))
-				metric.RecordTableCount("written", err)
+				metric.RecordTableCount(metric.TableStateWritten, err)
 				skipTables[table] = struct{}{}
 			}
 		}(worker, task)
@@ -242,7 +242,7 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	common.AppLogger.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
 
 	if _, ok := skipTables[table]; !ok {
-		metric.RecordTableCount("written", nil)
+		metric.RecordTableCount(metric.TableStateWritten, nil)
 	}
 
 	// recycle table worker in advance to prevent so many idle region workers and promote CPU utilization.
@@ -251,7 +251,7 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	if ctxAborted {
 		return errCtxAborted
 	}
-	metric.RecordTableCount("closed", err)
+	metric.RecordTableCount(metric.TableStateClosed, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -341,11 +341,11 @@ func (rc *RestoreController) handlePostProcessing(ctx context.Context) {
 func (rc *RestoreController) doPostProcessing(ctx context.Context, t *TableRestore) error {
 	uniqueTable := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
 	var err error
-	defer metric.RecordTableCount("completed", err)
+	defer metric.RecordTableCount(metric.TableStateCompleted, err)
 
 	// 1. close engine, then calling import
 	err = t.importKV()
-	metric.RecordTableCount("imported", err)
+	metric.RecordTableCount(metric.TableStateImported, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -359,14 +359,14 @@ func (rc *RestoreController) doPostProcessing(ctx context.Context, t *TableResto
 
 	// 3. alter table set auto_increment
 	err = t.restoreTableMeta(ctx)
-	metric.RecordTableCount("altered_auto_inc", err)
+	metric.RecordTableCount(metric.TableStateAlteredAutoInc, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// 4. do table checksum
 	err = t.checksum(ctx)
-	metric.RecordTableCount("checksum", err)
+	metric.RecordTableCount(metric.TableStateChecksum, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -635,13 +635,6 @@ func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {
 
 ////////////////////////////////////////////////////////////////
 
-const (
-	statPending  string = "pending"
-	statRunning  string = "running"
-	statFinished string = "finished"
-	statFailed   string = "failed"
-)
-
 type restoreCallback func(ctx context.Context, regionID int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error
 
 type regionRestoreTask struct {
@@ -685,7 +678,7 @@ func newRegionRestoreTask(
 		encoder:   encoder,
 		callback:  callback,
 	}
-	task.setStatusWithMetric(statPending)
+	task.setStatusWithMetric(metric.ChunkStatePending)
 	return task, nil
 }
 
@@ -707,13 +700,13 @@ func (t *regionRestoreTask) Run(ctx context.Context) (err error) {
 	table := common.UniqueTable(region.DB, region.Table)
 	common.AppLogger.Infof("[%s] restore region [%s]", table, region.Name())
 
-	t.setStatusWithMetric(statRunning)
+	t.setStatusWithMetric(metric.ChunkStateRunning)
 	maxRowID, rows, checksum, err := t.run(ctx)
 	if err != nil {
-		t.setStatusWithMetric(statFailed)
+		t.setStatusWithMetric(metric.ChunkStateFailed)
 		return errors.Trace(err)
 	}
-	t.setStatusWithMetric(statFinished)
+	t.setStatusWithMetric(metric.ChunkStateFinished)
 
 	common.AppLogger.Infof("[%s] restore region [%s] takes %v", table, region.Name(), time.Since(timer))
 	err = t.callback(ctx, region.ID, maxRowID, rows, checksum)

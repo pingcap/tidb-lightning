@@ -10,6 +10,28 @@ var (
 	cpuUsage            float64
 )
 
+const (
+	// states used for the TableCounter labels
+	TableStatePending        = "pending"
+	TableStateWritten        = "written"
+	TableStateClosed         = "closed"
+	TableStateImported       = "imported"
+	TableStateAlteredAutoInc = "altered_auto_inc"
+	TableStateChecksum       = "checksum"
+	TableStateCompleted      = "completed"
+
+	// results used for the TableCounter labels
+	TableResultSuccess = "success"
+	TableResultFailure = "failure"
+
+	// states used for the ChunkCounter labels
+	ChunkStateEstimated = "estimated"
+	ChunkStatePending   = "pending"
+	ChunkStateRunning   = "running"
+	ChunkStateFinished  = "finished"
+	ChunkStateFailed    = "failed"
+)
+
 var (
 	EngineCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -39,14 +61,6 @@ var (
 			Name:      "tables",
 			Help:      "count number of tables processed",
 		}, []string{"state", "result"})
-	// state can be one of:
-	//  - pending
-	//  - written
-	//  - closed
-	//  - imported
-	//  - altered_auto_inc
-	//  - checksum
-	// result can be "success" or "failure"
 
 	ChunkCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -67,9 +81,9 @@ func init() {
 func RecordTableCount(status string, err error) {
 	var result string
 	if err != nil {
-		result = "failure"
+		result = TableResultFailure
 	} else {
-		result = "success"
+		result = TableResultSuccess
 	}
 	TableCounter.WithLabelValues(status, result).Inc()
 }
