@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -72,8 +71,7 @@ func NewRestoreControlloer(ctx context.Context, dbMetas map[string]*mydump.MDDat
 	rc := &RestoreController{
 		cfg:              cfg,
 		dbMetas:          dbMetas,
-		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
-		regionWorkers:    NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
+		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table", 1),
 		deliverMgr:       kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
 		postProcessQueue: make(chan *TableRestore),
 	}
@@ -105,7 +103,6 @@ func (rc *RestoreController) Run(ctx context.Context) {
 		}
 		if err != nil {
 			common.AppLogger.Errorf("run cause error : %s", errors.ErrorStack(err))
-			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			break // ps : not continue
 		}
 	}
@@ -126,6 +123,18 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	defer tidbMgr.Close()
 
 	if !rc.cfg.Mydumper.NoSchema {
+		tablesCount := 0
+		for _, dbMeta := range rc.dbMetas {
+			tablesCount += len(dbMeta.Tables)
+		}
+		progress := config.Progress()
+		tidbMgr.ProgressBarID = progress.AcquireBars(1, "[=> ]")
+		defer func() {
+			progress.RecycleBars(1)
+			tidbMgr.ProgressBarID = -1
+		}()
+		progress.Reset(tidbMgr.ProgressBarID, "PREPARING", tablesCount)
+
 		for db, dbMeta := range rc.dbMetas {
 			timer := time.Now()
 			common.AppLogger.Infof("restore table schema for `%s`", dbMeta.Name)
@@ -151,6 +160,18 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	timer := time.Now()
 	var wg sync.WaitGroup
+
+	tablesCount := 0
+	for _, dbMeta := range rc.dbMetas {
+		tablesCount += len(dbMeta.Tables)
+	}
+	progress := config.Progress()
+	tableProgressBarID := progress.AcquireBars(1, "[=> ]")
+	workerStartID := progress.AcquireBars(rc.tableWorkers.limit, "[-> ]")
+	defer progress.RecycleBars(1 + rc.tableWorkers.limit)
+	progress.Reset(tableProgressBarID, "RESTORING", tablesCount)
+
+	rc.regionWorkers = NewRestoreWorkerPool(ctx, rc.cfg.App.RegionConcurrency, "region", workerStartID)
 
 	for dbName, dbMeta := range rc.dbMetas {
 		dbInfo, ok := rc.dbInfos[dbName]
@@ -184,6 +205,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				defer wg.Done()
 				table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
 				err := rc.restoreTable(ctx, tr, w)
+				progress.Inc(tableProgressBarID)
 				if err != nil {
 					common.AppLogger.Errorf("[%s] restore error %v", table, errors.ErrorStack(err))
 				}
@@ -213,6 +235,8 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 
 	var ctxAborted bool
 	//1. restore table data
+	workerID := w.ID
+	config.Progress().Reset(workerID, fmt.Sprintf("%-9.9s", t.tableMeta.Name), len(t.tasks))
 	for _, task := range t.tasks {
 		select {
 		case <-ctx.Done():
@@ -231,8 +255,10 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 				return
 			}
 			err := t.Run(ctx)
+			config.Progress().Inc(workerID)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] region %s run task error %s", table, t.region.Name(), errors.ErrorStack(err))
+				metric.RecordTableCount("written", err)
 				skipTables[table] = struct{}{}
 			}
 		}(worker, task)
@@ -240,12 +266,17 @@ func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, 
 	wg.Wait()
 	common.AppLogger.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
 
+	if _, ok := skipTables[table]; !ok {
+		metric.RecordTableCount("written", nil)
+	}
+
 	// recycle table worker in advance to prevent so many idle region workers and promote CPU utilization.
 	err := t.closeWithRetry(ctx)
 	rc.tableWorkers.Recycle(w)
 	if ctxAborted {
 		return errCtxAborted
 	}
+	metric.RecordTableCount("closed", err)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -334,25 +365,34 @@ func (rc *RestoreController) handlePostProcessing(ctx context.Context) {
 
 func (rc *RestoreController) doPostProcessing(ctx context.Context, t *TableRestore) error {
 	uniqueTable := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
+	var err error
+	defer metric.RecordTableCount("completed", err)
+
 	// 1. close engine, then calling import
-	if err := t.importKV(); err != nil {
+	err = t.importKV()
+	metric.RecordTableCount("imported", err)
+	if err != nil {
 		return errors.Trace(err)
 	}
 	common.AppLogger.Infof("[%s] local checksum %s, has imported %d rows", uniqueTable, t.localChecksum, t.tableRows)
 
 	// 2. compact level 1
-	if err := rc.doCompact(ctx, Level1Compact); err != nil {
+	if err = rc.doCompact(ctx, Level1Compact); err != nil {
 		// log it and continue
 		common.AppLogger.Warnf("[%s] do compact %d failed err %v", uniqueTable, Level1Compact, errors.ErrorStack(err))
 	}
 
 	// 3. alter table set auto_increment
-	if err := t.restoreTableMeta(ctx); err != nil {
+	err = t.restoreTableMeta(ctx)
+	metric.RecordTableCount("altered_auto_inc", err)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// 4. do table checksum
-	if err := t.checksum(ctx); err != nil {
+	err = t.checksum(ctx)
+	metric.RecordTableCount("checksum", err)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -591,29 +631,32 @@ type RestoreWorkerPool struct {
 }
 
 type RestoreWorker struct {
-	ID int64
+	ID int
 }
 
-func NewRestoreWorkerPool(ctx context.Context, limit int, name string) *RestoreWorkerPool {
+func NewRestoreWorkerPool(ctx context.Context, limit int, name string, startID int) *RestoreWorkerPool {
 	workers := make(chan *RestoreWorker, limit)
 	for i := 0; i < limit; i++ {
-		workers <- &RestoreWorker{ID: int64(i + 1)}
+		workers <- &RestoreWorker{ID: i + startID}
 	}
 
-	pool := &RestoreWorkerPool{
+	metric.IdleWorkersGauge.WithLabelValues(name).Set(float64(limit))
+	return &RestoreWorkerPool{
 		limit:   limit,
 		workers: workers,
 		name:    name,
 	}
-	reportFunc := func() {
-		metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
-	}
-	go metric.ReportMetricPeriodically(ctx, reportFunc)
-	return pool
 }
 
-func (pool *RestoreWorkerPool) Apply() *RestoreWorker         { return <-pool.workers }
-func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) { pool.workers <- worker }
+func (pool *RestoreWorkerPool) Apply() *RestoreWorker {
+	worker := <-pool.workers
+	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+	return worker
+}
+func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {
+	pool.workers <- worker
+	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+}
 
 ////////////////////////////////////////////////////////////////
 
@@ -656,8 +699,7 @@ func newRegionRestoreTask(
 		return nil, errors.Trace(err)
 	}
 
-	return &regionRestoreTask{
-		status:   statPending,
+	task := &regionRestoreTask{
 		region:   region,
 		executor: executor,
 		delivers: delivers,
@@ -667,7 +709,14 @@ func newRegionRestoreTask(
 		cfg:       cfg,
 		encoder:   encoder,
 		callback:  callback,
-	}, nil
+	}
+	task.setStatusWithMetric(statPending)
+	return task, nil
+}
+
+func (t *regionRestoreTask) setStatusWithMetric(status string) {
+	t.status = status
+	metric.ChunkCounter.WithLabelValues(status).Inc()
 }
 
 func (t *regionRestoreTask) Run(ctx context.Context) (err error) {
@@ -683,18 +732,19 @@ func (t *regionRestoreTask) Run(ctx context.Context) (err error) {
 	table := common.UniqueTable(region.DB, region.Table)
 	common.AppLogger.Infof("[%s] restore region [%s]", table, region.Name())
 
-	t.status = statRunning
+	t.setStatusWithMetric(statRunning)
 	maxRowID, rows, checksum, err := t.run(ctx)
 	if err != nil {
+		t.setStatusWithMetric(statFailed)
 		return errors.Trace(err)
 	}
+	t.setStatusWithMetric(statFinished)
 
 	common.AppLogger.Infof("[%s] restore region [%s] takes %v", table, region.Name(), time.Since(timer))
 	err = t.callback(ctx, region.ID, maxRowID, rows, checksum)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	t.status = statFinished
 	return nil
 }
 
@@ -826,8 +876,8 @@ func (tr *TableRestore) restoreTableMeta(ctx context.Context) error {
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
 		// let it failed and record it to log.
-		common.AppLogger.Warnf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
-		return nil
+		common.AppLogger.Errorf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
+		return errors.Trace(err)
 	}
 	defer db.Close()
 
@@ -877,9 +927,8 @@ func (tr *TableRestore) checksum(ctx context.Context) error {
 		return nil
 	}
 	if remoteChecksum.Checksum != localChecksum.Sum() || remoteChecksum.TotalKVs != localChecksum.SumKVS() || remoteChecksum.TotalBytes != localChecksum.SumSize() {
-		common.AppLogger.Errorf("[%s] checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
+		return errors.Errorf("[%s] checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
 			table, remoteChecksum.Checksum, localChecksum.Sum(), remoteChecksum.TotalKVs, localChecksum.SumKVS(), remoteChecksum.TotalBytes, localChecksum.SumSize())
-		return nil
 	}
 
 	common.AppLogger.Infof("[%s] checksum pass", table)

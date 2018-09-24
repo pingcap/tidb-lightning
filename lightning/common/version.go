@@ -28,13 +28,13 @@ func GetRawInfo() string {
 
 // PrintInfo prints some information of the app, like git hash, binary build time, etc.
 func PrintInfo(app string, callback func()) {
-	oriLevel := GetLevel()
-	SetLevel(log.InfoLevel)
+	oriLevel := log.GetLevel()
+	log.SetLevel(log.InfoLevel)
 	printInfo(app)
 	if callback != nil {
 		callback()
 	}
-	SetLevel(oriLevel)
+	log.SetLevel(oriLevel)
 }
 
 func printInfo(app string) {
