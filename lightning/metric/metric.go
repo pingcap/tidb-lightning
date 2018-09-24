@@ -1,15 +1,7 @@
 package metric
 
 import (
-	"context"
-	"syscall"
-	"time"
-
 	"github.com/prometheus/client_golang/prometheus"
-)
-
-const (
-	ReportMetricInterval = time.Second * 10
 )
 
 var (
@@ -18,15 +10,29 @@ var (
 	cpuUsage            float64
 )
 
-var (
-	cpuUsageGauge = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "lightning",
-			Name:      "cpu_usage",
-			Help:      "the cpu usage of lightning process",
-		},
-	)
+const (
+	// states used for the TableCounter labels
+	TableStatePending        = "pending"
+	TableStateWritten        = "written"
+	TableStateClosed         = "closed"
+	TableStateImported       = "imported"
+	TableStateAlteredAutoInc = "altered_auto_inc"
+	TableStateChecksum       = "checksum"
+	TableStateCompleted      = "completed"
 
+	// results used for the TableCounter labels
+	TableResultSuccess = "success"
+	TableResultFailure = "failure"
+
+	// states used for the ChunkCounter labels
+	ChunkStateEstimated = "estimated"
+	ChunkStatePending   = "pending"
+	ChunkStateRunning   = "running"
+	ChunkStateFinished  = "finished"
+	ChunkStateFailed    = "failed"
+)
+
+var (
 	EngineCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "lightning",
@@ -48,46 +54,36 @@ var (
 			Help:      "counting kv open and closed kv encoder",
 		}, []string{"type"},
 	)
+
+	TableCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "lightning",
+			Name:      "tables",
+			Help:      "count number of tables processed",
+		}, []string{"state", "result"})
+
+	ChunkCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "lightning",
+			Name:      "chunks",
+			Help:      "count number of chunks processed",
+		}, []string{"state"})
 )
 
 func init() {
-	prometheus.MustRegister(cpuUsageGauge)
 	prometheus.MustRegister(IdleWorkersGauge)
 	prometheus.MustRegister(EngineCounter)
 	prometheus.MustRegister(KvEncoderCounter)
+	prometheus.MustRegister(TableCounter)
+	prometheus.MustRegister(ChunkCounter)
 }
 
-func CalcCPUUsageBackground(ctx context.Context) {
-	go func() {
-		reportCPU := func() {
-			calcCPUUsage()
-			cpuUsageGauge.Set(cpuUsage)
-		}
-		ReportMetricPeriodically(ctx, reportCPU)
-	}()
-}
-
-func ReportMetricPeriodically(ctx context.Context, metricFunc func()) {
-	ticker := time.NewTicker(ReportMetricInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			metricFunc()
-		}
+func RecordTableCount(status string, err error) {
+	var result string
+	if err != nil {
+		result = TableResultFailure
+	} else {
+		result = TableResultSuccess
 	}
-}
-
-func calcCPUUsage() {
-	var ru syscall.Rusage
-	syscall.Getrusage(syscall.RUSAGE_SELF, &ru)
-	usageTime := ru.Utime.Nano() + ru.Stime.Nano()
-	nowTime := time.Now().UnixNano()
-	perc := float64(usageTime-lastCPUUsageTime) / float64(nowTime-lastInspectUnixNano) * 100.0
-	lastInspectUnixNano = nowTime
-	lastCPUUsageTime = usageTime
-	cpuUsage = perc
+	TableCounter.WithLabelValues(status, result).Inc()
 }
