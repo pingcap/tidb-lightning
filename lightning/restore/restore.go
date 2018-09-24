@@ -299,7 +299,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 
 func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) (*kv.ClosedEngine, error) {
 	if cp.Status >= CheckpointStatusClosed {
-		return rc.importer.UnsafeNewClosedEngine(t.tableName, cp.Engine), nil
+		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, cp.Engine)
+		return closedEngine, errors.Trace(err)
 	}
 
 	engine, err := rc.importer.OpenEngine(ctx, t.tableName, cp.Engine)
@@ -390,11 +391,9 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 	return closedEngine, nil
 }
 
-func closeWithRetry(ctx context.Context, engine *kv.OpenedEngine) (*kv.ClosedEngine, error) {
+func closeWithRetry(ctx context.Context, engine *kv.OpenedEngine) (closedEngine *kv.ClosedEngine, err error) {
 	// ensure the engine is closed (thus the memory for tikv-importer is freed)
 	// before recycling the table workers.
-
-	var err error
 
 	closeTicker := time.NewTicker(closeEngineRetryDuration)
 	timeoutTimer := time.NewTimer(closeEngineRetryMaxDuration)
@@ -415,9 +414,9 @@ outside:
 		case <-closeTicker.C:
 		case <-closeImmediately:
 		}
-		closedEngine, err := engine.Close(ctx)
+		closedEngine, err = engine.Close(ctx)
 		if err == nil {
-			return closedEngine, nil
+			return
 		}
 		if !strings.Contains(err.Error(), "EngineInUse") {
 			// error cannot be recovered, return immediately

@@ -245,26 +245,30 @@ type ClosedEngine struct {
 // error if any associated WriteStream is still not closed.
 func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 	common.AppLogger.Infof("[%s] [%s] engine close", engine.tableName, engine.uuid)
-	req := &kv.CloseEngineRequest{
-		Uuid: engine.uuid.Bytes(),
-	}
 	timer := time.Now()
-	_, err := engine.importer.cli.CloseEngine(ctx, req)
+	closedEngine, err := engine.importer.UnsafeCloseEngine(ctx, engine.tableName, engine.uuid)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	common.AppLogger.Infof("[%s] [%s] engine close takes %v", engine.tableName, engine.uuid, time.Since(timer))
 	metric.EngineCounter.WithLabelValues("closed").Inc()
-
-	return engine.importer.UnsafeNewClosedEngine(engine.tableName, engine.uuid), nil
+	return closedEngine, nil
 }
 
-func (importer *Importer) UnsafeNewClosedEngine(tableName string, engineUUID uuid.UUID) *ClosedEngine {
+func (importer *Importer) UnsafeCloseEngine(ctx context.Context, tableName string, engineUUID uuid.UUID) (*ClosedEngine, error) {
+	req := &kv.CloseEngineRequest{
+		Uuid: engineUUID.Bytes(),
+	}
+	_, err := importer.cli.CloseEngine(ctx, req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return &ClosedEngine{
 		importer:  importer,
 		tableName: tableName,
 		uuid:      engineUUID,
-	}
+	}, nil
 }
 
 // Import the data into the TiKV cluster via SST ingestion.
