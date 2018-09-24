@@ -225,15 +225,20 @@ func (rc *RestoreController) saveStatusCheckpoint(ctx context.Context, tableName
 }
 
 func (rc *RestoreController) listenCheckpointUpdates(ctx context.Context) {
+outside:
 	for {
 		select {
 		case <-ctx.Done():
-			// TODO find a safer alternative
-			close(rc.saveCpCh)
-			return
+			break outside
 		case updater := <-rc.saveCpCh:
+			if updater == nil {
+				break outside
+			}
 			updater.updateCheckpointsDB(ctx, rc.checkpointsDB)
 		}
+	}
+	// drop the rest of the channel
+	for range rc.saveCpCh {
 	}
 }
 
