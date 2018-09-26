@@ -179,7 +179,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 }
 
 type checkpointUpdater interface {
-	updateCheckpointsDB(ctx context.Context, cpdb CheckpointsDB)
+	updateCheckpointsDB(cpdb CheckpointsDB)
 }
 
 type saveChunkCheckpoint struct {
@@ -197,17 +197,17 @@ type saveFailureCheckpoint struct {
 	tableName string
 }
 
-func (u *saveChunkCheckpoint) updateCheckpointsDB(ctx context.Context, cpdb CheckpointsDB) {
-	cpdb.UpdateChunk(ctx, u.tableName, u.alloc.Base()+1, u.checksum, u.path, u.offset)
+func (u *saveChunkCheckpoint) updateCheckpointsDB(cpdb CheckpointsDB) {
+	cpdb.UpdateChunk(u.tableName, u.alloc.Base()+1, u.checksum, u.path, u.offset)
 }
-func (u *saveStatusCheckpoint) updateCheckpointsDB(ctx context.Context, cpdb CheckpointsDB) {
-	cpdb.UpdateStatus(ctx, u.tableName, u.status)
+func (u *saveStatusCheckpoint) updateCheckpointsDB(cpdb CheckpointsDB) {
+	cpdb.UpdateStatus(u.tableName, u.status)
 }
-func (u *saveFailureCheckpoint) updateCheckpointsDB(ctx context.Context, cpdb CheckpointsDB) {
-	cpdb.UpdateFailure(ctx, u.tableName)
+func (u *saveFailureCheckpoint) updateCheckpointsDB(cpdb CheckpointsDB) {
+	cpdb.UpdateFailure(u.tableName)
 }
 
-func (rc *RestoreController) saveStatusCheckpoint(ctx context.Context, tableName string, err error, statusIfSucceed CheckpointStatus) {
+func (rc *RestoreController) saveStatusCheckpoint(tableName string, err error, statusIfSucceed CheckpointStatus) {
 	var updator checkpointUpdater
 
 	switch {
@@ -234,7 +234,7 @@ outside:
 			if updater == nil {
 				break outside
 			}
-			updater.updateCheckpointsDB(ctx, rc.checkpointsDB)
+			updater.updateCheckpointsDB(rc.checkpointsDB)
 		}
 	}
 	// drop the rest of the channel
@@ -319,7 +319,10 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 	}
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, 1)
+	var (
+		chunkErrMutex sync.Mutex
+		chunkErr      error
+	)
 
 	timer := time.Now()
 	handledChunksCount := new(int32)
@@ -327,12 +330,16 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 	// Restore table data
 	for _, chunk := range chunks {
 		select {
-		case err := <-errCh:
-			rc.saveStatusCheckpoint(ctx, t.tableName, err, CheckpointStatusAllWritten)
-			return nil, errors.Trace(err)
 		case <-ctx.Done():
 			return nil, context.Canceled
 		default:
+		}
+
+		chunkErrMutex.Lock()
+		err := chunkErr
+		chunkErrMutex.Unlock()
+		if err != nil {
+			break
 		}
 
 		// Flows :
@@ -361,7 +368,11 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 			if err != nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
 				common.AppLogger.Errorf("[%s] chunk %s run task error %s", t.tableName, cr.name, errors.ErrorStack(err))
-				errCh <- err
+				chunkErrMutex.Lock()
+				if chunkErr == nil {
+					chunkErr = err
+				}
+				chunkErrMutex.Unlock()
 				return
 			}
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
@@ -386,10 +397,16 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 
 	wg.Wait()
 	common.AppLogger.Infof("[%s] encode kv data and write takes %v", t.tableName, time.Since(timer))
-	rc.saveStatusCheckpoint(ctx, t.tableName, nil, CheckpointStatusAllWritten)
+	chunkErrMutex.Lock()
+	err = chunkErr
+	chunkErrMutex.Unlock()
+	rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusAllWritten)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	closedEngine, err := closeWithRetry(ctx, engine)
-	rc.saveStatusCheckpoint(ctx, t.tableName, err, CheckpointStatusClosed)
+	rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusClosed)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -443,7 +460,7 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 		rc.postProcessLock.Lock()
 		err := t.importKV(ctx, closedEngine)
 		rc.postProcessLock.Unlock()
-		rc.saveStatusCheckpoint(ctx, t.tableName, err, CheckpointStatusImported)
+		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusImported)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -459,7 +476,7 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		err := t.restoreTableMeta(ctx, rc.cfg)
-		rc.saveStatusCheckpoint(ctx, t.tableName, err, CheckpointStatusAlteredAutoInc)
+		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
 			common.AppLogger.Errorf(
 				"[%[1]s] failed to AUTO TABLE %[1]s SET AUTO_INCREMENT=%[2]d : %[3]v",
@@ -472,7 +489,7 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 	// 4. do table checksum
 	if cp.Status < CheckpointStatusCompleted {
 		err := t.compareChecksum(ctx, rc.cfg)
-		rc.saveStatusCheckpoint(ctx, t.tableName, err, CheckpointStatusCompleted)
+		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusCompleted)
 		if err != nil {
 			common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
 			return errors.Trace(err)

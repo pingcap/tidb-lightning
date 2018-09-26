@@ -60,7 +60,6 @@ type CheckpointsDB interface {
 	Load(ctx context.Context, dbInfo map[string]*TidbDBInfo) error
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	UpdateChunk(
-		ctx context.Context,
 		tableName string,
 		allocBase int64,
 		checksum verify.KVChecksum,
@@ -68,12 +67,10 @@ type CheckpointsDB interface {
 		offset int64,
 	)
 	UpdateStatus(
-		ctx context.Context,
 		tableName string,
 		status CheckpointStatus,
 	)
 	UpdateFailure(
-		ctx context.Context,
 		tableName string,
 	)
 }
@@ -99,9 +96,9 @@ func (*NullCheckpointsDB) Get(_ context.Context, tableName string) (*TableCheckp
 	}, nil
 }
 
-func (*NullCheckpointsDB) UpdateChunk(context.Context, string, int64, verify.KVChecksum, string, int64) {
+func (*NullCheckpointsDB) UpdateChunk(string, int64, verify.KVChecksum, string, int64) {
 }
-func (*NullCheckpointsDB) UpdateStatus(context.Context, string, CheckpointStatus) {
+func (*NullCheckpointsDB) UpdateStatus(string, CheckpointStatus) {
 }
-func (*NullCheckpointsDB) UpdateFailure(context.Context, string) {
+func (*NullCheckpointsDB) UpdateFailure(string) {
 }
