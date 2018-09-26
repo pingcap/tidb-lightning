@@ -1,0 +1,31 @@
+[lightning]
+# pprof-port = 28423
+table-concurrency = 1
+check-requirements = false
+file = "/dev/stderr"
+level = "error"
+
+[checkpoint]
+enable = true
+schema = "tidb_lightning_checkpoint_test_cppk"
+
+[tikv-importer]
+addr = "127.0.0.1:20180"
+
+[mydumper]
+data-source-dir = "/tmp/lightning_test_result/cppk.mydump"
+read-block-size = 1
+region-min-size = 1
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+log-level = "error"
+
+[post-restore]
+checksum = true
+compact = false
+analyze = false
