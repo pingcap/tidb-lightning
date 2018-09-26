@@ -185,6 +185,9 @@ func (s *proxyService) WriteEngine(receiver kv.ImportKV_WriteEngineServer) error
 			return streamErr
 
 		default:
+			// should really write `sender.finish(streamErr)` but that method is private
+			sender.SendMsg(streamErr)
+			sender.CloseSend()
 			streamErr = err
 			return err
 		}
