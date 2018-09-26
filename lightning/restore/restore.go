@@ -37,9 +37,7 @@ const (
 var metrics = common.NewMetrics()
 
 const (
-	defaultGCLifeTime           = 100 * time.Hour
-	closeEngineRetryDuration    = 6 * time.Second
-	closeEngineRetryMaxDuration = 30 * time.Second
+	defaultGCLifeTime = 100 * time.Hour
 )
 
 var (
@@ -467,51 +465,13 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 		return nil, errors.Trace(err)
 	}
 
-	closedEngine, err := closeWithRetry(ctx, engine)
+	closedEngine, err := engine.Close(ctx)
 	rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusClosed)
 	if err != nil {
+		common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %s", errors.ErrorStack(err))
 		return nil, errors.Trace(err)
 	}
 	return closedEngine, nil
-}
-
-func closeWithRetry(ctx context.Context, engine *kv.OpenedEngine) (closedEngine *kv.ClosedEngine, err error) {
-	// ensure the engine is closed (thus the memory for tikv-importer is freed)
-	// before recycling the table workers.
-
-	closeTicker := time.NewTicker(closeEngineRetryDuration)
-	timeoutTimer := time.NewTimer(closeEngineRetryMaxDuration)
-	closeImmediately := make(chan struct{}, 1)
-	defer closeTicker.Stop()
-	defer timeoutTimer.Stop()
-	retryCount := 0
-
-	closeImmediately <- struct{}{}
-
-outside:
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-timeoutTimer.C:
-			break outside
-		case <-closeTicker.C:
-		case <-closeImmediately:
-		}
-		closedEngine, err = engine.Close(ctx)
-		if err == nil {
-			return
-		}
-		if !strings.Contains(err.Error(), "EngineInUse") {
-			// error cannot be recovered, return immediately
-			break outside
-		}
-		retryCount++
-		common.AppLogger.Infof("engine still not fully closed, retry #%d after %s : %s", retryCount, closeEngineRetryDuration, err)
-	}
-
-	common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %s", errors.ErrorStack(err))
-	return nil, errors.Trace(err)
 }
 
 func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedEngine, rc *RestoreController, cp *TableCheckpoint) error {
