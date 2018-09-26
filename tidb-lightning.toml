@@ -12,7 +12,7 @@ table-concurrency = 8
 # region-concurrency changes the concurrency number of data. It is set to the number of logical CPU cores by default and needs no configuration.
 # In mixed configuration, you can set it to 75% of the size of logical CPU cores.
 # region-concurrency default to runtime.NumCPU()
-# region-concurrency =  
+# region-concurrency =
 
 # logging
 level = "info"
@@ -20,6 +20,18 @@ file = "tidb-lightning.log"
 max-size = 128 # MB
 max-days = 28
 max-backups = 14
+
+[checkpoint]
+# Whether to enable checkpoints.
+# While importing, Lightning will record which tables have been imported, so even if Lightning or other component
+# crashed, we could start from a known good state instead of redoing everything.
+enable = true
+# The schema name (database name) to store the checkpoints
+schema = "tidb_lightning_checkpoint"
+# The data source name (DSN) in the form "USER:PASS@tcp(HOST:PORT)/".
+# If not specified, the TiDB server from the [tidb] section will be used to store the checkpoints. You could also
+# specify a different MySQL-compatible database server if you like.
+#dsn = "root@tcp(127.0.0.1:4000)/"
 
 [tikv-importer]
 addr = "127.0.0.1:8808"

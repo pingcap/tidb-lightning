@@ -39,7 +39,7 @@ type Config struct {
 
 	// not implemented yet.
 	// ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
-
+	Checkpoint   Checkpoint      `toml:"checkpoint" json:"checkpoint"`
 	Mydumper     MydumperRuntime `toml:"mydumper" json:"mydumper"`
 	TikvImporter TikvImporter    `toml:"tikv-importer" json:"tikv-importer"`
 	PostRestore  PostRestore     `toml:"post-restore" json:"post-restore"`
@@ -84,6 +84,12 @@ type MydumperRuntime struct {
 type TikvImporter struct {
 	Addr      string `toml:"addr" json:"addr"`
 	BatchSize int64  `toml:"batch-size" json:"batch-size"`
+}
+
+type Checkpoint struct {
+	Enable bool   `toml:"enable" json:"enable"`
+	Schema string `toml:"schema" json:"schema"`
+	DSN    string `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
 }
 
 func NewConfig() *Config {
@@ -138,6 +144,13 @@ func LoadConfig(args []string) (*Config, error) {
 	// hendle kv import
 	if cfg.TikvImporter.BatchSize <= 0 {
 		cfg.TikvImporter.BatchSize = KVMaxBatchSize
+	}
+
+	if len(cfg.Checkpoint.Schema) == 0 {
+		cfg.Checkpoint.Schema = "tidb_lightning_checkpoint"
+	}
+	if len(cfg.Checkpoint.DSN) == 0 {
+		cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw)
 	}
 
 	return cfg, nil
