@@ -74,6 +74,11 @@ func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDData
 		return nil, errors.Trace(err)
 	}
 
+	cpdb, err := openCheckpointsDB(ctx, cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	rc := &RestoreController{
 		cfg:           cfg,
 		dbMetas:       dbMetas,
@@ -81,15 +86,35 @@ func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDData
 		regionWorkers: NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
 		importer:      importer,
 
-		checkpointsDB: NewNullCheckpointsDB(),
+		checkpointsDB: cpdb,
 		saveCpCh:      make(chan checkpointUpdater),
 	}
 
 	return rc, nil
 }
 
+func openCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, error) {
+	if !cfg.Checkpoint.Enable {
+		return NewNullCheckpointsDB(), nil
+	}
+	db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema)
+	if err != nil {
+		db.Close()
+		return nil, errors.Trace(err)
+	}
+	return cpdb, nil
+}
+
 func (rc *RestoreController) Close() {
 	rc.importer.Close()
+	rc.saveCpCh <- nil
+	if err := rc.checkpointsDB.Close(); err != nil {
+		common.AppLogger.Warnf("Failed to close checkpoints DB: %v", err)
+	}
 }
 
 func (rc *RestoreController) Run(ctx context.Context) error {
@@ -135,6 +160,8 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	}
 	defer tidbMgr.Close()
 
+	var nonUniqueTables []string
+
 	if !rc.cfg.Mydumper.NoSchema {
 		for db, dbMeta := range rc.dbMetas {
 			timer := time.Now()
@@ -156,7 +183,36 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	}
 	rc.dbInfos = dbInfos
 
-	err = rc.checkpointsDB.Load(ctx, dbInfos)
+	// Invalidate stale checkpoints
+	for _, dbInfo := range dbInfos {
+		for _, tableInfo := range dbInfo.Tables {
+			if !tableInfo.core.PKIsHandle {
+				tableName := common.UniqueTable(dbInfo.Name, tableInfo.Name)
+				nonUniqueTables = append(nonUniqueTables, tableName)
+			}
+		}
+	}
+	common.AppLogger.Debugf("Found these tables without unique indices: %v", nonUniqueTables)
+	invalidatedEngines, err := rc.checkpointsDB.InvalidateNonUniqueTables(ctx, nonUniqueTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	common.AppLogger.Debugf("Found these engines without unique indices: %v", invalidatedEngines)
+	for _, ie := range invalidatedEngines {
+		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, ie.TableName, ie.Engine)
+		if err != nil {
+			common.AppLogger.Warnf("Cannot close engine %v for invalidation: %v", ie, err)
+			continue
+		}
+		err = closedEngine.Cleanup(ctx)
+		if err != nil {
+			common.AppLogger.Warnf("Cannot cleanup engine %v for invalidation: %v", ie, err)
+			continue
+		}
+	}
+
+	// Load new checkpoints
+	rc.checkpointsDB.Load(ctx, dbInfos)
 	if err != nil {
 		return errors.Trace(err)
 	}
