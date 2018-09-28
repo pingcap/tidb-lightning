@@ -176,7 +176,10 @@ func (engine *OpenedEngine) NewWriteStream(ctx context.Context) (*WriteStream, e
 		},
 	}
 	if err = wstream.Send(req); err != nil {
-		wstream.CloseAndRecv()
+		if _, closeErr := wstream.CloseAndRecv(); closeErr != nil {
+			// just log the close error, we need to propagate the send error instead
+			common.AppLogger.Warnf("close write stream cause failed : %v", closeErr)
+		}
 		return nil, errors.Trace(err)
 	}
 

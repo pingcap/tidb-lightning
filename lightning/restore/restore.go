@@ -238,6 +238,7 @@ outside:
 		}
 	}
 	// drop the rest of the channel
+	// we _cannot_ use `close(rc.saveCpCh)` because there are multiple writers to this channel outside of our control.
 	for range rc.saveCpCh {
 	}
 }
@@ -270,7 +271,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 
 			select {
 			case <-ctx.Done():
-				return context.Canceled
+				return ctx.Err()
 			default:
 			}
 
@@ -331,7 +332,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 	for _, chunk := range chunks {
 		select {
 		case <-ctx.Done():
-			return nil, context.Canceled
+			return nil, ctx.Err()
 		default:
 		}
 
@@ -430,7 +431,7 @@ outside:
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, context.Canceled
+			return nil, ctx.Err()
 		case <-timeoutTimer.C:
 			break outside
 		case <-closeTicker.C:
@@ -1043,7 +1044,7 @@ outside:
 	for {
 		select {
 		case <-ctx.Done():
-			return context.Canceled
+			return ctx.Err()
 		default:
 		}
 
