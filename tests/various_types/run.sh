@@ -1,0 +1,63 @@
+#!/bin/sh
+
+# Verify that using various uncommon types as primary key still works properly.
+
+set -eu
+
+run_sql 'DROP DATABASE IF EXISTS vt;'
+run_lightning
+echo 'Import finished'
+
+run_sql 'SELECT count(pk), bin(min(pk)), bin(max(pk)) FROM vt.bit'
+check_contains 'count(pk): 4'
+check_contains 'bin(min(pk)): 0'
+check_contains 'bin(max(pk)): 11'
+run_sql 'SELECT ref FROM vt.bit WHERE pk = 0b10'
+check_contains 'ref: 3'
+
+run_sql 'SELECT count(pk), min(pk), max(pk), sum(pk) FROM vt.decimal'
+check_contains 'count(pk): 50'
+check_contains 'min(pk): -99.9990'
+check_contains 'max(pk): 99.9912'
+check_contains 'sum(pk): -9.9123'
+run_sql 'SELECT ref FROM vt.decimal WHERE pk BETWEEN -1.0 AND 0.0'
+check_contains 'ref: 22'
+
+run_sql 'SELECT count(pk), min(pk), max(pk) FROM vt.double'
+check_contains 'count(pk): 41'
+check_contains 'min(pk): 9.85967654375977e-305'
+check_contains 'max(pk): 1.0142320547350045e304'
+run_sql 'SELECT ref FROM vt.double WHERE pk BETWEEN 1e100 AND 1e120'
+check_contains 'ref: 245'
+
+run_sql 'SELECT count(pk), min(pk), max(pk), count(uk), min(uk), max(uk) FROM vt.datetime'
+check_contains 'count(pk): 70'
+check_contains 'min(pk): 1026-09-21 15:15:54.335745'
+check_contains 'max(pk): 9889-01-08 08:51:03.389832'
+check_contains 'count(uk): 70'
+check_contains 'min(uk): 1970-11-09 19:25:45.843'
+check_contains 'max(uk): 2036-10-14 10:48:28.620'
+run_sql "SELECT ref FROM vt.datetime WHERE pk BETWEEN '2882-01-01' AND '2882-12-31'"
+check_contains 'ref: 7'
+run_sql "SELECT ref FROM vt.datetime WHERE uk BETWEEN '2001-01-01' AND '2001-12-31'"
+check_contains 'ref: 32'
+
+run_sql 'SELECT count(pk), min(pk), max(pk) FROM vt.char'
+check_contains 'count(pk): 50'
+check_contains 'min(pk): 090abbb2-f22e-4f97-a4fe-a52eb1a80a0b'
+check_contains 'max(pk): fde1328c-409c-43a8-b1b0-8c35c8000f92'
+run_sql "SELECT ref FROM vt.char WHERE pk = '55dc0343-db6a-4208-9872-9096305b8c07'"
+check_contains 'ref: 41'
+
+run_sql 'SELECT count(pk), hex(min(pk)), hex(max(pk)) FROM vt.binary'
+check_contains 'count(pk): 50'
+check_contains 'hex(min(pk)): 090ABBB2F22E4F97A4FEA52EB1A80A0B'
+check_contains 'hex(max(pk)): FDE1328C409C43A8B1B08C35C8000F92'
+run_sql "SELECT ref FROM vt.binary WHERE pk = x'55dc0343db6a420898729096305b8c07'"
+check_contains 'ref: 41'
+
+run_sql 'SELECT count(pk), count(DISTINCT js) FROM vt.json'
+check_contains 'count(pk): 91'
+check_contains 'count(DISTINCT js): 91'
+run_sql 'SELECT pk FROM vt.json WHERE js = json_array(1, 2, 3)'
+check_contains 'pk: 1089'
