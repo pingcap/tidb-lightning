@@ -53,6 +53,11 @@ func init() {
 	kv.InitMembufCap(defReadBlockSize)
 }
 
+type saveCp struct {
+	tableName string
+	merger    TableCheckpointMerger
+}
+
 type RestoreController struct {
 	cfg             *config.Config
 	dbMetas         map[string]*mydump.MDDatabaseMeta
@@ -63,7 +68,8 @@ type RestoreController struct {
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 
 	checkpointsDB CheckpointsDB
-	saveCpCh      chan checkpointUpdater
+	saveCpCh      chan saveCp
+	checkpointsWg sync.WaitGroup
 }
 
 func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
@@ -85,7 +91,7 @@ func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDData
 		importer:      importer,
 
 		checkpointsDB: cpdb,
-		saveCpCh:      make(chan checkpointUpdater),
+		saveCpCh:      make(chan saveCp),
 	}
 
 	return rc, nil
@@ -107,12 +113,12 @@ func openCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 	return cpdb, nil
 }
 
+func (rc *RestoreController) Wait() {
+	rc.checkpointsWg.Wait()
+}
+
 func (rc *RestoreController) Close() {
 	rc.importer.Close()
-	rc.saveCpCh <- nil
-	if err := rc.checkpointsDB.Close(); err != nil {
-		common.AppLogger.Warnf("Failed to close checkpoints DB: %v", err)
-	}
 }
 
 func (rc *RestoreController) Run(ctx context.Context) error {
@@ -158,8 +164,6 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	}
 	defer tidbMgr.Close()
 
-	var nonUniqueTables []string
-
 	if !rc.cfg.Mydumper.NoSchema {
 		for db, dbMeta := range rc.dbMetas {
 			timer := time.Now()
@@ -181,40 +185,13 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	}
 	rc.dbInfos = dbInfos
 
-	// Invalidate stale checkpoints
-	for _, dbInfo := range dbInfos {
-		for _, tableInfo := range dbInfo.Tables {
-			if !tableInfo.core.PKIsHandle {
-				tableName := common.UniqueTable(dbInfo.Name, tableInfo.Name)
-				nonUniqueTables = append(nonUniqueTables, tableName)
-			}
-		}
-	}
-	common.AppLogger.Debugf("Found these tables without unique indices: %v", nonUniqueTables)
-	invalidatedEngines, err := rc.checkpointsDB.InvalidateNonUniqueTables(ctx, nonUniqueTables)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	common.AppLogger.Debugf("Found these engines without unique indices: %v", invalidatedEngines)
-	for _, ie := range invalidatedEngines {
-		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, ie.TableName, ie.Engine)
-		if err != nil {
-			common.AppLogger.Warnf("Cannot close engine %v for invalidation: %v", ie, err)
-			continue
-		}
-		err = closedEngine.Cleanup(ctx)
-		if err != nil {
-			common.AppLogger.Warnf("Cannot cleanup engine %v for invalidation: %v", ie, err)
-			continue
-		}
-	}
-
 	// Load new checkpoints
 	rc.checkpointsDB.Load(ctx, dbInfos)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	go rc.listenCheckpointUpdates(ctx)
+
+	go rc.listenCheckpointUpdates(&rc.checkpointsWg)
 
 	// Estimate the number of chunks for progress reporting
 	rc.estimateChunkCountIntoMetrics()
@@ -237,68 +214,59 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	metric.ChunkCounter.WithLabelValues("estimated").Add(float64(estimatedChunkCount))
 }
 
-type checkpointUpdater interface {
-	updateCheckpointsDB(cpdb CheckpointsDB)
-}
-
-type saveChunkCheckpoint struct {
-	tableName string
-	alloc     *kvenc.Allocator
-	checksum  verify.KVChecksum
-	path      string
-	offset    int64
-}
-type saveStatusCheckpoint struct {
-	tableName string
-	status    CheckpointStatus
-}
-type saveFailureCheckpoint struct {
-	tableName string
-}
-
-func (u *saveChunkCheckpoint) updateCheckpointsDB(cpdb CheckpointsDB) {
-	cpdb.UpdateChunk(u.tableName, u.alloc.Base()+1, u.checksum, u.path, u.offset)
-}
-func (u *saveStatusCheckpoint) updateCheckpointsDB(cpdb CheckpointsDB) {
-	cpdb.UpdateStatus(u.tableName, u.status)
-}
-func (u *saveFailureCheckpoint) updateCheckpointsDB(cpdb CheckpointsDB) {
-	cpdb.UpdateFailure(u.tableName)
-}
-
 func (rc *RestoreController) saveStatusCheckpoint(tableName string, err error, statusIfSucceed CheckpointStatus) {
-	var updator checkpointUpdater
+	merger := &StatusCheckpointMerger{Status: statusIfSucceed}
 
 	switch {
 	case err == nil:
-		updator = &saveStatusCheckpoint{tableName: tableName, status: statusIfSucceed}
+		break
 	case !common.IsContextCanceledError(err):
 		common.AppLogger.Warnf("Save checkpoint error for table %s before step %d: %+v", tableName, statusIfSucceed, err)
-		updator = &saveFailureCheckpoint{tableName: tableName}
+		merger.SetInvalid()
 	default:
 		return
 	}
 
 	metric.RecordTableCount(statusIfSucceed.MetricName(), err)
-	rc.saveCpCh <- updator
+	rc.saveCpCh <- saveCp{tableName: tableName, merger: merger}
 }
 
-func (rc *RestoreController) listenCheckpointUpdates(ctx context.Context) {
-outside:
-	for {
-		select {
-		case <-ctx.Done():
-			break outside
-		case updater := <-rc.saveCpCh:
-			if updater == nil {
-				break outside
+// listenCheckpointUpdates will combine several checkpoints together to reduce database load.
+func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
+	var lock sync.Mutex
+	coalesed := make(map[string]*TableCheckpointDiff)
+
+	hasCheckpoint := make(chan struct{}, 1)
+
+	go func() {
+		for range hasCheckpoint {
+			lock.Lock()
+			cpd := coalesed
+			coalesed = make(map[string]*TableCheckpointDiff)
+			lock.Unlock()
+
+			if len(cpd) > 0 {
+				rc.checkpointsDB.Update(cpd)
 			}
-			updater.updateCheckpointsDB(rc.checkpointsDB)
+			wg.Done()
 		}
-	}
-	// drop the rest of the channel
-	// we _cannot_ use `close(rc.saveCpCh)` because there are multiple writers to this channel outside of our control.
-	for range rc.saveCpCh {
+	}()
+
+	for scp := range rc.saveCpCh {
+		lock.Lock()
+		cpd, ok := coalesed[scp.tableName]
+		if !ok {
+			cpd = NewTableCheckpointDiff()
+			coalesed[scp.tableName] = cpd
+		}
+		scp.merger.MergeInto(cpd)
+
+		if len(hasCheckpoint) == 0 {
+			wg.Add(1)
+			hasCheckpoint <- struct{}{}
+		}
+
+		lock.Unlock()
 	}
 }
 
@@ -408,7 +376,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunk)
+		cr, err := newChunkRestore(chunk, cp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -424,7 +392,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 				rc.regionWorkers.Recycle(w)
 			}()
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
-			err := cr.restore(ctx, t, engine, rc.cfg)
+			err := cr.restore(ctx, t, engine, rc)
 			if err != nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
 				common.AppLogger.Errorf("[%s] chunk %s run task error %s", t.tableName, cr.name, errors.ErrorStack(err))
@@ -439,19 +407,6 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 
 			handled := int(atomic.AddInt32(handledChunksCount, 1))
 			common.AppLogger.Infof("[%s] handled region count = %d (%s)", t.tableName, handled, common.Percent(handled, len(chunks)))
-
-			// Update the table, and save a checkpoint.
-			t.checksumLock.Lock()
-			defer t.checksumLock.Unlock()
-			t.checksum.Add(&cr.checksum)
-			t.rows += cr.rows
-			rc.saveCpCh <- &saveChunkCheckpoint{
-				tableName: t.tableName,
-				alloc:     t.alloc,
-				checksum:  t.checksum,
-				path:      cr.path,
-				offset:    cr.offset,
-			}
 		}(worker, cr)
 	}
 
@@ -775,15 +730,15 @@ type chunkRestore struct {
 	path   string
 	offset int64
 	name   string
-
-	checksum verify.KVChecksum
-	rows     uint64
 }
 
-func newChunkRestore(chunk *mydump.TableRegion) (*chunkRestore, error) {
+func newChunkRestore(chunk *mydump.TableRegion, cp *TableCheckpoint) (*chunkRestore, error) {
 	reader, err := mydump.NewRegionReader(chunk.File, chunk.Offset, chunk.Size)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if pos, ok := cp.ChunkPos(chunk.File, chunk.Offset); ok {
+		reader.Seek(pos)
 	}
 
 	return &chunkRestore{
@@ -860,7 +815,7 @@ func (t *TableRestore) loadChunks(minChunkSize int64, cp *TableCheckpoint) []*my
 	// Remove all regions which have been imported
 	newChunks := chunks[:0]
 	for _, chunk := range chunks {
-		if !cp.HasChunk(chunk.File, chunk.Offset) {
+		if pos, ok := cp.ChunkPos(chunk.File, chunk.Offset); !ok || pos < chunk.Offset+chunk.Size {
 			newChunks = append(newChunks, chunk)
 		}
 	}
@@ -1027,21 +982,19 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 
 ////////////////////////////////////////////////////////////////
 
-func (cr *chunkRestore) restore(ctx context.Context, t *TableRestore, engine *kv.OpenedEngine, cfg *config.Config) error {
-	// Create the write stream
-	stream, err := engine.NewWriteStream(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer stream.Close()
-
+func (cr *chunkRestore) restore(
+	ctx context.Context,
+	t *TableRestore,
+	engine *kv.OpenedEngine,
+	rc *RestoreController,
+) error {
 	// Create the encoder.
 	kvEncoder, err := kv.NewTableKVEncoder(
 		t.dbInfo.Name,
 		t.tableInfo.Name,
 		t.tableInfo.ID,
 		t.tableInfo.Columns,
-		cfg.TiDB.SQLMode,
+		rc.cfg.TiDB.SQLMode,
 		t.alloc,
 	)
 	if err != nil {
@@ -1070,7 +1023,7 @@ outside:
 		}
 
 		start := time.Now()
-		sqls, err := cr.reader.Read(cfg.Mydumper.ReadBlockSize)
+		sqls, err := cr.reader.Read(rc.cfg.Mydumper.ReadBlockSize)
 		switch errors.Cause(err) {
 		case nil:
 		case io.EOF:
@@ -1080,8 +1033,13 @@ outside:
 		}
 		metrics.MarkTiming(readMark, start)
 
+		var (
+			totalKVs          []kvenc.KvPair
+			totalAffectedRows uint64
+			localChecksum     verify.KVChecksum
+		)
+		// sql -> kv
 		for _, stmt := range sqls {
-			// sql -> kv
 			start = time.Now()
 			kvs, affectedRows, err := kvEncoder.SQL2KV(stmt)
 			metrics.MarkTiming(encodeMark, start)
@@ -1091,19 +1049,44 @@ outside:
 				return errors.Trace(err)
 			}
 
-			// kv -> deliver ( -> tikv )
-			start = time.Now()
-			err = stream.Put(kvs)
-			metrics.MarkTiming(deliverMark, start)
-			if err != nil {
-				// TODO : retry ~
-				common.AppLogger.Errorf("kv deliver failed = %s\n", err.Error())
-				return errors.Trace(err)
-			}
-
-			cr.checksum.Update(kvs)
-			cr.rows += affectedRows
+			totalKVs = append(totalKVs, kvs...)
+			localChecksum.Update(kvs)
+			totalAffectedRows += affectedRows
 		}
+
+		// kv -> deliver ( -> tikv )
+		start = time.Now()
+		stream, err := engine.NewWriteStream(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = stream.Put(totalKVs)
+		if e := stream.Close(); e != nil {
+			common.AppLogger.Warnf("failed to close write stream: %s", e.Error())
+		}
+		metrics.MarkTiming(deliverMark, start)
+		if err != nil {
+			// TODO : retry ~
+			common.AppLogger.Errorf("kv deliver failed = %s\n", err.Error())
+			return errors.Trace(err)
+		}
+
+		// Update the table, and save a checkpoint.
+		// (the write to the importer is effective immediately, thus update these here)
+		t.checksumLock.Lock()
+		t.checksum.Add(&localChecksum)
+		t.rows += totalAffectedRows
+		rc.saveCpCh <- saveCp{
+			tableName: t.tableName,
+			merger: &ChunkCheckpointMerger{
+				AllocBase: t.alloc.Base() + 1,
+				Checksum:  t.checksum,
+				Path:      cr.path,
+				Offset:    cr.offset,
+				Pos:       cr.reader.Tell(),
+			},
+		}
+		t.checksumLock.Unlock()
 	}
 
 	common.AppLogger.Infof("[%s] restore chunk [%s] takes %v", t.tableName, cr.name, time.Since(timer))

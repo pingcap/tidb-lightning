@@ -54,16 +54,16 @@ type TableCheckpoint struct {
 	Engine    uuid.UUID
 	AllocBase int64
 	Checksum  verify.KVChecksum
-	chunks    map[chunkCheckpoint]struct{}
+	chunks    map[chunkCheckpoint]int64
 }
 
 func (cp *TableCheckpoint) resetChunks() {
-	cp.chunks = make(map[chunkCheckpoint]struct{})
+	cp.chunks = make(map[chunkCheckpoint]int64)
 }
 
-func (cp *TableCheckpoint) HasChunk(path string, offset int64) bool {
-	_, ok := cp.chunks[chunkCheckpoint{path: path, offset: offset}]
-	return ok
+func (cp *TableCheckpoint) ChunkPos(path string, offset int64) (int64, bool) {
+	pos, ok := cp.chunks[chunkCheckpoint{path: path, offset: offset}]
+	return pos, ok
 }
 
 type chunkCheckpoint struct {
@@ -71,30 +71,64 @@ type chunkCheckpoint struct {
 	offset int64
 }
 
-type InvalidatedEngine struct {
-	TableName string
-	Engine    uuid.UUID
+type TableCheckpointDiff struct {
+	hasStatus   bool
+	hasChecksum bool
+	status      CheckpointStatus
+	allocBase   int64
+	checksum    verify.KVChecksum
+	chunks      map[chunkCheckpoint]int64
+}
+
+func NewTableCheckpointDiff() *TableCheckpointDiff {
+	return &TableCheckpointDiff{
+		status: CheckpointStatusMaxInvalid + 1,
+		chunks: make(map[chunkCheckpoint]int64),
+	}
+}
+
+func (cpd *TableCheckpointDiff) String() string {
+	return fmt.Sprintf("{hasStatus:%v, hasChecksum:%v, status:%d, allocBase:%d, checksum:%v, chunks:[%d]}", cpd.hasStatus, cpd.hasChecksum, cpd.status, cpd.allocBase, cpd.checksum, len(cpd.chunks))
+}
+
+type TableCheckpointMerger interface {
+	MergeInto(cpd *TableCheckpointDiff)
+}
+
+type StatusCheckpointMerger struct {
+	Status CheckpointStatus
+}
+
+func (merger *StatusCheckpointMerger) SetInvalid() {
+	merger.Status /= 10
+}
+
+func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
+	cpd.status = merger.Status
+	cpd.hasStatus = true
+}
+
+type ChunkCheckpointMerger struct {
+	AllocBase int64
+	Checksum  verify.KVChecksum
+	Path      string
+	Offset    int64
+	Pos       int64
+}
+
+func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
+	cpd.hasChecksum = true
+	cpd.allocBase = merger.AllocBase
+	cpd.checksum = merger.Checksum
+	chcp := chunkCheckpoint{path: merger.Path, offset: merger.Offset}
+	cpd.chunks[chcp] = merger.Pos
 }
 
 type CheckpointsDB interface {
-	InvalidateNonUniqueTables(ctx context.Context, tableNames []string) ([]InvalidatedEngine, error)
 	Load(ctx context.Context, dbInfo map[string]*TidbDBInfo) error
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	Close() error
-	UpdateChunk(
-		tableName string,
-		allocBase int64,
-		checksum verify.KVChecksum,
-		path string,
-		offset int64,
-	)
-	UpdateStatus(
-		tableName string,
-		status CheckpointStatus,
-	)
-	UpdateFailure(
-		tableName string,
-	)
+	Update(checkpointDiffs map[string]*TableCheckpointDiff)
 }
 
 // NullCheckpointsDB is a checkpoints database with no checkpoints.
@@ -104,9 +138,6 @@ func NewNullCheckpointsDB() *NullCheckpointsDB {
 	return &NullCheckpointsDB{}
 }
 
-func (*NullCheckpointsDB) InvalidateNonUniqueTables(context.Context, []string) ([]InvalidatedEngine, error) {
-	return nil, nil
-}
 func (*NullCheckpointsDB) Load(context.Context, map[string]*TidbDBInfo) error {
 	return nil
 }
@@ -118,16 +149,11 @@ func (*NullCheckpointsDB) Get(_ context.Context, tableName string) (*TableCheckp
 	return &TableCheckpoint{
 		Status: CheckpointStatusLoaded,
 		Engine: uuid.NewV4(),
-		chunks: make(map[chunkCheckpoint]struct{}),
+		chunks: make(map[chunkCheckpoint]int64),
 	}, nil
 }
 
-func (*NullCheckpointsDB) UpdateChunk(string, int64, verify.KVChecksum, string, int64) {
-}
-func (*NullCheckpointsDB) UpdateStatus(string, CheckpointStatus) {
-}
-func (*NullCheckpointsDB) UpdateFailure(string) {
-}
+func (*NullCheckpointsDB) Update(map[string]*TableCheckpointDiff) {}
 
 type MySQLCheckpointsDB struct {
 	db      *sql.DB
@@ -158,10 +184,11 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			INDEX(node_id, session)
 		);
-		CREATE TABLE IF NOT EXISTS %[1]s.chunk_v1 (
+		CREATE TABLE IF NOT EXISTS %[1]s.chunk_v2 (
 			table_name varchar(261) NOT NULL,
 			path varchar(2048) NOT NULL,
 			offset bigint NOT NULL,
+			pos bigint NOT NULL,
 			PRIMARY KEY(table_name, path, offset)
 		);
 	`, schema))
@@ -177,77 +204,6 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 		schema:  schema,
 		session: session,
 	}, nil
-}
-
-func (cpdb *MySQLCheckpointsDB) InvalidateNonUniqueTables(ctx context.Context, tableNames []string) ([]InvalidatedEngine, error) {
-	if len(tableNames) == 0 {
-		return nil, nil
-	}
-
-	// Let's hope the user is sane and won't create >65535 tables without unique columns :|
-	selectPlaceholders := strings.Repeat(",?", len(tableNames))
-	selectPlaceholders = selectPlaceholders[1:]
-
-	selectQuery := fmt.Sprintf(`
-		SELECT table_name, engine FROM %s.table_v1 WHERE status < %d AND table_name IN (%s)
-	`, cpdb.schema, CheckpointStatusAllWritten, selectPlaceholders)
-
-	selectArgs := make([]interface{}, len(tableNames))
-	engines := make([]InvalidatedEngine, 0, len(tableNames))
-	for i, tableName := range tableNames {
-		selectArgs[i] = tableName
-	}
-
-	err := common.TransactWithRetry(ctx, cpdb.db, "(invalidate non-unique partially written engines)", func(c context.Context, tx *sql.Tx) error {
-		// Find all tables with status < 60
-		rows, err := tx.QueryContext(c, selectQuery, selectArgs...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		deleteArgs := make([]interface{}, 0, len(tableNames))
-		for rows.Next() {
-			var tableName string
-			var rawEngine []byte
-			if err := rows.Scan(&tableName, &rawEngine); err != nil {
-				return errors.Trace(err)
-			}
-			engines = append(engines, InvalidatedEngine{
-				TableName: tableName,
-				Engine:    uuid.FromBytesOrNil(rawEngine),
-			})
-			deleteArgs = append(deleteArgs, tableName)
-		}
-
-		// No bad tables \o/
-		if len(deleteArgs) == 0 {
-			return nil
-		}
-
-		deletePlaceholders := strings.Repeat(",?", len(deleteArgs))
-		deletePlaceholders = deletePlaceholders[1:]
-
-		// Invalidate those checkpoints
-		_, err = tx.ExecContext(c, fmt.Sprintf(`
-			DELETE FROM %s.chunk_v1 WHERE table_name IN (%s)
-		`, cpdb.schema, deletePlaceholders), deleteArgs...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		_, err = tx.ExecContext(c, fmt.Sprintf(`
-			DELETE FROM %s.table_v1 WHERE table_name IN (%s)
-		`, cpdb.schema, deletePlaceholders), deleteArgs...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return engines, nil
 }
 
 func (cpdb *MySQLCheckpointsDB) Load(ctx context.Context, dbInfo map[string]*TidbDBInfo) error {
@@ -296,17 +252,20 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 
 	purpose := "(read checkpoint " + tableName + ")"
 	err := common.TransactWithRetry(ctx, cpdb.db, purpose, func(c context.Context, tx *sql.Tx) error {
-		query := fmt.Sprintf(`SELECT path, offset FROM %s.chunk_v1 WHERE table_name = ?`, cpdb.schema)
+		query := fmt.Sprintf(`SELECT path, offset, pos FROM %s.chunk_v2 WHERE table_name = ?`, cpdb.schema)
 		rows, err := tx.QueryContext(c, query, tableName)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for rows.Next() {
-			var ccp chunkCheckpoint
-			if err := rows.Scan(&ccp.path, &ccp.offset); err != nil {
+			var (
+				ccp chunkCheckpoint
+				pos int64
+			)
+			if err := rows.Scan(&ccp.path, &ccp.offset, &pos); err != nil {
 				return errors.Trace(err)
 			}
-			cp.chunks[ccp] = struct{}{}
+			cp.chunks[ccp] = pos
 		}
 
 		query = fmt.Sprintf(`
@@ -346,56 +305,55 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 	return cp, nil
 }
 
-func (cpdb *MySQLCheckpointsDB) UpdateChunk(
-	tableName string,
-	allocBase int64,
-	checksum verify.KVChecksum,
-	path string,
-	offset int64,
-) {
-	purpose := fmt.Sprintf("(update chunk checkpoint of %s for %s|%d)", tableName, path, offset)
-	insertQuery := fmt.Sprintf(`
-		INSERT IGNORE %s.chunk_v1 (table_name, path, offset) VALUES (?, ?, ?);
+func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
+	chunkQuery := fmt.Sprintf(`
+		REPLACE INTO %s.chunk_v2 (table_name, path, offset, pos) VALUES (?, ?, ?, ?);
 	`, cpdb.schema)
-	updateQuery := fmt.Sprintf(`
+	checksumQuery := fmt.Sprintf(`
 		UPDATE %s.table_v1 SET alloc_base = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ? WHERE table_name = ?;
 	`, cpdb.schema)
+	statusQuery := fmt.Sprintf(`
+		UPDATE %s.table_v1 SET status = ? WHERE table_name = ?;
+	`, cpdb.schema)
 
-	err := common.TransactWithRetry(context.Background(), cpdb.db, purpose, func(c context.Context, tx *sql.Tx) error {
-		if _, e := tx.ExecContext(c, insertQuery, tableName, path, offset); e != nil {
+	err := common.TransactWithRetry(context.Background(), cpdb.db, "(update checkpoints)", func(c context.Context, tx *sql.Tx) error {
+		chunkStmt, e := tx.PrepareContext(c, chunkQuery)
+		if e != nil {
 			return errors.Trace(e)
 		}
-		if _, e := tx.ExecContext(c, updateQuery, allocBase, checksum.SumSize(), checksum.SumKVS(), checksum.Sum(), tableName); e != nil {
+		defer chunkStmt.Close()
+		checksumStmt, e := tx.PrepareContext(c, checksumQuery)
+		if e != nil {
 			return errors.Trace(e)
 		}
+		defer checksumStmt.Close()
+		statusStmt, e := tx.PrepareContext(c, statusQuery)
+		if e != nil {
+			return errors.Trace(e)
+		}
+		defer statusStmt.Close()
+
+		for tableName, cpd := range checkpointDiffs {
+			if cpd.hasStatus {
+				if _, e := statusStmt.ExecContext(c, cpd.status, tableName); e != nil {
+					return errors.Trace(e)
+				}
+			}
+			if cpd.hasChecksum {
+				if _, e := checksumStmt.ExecContext(c, cpd.allocBase, cpd.checksum.SumSize(), cpd.checksum.SumKVS(), cpd.checksum.Sum(), tableName); e != nil {
+					return errors.Trace(e)
+				}
+			}
+			for chcp, pos := range cpd.chunks {
+				if _, e := chunkStmt.ExecContext(c, tableName, chcp.path, chcp.offset, pos); e != nil {
+					return errors.Trace(e)
+				}
+			}
+		}
+
 		return nil
 	})
 	if err != nil {
-		common.AppLogger.Warnf("[%s] failed to save chunk checkpoint: %v", tableName, err)
-	}
-}
-
-func (cpdb *MySQLCheckpointsDB) UpdateStatus(
-	tableName string,
-	status CheckpointStatus,
-) {
-	purpose := fmt.Sprintf("(update status checkpoint of %s)", tableName)
-	query := fmt.Sprintf(`
-		UPDATE %s.table_v1 SET status = ? WHERE table_name = ?;
-	`, cpdb.schema)
-	err := common.ExecWithRetry(context.Background(), cpdb.db, purpose, query, uint8(status), tableName)
-	if err != nil {
-		common.AppLogger.Warnf("[%s] failed to save status checkpoint: %v", tableName, err)
-	}
-}
-
-func (cpdb *MySQLCheckpointsDB) UpdateFailure(tableName string) {
-	purpose := fmt.Sprintf("(update status checkpoint of %s)", tableName)
-	query := fmt.Sprintf(`
-		UPDATE %s.table_v1 SET status = status / 10 WHERE table_name = ? AND status > 25;
-	`, cpdb.schema)
-	err := common.ExecWithRetry(context.Background(), cpdb.db, purpose, query, tableName)
-	if err != nil {
-		common.AppLogger.Errorf("[%s] failed to save failure checkpoint: %v", tableName, err)
+		common.AppLogger.Errorf("failed to save checkpoint: %v", err)
 	}
 }
