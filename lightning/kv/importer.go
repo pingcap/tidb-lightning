@@ -126,6 +126,12 @@ type OpenedEngine struct {
 	ts        uint64
 }
 
+// isIgnorableOpenCloseEngineError checks if the error from
+// OpenEngine/CloseEngine can be safely ignored.
+func isIgnorableOpenCloseEngineError(err error) bool {
+	return err == nil || strings.Contains(err.Error(), "FileExists")
+}
+
 // OpenEngine opens an engine with the given UUID. This type is goroutine safe:
 // you can share this instance and execute any method anywhere.
 func (importer *Importer) OpenEngine(
@@ -137,7 +143,7 @@ func (importer *Importer) OpenEngine(
 		Uuid: engineUUID.Bytes(),
 	}
 	_, err := importer.cli.OpenEngine(ctx, req)
-	if err != nil {
+	if !isIgnorableOpenCloseEngineError(err) {
 		return nil, errors.Trace(err)
 	}
 
@@ -263,7 +269,7 @@ func (importer *Importer) UnsafeCloseEngine(ctx context.Context, tableName strin
 		Uuid: engineUUID.Bytes(),
 	}
 	_, err := importer.cli.CloseEngine(ctx, req)
-	if err != nil {
+	if !isIgnorableOpenCloseEngineError(err) {
 		return nil, errors.Trace(err)
 	}
 
