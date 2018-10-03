@@ -8,6 +8,7 @@ level = "error"
 [checkpoint]
 enable = true
 schema = "tidb_lightning_checkpoint_test_cpch"
+keep = true
 
 [tikv-importer]
 addr = "127.0.0.1:19557"

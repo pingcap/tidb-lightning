@@ -131,6 +131,7 @@ func (rc *RestoreController) Run(ctx context.Context) error {
 		rc.fullCompact,
 		rc.analyze,
 		rc.switchToNormalMode,
+		rc.cleanCheckpoints,
 	}
 
 	var err error
@@ -630,6 +631,18 @@ func checkVersion(component string, expected, actual semver.Version) error {
 		expected,
 		actual,
 	)
+}
+
+func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
+	if !rc.cfg.Checkpoint.Enable || rc.cfg.Checkpoint.Keep {
+		common.AppLogger.Info("Skip clean checkpoints.")
+
+		return nil
+	}
+	timer := time.Now()
+	err := rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
+	common.AppLogger.Infof("clean checkpoints takes %v", time.Since(timer))
+	return errors.Trace(err)
 }
 
 func (rc *RestoreController) getTables() []string {

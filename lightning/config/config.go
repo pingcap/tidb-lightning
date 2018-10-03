@@ -90,6 +90,7 @@ type Checkpoint struct {
 	Enable bool   `toml:"enable" json:"enable"`
 	Schema string `toml:"schema" json:"schema"`
 	DSN    string `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	Keep   bool   `toml:"keep" json:"keep"`
 }
 
 func NewConfig() *Config {
