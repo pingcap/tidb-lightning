@@ -316,7 +316,9 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				t.Close()
 				rc.tableWorkers.Recycle(w)
 				if err != nil {
-					common.AppLogger.Errorf("[%s] restore error %v", t.tableName, errors.ErrorStack(err))
+					if !common.IsContextCanceledError(err) {
+						common.AppLogger.Errorf("[%s] restore error %v", t.tableName, errors.ErrorStack(err))
+					}
 					return
 				}
 
@@ -396,7 +398,9 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 			err := cr.restore(ctx, t, engine, rc)
 			if err != nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
-				common.AppLogger.Errorf("[%s] chunk %s run task error %s", t.tableName, cr.name, errors.ErrorStack(err))
+				if !common.IsContextCanceledError(err) {
+					common.AppLogger.Errorf("[%s] chunk %s run task error %s", t.tableName, cr.name, errors.ErrorStack(err))
+				}
 				chunkErrMutex.Lock()
 				if chunkErr == nil {
 					chunkErr = err
@@ -868,7 +872,9 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 
 	err := closedEngine.Import(ctx)
 	if err != nil {
-		common.AppLogger.Errorf("[%s] failed to flush kvs : %s", tr.tableName, err.Error())
+		if !common.IsContextCanceledError(err) {
+			common.AppLogger.Errorf("[%s] failed to flush kvs : %s", tr.tableName, err.Error())
+		}
 		return errors.Trace(err)
 	}
 	closedEngine.Cleanup(ctx)

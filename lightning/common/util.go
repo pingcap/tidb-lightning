@@ -149,7 +149,9 @@ func TransactWithRetry(ctx context.Context, db *sql.DB, purpose string, action f
 			if IsRetryableError(err) {
 				continue
 			}
-			AppLogger.Errorf("transaction %s [error] %v", purpose, err)
+			if !IsContextCanceledError(err) {
+				AppLogger.Errorf("transaction %s [error] %v", purpose, err)
+			}
 			return errors.Trace(err)
 		}
 
@@ -162,7 +164,9 @@ func TransactWithRetry(ctx context.Context, db *sql.DB, purpose string, action f
 func transactImpl(ctx context.Context, db *sql.DB, purpose string, action func(context.Context, *sql.Tx) error) error {
 	txn, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		AppLogger.Errorf("transaction %s begin failed %v", purpose, errors.ErrorStack(err))
+		if !IsContextCanceledError(err) {
+			AppLogger.Errorf("transaction %s begin failed %v", purpose, errors.ErrorStack(err))
+		}
 		return errors.Trace(err)
 	}
 
@@ -171,7 +175,9 @@ func transactImpl(ctx context.Context, db *sql.DB, purpose string, action func(c
 		AppLogger.Warnf("transaction %s [error]%v", purpose, err)
 		rerr := txn.Rollback()
 		if rerr != nil {
-			AppLogger.Errorf("transaction %s [error] %v", purpose, rerr)
+			if !IsContextCanceledError(rerr) {
+				AppLogger.Errorf("transaction %s [error] %v", purpose, rerr)
+			}
 		}
 		// we should return the exec err, instead of the rollback rerr.
 		// no need to errors.Trace() it, as the error comes from user code anyway.
@@ -180,7 +186,9 @@ func transactImpl(ctx context.Context, db *sql.DB, purpose string, action func(c
 
 	err = txn.Commit()
 	if err != nil {
-		AppLogger.Errorf("transaction %s commit failed %v", purpose, errors.ErrorStack(err))
+		if !IsContextCanceledError(err) {
+			AppLogger.Errorf("transaction %s commit failed %v", purpose, errors.ErrorStack(err))
+		}
 		return errors.Trace(err)
 	}
 	return nil
