@@ -120,17 +120,25 @@ func LoadConfig(args []string) (*Config, error) {
 	if err := fs.Parse(args); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if err := cfg.Load(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return cfg, nil
+}
+
+func (cfg *Config) Load() error {
 	if cfg.printVersion {
 		fmt.Println(common.GetRawInfo())
-		return nil, flag.ErrHelp
+		return flag.ErrHelp
 	}
 
 	data, err := ioutil.ReadFile(cfg.ConfigFile)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if err = toml.Unmarshal(data, cfg); err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	// handle mydumper
@@ -153,5 +161,5 @@ func LoadConfig(args []string) (*Config, error) {
 		cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw)
 	}
 
-	return cfg, nil
+	return nil
 }

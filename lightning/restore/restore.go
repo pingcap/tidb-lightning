@@ -78,7 +78,7 @@ func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDData
 		return nil, errors.Trace(err)
 	}
 
-	cpdb, err := openCheckpointsDB(ctx, cfg)
+	cpdb, err := OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -97,7 +97,7 @@ func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDData
 	return rc, nil
 }
 
-func openCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, error) {
+func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, error) {
 	if !cfg.Checkpoint.Enable {
 		return NewNullCheckpointsDB(), nil
 	}

@@ -3,9 +3,11 @@ package restore
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
+	"github.com/joho/sqltocsv"
 	"github.com/juju/errors"
 	"github.com/satori/go.uuid"
 	"golang.org/x/net/context"
@@ -129,6 +131,12 @@ type CheckpointsDB interface {
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	Close() error
 	Update(checkpointDiffs map[string]*TableCheckpointDiff)
+
+	RemoveCheckpoint(ctx context.Context, tableName string) error
+	IgnoreErrorCheckpoint(ctx context.Context, tableName string) error
+	DestroyErrorCheckpoint(ctx context.Context, tableName string, target *TiDBManager) error
+	DumpTables(ctx context.Context, csv io.Writer) error
+	DumpChunks(ctx context.Context, csv io.Writer) error
 }
 
 // NullCheckpointsDB is a checkpoints database with no checkpoints.
@@ -356,4 +364,220 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 	if err != nil {
 		common.AppLogger.Errorf("failed to save checkpoint: %v", err)
 	}
+}
+
+// Management functions ----------------------------------------------------------------------------
+
+var cannotManageNullDB = errors.NotSupportedf("checkpoints is disabled")
+
+func (*NullCheckpointsDB) RemoveCheckpoint(context.Context, string) error {
+	return errors.Trace(cannotManageNullDB)
+}
+func (*NullCheckpointsDB) IgnoreErrorCheckpoint(context.Context, string) error {
+	return errors.Trace(cannotManageNullDB)
+}
+func (*NullCheckpointsDB) DestroyErrorCheckpoint(context.Context, string, *TiDBManager) error {
+	return errors.Trace(cannotManageNullDB)
+}
+func (*NullCheckpointsDB) DumpTables(context.Context, io.Writer) error {
+	return errors.Trace(cannotManageNullDB)
+}
+func (*NullCheckpointsDB) DumpChunks(context.Context, io.Writer) error {
+	return errors.Trace(cannotManageNullDB)
+}
+
+func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName string) error {
+	var (
+		deleteChunkFmt string
+		deleteTableFmt string
+		arg            interface{}
+	)
+
+	if tableName == "all" {
+		deleteChunkFmt = "DELETE FROM %[1]s.chunk_v2 WHERE table_name IN (SELECT table_name FROM %[1]s.table_v1 WHERE node_id = ?)"
+		deleteTableFmt = "DELETE FROM %s.table_v1 WHERE node_id = ?"
+		arg = nodeID
+	} else {
+		deleteChunkFmt = "DELETE FROM %s.chunk_v2 WHERE table_name = ?"
+		deleteTableFmt = "DELETE FROM %s.table_v1 WHERE table_name = ?"
+		arg = tableName
+	}
+
+	deleteChunkQuery := fmt.Sprintf(deleteChunkFmt, cpdb.schema)
+	deleteTableQuery := fmt.Sprintf(deleteTableFmt, cpdb.schema)
+	err := common.TransactWithRetry(ctx, cpdb.db, fmt.Sprintf("(remove checkpoints of %s)", tableName), func(c context.Context, tx *sql.Tx) error {
+		if _, e := tx.ExecContext(c, deleteChunkQuery, arg); e != nil {
+			return errors.Trace(e)
+		}
+		if _, e := tx.ExecContext(c, deleteTableQuery, arg); e != nil {
+			return errors.Trace(e)
+		}
+		return nil
+	})
+	return errors.Trace(err)
+}
+
+func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
+	var (
+		colName string
+		arg     interface{}
+	)
+	if tableName == "all" {
+		colName, arg = "node_id", nodeID
+	} else {
+		colName, arg = "table_name", tableName
+	}
+	query := fmt.Sprintf(`
+		UPDATE %s.table_v1 SET status = %d WHERE %s = ? AND status <= %d;
+	`, cpdb.schema, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
+
+	err := common.ExecWithRetry(ctx, cpdb.db, fmt.Sprintf("(ignore error checkpoints for %s)", tableName), query, arg)
+	return errors.Trace(err)
+}
+
+func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string, target *TiDBManager) error {
+	var targetTables []string
+	if tableName == "all" {
+		var err error
+		targetTables, err = cpdb.destroyAllErrorCheckpoints(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		shouldDestroy, err := cpdb.destroySingleErrorCheckpoint(ctx, tableName)
+		if err != nil || !shouldDestroy {
+			return errors.Trace(err)
+		}
+		targetTables = []string{tableName}
+	}
+
+	common.AppLogger.Info("Going to drop the following tables:", targetTables)
+	for _, tableName := range targetTables {
+		query := "DROP TABLE " + tableName
+		err := common.ExecWithRetry(ctx, target.db, query, query)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (cpdb *MySQLCheckpointsDB) destroyAllErrorCheckpoints(ctx context.Context) ([]string, error) {
+	var targetTables []string
+
+	selectQuery := fmt.Sprintf(`
+		SELECT table_name FROM %s.table_v1 WHERE node_id = ? AND status <= %d;
+	`, cpdb.schema, CheckpointStatusMaxInvalid)
+	deleteChunkQuery := fmt.Sprintf(`
+		DELETE FROM %[1]s.chunk_v2 WHERE table_name IN (SELECT table_name FROM %[1]s.table_v1 WHERE node_id = ? AND status <= %[2]d)
+	`, cpdb.schema, CheckpointStatusMaxInvalid)
+	deleteTableQuery := fmt.Sprintf(`
+		DELETE FROM %s.table_v1 WHERE node_id = ? AND status <= %d
+	`, cpdb.schema, CheckpointStatusMaxInvalid)
+
+	err := common.TransactWithRetry(ctx, cpdb.db, "(destroy error checkpoints for all)", func(c context.Context, tx *sql.Tx) error {
+		// Obtain the list of tables
+		rows, e := tx.QueryContext(c, selectQuery, nodeID)
+		if e != nil {
+			return errors.Trace(e)
+		}
+		for rows.Next() {
+			var matchedTableName string
+			if e := rows.Scan(&matchedTableName); e != nil {
+				return errors.Trace(e)
+			}
+			targetTables = append(targetTables, matchedTableName)
+		}
+		if e := rows.Close(); e != nil {
+			return errors.Trace(e)
+		}
+
+		// Delete the checkpoints
+		if _, e := tx.ExecContext(c, deleteChunkQuery, nodeID); e != nil {
+			return errors.Trace(e)
+		}
+		if _, e := tx.ExecContext(c, deleteTableQuery, nodeID); e != nil {
+			return errors.Trace(e)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return targetTables, nil
+}
+
+func (cpdb *MySQLCheckpointsDB) destroySingleErrorCheckpoint(ctx context.Context, tableName string) (bool, error) {
+	shouldDestroy := false
+
+	selectQuery := fmt.Sprintf(`
+		SELECT COUNT(1) FROM %s.table_v1 WHERE table_name = ? AND status <= %d;
+	`, cpdb.schema, CheckpointStatusMaxInvalid)
+	deleteChunkQuery := fmt.Sprintf("DELETE FROM %s.chunk_v2 WHERE table_name = ?", cpdb.schema)
+	deleteTableQuery := fmt.Sprintf("DELETE FROM %s.table_v1 WHERE table_name = ?", cpdb.schema)
+
+	err := common.TransactWithRetry(ctx, cpdb.db, fmt.Sprintf("(destroy error checkpoint for %s)", tableName), func(c context.Context, tx *sql.Tx) error {
+		row := tx.QueryRowContext(c, selectQuery, tableName)
+		var isTableError int
+		if e := row.Scan(&isTableError); e != nil {
+			return errors.Trace(e)
+		}
+		if isTableError != 1 {
+			return nil
+		}
+
+		if _, e := tx.ExecContext(c, deleteChunkQuery, tableName); e != nil {
+			return errors.Trace(e)
+		}
+		if _, e := tx.ExecContext(c, deleteTableQuery, tableName); e != nil {
+			return errors.Trace(e)
+		}
+		shouldDestroy = true
+		return nil
+	})
+
+	return shouldDestroy, errors.Trace(err)
+}
+
+func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer) error {
+	rows, err := cpdb.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT
+			node_id,
+			session,
+			table_name,
+			hex(hash) AS hash,
+			hex(engine) AS engine,
+			status,
+			alloc_base,
+			kvc_bytes,
+			kvc_kvs,
+			kvc_checksum,
+			create_time,
+			update_time
+		FROM %s.table_v1;
+	`, cpdb.schema))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rows.Close()
+
+	return errors.Trace(sqltocsv.Write(writer, rows))
+}
+
+func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer) error {
+	rows, err := cpdb.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT
+			table_name,
+			path,
+			offset,
+			pos
+		FROM %s.chunk_v2;
+	`, cpdb.schema))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rows.Close()
+
+	return errors.Trace(sqltocsv.Write(writer, rows))
 }
