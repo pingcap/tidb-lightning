@@ -211,10 +211,10 @@ func IsRetryableError(err error) bool {
 		}
 	default:
 		switch status.Code(err) {
-		case codes.OK, codes.Canceled, codes.InvalidArgument, codes.FailedPrecondition, codes.Unimplemented, codes.Unauthenticated:
-			return false
-		default:
+		case codes.Unknown, codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
 			return true
+		default:
+			return false
 		}
 	}
 }

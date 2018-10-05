@@ -161,6 +161,11 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	go rc.listenCheckpointUpdates(ctx)
 
 	// Estimate the number of chunks for progress reporting
+	rc.estimateChunkCountIntoMetrics()
+	return nil
+}
+
+func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	estimatedChunkCount := int64(0)
 	minRegionSize := rc.cfg.Mydumper.MinRegionSize
 	for _, dbMeta := range rc.dbMetas {
@@ -174,8 +179,6 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 		}
 	}
 	metric.ChunkCounter.WithLabelValues("estimated").Add(float64(estimatedChunkCount))
-
-	return nil
 }
 
 type checkpointUpdater interface {
@@ -259,6 +262,12 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				return errors.Errorf("table info %s not found", tbl)
 			}
 
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
 			tableName := common.UniqueTable(dbInfo.Name, tableInfo.Name)
 			cp, err := rc.checkpointsDB.Get(ctx, tableName)
 			if err != nil {
@@ -267,12 +276,6 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp)
 			if err != nil {
 				return errors.Trace(err)
-			}
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
 			}
 
 			// Note: We still need tableWorkers to control the concurrency of tables. In the future, we will investigate more about

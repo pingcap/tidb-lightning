@@ -129,6 +129,12 @@ type OpenedEngine struct {
 // isIgnorableOpenCloseEngineError checks if the error from
 // OpenEngine/CloseEngine can be safely ignored.
 func isIgnorableOpenCloseEngineError(err error) bool {
+	// We allow "FileExists" error. This happens when the engine has been opened
+	// and closed before. This error typically arise when resuming from a
+	// checkpoint with a partially-imported engine.
+	//
+	// If the error is legit in a no-checkpoints settings, the later WriteEngine
+	// API will bail us out to keep us safe.
 	return err == nil || strings.Contains(err.Error(), "FileExists")
 }
 
@@ -184,7 +190,7 @@ func (engine *OpenedEngine) NewWriteStream(ctx context.Context) (*WriteStream, e
 	if err = wstream.Send(req); err != nil {
 		if _, closeErr := wstream.CloseAndRecv(); closeErr != nil {
 			// just log the close error, we need to propagate the send error instead
-			common.AppLogger.Warnf("close write stream cause failed : %v", closeErr)
+			common.AppLogger.Warnf("[%s] close write stream cause failed : %v", engine.tableName, closeErr)
 		}
 		return nil, errors.Trace(err)
 	}
@@ -198,10 +204,6 @@ func (engine *OpenedEngine) NewWriteStream(ctx context.Context) (*WriteStream, e
 // Put delivers some KV pairs to importer via this write stream.
 func (stream *WriteStream) Put(kvs []kvec.KvPair) error {
 	// Send kv paris as write request content
-	// TODO :
-	//		* too many to seperate batch ??
-	//		* buffer pool []*importpb.Mutation
-	// 		* handle partial transportation -- rollback ? clear ?
 	mutations := make([]*kv.Mutation, len(kvs))
 	for i, pair := range kvs {
 		mutations[i] = &kv.Mutation{
@@ -226,7 +228,7 @@ func (stream *WriteStream) Put(kvs []kvec.KvPair) error {
 		if !common.IsRetryableError(sendErr) {
 			break
 		}
-		common.AppLogger.Errorf("[kv-deliver] [%s] write stream failed to send: %s", stream.engine.tableName, sendErr.Error())
+		common.AppLogger.Errorf("[%s] write stream failed to send: %s", stream.engine.tableName, sendErr.Error())
 		time.Sleep(retryBackoffTime)
 	}
 	return errors.Trace(sendErr)
@@ -235,7 +237,7 @@ func (stream *WriteStream) Put(kvs []kvec.KvPair) error {
 // Close the write stream.
 func (stream *WriteStream) Close() error {
 	if _, err := stream.wstream.CloseAndRecv(); err != nil {
-		common.AppLogger.Errorf("close write stream cause failed : %v", err)
+		common.AppLogger.Errorf("[%s] close write stream cause failed : %v", stream.engine.tableName, err)
 		return errors.Trace(err)
 	}
 	return nil
@@ -264,6 +266,11 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 	return closedEngine, nil
 }
 
+// UnsafeCloseEngine closes the engine without first opening it. This method is
+// "unsafe" as it does not follow the normal operation sequence
+// (Open -> Write -> Close -> Import). This method should only be used when one
+// knows via other ways that the engine has already been opened, e.g. when
+// resuming from a checkpoint.
 func (importer *Importer) UnsafeCloseEngine(ctx context.Context, tableName string, engineUUID uuid.UUID) (*ClosedEngine, error) {
 	req := &kv.CloseEngineRequest{
 		Uuid: engineUUID.Bytes(),
