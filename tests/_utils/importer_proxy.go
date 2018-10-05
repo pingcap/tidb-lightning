@@ -51,7 +51,7 @@ type proxyService struct {
 	startTime time.Time
 	client    kv.ImportKVClient
 	lock      sync.Mutex
-	logs      *[]logEntry
+	logs      []logEntry
 	id        int
 
 	importDelayMs int64
@@ -62,7 +62,7 @@ func (s *proxyService) logStart(rpc string, args ...interface{}) int {
 	defer s.lock.Unlock()
 	id := s.id
 	s.id++
-	*s.logs = append(*s.logs, logEntry{
+	s.logs = append(s.logs, logEntry{
 		TS:    time.Since(s.startTime),
 		ID:    id,
 		Phase: "S",
@@ -76,7 +76,7 @@ func (s *proxyService) logStart(rpc string, args ...interface{}) int {
 func (s *proxyService) logEnd(rpc string, id int, err error, args ...interface{}) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	*s.logs = append(*s.logs, logEntry{
+	s.logs = append(s.logs, logEntry{
 		TS:    time.Since(s.startTime),
 		ID:    id,
 		Phase: "E",
@@ -220,7 +220,6 @@ func run() error {
 	server := grpc.NewServer()
 	service.startTime = time.Now()
 	service.client = kv.NewImportKVClient(clientConn)
-	service.logs = new([]logEntry)
 	kv.RegisterImportKVServer(server, &service)
 	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
@@ -241,8 +240,11 @@ func run() error {
 	})
 	mux.HandleFunc("/api/v1/dump", func(w http.ResponseWriter, req *http.Request) {
 		service.lock.Lock()
-		logs := *service.logs
+		logs := service.logs
 		service.lock.Unlock()
+		// the above will create a snapshot of the logs array. since the log is append-only,
+		// and the GC will keep reference valid concurrently, we are sure the array content here is
+		// consistent even outside of the lock.
 
 		since, err := strconv.ParseInt(req.URL.Query().Get("since"), 10, 64)
 		if err != nil {
