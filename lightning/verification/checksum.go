@@ -7,17 +7,25 @@ import (
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 
+var ecmaTable = crc64.MakeTable(crc64.ECMA)
+
 type KVChecksum struct {
-	ecmaTable *crc64.Table
-	bytes     uint64
-	kvs       uint64
-	checksum  uint64
+	bytes    uint64
+	kvs      uint64
+	checksum uint64
 }
 
 func NewKVChecksum(checksum uint64) *KVChecksum {
 	return &KVChecksum{
-		ecmaTable: crc64.MakeTable(crc64.ECMA),
-		checksum:  checksum,
+		checksum: checksum,
+	}
+}
+
+func MakeKVChecksum(bytes uint64, kvs uint64, checksum uint64) KVChecksum {
+	return KVChecksum{
+		bytes:    bytes,
+		kvs:      kvs,
+		checksum: checksum,
 	}
 }
 
@@ -30,8 +38,8 @@ func (c *KVChecksum) Update(kvs []kvec.KvPair) {
 	)
 
 	for _, pair := range kvs {
-		sum = crc64.Update(0, c.ecmaTable, pair.Key)
-		sum = crc64.Update(sum, c.ecmaTable, pair.Val)
+		sum = crc64.Update(0, ecmaTable, pair.Key)
+		sum = crc64.Update(sum, ecmaTable, pair.Val)
 		checksum ^= sum
 		kvNum++
 		bytes += (len(pair.Key) + len(pair.Val))

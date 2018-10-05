@@ -68,6 +68,12 @@ var (
 			Name:      "chunks",
 			Help:      "count number of chunks processed",
 		}, []string{"state"})
+	// state can be one of:
+	//  - estimated (an estimation derived from the file size)
+	//  - pending
+	//  - running
+	//  - finished
+	//  - failed
 )
 
 func init() {

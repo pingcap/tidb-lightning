@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -12,12 +13,13 @@ import (
 	"time"
 
 	"database/sql"
-	"database/sql/driver"
 	"path/filepath"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -114,7 +116,7 @@ func QueryRowWithRetry(ctx context.Context, db *sql.DB, query string, dest ...in
 
 		err = db.QueryRowContext(ctx, query).Scan(dest...)
 		if err != nil {
-			if !isRetryableError(err) {
+			if !IsRetryableError(err) {
 				return errors.Trace(err)
 			}
 			AppLogger.Warnf("query %s [error] %v", query, err)
@@ -143,7 +145,7 @@ func ExecWithRetry(ctx context.Context, db *sql.DB, sqls []string) error {
 		}
 
 		if err = executeSQLImp(ctx, db, sqls); err != nil {
-			if isRetryableError(err) {
+			if IsRetryableError(err) {
 				continue
 			}
 			AppLogger.Errorf("[exec][sql] %s [error] %v", sqls, err)
@@ -185,28 +187,43 @@ func executeSQLImp(ctx context.Context, db *sql.DB, sqls []string) error {
 	return nil
 }
 
-func isRetryableError(err error) bool {
+// IsRetryableError returns whether the error is transient (e.g. network
+// connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
+// function returns `false` (irrecoverable) if `err == nil`.
+func IsRetryableError(err error) bool {
 	err = errors.Cause(err)
-	if err == driver.ErrBadConn {
-		return true
+
+	switch err {
+	case nil, context.Canceled, context.DeadlineExceeded, io.EOF:
+		return false
 	}
 
-	if nerr, ok := err.(net.Error); ok {
+	switch nerr := err.(type) {
+	case net.Error:
 		return nerr.Timeout()
-	}
-
-	mysqlErr, ok := err.(*mysql.MySQLError)
-	if ok {
-		switch mysqlErr.Number {
+	case *mysql.MySQLError:
+		switch nerr.Number {
 		// ErrLockDeadlock can retry to commit while meet deadlock
 		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout, tmysql.ErrRegionUnavailable:
 			return true
 		default:
 			return false
 		}
+	default:
+		switch status.Code(err) {
+		case codes.Unknown, codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
+			return true
+		default:
+			return false
+		}
 	}
+}
 
-	return true
+// IsContextCanceledError returns whether the error is caused by context
+// cancellation.
+func IsContextCanceledError(err error) bool {
+	err = errors.Cause(err)
+	return err == context.Canceled || status.Code(err) == codes.Canceled
 }
 
 // UniqueTable returns an unique table name.

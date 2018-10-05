@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -21,7 +22,6 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/kvencoder"
-	"github.com/satori/go.uuid"
 
 	// hack for glide update, delete later
 	_ "github.com/pingcap/tidb-tools/pkg/table-router"
@@ -34,10 +34,7 @@ const (
 	Level1Compact    = 1
 )
 
-var (
-	errCtxAborted = errors.New("context aborted error")
-	metrics       = common.NewMetrics()
-)
+var metrics = common.NewMetrics()
 
 const (
 	defaultGCLifeTime           = 100 * time.Hour
@@ -59,31 +56,40 @@ func init() {
 }
 
 type RestoreController struct {
-	cfg              *config.Config
-	dbMetas          map[string]*mydump.MDDatabaseMeta
-	dbInfos          map[string]*TidbDBInfo
-	tableWorkers     *RestoreWorkerPool
-	regionWorkers    *RestoreWorkerPool
-	deliverMgr       *kv.KVDeliverKeeper
-	postProcessQueue chan *TableRestore
+	cfg             *config.Config
+	dbMetas         map[string]*mydump.MDDatabaseMeta
+	dbInfos         map[string]*TidbDBInfo
+	tableWorkers    *RestoreWorkerPool
+	regionWorkers   *RestoreWorkerPool
+	importer        *kv.Importer
+	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
+
+	checkpointsDB CheckpointsDB
+	saveCpCh      chan checkpointUpdater
 }
 
-func NewRestoreControlloer(ctx context.Context, dbMetas map[string]*mydump.MDDatabaseMeta, cfg *config.Config) *RestoreController {
-	rc := &RestoreController{
-		cfg:              cfg,
-		dbMetas:          dbMetas,
-		tableWorkers:     NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
-		regionWorkers:    NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
-		deliverMgr:       kv.NewKVDeliverKeeper(cfg.TikvImporter.Addr, cfg.TiDB.PdAddr),
-		postProcessQueue: make(chan *TableRestore),
+func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
+	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	go rc.handlePostProcessing(ctx)
-	return rc
+	rc := &RestoreController{
+		cfg:           cfg,
+		dbMetas:       dbMetas,
+		tableWorkers:  NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
+		regionWorkers: NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
+		importer:      importer,
+
+		checkpointsDB: NewNullCheckpointsDB(),
+		saveCpCh:      make(chan checkpointUpdater),
+	}
+
+	return rc, nil
 }
 
 func (rc *RestoreController) Close() {
-	rc.deliverMgr.Close()
+	rc.importer.Close()
 }
 
 func (rc *RestoreController) Run(ctx context.Context) {
@@ -98,19 +104,21 @@ func (rc *RestoreController) Run(ctx context.Context) {
 		rc.switchToNormalMode,
 	}
 
+outside:
 	for _, process := range opts {
 		err := process(ctx)
-		if errors.Cause(err) == errCtxAborted {
-			break
-		}
-		if err != nil {
+		switch {
+		case err == nil:
+		case common.IsContextCanceledError(err):
+			common.AppLogger.Infof("user terminated : %v", err)
+			break outside
+		default:
 			common.AppLogger.Errorf("run cause error : %s", errors.ErrorStack(err))
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-			break // ps : not continue
+			break outside // ps : not continue
 		}
 	}
 
-	// show metrics
 	statistic := metrics.DumpTiming()
 	common.AppLogger.Infof("Timing statistic :\n%s", statistic)
 	common.AppLogger.Infof("the whole procedure takes %v", time.Since(timer))
@@ -145,7 +153,97 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	rc.dbInfos = dbInfos
+
+	err = rc.checkpointsDB.Load(ctx, dbInfos)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	go rc.listenCheckpointUpdates(ctx)
+
+	// Estimate the number of chunks for progress reporting
+	rc.estimateChunkCountIntoMetrics()
 	return nil
+}
+
+func (rc *RestoreController) estimateChunkCountIntoMetrics() {
+	estimatedChunkCount := int64(0)
+	minRegionSize := rc.cfg.Mydumper.MinRegionSize
+	for _, dbMeta := range rc.dbMetas {
+		for _, tableMeta := range dbMeta.Tables {
+			for _, dataFile := range tableMeta.DataFiles {
+				info, err := os.Stat(dataFile)
+				if err == nil {
+					estimatedChunkCount += (info.Size() + minRegionSize - 1) / minRegionSize
+				}
+			}
+		}
+	}
+	metric.ChunkCounter.WithLabelValues("estimated").Add(float64(estimatedChunkCount))
+}
+
+type checkpointUpdater interface {
+	updateCheckpointsDB(cpdb CheckpointsDB)
+}
+
+type saveChunkCheckpoint struct {
+	tableName string
+	alloc     *kvenc.Allocator
+	checksum  verify.KVChecksum
+	path      string
+	offset    int64
+}
+type saveStatusCheckpoint struct {
+	tableName string
+	status    CheckpointStatus
+}
+type saveFailureCheckpoint struct {
+	tableName string
+}
+
+func (u *saveChunkCheckpoint) updateCheckpointsDB(cpdb CheckpointsDB) {
+	cpdb.UpdateChunk(u.tableName, u.alloc.Base()+1, u.checksum, u.path, u.offset)
+}
+func (u *saveStatusCheckpoint) updateCheckpointsDB(cpdb CheckpointsDB) {
+	cpdb.UpdateStatus(u.tableName, u.status)
+}
+func (u *saveFailureCheckpoint) updateCheckpointsDB(cpdb CheckpointsDB) {
+	cpdb.UpdateFailure(u.tableName)
+}
+
+func (rc *RestoreController) saveStatusCheckpoint(tableName string, err error, statusIfSucceed CheckpointStatus) {
+	var updator checkpointUpdater
+
+	switch {
+	case err == nil:
+		updator = &saveStatusCheckpoint{tableName: tableName, status: statusIfSucceed}
+	case !common.IsContextCanceledError(err):
+		common.AppLogger.Warnf("Save checkpoint error for table %s before step %d: %+v", tableName, statusIfSucceed, err)
+		updator = &saveFailureCheckpoint{tableName: tableName}
+	default:
+		return
+	}
+
+	metric.RecordTableCount(statusIfSucceed.MetricName(), err)
+	rc.saveCpCh <- updator
+}
+
+func (rc *RestoreController) listenCheckpointUpdates(ctx context.Context) {
+outside:
+	for {
+		select {
+		case <-ctx.Done():
+			break outside
+		case updater := <-rc.saveCpCh:
+			if updater == nil {
+				break outside
+			}
+			updater.updateCheckpointsDB(rc.checkpointsDB)
+		}
+	}
+	// drop the rest of the channel
+	// we _cannot_ use `close(rc.saveCpCh)` because there are multiple writers to this channel outside of our control.
+	for range rc.saveCpCh {
+	}
 }
 
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
@@ -164,15 +262,20 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				return errors.Errorf("table info %s not found", tbl)
 			}
 
-			tr, err := NewTableRestore(ctx, dbInfo, tableInfo, tableMeta, rc.cfg, rc.deliverMgr)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			tableName := common.UniqueTable(dbInfo.Name, tableInfo.Name)
+			cp, err := rc.checkpointsDB.Get(ctx, tableName)
 			if err != nil {
 				return errors.Trace(err)
 			}
-
-			select {
-			case <-ctx.Done():
-				return errCtxAborted
-			default:
+			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp)
+			if err != nil {
+				return errors.Trace(err)
 			}
 
 			// Note: We still need tableWorkers to control the concurrency of tables. In the future, we will investigate more about
@@ -180,14 +283,20 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 
 			worker := rc.tableWorkers.Apply()
 			wg.Add(1)
-			go func(w *RestoreWorker, t *TableRestore) {
+			go func(w *RestoreWorker, t *TableRestore, cp *TableCheckpoint) {
 				defer wg.Done()
-				table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
-				err := rc.restoreTable(ctx, tr, w)
+
+				closedEngine, err := t.restore(ctx, rc, cp)
+				defer metric.RecordTableCount("completed", err)
+				t.Close()
+				rc.tableWorkers.Recycle(w)
 				if err != nil {
-					common.AppLogger.Errorf("[%s] restore error %v", table, errors.ErrorStack(err))
+					common.AppLogger.Errorf("[%s] restore error %v", t.tableName, errors.ErrorStack(err))
+					return
 				}
-			}(worker, tr)
+
+				err = t.postProcess(ctx, closedEngine, rc, cp)
+			}(worker, tr, cp)
 		}
 	}
 
@@ -197,90 +306,120 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	return nil
 }
 
-func (rc *RestoreController) restoreTable(ctx context.Context, t *TableRestore, w *RestoreWorker) error {
-	defer t.Close()
-	// if it's empty table, return it
-	if len(t.tasks) == 0 {
-		rc.tableWorkers.Recycle(w)
-		return nil
+func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) (*kv.ClosedEngine, error) {
+	if cp.Status >= CheckpointStatusClosed {
+		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, cp.Engine)
+		return closedEngine, errors.Trace(err)
 	}
 
-	timer := time.Now()
-	table := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
+	engine, err := rc.importer.OpenEngine(ctx, t.tableName, cp.Engine)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
-	skipTables := make(map[string]struct{})
+	var chunks []*mydump.TableRegion
+	if cp.Status < CheckpointStatusAllWritten {
+		chunks = t.loadChunks(rc.cfg.Mydumper.MinRegionSize, cp)
+	}
+
 	var wg sync.WaitGroup
+	var (
+		chunkErrMutex sync.Mutex
+		chunkErr      error
+	)
 
-	var ctxAborted bool
-	//1. restore table data
-	for _, task := range t.tasks {
+	timer := time.Now()
+	handledChunksCount := new(int32)
+
+	// Restore table data
+	for _, chunk := range chunks {
 		select {
 		case <-ctx.Done():
-			ctxAborted = true
-			break
+			return nil, ctx.Err()
 		default:
 		}
 
+		chunkErrMutex.Lock()
+		err := chunkErr
+		chunkErrMutex.Unlock()
+		if err != nil {
+			break
+		}
+
+		// Flows :
+		// 	1. read mydump file
+		// 	2. sql -> kvs
+		// 	3. load kvs data (into kv deliver server)
+		// 	4. flush kvs data (into tikv node)
+
+		cr, err := newChunkRestore(chunk)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Inc()
+
 		worker := rc.regionWorkers.Apply()
 		wg.Add(1)
-		go func(w *RestoreWorker, t *regionRestoreTask) {
-			defer rc.regionWorkers.Recycle(w)
-			defer wg.Done()
-			if _, ok := skipTables[table]; ok {
-				common.AppLogger.Infof("something wrong with table %s before, so skip region %s", table, t.region.Name())
+		go func(w *RestoreWorker, cr *chunkRestore) {
+			// Restore a chunk.
+			defer func() {
+				cr.close()
+				wg.Done()
+				rc.regionWorkers.Recycle(w)
+			}()
+			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
+			err := cr.restore(ctx, t, engine, rc.cfg)
+			if err != nil {
+				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
+				common.AppLogger.Errorf("[%s] chunk %s run task error %s", t.tableName, cr.name, errors.ErrorStack(err))
+				chunkErrMutex.Lock()
+				if chunkErr == nil {
+					chunkErr = err
+				}
+				chunkErrMutex.Unlock()
 				return
 			}
-			err := t.Run(ctx)
-			if err != nil {
-				common.AppLogger.Errorf("[%s] region %s run task error %s", table, t.region.Name(), errors.ErrorStack(err))
-				metric.RecordTableCount(metric.TableStateWritten, err)
-				skipTables[table] = struct{}{}
+			metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
+
+			handled := int(atomic.AddInt32(handledChunksCount, 1))
+			common.AppLogger.Infof("[%s] handled region count = %d (%s)", t.tableName, handled, common.Percent(handled, len(chunks)))
+
+			// Update the table, and save a checkpoint.
+			t.checksumLock.Lock()
+			defer t.checksumLock.Unlock()
+			t.checksum.Add(&cr.checksum)
+			t.rows += cr.rows
+			rc.saveCpCh <- &saveChunkCheckpoint{
+				tableName: t.tableName,
+				alloc:     t.alloc,
+				checksum:  t.checksum,
+				path:      cr.path,
+				offset:    cr.offset,
 			}
-		}(worker, task)
+		}(worker, cr)
 	}
+
 	wg.Wait()
-	common.AppLogger.Infof("[%s] encode kv data and write takes %v", table, time.Since(timer))
-
-	if _, ok := skipTables[table]; !ok {
-		metric.RecordTableCount(metric.TableStateWritten, nil)
-	}
-
-	// recycle table worker in advance to prevent so many idle region workers and promote CPU utilization.
-	err := t.closeWithRetry(ctx)
-	rc.tableWorkers.Recycle(w)
-	if ctxAborted {
-		return errCtxAborted
-	}
-	metric.RecordTableCount(metric.TableStateClosed, err)
+	common.AppLogger.Infof("[%s] encode kv data and write takes %v", t.tableName, time.Since(timer))
+	chunkErrMutex.Lock()
+	err = chunkErr
+	chunkErrMutex.Unlock()
+	rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusAllWritten)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
-	var (
-		tableRows uint64
-		checksum  = verify.NewKVChecksum(0)
-	)
-	for _, regStat := range t.handledRegions {
-		tableRows += regStat.rows
-		if regStat.maxRowID > t.tableMaxRowID {
-			t.tableMaxRowID = regStat.maxRowID
-		}
-		checksum.Add(regStat.checksum)
+	closedEngine, err := closeWithRetry(ctx, engine)
+	rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusClosed)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	t.localChecksum = checksum
-	t.tableRows = tableRows
-
-	err = rc.postProcessing(t)
-	return errors.Trace(err)
+	return closedEngine, nil
 }
 
-func (t *TableRestore) closeWithRetry(ctx context.Context) error {
+func closeWithRetry(ctx context.Context, engine *kv.OpenedEngine) (closedEngine *kv.ClosedEngine, err error) {
 	// ensure the engine is closed (thus the memory for tikv-importer is freed)
 	// before recycling the table workers.
-	kvDeliver := t.deliversMgr.AcquireClient(t.tableMeta.DB, t.tableMeta.Name)
-	defer t.deliversMgr.RecycleClient(kvDeliver)
-
-	var err error
 
 	closeTicker := time.NewTicker(closeEngineRetryDuration)
 	timeoutTimer := time.NewTimer(closeEngineRetryMaxDuration)
@@ -295,15 +434,15 @@ outside:
 	for {
 		select {
 		case <-ctx.Done():
-			return errCtxAborted
+			return nil, ctx.Err()
 		case <-timeoutTimer.C:
 			break outside
 		case <-closeTicker.C:
 		case <-closeImmediately:
 		}
-		err = kvDeliver.CloseEngine()
+		closedEngine, err = engine.Close(ctx)
 		if err == nil {
-			return nil
+			return
 		}
 		if !strings.Contains(err.Error(), "EngineInUse") {
 			// error cannot be recovered, return immediately
@@ -314,61 +453,51 @@ outside:
 	}
 
 	common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %s", errors.ErrorStack(err))
-	return errors.Trace(err)
+	return nil, errors.Trace(err)
 }
 
-func (rc *RestoreController) postProcessing(t *TableRestore) error {
-	postProcessError := make(chan error, 1)
-	t.postProcessError = postProcessError
-	rc.postProcessQueue <- t
-	if err := <-postProcessError; err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (rc *RestoreController) handlePostProcessing(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case table := <-rc.postProcessQueue:
-			table.postProcessError <- rc.doPostProcessing(ctx, table)
-		}
-	}
-}
-
-func (rc *RestoreController) doPostProcessing(ctx context.Context, t *TableRestore) error {
-	uniqueTable := common.UniqueTable(t.tableMeta.DB, t.tableMeta.Name)
-	var err error
-	defer metric.RecordTableCount(metric.TableStateCompleted, err)
-
+func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedEngine, rc *RestoreController, cp *TableCheckpoint) error {
 	// 1. close engine, then calling import
-	err = t.importKV()
-	metric.RecordTableCount(metric.TableStateImported, err)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	common.AppLogger.Infof("[%s] local checksum %s, has imported %d rows", uniqueTable, t.localChecksum, t.tableRows)
+	// FIXME: flush is an asynchronous operation, what if flush failed?
+	if cp.Status < CheckpointStatusImported {
+		// the lock ensures the import() step will not be concurrent.
+		rc.postProcessLock.Lock()
+		err := t.importKV(ctx, closedEngine)
+		rc.postProcessLock.Unlock()
+		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusImported)
+		if err != nil {
+			return errors.Trace(err)
+		}
 
-	// 2. compact level 1
-	if err = rc.doCompact(ctx, Level1Compact); err != nil {
-		// log it and continue
-		common.AppLogger.Warnf("[%s] do compact %d failed err %v", uniqueTable, Level1Compact, errors.ErrorStack(err))
+		// 2. compact level 1
+		err = rc.doCompact(ctx, Level1Compact)
+		if err != nil {
+			// log it and continue
+			common.AppLogger.Warnf("[%s] do compact %d failed err %v", t.tableName, Level1Compact, errors.ErrorStack(err))
+		}
 	}
 
 	// 3. alter table set auto_increment
-	err = t.restoreTableMeta(ctx)
-	metric.RecordTableCount(metric.TableStateAlteredAutoInc, err)
-	if err != nil {
-		return errors.Trace(err)
+	if cp.Status < CheckpointStatusAlteredAutoInc {
+		err := t.restoreTableMeta(ctx, rc.cfg)
+		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusAlteredAutoInc)
+		if err != nil {
+			common.AppLogger.Errorf(
+				"[%[1]s] failed to AUTO TABLE %[1]s SET AUTO_INCREMENT=%[2]d : %[3]v",
+				t.tableName, t.alloc.Base()+1, err.Error(),
+			)
+			return errors.Trace(err)
+		}
 	}
 
 	// 4. do table checksum
-	err = t.checksum(ctx)
-	metric.RecordTableCount(metric.TableStateChecksum, err)
-	if err != nil {
-		return errors.Trace(err)
+	if cp.Status < CheckpointStatusCompleted {
+		err := t.compareChecksum(ctx, rc.cfg)
+		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusCompleted)
+		if err != nil {
+			common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
@@ -385,13 +514,7 @@ func (rc *RestoreController) fullCompact(ctx context.Context) error {
 }
 
 func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
-	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr, "")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer cli.Close()
-
-	return errors.Trace(cli.Compact(level))
+	return errors.Trace(rc.importer.Compact(ctx, level))
 }
 
 // analyze will analyze table for all tables.
@@ -415,13 +538,7 @@ func (rc *RestoreController) switchToNormalMode(ctx context.Context) error {
 }
 
 func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) error {
-	cli, err := kv.NewKVDeliverClient(ctx, uuid.Nil, rc.cfg.TikvImporter.Addr, rc.cfg.TiDB.PdAddr, "")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer cli.Close()
-
-	return errors.Trace(cli.Switch(mode))
+	return errors.Trace(rc.importer.SwitchMode(ctx, mode))
 }
 
 func (rc *RestoreController) checkRequirements(_ context.Context) error {
@@ -635,134 +752,61 @@ func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {
 
 ////////////////////////////////////////////////////////////////
 
-type restoreCallback func(ctx context.Context, regionID int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error
+type chunkRestore struct {
+	reader *mydump.RegionReader
+	path   string
+	offset int64
+	name   string
 
-type regionRestoreTask struct {
-	status   string
-	region   *mydump.TableRegion
-	executor *RegionRestoreExectuor
-	encoder  *kv.TableKVEncoder
-	delivers *kv.KVDeliverKeeper
-	// TODO : progress ...
-	callback  restoreCallback
-	dbInfo    *TidbDBInfo
-	tableInfo *TidbTableInfo
-	cfg       *config.Config
+	checksum verify.KVChecksum
+	rows     uint64
 }
 
-func newRegionRestoreTask(
-	region *mydump.TableRegion,
-	executor *RegionRestoreExectuor,
-	dbInfo *TidbDBInfo,
-	tableInfo *TidbTableInfo,
-	cfg *config.Config,
-	delivers *kv.KVDeliverKeeper,
-	alloc *kvenc.Allocator,
-	callback restoreCallback) (*regionRestoreTask, error) {
-
-	encoder, err := kv.NewTableKVEncoder(
-		dbInfo.Name, tableInfo.Name, tableInfo.ID,
-		tableInfo.Columns, cfg.TiDB.SQLMode, alloc)
+func newChunkRestore(chunk *mydump.TableRegion) (*chunkRestore, error) {
+	reader, err := mydump.NewRegionReader(chunk.File, chunk.Offset, chunk.Size)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	task := &regionRestoreTask{
-		region:   region,
-		executor: executor,
-		delivers: delivers,
-
-		dbInfo:    dbInfo,
-		tableInfo: tableInfo,
-		cfg:       cfg,
-		encoder:   encoder,
-		callback:  callback,
-	}
-	task.setStatusWithMetric(metric.ChunkStatePending)
-	return task, nil
+	return &chunkRestore{
+		reader: reader,
+		path:   chunk.File,
+		offset: chunk.Offset,
+		name:   chunk.Name(),
+	}, nil
 }
 
-func (t *regionRestoreTask) setStatusWithMetric(status string) {
-	t.status = status
-	metric.ChunkCounter.WithLabelValues(status).Inc()
-}
-
-func (t *regionRestoreTask) Run(ctx context.Context) (err error) {
-	defer func() {
-		closeErr := t.encoder.Close()
-		t.encoder = nil
-		if closeErr != nil {
-			common.AppLogger.Errorf("restore region task err %v", errors.ErrorStack(closeErr))
-		}
-	}()
-	timer := time.Now()
-	region := t.region
-	table := common.UniqueTable(region.DB, region.Table)
-	common.AppLogger.Infof("[%s] restore region [%s]", table, region.Name())
-
-	t.setStatusWithMetric(metric.ChunkStateRunning)
-	maxRowID, rows, checksum, err := t.run(ctx)
-	if err != nil {
-		t.setStatusWithMetric(metric.ChunkStateFailed)
-		return errors.Trace(err)
-	}
-	t.setStatusWithMetric(metric.ChunkStateFinished)
-
-	common.AppLogger.Infof("[%s] restore region [%s] takes %v", table, region.Name(), time.Since(timer))
-	err = t.callback(ctx, region.ID, maxRowID, rows, checksum)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (t *regionRestoreTask) run(ctx context.Context) (int64, uint64, *verify.KVChecksum, error) {
-	kvDeliver := t.delivers.AcquireClient(t.executor.tableMeta.DB, t.executor.tableMeta.Name)
-	defer t.delivers.RecycleClient(kvDeliver)
-
-	nextRowID, affectedRows, checksum, err := t.executor.Run(ctx, t.region, t.encoder, kvDeliver)
-	return nextRowID, affectedRows, checksum, errors.Trace(err)
+func (cr *chunkRestore) close() {
+	cr.reader.Close()
 }
 
 type TableRestore struct {
-	mux sync.Mutex
-	ctx context.Context
+	// The unique table name in the form "`db`.`tbl`".
+	tableName string
+	dbInfo    *TidbDBInfo
+	tableInfo *TidbTableInfo
+	tableMeta *mydump.MDTableMeta
+	encoder   kvenc.KvEncoder
+	alloc     *kvenc.Allocator
 
-	cfg         *config.Config
-	dbInfo      *TidbDBInfo
-	tableInfo   *TidbTableInfo
-	tableMeta   *mydump.MDTableMeta
-	encoder     kvenc.KvEncoder
-	alloc       *kvenc.Allocator
-	deliversMgr *kv.KVDeliverKeeper
-
-	regions          []*mydump.TableRegion
-	tasks            []*regionRestoreTask
-	handledRegions   map[int]*regionStat
-	localChecksum    *verify.KVChecksum
-	tableMaxRowID    int64
-	tableRows        uint64
-	postProcessError chan error
-}
-
-type regionStat struct {
-	maxRowID int64
-	rows     uint64
-	checksum *verify.KVChecksum
+	checksumLock     sync.Mutex
+	checksum         verify.KVChecksum
+	rows             uint64
+	checkpointStatus CheckpointStatus
+	engine           *kv.OpenedEngine
 }
 
 func NewTableRestore(
-	ctx context.Context,
+	tableName string,
+	tableMeta *mydump.MDTableMeta,
 	dbInfo *TidbDBInfo,
 	tableInfo *TidbTableInfo,
-	tableMeta *mydump.MDTableMeta,
-	cfg *config.Config,
-	deliverMgr *kv.KVDeliverKeeper,
+	cp *TableCheckpoint,
 ) (*TableRestore, error) {
 	idAlloc := kvenc.NewAllocator()
+	idAlloc.Reset(cp.AllocBase)
 	encoder, err := kvenc.New(dbInfo.Name, idAlloc)
 	if err != nil {
-		common.AppLogger.Errorf("err %s", errors.ErrorStack(err))
 		return nil, errors.Trace(err)
 	}
 	// create table in encoder.
@@ -771,85 +815,55 @@ func NewTableRestore(
 		return nil, errors.Trace(err)
 	}
 
-	tr := &TableRestore{
-		ctx:            ctx,
-		cfg:            cfg,
-		dbInfo:         dbInfo,
-		tableInfo:      tableInfo,
-		tableMeta:      tableMeta,
-		encoder:        encoder,
-		alloc:          idAlloc,
-		deliversMgr:    deliverMgr,
-		handledRegions: make(map[int]*regionStat),
-	}
-	if err := tr.loadRegions(); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return tr, nil
+	return &TableRestore{
+		tableName: tableName,
+		dbInfo:    dbInfo,
+		tableInfo: tableInfo,
+		tableMeta: tableMeta,
+		encoder:   encoder,
+		alloc:     idAlloc,
+		checksum:  cp.Checksum,
+	}, nil
 }
 
 func (tr *TableRestore) Close() {
 	tr.encoder.Close()
-	common.AppLogger.Infof("[%s] restore done", common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name))
+	common.AppLogger.Infof("[%s] restore done", tr.tableName)
 }
 
-func (tr *TableRestore) loadRegions() error {
+func (t *TableRestore) loadChunks(minChunkSize int64, cp *TableCheckpoint) []*mydump.TableRegion {
+	common.AppLogger.Infof("[%s] load chunks", t.tableName)
 	timer := time.Now()
-	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
-	common.AppLogger.Infof("[%s] load regions", table)
 
-	founder := mydump.NewRegionFounder(tr.cfg.Mydumper.MinRegionSize)
-	regions := founder.MakeTableRegions(tr.tableMeta)
+	founder := mydump.NewRegionFounder(minChunkSize)
+	chunks := founder.MakeTableRegions(t.tableMeta)
 
-	tasks := make([]*regionRestoreTask, 0, len(regions))
-	for _, region := range regions {
-		executor := NewRegionRestoreExectuor(tr.cfg, tr.tableMeta)
-		task, err := newRegionRestoreTask(region, executor, tr.dbInfo, tr.tableInfo, tr.cfg, tr.deliversMgr, tr.alloc, tr.onRegionFinished)
-		if err != nil {
-			return errors.Trace(err)
+	// Ref: https://github.com/golang/go/wiki/SliceTricks#filtering-without-allocating
+	// Remove all regions which have been imported
+	newChunks := chunks[:0]
+	for _, chunk := range chunks {
+		if !cp.HasChunk(chunk.File, chunk.Offset) {
+			newChunks = append(newChunks, chunk)
 		}
-		tasks = append(tasks, task)
-		common.AppLogger.Debugf("[%s] region - %s", table, region.Name())
 	}
 
-	tr.regions = regions
-	tr.tasks = tasks
-
-	common.AppLogger.Infof("[%s] load %d regions takes %v", table, len(regions), time.Since(timer))
-	return nil
+	common.AppLogger.Infof(
+		"[%s] load %d chunks (%d are new) takes %v",
+		t.tableName, len(chunks), len(newChunks), time.Since(timer),
+	)
+	return newChunks
 }
 
-func (tr *TableRestore) onRegionFinished(ctx context.Context, id int, maxRowID int64, rows uint64, checksum *verify.KVChecksum) error {
-	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
-	tr.mux.Lock()
-	defer tr.mux.Unlock()
-
-	tr.handledRegions[id] = &regionStat{
-		maxRowID: maxRowID,
-		rows:     rows,
-		checksum: checksum,
-	}
-
-	total := len(tr.regions)
-	handled := len(tr.handledRegions)
-	common.AppLogger.Infof("[%s] handled region count = %d (%s)", table, handled, common.Percent(handled, total))
-
-	return nil
-}
-
-func (tr *TableRestore) restoreTableMeta(ctx context.Context) error {
+func (tr *TableRestore) restoreTableMeta(ctx context.Context, cfg *config.Config) error {
 	timer := time.Now()
-	dsn := tr.cfg.TiDB
+	dsn := cfg.TiDB
 	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
 	if err != nil {
-		// let it failed and record it to log.
-		common.AppLogger.Warnf("connect db failed %v, the next operation is: ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d; you should do it manually", err, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
-		return nil
+		return errors.Trace(err)
 	}
 	defer db.Close()
 
-	err = AlterAutoIncrement(ctx, db, tr.tableMeta.DB, tr.tableMeta.Name, tr.tableMaxRowID)
+	err = AlterAutoIncrement(ctx, db, tr.tableMeta.DB, tr.tableMeta.Name, tr.alloc.Base()+1)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -857,50 +871,48 @@ func (tr *TableRestore) restoreTableMeta(ctx context.Context) error {
 	return nil
 }
 
-func (tr *TableRestore) importKV() error {
-	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
-	common.AppLogger.Infof("[%s] flush kv deliver ...", table)
+func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
+	common.AppLogger.Infof("[%s] flush kv deliver ...", tr.tableName)
 
 	start := time.Now()
 	defer func() {
-		metrics.MarkTiming(fmt.Sprintf("[%s]_kv_flush", table), start)
-		common.AppLogger.Infof("[%s] kv deliver all flushed !", table)
+		metrics.MarkTiming(fmt.Sprintf("[%s]_kv_flush", tr.tableName), start)
+		common.AppLogger.Infof("[%s] kv deliver all flushed !", tr.tableName)
 	}()
 
-	// FIXME: flush is an asynchronous operation, what if flush failed?
-	if err := tr.deliversMgr.Flush(table); err != nil {
-		common.AppLogger.Errorf("[%s] falied to flush kvs : %s", table, err.Error())
+	err := closedEngine.Import(ctx)
+	if err != nil {
+		common.AppLogger.Errorf("[%s] failed to flush kvs : %s", tr.tableName, err.Error())
 		return errors.Trace(err)
 	}
-
+	closedEngine.Cleanup(ctx)
+	common.AppLogger.Infof("[%s] local checksum %v, has imported %d rows", tr.tableName, tr.checksum, tr.rows)
 	return nil
 }
 
 // do checksum for each table.
-func (tr *TableRestore) checksum(ctx context.Context) error {
-	table := common.UniqueTable(tr.tableMeta.DB, tr.tableMeta.Name)
-	if !tr.cfg.PostRestore.Checksum {
-		common.AppLogger.Infof("[%s] Skip checksum.", table)
+func (tr *TableRestore) compareChecksum(ctx context.Context, cfg *config.Config) error {
+	if !cfg.PostRestore.Checksum {
+		common.AppLogger.Infof("[%s] Skip checksum.", tr.tableName)
 		return nil
 	}
 
-	remoteChecksum, err := DoChecksum(ctx, tr.cfg.TiDB, table)
+	remoteChecksum, err := DoChecksum(ctx, cfg.TiDB, tr.tableName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	localChecksum := tr.localChecksum
-	if localChecksum == nil {
-		common.AppLogger.Warnf("[%s] no local checksum, remote checksum is %+v", table, remoteChecksum)
-		return nil
-	}
-	if remoteChecksum.Checksum != localChecksum.Sum() || remoteChecksum.TotalKVs != localChecksum.SumKVS() || remoteChecksum.TotalBytes != localChecksum.SumSize() {
-		common.AppLogger.Errorf("[%s] checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
-			table, remoteChecksum.Checksum, localChecksum.Sum(), remoteChecksum.TotalKVs, localChecksum.SumKVS(), remoteChecksum.TotalBytes, localChecksum.SumSize())
-		return nil
+	if remoteChecksum.Checksum != tr.checksum.Sum() ||
+		remoteChecksum.TotalKVs != tr.checksum.SumKVS() ||
+		remoteChecksum.TotalBytes != tr.checksum.SumSize() {
+		return errors.Errorf("checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
+			remoteChecksum.Checksum, tr.checksum.Sum(),
+			remoteChecksum.TotalKVs, tr.checksum.SumKVS(),
+			remoteChecksum.TotalBytes, tr.checksum.SumSize(),
+		)
 	}
 
-	common.AppLogger.Infof("[%s] checksum pass", table)
+	common.AppLogger.Infof("[%s] checksum pass", tr.tableName)
 	return nil
 }
 
@@ -955,7 +967,7 @@ func DoChecksum(ctx context.Context, dsn config.DBStore, table string) (*RemoteC
 	cs := RemoteChecksum{}
 	common.AppLogger.Infof("[%s] doing remote checksum", table)
 	query := fmt.Sprintf("ADMIN CHECKSUM TABLE %s", table)
-	common.QueryRowWithRetry(ctx, db, query, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
+	err = common.QueryRowWithRetry(ctx, db, query, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -997,69 +1009,56 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 
 ////////////////////////////////////////////////////////////////
 
-type RegionRestoreExectuor struct {
-	cfg *config.Config
-
-	tableMeta *mydump.MDTableMeta
-}
-
-func NewRegionRestoreExectuor(
-	cfg *config.Config,
-	tableMeta *mydump.MDTableMeta) *RegionRestoreExectuor {
-
-	exc := &RegionRestoreExectuor{
-		cfg:       cfg,
-		tableMeta: tableMeta,
-	}
-
-	return exc
-}
-
-func (exc *RegionRestoreExectuor) Run(
-	ctx context.Context,
-	region *mydump.TableRegion,
-	kvEncoder *kv.TableKVEncoder,
-	kvDeliver kv.KVDeliver) (nextRowID int64, affectedRows uint64, checksum *verify.KVChecksum, err error) {
-
-	/*
-		Flows :
-			1. read mydump file
-			2. sql -> kvs
-			3. load kvs data (into kv deliver server)
-			4. flush kvs data (into tikv node)
-	*/
-	reader, err := mydump.NewRegionReader(region.File, region.Offset, region.Size)
+func (cr *chunkRestore) restore(ctx context.Context, t *TableRestore, engine *kv.OpenedEngine, cfg *config.Config) error {
+	// Create the write stream
+	stream, err := engine.NewWriteStream(ctx)
 	if err != nil {
-		return 0, 0, nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	defer reader.Close()
+	defer stream.Close()
 
-	table := common.UniqueTable(exc.tableMeta.DB, exc.tableMeta.Name)
-	readMark := fmt.Sprintf("[%s]_read_file", table)
-	encodeMark := fmt.Sprintf("[%s]_sql_2_kv", table)
-	deliverMark := fmt.Sprintf("[%s]_deliver_write", table)
+	// Create the encoder.
+	kvEncoder, err := kv.NewTableKVEncoder(
+		t.dbInfo.Name,
+		t.tableInfo.Name,
+		t.tableInfo.ID,
+		t.tableInfo.Columns,
+		cfg.TiDB.SQLMode,
+		t.alloc,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		closeErr := kvEncoder.Close()
+		kvEncoder = nil
+		if closeErr != nil {
+			common.AppLogger.Errorf("restore chunk task err %v", errors.ErrorStack(closeErr))
+		}
+	}()
 
-	rows := uint64(0)
-	checksum = verify.NewKVChecksum(0)
-	/*
-		TODO :
-			So far, since checksum can not recompute on the same key-value pair,
-			otherwise this would leads to an incorrect checksum value finally.
-			So it's important to guarantee that do checksum on kvs correctly
-			no matter what happens during process of restore ( eg. safe point / error retry ... )
-	*/
+	readMark := fmt.Sprintf("[%s]_read_file", t.tableName)
+	encodeMark := fmt.Sprintf("[%s]_sql_2_kv", t.tableName)
+	deliverMark := fmt.Sprintf("[%s]_deliver_write", t.tableName)
 
+	timer := time.Now()
+
+outside:
 	for {
 		select {
 		case <-ctx.Done():
-			return kvEncoder.NextRowID(), rows, checksum, errCtxAborted
+			return ctx.Err()
 		default:
 		}
 
 		start := time.Now()
-		sqls, err := reader.Read(defReadBlockSize)
-		if errors.Cause(err) == io.EOF {
-			break
+		sqls, err := cr.reader.Read(cfg.Mydumper.ReadBlockSize)
+		switch errors.Cause(err) {
+		case nil:
+		case io.EOF:
+			break outside
+		default:
+			return errors.Trace(err)
 		}
 		metrics.MarkTiming(readMark, start)
 
@@ -1071,28 +1070,25 @@ func (exc *RegionRestoreExectuor) Run(
 			common.AppLogger.Debugf("len(kvs) %d, len(sql) %d", len(kvs), len(stmt))
 			if err != nil {
 				common.AppLogger.Errorf("kv encode failed = %s\n", err.Error())
-				return kvEncoder.NextRowID(), rows, checksum, errors.Trace(err)
+				return errors.Trace(err)
 			}
 
 			// kv -> deliver ( -> tikv )
 			start = time.Now()
-			err = kvDeliver.Put(kvs)
+			err = stream.Put(kvs)
 			metrics.MarkTiming(deliverMark, start)
-
 			if err != nil {
 				// TODO : retry ~
 				common.AppLogger.Errorf("kv deliver failed = %s\n", err.Error())
-				return kvEncoder.NextRowID(), rows, checksum, errors.Trace(err)
+				return errors.Trace(err)
 			}
 
-			checksum.Update(kvs)
-			rows += affectedRows
+			cr.checksum.Update(kvs)
+			cr.rows += affectedRows
 		}
-		// TODO .. record progress on this region
 	}
 
-	// TODO :
-	//		It's really necessary to statistic total num of kv pairs for debug tracing !!!
+	common.AppLogger.Infof("[%s] restore chunk [%s] takes %v", t.tableName, cr.name, time.Since(timer))
 
-	return kvEncoder.NextRowID(), rows, checksum, nil
+	return nil
 }
