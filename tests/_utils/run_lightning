@@ -1,0 +1,6 @@
+#!/bin/sh
+
+set -eu
+TEST_DIR=/tmp/lightning_test_result
+
+bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.${1-config}.out" DEVEL -c "tests/$TEST_NAME/${1-config}.toml"

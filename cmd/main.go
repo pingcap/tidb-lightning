@@ -48,8 +48,11 @@ func main() {
 		app.Stop()
 	}()
 
-	app.Run()
+	err = app.Run()
+	if err != nil {
+		common.AppLogger.Error("tidb lightning encountered error:", errors.ErrorStack(err))
+		os.Exit(1)
+	}
 
 	common.AppLogger.Info("tidb lightning exit.")
-	return
 }

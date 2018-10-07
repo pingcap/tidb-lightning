@@ -14,6 +14,8 @@ LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GitBranch=$(sh
 LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GoVersion=$(shell go version)"
 
 LIGHTNING_BIN := bin/tidb-lightning
+TEST_DIR := /tmp/lightning_test_result
+# this is hard-coded unless we want to generate *.toml on fly.
 
 TIDBDIR := vendor/github.com/pingcap/tidb
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
@@ -26,7 +28,7 @@ GOTEST    := GO111MODULE=off CGO_ENABLED=1 $(GO) test -p 3
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGES  := $$(go list ./...| grep -vE 'vendor|cmd|test|proto|diff')
+PACKAGES  := $$(go list ./...| grep -vE 'vendor|cmd|test|proto|diff|bin')
 
 RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
@@ -34,7 +36,7 @@ ifeq ("$(WITH_RACE)", "1")
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
-.PHONY: all build parser clean lightning
+.PHONY: all build parser clean lightning test integration_test
 
 default: clean lightning checksuccess
 
@@ -79,13 +81,28 @@ parser: goyacc
 lightning:
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/main.go
 
-# FIXME: Split the unit test out from the integration test.
 test:
-	true
+	mkdir -p "$(TEST_DIR)"
+	@export log_level=error;\
+	$(GOTEST) -cover -covermode=count -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES)
 
 integration_test:
-	@export log_level=error;\
-	$(GOTEST) -cover $(PACKAGES)
+	@which bin/tidb-server
+	@which bin/tikv-server
+	@which bin/pd-server
+	@which bin/tikv-importer
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb-lightning/... \
+		-o bin/tidb-lightning.test \
+		github.com/pingcap/tidb-lightning/cmd
+	$(GOBUILD) -o bin/importer_proxy tests/_utils/importer_proxy.go
+	tests/run.sh
+
+coverage:
+	GO111MODULE=off go get github.com/wadey/gocovmerge
+	gocovmerge "$(TEST_DIR)"/cov.* > "$(TEST_DIR)/all_cov.out"
+	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
+	grep -F '<option' "$(TEST_DIR)/all_cov.html"
 
 update: update_vendor parser clean_vendor
 update_vendor:

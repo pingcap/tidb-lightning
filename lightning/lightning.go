@@ -53,22 +53,24 @@ func New(cfg *config.Config) *Lightning {
 	}
 }
 
-func (l *Lightning) Run() {
+func (l *Lightning) Run() error {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	common.PrintInfo("lightning", func() {
 		common.AppLogger.Infof("cfg %s", l.cfg)
 	})
 
 	if l.handleCommandFlagsAndExits() {
-		return
+		return nil
 	}
 
 	l.wg.Add(1)
+	var err error
 	go func() {
 		defer l.wg.Done()
-		l.run()
+		err = l.run()
 	}()
 	l.wg.Wait()
+	return errors.Trace(err)
 }
 
 func (l *Lightning) handleCommandFlagsAndExits() (exits bool) {
@@ -99,23 +101,23 @@ func (l *Lightning) handleCommandFlagsAndExits() (exits bool) {
 	return false
 }
 
-func (l *Lightning) run() {
+func (l *Lightning) run() error {
 	mdl, err := mydump.NewMyDumpLoader(l.cfg)
 	if err != nil {
 		common.AppLogger.Errorf("failed to load mydumper source : %s", errors.ErrorStack(err))
-		return
+		return errors.Trace(err)
 	}
 
 	dbMetas := mdl.GetDatabases()
 	procedure, err := restore.NewRestoreController(l.ctx, dbMetas, l.cfg)
 	if err != nil {
 		common.AppLogger.Errorf("failed to restore : %s", errors.ErrorStack(err))
-		return
+		return errors.Trace(err)
 	}
 	defer procedure.Close()
 
-	procedure.Run(l.ctx)
-	return
+	err = procedure.Run(l.ctx)
+	return errors.Trace(err)
 }
 
 func (l *Lightning) doCompact() error {
