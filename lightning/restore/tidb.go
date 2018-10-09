@@ -61,12 +61,12 @@ func (timgr *TiDBManager) Close() {
 
 func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, tablesSchema map[string]string) error {
 	createDatabase := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
-	err := common.ExecWithRetry(ctx, timgr.db, []string{createDatabase})
+	err := common.ExecWithRetry(ctx, timgr.db, createDatabase, createDatabase)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	useDB := fmt.Sprintf("USE `%s`", database)
-	err = common.ExecWithRetry(ctx, timgr.db, []string{useDB})
+	err = common.ExecWithRetry(ctx, timgr.db, useDB, useDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -97,7 +97,7 @@ func createTableIfNotExistsStmt(createTable string) string {
 
 func safeCreateTable(ctx context.Context, db *sql.DB, createTable string) error {
 	createTable = createTableIfNotExistsStmt(createTable)
-	err := common.ExecWithRetry(ctx, db, []string{createTable})
+	err := common.ExecWithRetry(ctx, db, createTable, createTable)
 	return errors.Trace(err)
 }
 
@@ -196,16 +196,15 @@ func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (gcLifeTime string, err e
 }
 
 func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
-	query := fmt.Sprintf(
-		"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'", gcLifeTime)
-	err := common.ExecWithRetry(ctx, db, []string{query})
-	return errors.Annotatef(err, "%s", query)
+	query := "UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'"
+	err := common.ExecWithRetry(ctx, db, query, query, gcLifeTime)
+	return errors.Annotatef(err, "%s -- ? = %s", query, gcLifeTime)
 }
 
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, schema string, table string, incr int64) error {
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d", schema, table, incr)
 	common.AppLogger.Infof("[%s.%s] %s", schema, table, query)
-	err := common.ExecWithRetry(ctx, db, []string{query})
+	err := common.ExecWithRetry(ctx, db, query, query)
 	if err != nil {
 		common.AppLogger.Errorf("query failed %v, you should do it manually, err %v", query, err)
 	}

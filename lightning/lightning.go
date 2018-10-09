@@ -117,6 +117,7 @@ func (l *Lightning) run() error {
 	defer procedure.Close()
 
 	err = procedure.Run(l.ctx)
+	procedure.Wait()
 	return errors.Trace(err)
 }
 

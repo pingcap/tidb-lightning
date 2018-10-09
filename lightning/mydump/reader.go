@@ -364,6 +364,18 @@ func (r *RegionReader) Read(maxBlockSize int64) ([][]byte, error) {
 	return datas, errors.Trace(err)
 }
 
+func (r *RegionReader) Tell() int64 {
+	return r.pos
+}
+
+func (r *RegionReader) Seek(pos int64) {
+	r.pos = r.fileReader.Seek(pos)
+}
+
+func (r *RegionReader) Size() int64 {
+	return r.size
+}
+
 func (r *RegionReader) Close() error {
 	return errors.Trace(r.fileReader.Close())
 }

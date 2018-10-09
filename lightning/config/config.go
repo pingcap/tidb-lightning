@@ -39,7 +39,7 @@ type Config struct {
 
 	// not implemented yet.
 	// ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
-
+	Checkpoint   Checkpoint      `toml:"checkpoint" json:"checkpoint"`
 	Mydumper     MydumperRuntime `toml:"mydumper" json:"mydumper"`
 	TikvImporter TikvImporter    `toml:"tikv-importer" json:"tikv-importer"`
 	PostRestore  PostRestore     `toml:"post-restore" json:"post-restore"`
@@ -86,6 +86,13 @@ type TikvImporter struct {
 	BatchSize int64  `toml:"batch-size" json:"batch-size"`
 }
 
+type Checkpoint struct {
+	Enable           bool   `toml:"enable" json:"enable"`
+	Schema           string `toml:"schema" json:"schema"`
+	DSN              string `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	KeepAfterSuccess bool   `toml:"keep-after-success" json:"keep-after-success"`
+}
+
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
@@ -114,17 +121,25 @@ func LoadConfig(args []string) (*Config, error) {
 	if err := fs.Parse(args); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if err := cfg.Load(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return cfg, nil
+}
+
+func (cfg *Config) Load() error {
 	if cfg.printVersion {
 		fmt.Println(common.GetRawInfo())
-		return nil, flag.ErrHelp
+		return flag.ErrHelp
 	}
 
 	data, err := ioutil.ReadFile(cfg.ConfigFile)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if err = toml.Unmarshal(data, cfg); err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	// handle mydumper
@@ -140,5 +155,12 @@ func LoadConfig(args []string) (*Config, error) {
 		cfg.TikvImporter.BatchSize = KVMaxBatchSize
 	}
 
-	return cfg, nil
+	if len(cfg.Checkpoint.Schema) == 0 {
+		cfg.Checkpoint.Schema = "tidb_lightning_checkpoint"
+	}
+	if len(cfg.Checkpoint.DSN) == 0 {
+		cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw)
+	}
+
+	return nil
 }

@@ -14,6 +14,7 @@ LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GitBranch=$(sh
 LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GoVersion=$(shell go version)"
 
 LIGHTNING_BIN := bin/tidb-lightning
+LIGHTNING_CTL_BIN := bin/tidb-lightning-ctl
 TEST_DIR := /tmp/lightning_test_result
 # this is hard-coded unless we want to generate *.toml on fly.
 
@@ -36,19 +37,19 @@ ifeq ("$(WITH_RACE)", "1")
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
-.PHONY: all build parser clean lightning test integration_test
+.PHONY: all build parser clean lightning lightning-ctl test integration_test
 
-default: clean lightning checksuccess
+default: clean lightning lightning-ctl checksuccess
 
 build:
 	$(GOBUILD)
 
 clean:
 	$(GO) clean -i ./...
-	rm -f $(LIGHTNING_BIN)
+	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN)
 
 checksuccess:
-	@if [ -f $(LIGHTNING_BIN) ]; \
+	@if [ -f $(LIGHTNING_BIN) ] && [ -f $(LIGHTNING_CTRL_BIN) ]; \
 	then \
 		echo "Lightning build successfully :-) !" ; \
 	fi
@@ -80,6 +81,9 @@ parser: goyacc
 
 lightning:
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/main.go
+
+lightning-ctl:
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_CTL_BIN) cmd/tidb-lightning-ctl/main.go
 
 test:
 	mkdir -p "$(TEST_DIR)"

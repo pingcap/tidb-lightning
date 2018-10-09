@@ -5,3 +5,4 @@ test_*/
 .idea
 *.local
 go.sum
+*.pyc

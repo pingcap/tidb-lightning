@@ -237,7 +237,9 @@ func (stream *WriteStream) Put(kvs []kvec.KvPair) error {
 // Close the write stream.
 func (stream *WriteStream) Close() error {
 	if _, err := stream.wstream.CloseAndRecv(); err != nil {
-		common.AppLogger.Errorf("[%s] close write stream cause failed : %v", stream.engine.tableName, err)
+		if !common.IsContextCanceledError(err) {
+			common.AppLogger.Errorf("[%s] close write stream cause failed : %v", stream.engine.tableName, err)
+		}
 		return errors.Trace(err)
 	}
 	return nil
