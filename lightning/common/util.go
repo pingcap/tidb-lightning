@@ -164,10 +164,7 @@ func TransactWithRetry(ctx context.Context, db *sql.DB, purpose string, action f
 func transactImpl(ctx context.Context, db *sql.DB, purpose string, action func(context.Context, *sql.Tx) error) error {
 	txn, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		if !IsContextCanceledError(err) {
-			AppLogger.Errorf("transaction %s begin failed %v", purpose, errors.ErrorStack(err))
-		}
-		return errors.Trace(err)
+		return errors.Annotate(err, "begin transaction failed")
 	}
 
 	err = action(ctx, txn)
@@ -186,10 +183,7 @@ func transactImpl(ctx context.Context, db *sql.DB, purpose string, action func(c
 
 	err = txn.Commit()
 	if err != nil {
-		if !IsContextCanceledError(err) {
-			AppLogger.Errorf("transaction %s commit failed %v", purpose, errors.ErrorStack(err))
-		}
-		return errors.Trace(err)
+		return errors.Annotate(err, "commit failed")
 	}
 	return nil
 }
