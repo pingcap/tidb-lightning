@@ -529,15 +529,6 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 	if err := rc.checkTiDBVersion(client); err != nil {
 		return errors.Trace(err)
 	}
-	// TODO: Reenable the PD/TiKV version check after we upgrade the dependency to 2.1.
-	if err := rc.checkPDVersion(client); err != nil {
-		// return errors.Trace(err)
-		common.AppLogger.Infof("PD version check failed: %v", err)
-	}
-	if err := rc.checkTiKVVersion(client); err != nil {
-		// return errors.Trace(err)
-		common.AppLogger.Infof("TiKV version check failed: %v", err)
-	}
 
 	return nil
 }
@@ -577,52 +568,6 @@ func (rc *RestoreController) checkTiDBVersion(client *http.Client) error {
 		return errors.Trace(err)
 	}
 	return checkVersion("TiDB", requiredTiDBVersion, *version)
-}
-
-func (rc *RestoreController) checkPDVersion(client *http.Client) error {
-	url := fmt.Sprintf("http://%s/pd/api/v1/config/cluster-version", rc.cfg.TiDB.PdAddr)
-	var rawVersion string
-	err := common.GetJSON(client, url, &rawVersion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	version, err := semver.NewVersion(rawVersion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return checkVersion("PD", requiredPDVersion, *version)
-}
-
-func (rc *RestoreController) checkTiKVVersion(client *http.Client) error {
-	url := fmt.Sprintf("http://%s/pd/api/v1/stores", rc.cfg.TiDB.PdAddr)
-
-	var stores struct {
-		Stores []struct {
-			Store struct {
-				Address string
-				Version string
-			}
-		}
-	}
-	err := common.GetJSON(client, url, &stores)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, store := range stores.Stores {
-		version, err := semver.NewVersion(store.Store.Version)
-		if err != nil {
-			return errors.Annotate(err, store.Store.Address)
-		}
-		component := fmt.Sprintf("TiKV (at %s)", store.Store.Address)
-		err = checkVersion(component, requiredTiKVVersion, *version)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }
 
 func checkVersion(component string, expected, actual semver.Version) error {
