@@ -187,7 +187,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	rc.dbInfos = dbInfos
 
 	// Load new checkpoints
-	rc.checkpointsDB.Load(ctx, dbInfos)
+	err = rc.checkpointsDB.Initialize(ctx, dbInfos)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -638,7 +638,7 @@ func checkVersion(component string, expected, actual semver.Version) error {
 }
 
 func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
-	if !rc.cfg.Checkpoint.Enable || rc.cfg.Checkpoint.Keep {
+	if !rc.cfg.Checkpoint.Enable || rc.cfg.Checkpoint.KeepAfterSuccess {
 		common.AppLogger.Info("Skip clean checkpoints.")
 
 		return nil

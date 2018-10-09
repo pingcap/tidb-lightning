@@ -94,6 +94,11 @@ func (cpd *TableCheckpointDiff) String() string {
 }
 
 type TableCheckpointMerger interface {
+	// MergeInto the table checkpoint diff from a status update or chunk update.
+	// If there are multiple updates to the same table, only the last one will
+	// take effect. Therefore, the caller must ensure events for the same table
+	// are properly ordered by the global time (an old event must be merged
+	// before the new one).
 	MergeInto(cpd *TableCheckpointDiff)
 }
 
@@ -127,7 +132,7 @@ func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 }
 
 type CheckpointsDB interface {
-	Load(ctx context.Context, dbInfo map[string]*TidbDBInfo) error
+	Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	Close() error
 	Update(checkpointDiffs map[string]*TableCheckpointDiff)
@@ -146,7 +151,7 @@ func NewNullCheckpointsDB() *NullCheckpointsDB {
 	return &NullCheckpointsDB{}
 }
 
-func (*NullCheckpointsDB) Load(context.Context, map[string]*TidbDBInfo) error {
+func (*NullCheckpointsDB) Initialize(context.Context, map[string]*TidbDBInfo) error {
 	return nil
 }
 func (*NullCheckpointsDB) Close() error {
@@ -214,11 +219,17 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 	}, nil
 }
 
-func (cpdb *MySQLCheckpointsDB) Load(ctx context.Context, dbInfo map[string]*TidbDBInfo) error {
+func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error {
 	// We can have at most 65535 placeholders https://stackoverflow.com/q/4922345/
 	// Since this step is not performance critical, we just insert the rows one-by-one.
 
 	err := common.TransactWithRetry(ctx, cpdb.db, "(insert checkpoints)", func(c context.Context, tx *sql.Tx) error {
+		// If `node_id` is not the same but the `table_name` duplicates,
+		// the CASE expression will return NULL, which can be used to violate
+		// the NOT NULL requirement of `session` column, and caused this INSERT
+		// statement to fail with an irrecoverable error.
+		// We do need to capture the error is display a user friendly message
+		// (multiple nodes cannot import the same table) though.
 		stmt, err := tx.PrepareContext(c, fmt.Sprintf(`
 			INSERT INTO %s.table_v1 (node_id, session, table_name, hash, engine) VALUES (?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE session = CASE
@@ -265,6 +276,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		if err != nil {
 			return errors.Trace(err)
 		}
+		defer rows.Close()
 		for rows.Next() {
 			var (
 				ccp chunkCheckpoint
@@ -274,6 +286,9 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 				return errors.Trace(err)
 			}
 			cp.chunks[ccp] = pos
+		}
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
 		}
 
 		query = fmt.Sprintf(`
@@ -436,19 +451,9 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 }
 
 func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string, target *TiDBManager) error {
-	var targetTables []string
-	if tableName == "all" {
-		var err error
-		targetTables, err = cpdb.destroyAllErrorCheckpoints(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		shouldDestroy, err := cpdb.destroySingleErrorCheckpoint(ctx, tableName)
-		if err != nil || !shouldDestroy {
-			return errors.Trace(err)
-		}
-		targetTables = []string{tableName}
+	targetTables, err := cpdb.destroyErrorCheckpoints(ctx, tableName)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	common.AppLogger.Info("Going to drop the following tables:", targetTables)
@@ -462,25 +467,40 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	return nil
 }
 
-func (cpdb *MySQLCheckpointsDB) destroyAllErrorCheckpoints(ctx context.Context) ([]string, error) {
-	var targetTables []string
+func (cpdb *MySQLCheckpointsDB) destroyErrorCheckpoints(ctx context.Context, tableName string) ([]string, error) {
+	var (
+		conditionColumn string
+		arg             interface{}
+	)
+
+	if tableName == "all" {
+		conditionColumn = "node_id"
+		arg = nodeID
+	} else {
+		conditionColumn = "table_name"
+		arg = tableName
+	}
 
 	selectQuery := fmt.Sprintf(`
-		SELECT table_name FROM %s.table_v1 WHERE node_id = ? AND status <= %d;
-	`, cpdb.schema, CheckpointStatusMaxInvalid)
+		SELECT table_name FROM %s.table_v1 WHERE %s = ? AND status <= %d;
+	`, cpdb.schema, conditionColumn, CheckpointStatusMaxInvalid)
 	deleteChunkQuery := fmt.Sprintf(`
-		DELETE FROM %[1]s.chunk_v2 WHERE table_name IN (SELECT table_name FROM %[1]s.table_v1 WHERE node_id = ? AND status <= %[2]d)
-	`, cpdb.schema, CheckpointStatusMaxInvalid)
+		DELETE FROM %[1]s.chunk_v2 WHERE table_name IN (SELECT table_name FROM %[1]s.table_v1 WHERE %[2]s = ? AND status <= %[3]d)
+	`, cpdb.schema, conditionColumn, CheckpointStatusMaxInvalid)
 	deleteTableQuery := fmt.Sprintf(`
-		DELETE FROM %s.table_v1 WHERE node_id = ? AND status <= %d
-	`, cpdb.schema, CheckpointStatusMaxInvalid)
+		DELETE FROM %s.table_v1 WHERE %s = ? AND status <= %d
+	`, cpdb.schema, conditionColumn, CheckpointStatusMaxInvalid)
 
-	err := common.TransactWithRetry(ctx, cpdb.db, "(destroy error checkpoints for all)", func(c context.Context, tx *sql.Tx) error {
+	var targetTables []string
+
+	err := common.TransactWithRetry(ctx, cpdb.db, fmt.Sprintf("(destroy error checkpoints for %s)", tableName), func(c context.Context, tx *sql.Tx) error {
 		// Obtain the list of tables
-		rows, e := tx.QueryContext(c, selectQuery, nodeID)
+		targetTables = nil
+		rows, e := tx.QueryContext(c, selectQuery, arg)
 		if e != nil {
 			return errors.Trace(e)
 		}
+		defer rows.Close()
 		for rows.Next() {
 			var matchedTableName string
 			if e := rows.Scan(&matchedTableName); e != nil {
@@ -488,15 +508,15 @@ func (cpdb *MySQLCheckpointsDB) destroyAllErrorCheckpoints(ctx context.Context) 
 			}
 			targetTables = append(targetTables, matchedTableName)
 		}
-		if e := rows.Close(); e != nil {
+		if e := rows.Err(); e != nil {
 			return errors.Trace(e)
 		}
 
 		// Delete the checkpoints
-		if _, e := tx.ExecContext(c, deleteChunkQuery, nodeID); e != nil {
+		if _, e := tx.ExecContext(c, deleteChunkQuery, arg); e != nil {
 			return errors.Trace(e)
 		}
-		if _, e := tx.ExecContext(c, deleteTableQuery, nodeID); e != nil {
+		if _, e := tx.ExecContext(c, deleteTableQuery, arg); e != nil {
 			return errors.Trace(e)
 		}
 		return nil
@@ -506,38 +526,6 @@ func (cpdb *MySQLCheckpointsDB) destroyAllErrorCheckpoints(ctx context.Context) 
 	}
 
 	return targetTables, nil
-}
-
-func (cpdb *MySQLCheckpointsDB) destroySingleErrorCheckpoint(ctx context.Context, tableName string) (bool, error) {
-	shouldDestroy := false
-
-	selectQuery := fmt.Sprintf(`
-		SELECT COUNT(1) FROM %s.table_v1 WHERE table_name = ? AND status <= %d;
-	`, cpdb.schema, CheckpointStatusMaxInvalid)
-	deleteChunkQuery := fmt.Sprintf("DELETE FROM %s.chunk_v2 WHERE table_name = ?", cpdb.schema)
-	deleteTableQuery := fmt.Sprintf("DELETE FROM %s.table_v1 WHERE table_name = ?", cpdb.schema)
-
-	err := common.TransactWithRetry(ctx, cpdb.db, fmt.Sprintf("(destroy error checkpoint for %s)", tableName), func(c context.Context, tx *sql.Tx) error {
-		row := tx.QueryRowContext(c, selectQuery, tableName)
-		var isTableError int
-		if e := row.Scan(&isTableError); e != nil {
-			return errors.Trace(e)
-		}
-		if isTableError != 1 {
-			return nil
-		}
-
-		if _, e := tx.ExecContext(c, deleteChunkQuery, tableName); e != nil {
-			return errors.Trace(e)
-		}
-		if _, e := tx.ExecContext(c, deleteTableQuery, tableName); e != nil {
-			return errors.Trace(e)
-		}
-		shouldDestroy = true
-		return nil
-	})
-
-	return shouldDestroy, errors.Trace(err)
 }
 
 func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer) error {

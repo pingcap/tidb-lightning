@@ -87,10 +87,10 @@ type TikvImporter struct {
 }
 
 type Checkpoint struct {
-	Enable bool   `toml:"enable" json:"enable"`
-	Schema string `toml:"schema" json:"schema"`
-	DSN    string `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
-	Keep   bool   `toml:"keep" json:"keep"`
+	Enable           bool   `toml:"enable" json:"enable"`
+	Schema           string `toml:"schema" json:"schema"`
+	DSN              string `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	KeepAfterSuccess bool   `toml:"keep-after-success" json:"keep-after-success"`
 }
 
 func NewConfig() *Config {

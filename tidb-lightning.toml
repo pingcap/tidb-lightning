@@ -34,7 +34,7 @@ schema = "tidb_lightning_checkpoint"
 #dsn = "root@tcp(127.0.0.1:4000)/"
 # Whether to keep the checkpoints after all data are imported. If false, the checkpoints will be deleted. The schema
 # needs to be dropped manually, however.
-#keep = false
+#keep-after-success = false
 
 [tikv-importer]
 addr = "127.0.0.1:8808"

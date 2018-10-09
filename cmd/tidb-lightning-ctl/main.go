@@ -31,10 +31,10 @@ func run() error {
 	compact := fs.Bool("compact", false, "do manual compaction on the target cluster")
 	mode := fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
 
-	cpRemove := fs.String("checkpoint-remove", "", "remove the checkpoint associated with the given table")
-	cpErrIgnore := fs.String("checkpoint-error-ignore", "", "ignore errors encoutered previously on this table; may corrupt this table if used incorrectly")
-	cpErrDestroy := fs.String("checkpoint-error-destroy", "", "deletes imported data with table which has an error before")
-	cpDump := fs.String("checkpoint-dump", "", "dump the checkpoint information as two CSV files in this folder")
+	cpRemove := fs.String("checkpoint-remove", "", "remove the checkpoint associated with the given table (value can be 'all' or '`db`.`table`')")
+	cpErrIgnore := fs.String("checkpoint-error-ignore", "", "ignore errors encoutered previously on the given table (value can be 'all' or '`db`.`table`'); may corrupt this table if used incorrectly")
+	cpErrDestroy := fs.String("checkpoint-error-destroy", "", "deletes imported data with table which has an error before (value can be 'all' or '`db`.`table`')")
+	cpDump := fs.String("checkpoint-dump", "", "dump the checkpoint information as two CSV files in the given folder")
 
 	err := fs.Parse(os.Args[1:])
 	if err == nil {
