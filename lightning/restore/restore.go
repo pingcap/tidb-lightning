@@ -58,6 +58,11 @@ type saveCp struct {
 	merger    TableCheckpointMerger
 }
 
+type errorSummary struct {
+	status CheckpointStatus
+	err    error
+}
+
 type RestoreController struct {
 	cfg             *config.Config
 	dbMetas         map[string]*mydump.MDDatabaseMeta
@@ -66,6 +71,9 @@ type RestoreController struct {
 	regionWorkers   *RestoreWorkerPool
 	importer        *kv.Importer
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
+
+	errorSummaryLock sync.Mutex
+	errorSummary     map[string]errorSummary
 
 	checkpointsDB CheckpointsDB
 	saveCpCh      chan saveCp
@@ -89,6 +97,8 @@ func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDData
 		tableWorkers:  NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
 		regionWorkers: NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
 		importer:      importer,
+
+		errorSummary: make(map[string]errorSummary),
 
 		checkpointsDB: cpdb,
 		saveCpCh:      make(chan saveCp),
@@ -154,6 +164,17 @@ outside:
 	statistic := metrics.DumpTiming()
 	common.AppLogger.Infof("Timing statistic :\n%s", statistic)
 	common.AppLogger.Infof("the whole procedure takes %v", time.Since(timer))
+
+	rc.errorSummaryLock.Lock()
+	defer rc.errorSummaryLock.Unlock()
+	if errorCount := len(rc.errorSummary); errorCount > 0 {
+		var msg strings.Builder
+		fmt.Fprintf(&msg, "Totally **%d** tables failed to be imported.\n", errorCount)
+		for tableName, errorSummary := range rc.errorSummary {
+			fmt.Fprintf(&msg, "- [%s] [%s] %s\n", tableName, errorSummary.status.MetricName(), errorSummary.err.Error())
+		}
+		common.AppLogger.Error(msg.String())
+	}
 
 	return errors.Trace(err)
 }
@@ -222,8 +243,10 @@ func (rc *RestoreController) saveStatusCheckpoint(tableName string, err error, s
 	case err == nil:
 		break
 	case !common.IsContextCanceledError(err):
-		common.AppLogger.Warnf("Save checkpoint error for table %s before step %d: %+v", tableName, statusIfSucceed, err)
 		merger.SetInvalid()
+		rc.errorSummaryLock.Lock()
+		rc.errorSummary[tableName] = errorSummary{status: statusIfSucceed, err: err}
+		rc.errorSummaryLock.Unlock()
 	default:
 		return
 	}
