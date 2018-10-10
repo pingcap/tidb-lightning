@@ -234,5 +234,5 @@ For details, see [Deploy TiDB Using Ansible](https://pingcap.com/docs/op-guide/a
 2. Run the executable file of `tidb-lightning`.
 
     ```
-    nohup ./tidb-lightning -c tidb-lightning.toml > nohup.out &
+    nohup ./tidb-lightning -config tidb-lightning.toml > nohup.out &
     ```
