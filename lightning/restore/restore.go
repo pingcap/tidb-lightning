@@ -62,6 +62,29 @@ type errorSummary struct {
 	status CheckpointStatus
 	err    error
 }
+type errorSummaries struct {
+	sync.Mutex
+	summary map[string]errorSummary
+}
+
+func (es *errorSummaries) emitLog() {
+	es.Lock()
+	defer es.Unlock()
+	if errorCount := len(es.summary); errorCount > 0 {
+		var msg strings.Builder
+		fmt.Fprintf(&msg, "Totally **%d** tables failed to be imported.\n", errorCount)
+		for tableName, errorSummary := range es.summary {
+			fmt.Fprintf(&msg, "- [%s] [%s] %s\n", tableName, errorSummary.status.MetricName(), errorSummary.err.Error())
+		}
+		common.AppLogger.Error(msg.String())
+	}
+}
+
+func (es *errorSummaries) record(tableName string, err error, status CheckpointStatus) {
+	es.Lock()
+	defer es.Unlock()
+	es.summary[tableName] = errorSummary{status: status, err: err}
+}
 
 type RestoreController struct {
 	cfg             *config.Config
@@ -72,8 +95,7 @@ type RestoreController struct {
 	importer        *kv.Importer
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 
-	errorSummaryLock sync.Mutex
-	errorSummary     map[string]errorSummary
+	errorSummaries errorSummaries
 
 	checkpointsDB CheckpointsDB
 	saveCpCh      chan saveCp
@@ -98,7 +120,9 @@ func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDData
 		regionWorkers: NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
 		importer:      importer,
 
-		errorSummary: make(map[string]errorSummary),
+		errorSummaries: errorSummaries{
+			summary: make(map[string]errorSummary),
+		},
 
 		checkpointsDB: cpdb,
 		saveCpCh:      make(chan saveCp),
@@ -165,16 +189,7 @@ outside:
 	common.AppLogger.Infof("Timing statistic :\n%s", statistic)
 	common.AppLogger.Infof("the whole procedure takes %v", time.Since(timer))
 
-	rc.errorSummaryLock.Lock()
-	defer rc.errorSummaryLock.Unlock()
-	if errorCount := len(rc.errorSummary); errorCount > 0 {
-		var msg strings.Builder
-		fmt.Fprintf(&msg, "Totally **%d** tables failed to be imported.\n", errorCount)
-		for tableName, errorSummary := range rc.errorSummary {
-			fmt.Fprintf(&msg, "- [%s] [%s] %s\n", tableName, errorSummary.status.MetricName(), errorSummary.err.Error())
-		}
-		common.AppLogger.Error(msg.String())
-	}
+	rc.errorSummaries.emitLog()
 
 	return errors.Trace(err)
 }
@@ -244,9 +259,7 @@ func (rc *RestoreController) saveStatusCheckpoint(tableName string, err error, s
 		break
 	case !common.IsContextCanceledError(err):
 		merger.SetInvalid()
-		rc.errorSummaryLock.Lock()
-		rc.errorSummary[tableName] = errorSummary{status: statusIfSucceed, err: err}
-		rc.errorSummaryLock.Unlock()
+		rc.errorSummaries.record(tableName, err, statusIfSucceed)
 	default:
 		return
 	}
