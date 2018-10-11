@@ -113,7 +113,11 @@ func LoadConfig(args []string) (*Config, error) {
 	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
 	fs := cfg.FlagSet
 
-	fs.StringVar(&cfg.ConfigFile, "c", "tidb-lightning.toml", "tidb-lightning configuration file")
+	// if both `-c` and `-config` are specified, the last one in the command line will take effect.
+	// the default value is assigned immediately after the StringVar() call,
+	// so it is fine to not give any default value for `-c`, to keep the `-h` page clean.
+	fs.StringVar(&cfg.ConfigFile, "c", "", "(deprecated alias of -config)")
+	fs.StringVar(&cfg.ConfigFile, "config", "tidb-lightning.toml", "tidb-lightning configuration file")
 	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compaction on the target cluster, run then exit")
 	fs.StringVar(&cfg.SwitchMode, "switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal'], run then exit")
 	fs.BoolVar(&cfg.printVersion, "V", false, "print version of lightning")
