@@ -58,6 +58,34 @@ type saveCp struct {
 	merger    TableCheckpointMerger
 }
 
+type errorSummary struct {
+	status CheckpointStatus
+	err    error
+}
+type errorSummaries struct {
+	sync.Mutex
+	summary map[string]errorSummary
+}
+
+func (es *errorSummaries) emitLog() {
+	es.Lock()
+	defer es.Unlock()
+	if errorCount := len(es.summary); errorCount > 0 {
+		var msg strings.Builder
+		fmt.Fprintf(&msg, "Totally **%d** tables failed to be imported.\n", errorCount)
+		for tableName, errorSummary := range es.summary {
+			fmt.Fprintf(&msg, "- [%s] [%s] %s\n", tableName, errorSummary.status.MetricName(), errorSummary.err.Error())
+		}
+		common.AppLogger.Error(msg.String())
+	}
+}
+
+func (es *errorSummaries) record(tableName string, err error, status CheckpointStatus) {
+	es.Lock()
+	defer es.Unlock()
+	es.summary[tableName] = errorSummary{status: status, err: err}
+}
+
 type RestoreController struct {
 	cfg             *config.Config
 	dbMetas         map[string]*mydump.MDDatabaseMeta
@@ -66,6 +94,8 @@ type RestoreController struct {
 	regionWorkers   *RestoreWorkerPool
 	importer        *kv.Importer
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
+
+	errorSummaries errorSummaries
 
 	checkpointsDB CheckpointsDB
 	saveCpCh      chan saveCp
@@ -89,6 +119,10 @@ func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDData
 		tableWorkers:  NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
 		regionWorkers: NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
 		importer:      importer,
+
+		errorSummaries: errorSummaries{
+			summary: make(map[string]errorSummary),
+		},
 
 		checkpointsDB: cpdb,
 		saveCpCh:      make(chan saveCp),
@@ -154,6 +188,8 @@ outside:
 	statistic := metrics.DumpTiming()
 	common.AppLogger.Infof("Timing statistic :\n%s", statistic)
 	common.AppLogger.Infof("the whole procedure takes %v", time.Since(timer))
+
+	rc.errorSummaries.emitLog()
 
 	return errors.Trace(err)
 }
@@ -222,8 +258,8 @@ func (rc *RestoreController) saveStatusCheckpoint(tableName string, err error, s
 	case err == nil:
 		break
 	case !common.IsContextCanceledError(err):
-		common.AppLogger.Warnf("Save checkpoint error for table %s before step %d: %+v", tableName, statusIfSucceed, err)
 		merger.SetInvalid()
+		rc.errorSummaries.record(tableName, err, statusIfSucceed)
 	default:
 		return
 	}
