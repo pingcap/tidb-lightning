@@ -311,6 +311,11 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	timer := time.Now()
 	var wg sync.WaitGroup
 
+	var (
+		restoreErrLock sync.Mutex
+		restoreErr     error
+	)
+
 	for dbName, dbMeta := range rc.dbMetas {
 		dbInfo, ok := rc.dbInfos[dbName]
 		if !ok {
@@ -348,7 +353,16 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				defer wg.Done()
 
 				closedEngine, err := t.restore(ctx, rc, cp)
-				defer metric.RecordTableCount("completed", err)
+				defer func() {
+					metric.RecordTableCount("completed", err)
+					if err != nil {
+						restoreErrLock.Lock()
+						if restoreErr == nil {
+							restoreErr = err
+						}
+						restoreErrLock.Unlock()
+					}
+				}()
 				t.Close()
 				rc.tableWorkers.Recycle(w)
 				if err != nil {
@@ -366,7 +380,9 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	wg.Wait()
 	common.AppLogger.Infof("restore all tables data takes %v", time.Since(timer))
 
-	return nil
+	restoreErrLock.Lock()
+	defer restoreErrLock.Unlock()
+	return errors.Trace(restoreErr)
 }
 
 func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) (*kv.ClosedEngine, error) {
@@ -715,12 +731,16 @@ func analyzeTable(ctx context.Context, dsn config.DBStore, tables []string) erro
 	setSessionVarInt(ctx, db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
 
 	// TODO: do it concurrently.
+	var analyzeErr error
 	for _, table := range tables {
 		timer := time.Now()
 		common.AppLogger.Infof("[%s] analyze", table)
 		query := fmt.Sprintf("ANALYZE TABLE %s", table)
 		err := common.ExecWithRetry(ctx, db, query, query)
 		if err != nil {
+			if analyzeErr == nil {
+				analyzeErr = err
+			}
 			common.AppLogger.Errorf("%s error %s", query, errors.ErrorStack(err))
 			continue
 		}
@@ -728,7 +748,7 @@ func analyzeTable(ctx context.Context, dsn config.DBStore, tables []string) erro
 	}
 
 	common.AppLogger.Infof("doing all tables analyze takes %v", time.Since(totalTimer))
-	return nil
+	return errors.Trace(analyzeErr)
 }
 
 ////////////////////////////////////////////////////////////////
