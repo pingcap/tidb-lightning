@@ -1,0 +1,19 @@
+syntax = "proto3";
+option go_package = "github.com/pingcap/tidb-lightning/lightning/restore";
+
+message FCPPBCheckpoints {
+    map<string, FCPPBCheckpoint> checkpoints = 1;
+}
+
+message FCPPBCheckpoint {
+    bytes hash = 2;
+    uint32 status = 3;
+    bytes engine = 4;
+    int64 alloc_base = 5;
+    fixed64 checksum = 6;
+    uint64 kvs = 7;
+    uint64 size = 8;
+    map<string, int64> chunks = 9;  // key should be of the form `$PATH:$OFFSET`
+}
+
+// protoc --go_out=$GOPATH/src lightning/restore/file_checkpoints.proto

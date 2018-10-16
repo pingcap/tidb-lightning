@@ -31,7 +31,10 @@ schema = "tidb_lightning_checkpoint"
 # The data source name (DSN) in the form "USER:PASS@tcp(HOST:PORT)/".
 # If not specified, the TiDB server from the [tidb] section will be used to store the checkpoints. You could also
 # specify a different MySQL-compatible database server if you like.
+# Besides MySQL, you could also store the checkpoints on the local filesystem by changing `driver` to "file".
+# With this, the `dsn` should be set as the filepath to store the checkpoints.
 #dsn = "root@tcp(127.0.0.1:4000)/"
+#driver = "mysql"
 # Whether to keep the checkpoints after all data are imported. If false, the checkpoints will be deleted. The schema
 # needs to be dropped manually, however.
 #keep-after-success = false

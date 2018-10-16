@@ -4,9 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/joho/sqltocsv"
 	"github.com/juju/errors"
 	"github.com/satori/go.uuid"
@@ -381,9 +384,127 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 	}
 }
 
+type FileCheckpointsDB struct {
+	checkpoints map[string]*FCPPBCheckpoint
+	path        string
+}
+
+func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
+	return &FileCheckpointsDB{
+		checkpoints: make(map[string]*FCPPBCheckpoint),
+		path:        path,
+	}
+}
+
+func (cpdb *FileCheckpointsDB) load() error {
+	content, err := ioutil.ReadFile(cpdb.path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var decoded FCPPBCheckpoints
+	if err := proto.Unmarshal(content, &decoded); err != nil {
+		return errors.Trace(err)
+	}
+	cpdb.checkpoints = decoded.Checkpoints
+	return nil
+}
+
+func (cpdb *FileCheckpointsDB) save() error {
+	encoded := FCPPBCheckpoints{Checkpoints: cpdb.checkpoints}
+	serialized, err := proto.Marshal(&encoded)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := ioutil.WriteFile(cpdb.path, serialized, 0644); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error {
+	cpdb.load() // ignore error -- file maybe not created yet.
+
+	for _, db := range dbInfo {
+		for _, table := range db.Tables {
+			tableName := common.UniqueTable(db.Name, table.Name)
+			if _, ok := cpdb.checkpoints[tableName]; !ok {
+				cpdb.checkpoints[tableName] = &FCPPBCheckpoint{
+					Status: uint32(CheckpointStatusLoaded),
+					Engine: uuid.NewV4().Bytes(),
+					Chunks: make(map[string]int64),
+				}
+			}
+			// TODO check if hash matches
+		}
+	}
+
+	return errors.Trace(cpdb.save())
+}
+
+func (cpdb *FileCheckpointsDB) Get(ctx context.Context, tableName string) (*TableCheckpoint, error) {
+	if cp, ok := cpdb.checkpoints[tableName]; ok {
+		if cp.Status <= uint32(CheckpointStatusMaxInvalid) {
+			return nil, errors.Errorf("Checkpoint for %s has invalid status: %d", tableName, cp.Status)
+		}
+
+		engine, err := uuid.FromBytes(cp.Engine)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		chunks := make(map[chunkCheckpoint]int64)
+		for key, pos := range cp.Chunks {
+			sepIndex := strings.LastIndexByte(key, ':')
+			if sepIndex < 0 {
+				return nil, errors.Errorf("invalid chunk key `%s`", key)
+			}
+			path := key[:sepIndex]
+			offset, err := strconv.ParseInt(key[sepIndex+1:], 10, 64)
+			if err != nil {
+				return nil, errors.Annotatef(err, "invalid chunk key `%s`", key)
+			}
+			chunks[chunkCheckpoint{path: path, offset: offset}] = pos
+		}
+
+		return &TableCheckpoint{
+			Status:    CheckpointStatus(cp.Status),
+			Engine:    engine,
+			AllocBase: cp.AllocBase,
+			Checksum:  verify.MakeKVChecksum(cp.Size, cp.Kvs, cp.Checksum),
+			chunks:    chunks,
+		}, nil
+	}
+	return nil, errors.Errorf("no checkpoint for %s", tableName)
+}
+
+func (cpdb *FileCheckpointsDB) Close() error {
+	return nil
+}
+
+func (cpdb *FileCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
+	for tableName, cpd := range checkpointDiffs {
+		cp := cpdb.checkpoints[tableName]
+		if cpd.hasStatus {
+			cp.Status = uint32(cpd.status)
+		}
+		if cpd.hasChecksum {
+			cp.AllocBase = cpd.allocBase
+			cp.Checksum = cpd.checksum.Sum()
+			cp.Kvs = cpd.checksum.SumKVS()
+			cp.Size = cpd.checksum.SumSize()
+		}
+		for chcp, pos := range cpd.chunks {
+			cp.Chunks[fmt.Sprintf("%s:%d", chcp.path, chcp.offset)] = pos
+		}
+	}
+	if err := cpdb.save(); err != nil {
+		common.AppLogger.Errorf("failed to save checkpoint: %v", err)
+	}
+}
+
 // Management functions ----------------------------------------------------------------------------
 
-var cannotManageNullDB = errors.NotSupportedf("checkpoints is disabled")
+var cannotManageNullDB = errors.New("cannot perform this function while checkpoints is disabled")
 
 func (*NullCheckpointsDB) RemoveCheckpoint(context.Context, string) error {
 	return errors.Trace(cannotManageNullDB)
@@ -450,12 +571,7 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 	return errors.Trace(err)
 }
 
-func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string, target *TiDBManager) error {
-	targetTables, err := cpdb.destroyErrorCheckpoints(ctx, tableName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+func dropTables(ctx context.Context, target *TiDBManager, targetTables []string) error {
 	common.AppLogger.Info("Going to drop the following tables:", targetTables)
 	for _, tableName := range targetTables {
 		query := "DROP TABLE " + tableName
@@ -465,6 +581,14 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		}
 	}
 	return nil
+}
+
+func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string, target *TiDBManager) error {
+	targetTables, err := cpdb.destroyErrorCheckpoints(ctx, tableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(dropTables(ctx, target, targetTables))
 }
 
 func (cpdb *MySQLCheckpointsDB) destroyErrorCheckpoints(ctx context.Context, tableName string) ([]string, error) {
@@ -568,4 +692,60 @@ func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer
 	defer rows.Close()
 
 	return errors.Trace(sqltocsv.Write(writer, rows))
+}
+
+func (cpdb *FileCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName string) error {
+	if err := cpdb.load(); err != nil {
+		return errors.Trace(err)
+	}
+	if tableName == "all" {
+		cpdb.checkpoints = make(map[string]*FCPPBCheckpoint)
+	} else {
+		delete(cpdb.checkpoints, tableName)
+	}
+	if err := cpdb.save(); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
+	if err := cpdb.load(); err != nil {
+		return errors.Trace(err)
+	}
+	for tn, cp := range cpdb.checkpoints {
+		if (tableName == "all" || tableName == tn) && cp.Status <= uint32(CheckpointStatusMaxInvalid) {
+			cp.Status = uint32(CheckpointStatusLoaded)
+		}
+	}
+	if err := cpdb.save(); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string, target *TiDBManager) error {
+	if err := cpdb.load(); err != nil {
+		return errors.Trace(err)
+	}
+	var targetTables []string
+	for tn, cp := range cpdb.checkpoints {
+		if (tableName == "all" || tableName == tn) && cp.Status <= uint32(CheckpointStatusMaxInvalid) {
+			targetTables = append(targetTables, tn)
+		}
+	}
+	for _, tn := range targetTables {
+		delete(cpdb.checkpoints, tn)
+	}
+	if err := dropTables(ctx, target, targetTables); err != nil {
+		return errors.Trace(err)
+	}
+	if err := cpdb.save(); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+func (cpdb *FileCheckpointsDB) DumpTables(ctx context.Context, csv io.Writer) error {
+	return errors.Errorf("dumping file checkpoint into CSV not unsupported, you may copy %s instead", cpdb.path)
+}
+func (cpdb *FileCheckpointsDB) DumpChunks(ctx context.Context, csv io.Writer) error {
+	return errors.Errorf("dumping file checkpoint into CSV not unsupported, you may copy %s instead", cpdb.path)
 }
