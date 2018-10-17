@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	"github.com/pingcap/tidb/plan"
+	plan "github.com/pingcap/tidb/planner/core"
 )
 
 func setGlobalVars() {

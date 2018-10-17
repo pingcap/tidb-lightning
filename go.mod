@@ -14,24 +14,25 @@ require (
 	github.com/cznic/strutil v0.0.0-20150430124730-1eb03e3cc9d3
 	github.com/cznic/y v0.0.0-20160420101755-9fdf92d4aac0
 	github.com/go-sql-driver/mysql v1.4.0
+	github.com/gogo/protobuf v1.1.1 // indirect
 	github.com/golang/protobuf v1.1.0 // indirect
 	github.com/golang/snappy v0.0.0-20150730031844-723cc1e459b8 // indirect
 	github.com/google/btree v0.0.0-20161217183710-316fb6d3f031 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v0.0.0-20171020063731-82921fcf811d // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v0.0.0-20160910222444-6b7015e65d36 // indirect
 	github.com/joho/sqltocsv v0.0.0-20180904231936-b24deec2b806
-	github.com/juju/errors v0.0.0-20160809030848-6f54ff631840 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7 // indirect
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef // indirect
+	github.com/opentracing/basictracer-go v1.0.0 // indirect
 	github.com/opentracing/opentracing-go v1.0.2 // indirect
 	github.com/pingcap/check v0.0.0-20161122095354-9b266636177e
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e // indirect
-	github.com/pingcap/kvproto v0.0.0-20180624112519-716bb0d730ba
-	github.com/pingcap/pd v1.1.0-alpha.0.20171213134044-eed819b69991 // indirect
-	github.com/pingcap/tidb v2.1.0-beta.0.20180823101743-1fa5669fb48a+incompatible
+	github.com/pingcap/kvproto v0.0.0-20181010074705-0ba3ca8a6e37
+	github.com/pingcap/pd v0.0.0-20180910072000-b5992e356ff4 // indirect
+	github.com/pingcap/tidb v2.1.0-rc.3+incompatible
 	github.com/pingcap/tidb-tools v0.0.0-20180806015954-b605dbc412c4 // indirect
-	github.com/pingcap/tipb v0.0.0-20180614062814-015341a07dc3 // indirect
+	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323 // indirect
 	github.com/pkg/errors v0.8.0
 	github.com/prometheus/client_golang v0.8.0
 	github.com/prometheus/client_model v0.0.0-20150212101744-fa8ad6fec335 // indirect
