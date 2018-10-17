@@ -1,7 +1,7 @@
 module github.com/pingcap/tidb-lightning
 
 require (
-	github.com/BurntSushi/toml v0.3.0
+	github.com/BurntSushi/toml v0.3.1
 	github.com/apache/thrift v0.0.0-20161221203622-b2a4d4ae21c7 // indirect
 	github.com/beorn7/perks v0.0.0-20160804104726-4c0e84591b9a // indirect
 	github.com/codahale/hdrhistogram v0.0.0-20160425231609-f8ad88b59a58 // indirect
@@ -15,7 +15,6 @@ require (
 	github.com/cznic/y v0.0.0-20160420101755-9fdf92d4aac0
 	github.com/go-sql-driver/mysql v1.4.0
 	github.com/gogo/protobuf v1.1.1 // indirect
-	github.com/golang/protobuf v1.1.0 // indirect
 	github.com/golang/snappy v0.0.0-20150730031844-723cc1e459b8 // indirect
 	github.com/google/btree v0.0.0-20161217183710-316fb6d3f031 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v0.0.0-20171020063731-82921fcf811d // indirect
@@ -34,23 +33,22 @@ require (
 	github.com/pingcap/tidb-tools v0.0.0-20180806015954-b605dbc412c4 // indirect
 	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323 // indirect
 	github.com/pkg/errors v0.8.0
-	github.com/prometheus/client_golang v0.8.0
+	github.com/prometheus/client_golang v0.9.0
 	github.com/prometheus/client_model v0.0.0-20150212101744-fa8ad6fec335 // indirect
 	github.com/prometheus/common v0.0.0-20160623151427-4402f4e5ea79 // indirect
 	github.com/prometheus/procfs v0.0.0-20160411190841-abf152e5f3e9 // indirect
 	github.com/satori/go.uuid v1.2.0
 	github.com/siddontang/go v0.0.0-20170517070808-cb568a3e5cc0 // indirect
-	github.com/sirupsen/logrus v0.11.6-0.20170323161349-3bcb09397d6d
+	github.com/sirupsen/logrus v1.1.1
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72 // indirect
 	github.com/twinj/uuid v0.1.0 // indirect
 	github.com/uber/jaeger-client-go v2.8.0+incompatible // indirect
 	github.com/uber/jaeger-lib v1.3.2-0.20180112221534-34d9cc24e47a // indirect
-	golang.org/x/sys v0.0.0-20161006025142-8d1157a43547
+	golang.org/x/sys v0.0.0-20180905080454-ebe1bf3edb33
 	golang.org/x/text v0.3.0
 	google.golang.org/appengine v1.1.1-0.20180731164958-4216e58b9158 // indirect
-	google.golang.org/genproto v0.0.0-20170711235230-b0a3dcfcd1a9 // indirect
-	google.golang.org/grpc v1.12.0
-	gopkg.in/natefinch/lumberjack.v2 v2.0.0-20180817145747-7d6a1875575e
+	google.golang.org/grpc v1.15.0
+	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 )
 
 replace github.com/pkg/errors v0.8.0 => github.com/pingcap/errors v0.10.1
