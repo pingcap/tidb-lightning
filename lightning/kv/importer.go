@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	"github.com/satori/go.uuid"
 	"google.golang.org/grpc"
 

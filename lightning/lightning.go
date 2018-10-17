@@ -1,15 +1,15 @@
 package lightning
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"runtime"
 	"sync"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"

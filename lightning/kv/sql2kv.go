@@ -1,7 +1,7 @@
 package kv
 
 import (
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"

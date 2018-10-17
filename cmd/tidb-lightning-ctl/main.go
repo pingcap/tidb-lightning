@@ -7,11 +7,11 @@ import (
 	"os"
 	"path"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
+	"github.com/pkg/errors"
 )
 
 func main() {
@@ -91,7 +91,7 @@ func switchMode(ctx context.Context, cfg *config.Config, mode string) error {
 	case config.NormalMode:
 		m = import_sstpb.SwitchMode_Normal
 	default:
-		return errors.NotValidf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
+		return errors.Errorf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
 	}
 
 	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)

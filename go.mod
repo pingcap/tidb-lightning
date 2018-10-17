@@ -20,7 +20,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v0.0.0-20171020063731-82921fcf811d // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v0.0.0-20160910222444-6b7015e65d36 // indirect
 	github.com/joho/sqltocsv v0.0.0-20180904231936-b24deec2b806
-	github.com/juju/errors v0.0.0-20160809030848-6f54ff631840
+	github.com/juju/errors v0.0.0-20160809030848-6f54ff631840 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7 // indirect
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef // indirect
@@ -30,20 +30,20 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20180624112519-716bb0d730ba
 	github.com/pingcap/pd v1.1.0-alpha.0.20171213134044-eed819b69991 // indirect
 	github.com/pingcap/tidb v2.1.0-beta.0.20180823101743-1fa5669fb48a+incompatible
-	github.com/pingcap/tidb-tools v0.0.0-20180806015954-b605dbc412c4
+	github.com/pingcap/tidb-tools v0.0.0-20180806015954-b605dbc412c4 // indirect
 	github.com/pingcap/tipb v0.0.0-20180614062814-015341a07dc3 // indirect
+	github.com/pkg/errors v0.8.0
 	github.com/prometheus/client_golang v0.8.0
 	github.com/prometheus/client_model v0.0.0-20150212101744-fa8ad6fec335 // indirect
 	github.com/prometheus/common v0.0.0-20160623151427-4402f4e5ea79 // indirect
 	github.com/prometheus/procfs v0.0.0-20160411190841-abf152e5f3e9 // indirect
 	github.com/satori/go.uuid v1.2.0
-	github.com/siddontang/go v0.0.0-20170517070808-cb568a3e5cc0
+	github.com/siddontang/go v0.0.0-20170517070808-cb568a3e5cc0 // indirect
 	github.com/sirupsen/logrus v0.11.6-0.20170323161349-3bcb09397d6d
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72 // indirect
 	github.com/twinj/uuid v0.1.0 // indirect
 	github.com/uber/jaeger-client-go v2.8.0+incompatible // indirect
 	github.com/uber/jaeger-lib v1.3.2-0.20180112221534-34d9cc24e47a // indirect
-	golang.org/x/net v0.0.0-20180724234803-3673e40ba225
 	golang.org/x/sys v0.0.0-20161006025142-8d1157a43547
 	golang.org/x/text v0.3.0
 	google.golang.org/appengine v1.1.1-0.20180731164958-4216e58b9158 // indirect
@@ -51,3 +51,5 @@ require (
 	google.golang.org/grpc v1.12.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0-20180817145747-7d6a1875575e
 )
+
+replace github.com/pkg/errors v0.8.0 => github.com/pingcap/errors v0.10.1

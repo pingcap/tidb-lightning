@@ -1,6 +1,7 @@
 package restore
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"io"
@@ -12,7 +13,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -22,11 +23,6 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/kvencoder"
-
-	// hack for glide update, delete later
-	_ "github.com/pingcap/tidb-tools/pkg/table-router"
-	_ "github.com/siddontang/go/sync2"
-	"golang.org/x/net/context"
 )
 
 const (

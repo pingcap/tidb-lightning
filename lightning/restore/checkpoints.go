@@ -1,6 +1,7 @@
 package restore
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"io"
@@ -8,9 +9,8 @@ import (
 	"time"
 
 	"github.com/joho/sqltocsv"
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	"github.com/satori/go.uuid"
-	"golang.org/x/net/context"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"

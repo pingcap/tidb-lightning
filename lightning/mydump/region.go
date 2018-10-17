@@ -7,8 +7,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pkg/errors"
 )
 
 type TableRegion struct {
