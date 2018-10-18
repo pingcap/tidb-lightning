@@ -1062,7 +1062,11 @@ outside:
 		}
 		err = stream.Put(totalKVs)
 		if e := stream.Close(); e != nil {
-			common.AppLogger.Warnf("failed to close write stream: %s", e.Error())
+			if err != nil {
+				common.AppLogger.Warnf("failed to close write stream: %s", e.Error())
+			} else {
+				err = e
+			}
 		}
 		metrics.MarkTiming(deliverMark, start)
 		if err != nil {
