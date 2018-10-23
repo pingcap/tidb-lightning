@@ -15,7 +15,10 @@ run_sql 'INSERT INTO error_summary.c VALUES (3, 9), (27, 81);'
 
 set +e
 run_lightning
+ERRORCODE=$?
 set -e
+
+[ "$ERRORCODE" -ne 0 ]
 
 # Verify that table `b` is indeed imported
 run_sql 'SELECT sum(id), sum(k) FROM error_summary.b'
