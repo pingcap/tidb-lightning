@@ -56,7 +56,7 @@ scrape_configs:
 
 ### `tikv-importer`
 
-`tikv-importer` 的度量皆以 `tikv_import_*` 为前敍。
+`tikv-importer` 的度量皆以 `tikv_import_*` 为前缀。
 
 * **`tikv_import_rpc_duration`** (直方图)
 
@@ -83,7 +83,7 @@ scrape_configs:
 
 ### `tidb-lightning`
 
-`tidb-lightning` 的度量皆以 `tikv_import_*` 为前敍。
+`tidb-lightning` 的度量皆以 `tikv_import_*` 为前缀。
 
 * **`lightning_importer_engine`** (计数器)
 
