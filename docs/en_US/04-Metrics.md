@@ -11,7 +11,7 @@ If you installed Lightning via TiDB-Ansible, simply adding the servers to the `[
 section in the `inventory.ini` should be sufficient to let the Prometheus server to collect their
 metrics.
 
-If you installed Lightning manually, please follow the instructions below.
+If you installed Lightning manually, follow the instructions below.
 
 ### `tikv-importer`
 
@@ -44,7 +44,7 @@ pprof-port = 10089
 ...
 ```
 
-Prometheus needs to be configured to discover the `tidb-lightning` server. For instance, you may
+Prometheus needs to be configured to discover the `tidb-lightning` server. For instance, you could
 hard-code the server address to the `scrape_configs` section:
 
 ```yaml

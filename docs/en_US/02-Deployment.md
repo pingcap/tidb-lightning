@@ -6,11 +6,11 @@ Hardware requirements
 
 ### Notes
 
-Before starting TiDB Lightning, please note that:
+Before starting TiDB Lightning, note that:
 
 - During the import process, the cluster cannot provide normal services.
 - If `tidb-lightning` crashes, the cluster will be left in "import mode".
-    Forgetting to switch back to "normal mode" will lead to high amount of uncompacted data on
+    Forgetting to switch back to "normal mode" will lead to a high amount of uncompacted data on
     the TiKV cluster, and will cause abnormally high CPU usage and stall.
     You can manually switch the cluster back to "normal mode" via the `tidb-lightning-ctl` tool:
 
@@ -31,7 +31,7 @@ To achieve the best performance, it is recommended to use the following hardware
     - 16 GB+ memory
     - 1 TB+ SSD, preferring higher read speed
     - 10 Gigabit network card
-    - `tidb-lightning` would fully consumes all CPU cores when running,
+    - `tidb-lightning` fully consumes all CPU cores when running,
         and deploying on a dedicated machine is highly recommended.
         If not possible, `tidb-lightning` could be deployed together with other components like
         `tidb-server`, and limiting the CPU usage via the `region-concurrency` setting.
@@ -42,10 +42,10 @@ To achieve the best performance, it is recommended to use the following hardware
     - 32 GB+ memory
     - 1 TB+ SSD, preferring higher IOPS
     - 10 Gigabit network card
-    - `tikv-importer` would fully consumes all CPU, disk I/O and network bandwidth when running,
+    - `tikv-importer` fully consumes all CPU, disk I/O and network bandwidth when running,
         and deploying on a dedicated machine is strongly recommended.
         If not possible, `tikv-importer` could be deployed together with other components like
-        `tikv-server`, but the import speed may be affected.
+        `tikv-server`, but the import speed might be affected.
 
 If you have got enough machines, you could deploy multiple Lightning/Importer servers,
 with each working on a distinct set of tables, to import the data in parallel.
@@ -110,7 +110,7 @@ TiDB Lightning can be deployed using Ansible, like [TiDB cluster itself][tidb-an
         # The listening port for metrics gathering. Should be open to the monitoring servers.
         tidb_lightning_pprof_port: 10089
 
-        # The file path tidb-lightning will read the mydumper SQL dump from.
+        # The file path tidb-lightning reads the mydumper SQL dump from.
         data_source_dir: "{{ deploy_dir }}/mydumper"
         ```
 
@@ -141,13 +141,12 @@ TiDB Lightning can be deployed using Ansible, like [TiDB cluster itself][tidb-an
 
     to start Importer.
 
-6. Login to the `tidb-lightning` server, and manually run
+6. Login to the `tidb-lightning` server, and manually run the following command
+    to start Lightning and import the data into the TiDB cluster.
 
     ```sh
     scripts/start_lightning.sh
     ```
-
-    to start Lightning and import the data into the TiDB cluster.
 
 7. After completion, run `scripts/stop_importer.sh` on the `tikv-importer` server to stop Importer.
 
@@ -159,10 +158,10 @@ Manual deployment
 Before importing, you should have deployed the TiDB cluster, with cluster version 2.0.4 or above.
 Using the latest version is highly recommended.
 
-You may find deployment instructions in the
+You can find deployment instructions in the
 [TiDB Quick Start Guide](https://pingcap.com/docs/QUICKSTART/).
 
-Download the TiDB Lightning tool set (please choose the one same as the cluster version):
+Download the TiDB Lightning tool set (choose the one same as the cluster version):
 
 - **v2.1**: https://download.pingcap.org/tidb-lightning-release-2.1-linux-amd64.tar.gz
 - **v2.0**: https://download.pingcap.org/tidb-lightning-release-2.0-linux-amd64.tar.gz
@@ -270,7 +269,7 @@ Download the TiDB Lightning tool set (please choose the one same as the cluster 
 
     [checkpoint]
     # Whether to enable checkpoints.
-    # While importing, Lightning will record which tables have been imported, so
+    # While importing, Lightning records which tables have been imported, so
     # even if Lightning or other component crashed, we could start from a known
     # good state instead of redoing everything.
     enable = true
@@ -314,7 +313,7 @@ Download the TiDB Lightning tool set (please choose the one same as the cluster 
     status-port = 10080
     # Address of any one PD server from the cluster
     pd-addr = "172.16.31.4:2379"
-    # tidb-lightning imports TiDB as a library and will generate some logs itself.
+    # tidb-lightning imports TiDB as a library and generates some logs itself.
     # This setting controls the log level of the TiDB library.
     log-level = "error"
     # Sets TiDB session variable to speed up the Checksum and Analyze operations.

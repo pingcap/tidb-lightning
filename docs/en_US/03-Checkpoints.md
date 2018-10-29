@@ -1,7 +1,7 @@
 Using Checkpoints
 =================
 
-Importing a large database will usually take hours and days, and if such long running processes
+Importing a large database usually takes hours and days, and if such long running processes
 spuriously crashes, it would be very time-wasting to redo the previously completed tasks. Lightning
 uses *checkpoints* to stores the import progress, so that restarting `tidb-lightning` will continue
 importing from where it lefts off.
@@ -35,8 +35,8 @@ Storage
 Checkpoints are saved in any databases compatible with MySQL 5.7 or above, including MariaDB and
 TiDB. By default the checkpoints are saved in the target database.
 
-When using the target database as the checkpoint storage, Lightning will be importing large amount
-of data at the same time. This will put extra stress on the target database and may sometimes lead
+While using the target database as the checkpoint storage, Lightning is importing large amount
+of data at the same time. This puts extra stress on the target database and sometimes leads
 to communication timeout. Therefore, **we strongly recommend you install a temporary MySQL server to
 store these checkpoints**. This server can be installed on the same host as `tidb-lightning` and can
 be uninstalled after the importer progress is completed.
@@ -54,10 +54,10 @@ situation. The checkpoint errors can be resolved using the `tidb-lightning-ctl` 
 tidb-lightning-ctl --checkpoint-error-destroy='`schema`.`table`
 ```
 
-If importing the table `` `schema`.`table` `` failed previously, this will
+If importing the table `` `schema`.`table` `` failed previously, this
 
-1. DROP the table `` `schema`.`table` `` from the target database, i.e. removing all imported data.
-2. reset the checkpoint record of this table to be "not yet started".
+1. DROPs the table `` `schema`.`table` `` from the target database, i.e. removing all imported data.
+2. resets the checkpoint record of this table to be "not yet started".
 
 If there is no errors involving the table `` `schema`.`table` ``, this operation does nothing.
 
@@ -78,7 +78,7 @@ tidb-lightning-ctl --checkpoint-error-ignore='`schema`.`table`'
 tidb-lightning-ctl --checkpoint-error-ignore=all
 ```
 
-If importing the table `` `schema`.`table` `` failed previously, this will clear the error status as
+If importing the table `` `schema`.`table` `` failed previously, this clears the error status as
 if nothing happened. The `all` variant applies this operation to all tables.
 
 This should only be used when you are sure that the error can indeed be ignored. If not, some

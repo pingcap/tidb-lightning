@@ -35,11 +35,11 @@ If only one table has an error encountered, the rest will still be processed nor
 How to ensure integrity of the imported data?
 ---------------------------------------------
 
-Lightning by default will perform checksum on the local data source and the imported tables. If
+Lightning by default performs checksum on the local data source and the imported tables. If
 there is checksum mismatch, the process would be aborted. These checksum information can be read
 from the log.
 
-You may also execute the `ADMIN CHECKSUM TABLE` SQL command on the target table to recompute the
+You could also execute the `ADMIN CHECKSUM TABLE` SQL command on the target table to recompute the
 checksum of the imported data.
 
 ```text
@@ -62,7 +62,7 @@ Could Lightning skip creating schema and tables?
 ------------------------------------------------
 
 Yes. If you have already created the tables in the target database, you could set `no-schema = true`
-in the `[data-source]` section in `tidb-lightning.toml`. This will make Lightning skips the
+in the `[data-source]` section in `tidb-lightning.toml`. This makes Lightning skips the
 `CREATE TABLE` invocations and fetch the metadata directly from the target database. Lightning will
 exit with error if a table is actually missing.
 
@@ -90,14 +90,14 @@ Yes, as long as every `tidb-lightning` instance operate on different tables.
 How to stop `tikv-importer`?
 ----------------------------
 
-If deployed using TiDB-Ansible, run `scripts/stop_importer.sh` under the deployed folder.
+If it is deployed using TiDB-Ansible, run `scripts/stop_importer.sh` under the deployed folder.
 
 Otherwise, obtain the process ID with `ps aux | grep tikv-importer`, then run `kill «pid»`.
 
 How to stop `tidb-lightning`?
 -----------------------------
 
-If deployed using TiDB-Ansible, run `scripts/stop_lightning.sh` under the deployed folder.
+If it is deployed using TiDB-Ansible, run `scripts/stop_lightning.sh` under the deployed folder.
 
 If `tidb-lightning` is running in foreground, simply press <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop it.
 
@@ -119,7 +119,7 @@ script file and execute the script.
 Why my TiDB cluster is using lots of CPU and running very slowly after using Lightning?
 ---------------------------------------------------------------------------------------
 
-If `tidb-lightning` abnormally exited, the cluster may be stuck in the "import mode", which is not
+If `tidb-lightning` abnormally exited, the cluster might be stuck in the "import mode", which is not
 suitable for production. You can force the cluster back to "normal mode" with:
 
 ```sh
