@@ -57,7 +57,7 @@ file may be left at a dangling open state, which could cause this error as well.
 **Cause**: Lightning only recognizes the UTF-8 and GB-18030 encodings for the table schemas. This
 error will be emitted if the file isn't in any of these encodings. It is also possible that the file has
 mixed encoding e.g. contains a string in UTF-8 and another string in GB-18030, due to historical
-ALTER TABLE executions.
+`ALTER TABLE` executions.
 
 **Solutions**:
 
