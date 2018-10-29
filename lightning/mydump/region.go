@@ -2,7 +2,7 @@ package mydump
 
 import (
 	"fmt"
-	"io"
+	"os"
 	"runtime"
 	"sort"
 	"sync"
@@ -18,13 +18,26 @@ type TableRegion struct {
 	Table string
 	File  string
 
-	Offset int64
-	Size   int64
+	Columns []byte
+	Chunk   Chunk
 }
 
 func (reg *TableRegion) Name() string {
 	return fmt.Sprintf("%s|%s|%d|%d",
-		reg.DB, reg.Table, reg.ID, reg.Offset)
+		reg.DB, reg.Table, reg.ID, reg.Chunk.Offset)
+}
+
+func (reg *TableRegion) RowIDMin() int64 {
+	return reg.Chunk.PrevRowIDMax + 1
+}
+func (reg *TableRegion) Rows() int64 {
+	return reg.Chunk.RowIDMax - reg.Chunk.PrevRowIDMax
+}
+func (reg *TableRegion) Offset() int64 {
+	return reg.Chunk.Offset
+}
+func (reg *TableRegion) Size() int64 {
+	return reg.Chunk.EndOffset - reg.Chunk.Offset
 }
 
 type regionSlice []*TableRegion
@@ -37,7 +50,7 @@ func (rs regionSlice) Swap(i, j int) {
 }
 func (rs regionSlice) Less(i, j int) bool {
 	if rs[i].File == rs[j].File {
-		return rs[i].Offset < rs[j].Offset
+		return rs[i].Chunk.Offset < rs[j].Chunk.Offset
 	}
 	return rs[i].File < rs[j].File
 }
@@ -82,12 +95,14 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 		go func(pid int, file string) {
 			common.AppLogger.Debugf("[%s] loading file's region (%s) ...", table, file)
 
-			var regions []*TableRegion
-			regions = splitFuzzyRegion(db, table, file, minRegionSize)
-
-			lock.Lock()
-			filesRegions = append(filesRegions, regions...)
-			lock.Unlock()
+			chunks, err := splitExactChunks(db, table, file, minRegionSize)
+			if err == nil {
+				lock.Lock()
+				filesRegions = append(filesRegions, chunks...)
+				lock.Unlock()
+			} else {
+				common.AppLogger.Errorf("failed to extract chunks from file (%s): %s", file, err.Error())
+			}
 
 			processors <- pid
 			wg.Done()
@@ -97,56 +112,44 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 
 	// Setup files' regions
 	sort.Sort(filesRegions) // ps : sort region by - (fileName, fileOffset)
+	var totalRowCount int64
 	for i, region := range filesRegions {
 		region.ID = i
+
+		// Re-adjust the row IDs so they won't be overlapping.
+		chunkRowCount := region.Chunk.RowIDMax - region.Chunk.PrevRowIDMax
+		region.Chunk.PrevRowIDMax = totalRowCount
+		totalRowCount += chunkRowCount
+		region.Chunk.RowIDMax = totalRowCount
 	}
 
 	return filesRegions
 }
 
-func splitFuzzyRegion(db string, table string, file string, minRegionSize int64) []*TableRegion {
-	reader, err := NewMDDataReader(file, 0)
+func splitExactChunks(db string, table string, file string, minChunkSize int64) ([]*TableRegion, error) {
+	reader, err := os.Open(file)
 	if err != nil {
-		if err == ErrInsertStatementNotFound {
-			common.AppLogger.Warnf("failed to generate file's regions  (%s) : %s", file, err.Error())
-		} else {
-			common.AppLogger.Errorf("failed to generate file's regions  (%s) : %s", file, err.Error())
-		}
-		return nil
+		return nil, errors.Trace(err)
 	}
 	defer reader.Close()
 
-	newRegion := func(off int64) *TableRegion {
-		return &TableRegion{
-			ID:     -1,
-			DB:     db,
-			Table:  table,
-			File:   file,
-			Offset: off,
-			Size:   0,
+	parser := NewChunkParser(reader)
+	chunks, err := parser.ReadChunks(minChunkSize)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	annotatedChunks := make([]*TableRegion, len(chunks))
+	for i, chunk := range chunks {
+		annotatedChunks[i] = &TableRegion{
+			ID:      -1,
+			DB:      db,
+			Table:   table,
+			File:    file,
+			Columns: parser.Columns,
+			Chunk:   chunk,
 		}
 	}
 
-	regions := make([]*TableRegion, 0)
-
-	var extendSize = int64(4 << 10) // 4 K
-	var offset int64
-	for {
-		reader.Seek(offset + minRegionSize)
-		_, err := reader.Read(extendSize)
-		pos := reader.Tell()
-
-		region := newRegion(offset)
-		region.Size = pos - offset
-		if region.Size > 0 {
-			regions = append(regions, region)
-		}
-
-		if errors.Cause(err) == io.EOF {
-			break
-		}
-		offset = pos
-	}
-
-	return regions
+	return annotatedChunks, nil
 }

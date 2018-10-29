@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
-	"github.com/pkg/errors"
+	"github.com/cznic/mathutil"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -23,6 +23,7 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/kvencoder"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -795,31 +796,38 @@ func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {
 ////////////////////////////////////////////////////////////////
 
 type chunkRestore struct {
-	reader *mydump.RegionReader
-	path   string
-	offset int64
-	name   string
+	parser  *mydump.ChunkParser
+	path    string
+	name    string
+	columns []byte
+	chunk   mydump.Chunk
 }
 
 func newChunkRestore(chunk *mydump.TableRegion, cp *TableCheckpoint) (*chunkRestore, error) {
-	reader, err := mydump.NewRegionReader(chunk.File, chunk.Offset, chunk.Size)
+	reader, err := os.Open(chunk.File)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if pos, ok := cp.ChunkPos(chunk.File, chunk.Offset); ok {
-		reader.Seek(pos)
+	parser := mydump.NewChunkParser(reader)
+
+	pos, ok := cp.ChunkPos(chunk.File, chunk.Offset())
+	if !ok {
+		pos = chunk.Offset()
 	}
+	reader.Seek(pos, io.SeekStart)
+	parser.Pos = pos
 
 	return &chunkRestore{
-		reader: reader,
-		path:   chunk.File,
-		offset: chunk.Offset,
-		name:   chunk.Name(),
+		parser:  parser,
+		path:    chunk.File,
+		name:    chunk.Name(),
+		columns: chunk.Columns,
+		chunk:   chunk.Chunk,
 	}, nil
 }
 
 func (cr *chunkRestore) close() {
-	cr.reader.Close()
+	cr.parser.Reader().(*os.File).Close()
 }
 
 type TableRestore struct {
@@ -884,7 +892,7 @@ func (t *TableRestore) loadChunks(minChunkSize int64, cp *TableCheckpoint) []*my
 	// Remove all regions which have been imported
 	newChunks := chunks[:0]
 	for _, chunk := range chunks {
-		if pos, ok := cp.ChunkPos(chunk.File, chunk.Offset); !ok || pos < chunk.Offset+chunk.Size {
+		if pos, ok := cp.ChunkPos(chunk.File, chunk.Chunk.Offset); !ok || pos < chunk.Chunk.EndOffset {
 			newChunks = append(newChunks, chunk)
 		}
 	}
@@ -1085,7 +1093,6 @@ func (cr *chunkRestore) restore(
 
 	timer := time.Now()
 
-outside:
 	for {
 		select {
 		case <-ctx.Done():
@@ -1093,15 +1100,39 @@ outside:
 		default:
 		}
 
-		start := time.Now()
-		sqls, err := cr.reader.Read(rc.cfg.Mydumper.ReadBlockSize)
-		switch errors.Cause(err) {
-		case nil:
-		case io.EOF:
-			break outside
-		default:
-			return errors.Trace(err)
+		endOffset := mathutil.MinInt64(cr.chunk.EndOffset, cr.parser.Pos+rc.cfg.Mydumper.ReadBlockSize)
+		if cr.parser.Pos >= endOffset {
+			break
 		}
+
+		start := time.Now()
+
+		var sqls strings.Builder
+		sqls.WriteString("INSERT INTO ")
+		sqls.WriteString(t.tableName)
+		sqls.Write(cr.columns)
+		sqls.WriteString(" VALUES")
+		var sep byte = ' '
+	readLoop:
+		for cr.parser.Pos < endOffset {
+			err := cr.parser.ReadRow()
+			switch errors.Cause(err) {
+			case nil:
+				sqls.WriteByte(sep)
+				sep = ','
+				lastRow := cr.parser.LastRow()
+				sqls.Write(lastRow.Row)
+			case io.EOF:
+				break readLoop
+			default:
+				return errors.Trace(err)
+			}
+		}
+		if sep != ',' { // quick and dirty way to check if `sqls` actually contained any values
+			continue
+		}
+		sqls.WriteByte(';')
+
 		metrics.MarkTiming(readMark, start)
 
 		var (
@@ -1110,20 +1141,18 @@ outside:
 			localChecksum     verify.KVChecksum
 		)
 		// sql -> kv
-		for _, stmt := range sqls {
-			start = time.Now()
-			kvs, affectedRows, err := kvEncoder.SQL2KV(stmt)
-			metrics.MarkTiming(encodeMark, start)
-			common.AppLogger.Debugf("len(kvs) %d, len(sql) %d", len(kvs), len(stmt))
-			if err != nil {
-				common.AppLogger.Errorf("kv encode failed = %s\n", err.Error())
-				return errors.Trace(err)
-			}
-
-			totalKVs = append(totalKVs, kvs...)
-			localChecksum.Update(kvs)
-			totalAffectedRows += affectedRows
+		start = time.Now()
+		kvs, affectedRows, err := kvEncoder.SQL2KV(sqls.String())
+		metrics.MarkTiming(encodeMark, start)
+		common.AppLogger.Debugf("len(kvs) %d, len(sql) %d", len(kvs), sqls.Len())
+		if err != nil {
+			common.AppLogger.Errorf("kv encode failed = %s\n", err.Error())
+			return errors.Trace(err)
 		}
+
+		totalKVs = append(totalKVs, kvs...)
+		localChecksum.Update(kvs)
+		totalAffectedRows += affectedRows
 
 		// kv -> deliver ( -> tikv )
 		start = time.Now()
@@ -1157,8 +1186,8 @@ outside:
 				AllocBase: t.alloc.Base() + 1,
 				Checksum:  t.checksum,
 				Path:      cr.path,
-				Offset:    cr.offset,
-				Pos:       cr.reader.Tell(),
+				Offset:    cr.chunk.Offset,
+				Pos:       cr.parser.Pos,
 			},
 		}
 		t.checksumLock.Unlock()
