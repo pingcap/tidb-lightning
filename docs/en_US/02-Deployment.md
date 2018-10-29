@@ -20,7 +20,7 @@ Before starting TiDB Lightning, please note that:
 
 ### Deploying to separate machines
 
-`tidb-lightning` and `tikv-importer` are resource-intensive programs, and are best deployed into
+`tidb-lightning` and `tikv-importer` are resource-intensive programs. It is recommended to deploy them into
 two dedicated machines.
 
 To achieve the best performance, we recommend the following hardware configurations:
