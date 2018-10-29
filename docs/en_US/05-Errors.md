@@ -35,7 +35,7 @@ There are several deeper reasons of this error:
 
 ## ResourceTemporarilyUnavailable("Too many open engines …: 8")
 
-**Cause**: The number of concurrent engine files exceed the limit imposed by `tikv-importer`. This
+**Cause**: The number of concurrent engine files exceeds the limit imposed by `tikv-importer`. This
 could be caused by misconfiguration. Additionally, if `tidb-lightning` exited abnormally, an engine
 file may be left at a dangling open state, which could cause this error as well.
 
