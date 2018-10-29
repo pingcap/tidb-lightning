@@ -1,6 +1,6 @@
 # TiDB Lightning
 
-**TiDB Lightning** is a tool for fast full import of large amounts data into a TiDB cluster.
+**TiDB Lightning** is a tool for fast full import of large amounts of data into a TiDB cluster.
 Currently, we support reading SQL dump exported via mydumper.
 
 ![](docs/en_US/tidb-lightning.svg)
