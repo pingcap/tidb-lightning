@@ -1,7 +1,7 @@
 Common Errors
 =============
 
-When Lightning encountered an unrecoverable error, it will exit with nonzero exit code and leave the
+When Lightning encounters an unrecoverable error, it exits with nonzero exit code and leaves the
 reason in the log file. Errors are typically printed at the end of the log. You may also search for
 the string `[error]` to look for non-fatal errors.
 
