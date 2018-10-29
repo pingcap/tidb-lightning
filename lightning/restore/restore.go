@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/pkg/errors"
 )
@@ -837,7 +838,7 @@ type TableRestore struct {
 	tableInfo *TidbTableInfo
 	tableMeta *mydump.MDTableMeta
 	encoder   kvenc.KvEncoder
-	alloc     *kvenc.Allocator
+	alloc     autoid.Allocator
 
 	checksumLock     sync.Mutex
 	checksum         verify.KVChecksum
@@ -853,8 +854,7 @@ func NewTableRestore(
 	tableInfo *TidbTableInfo,
 	cp *TableCheckpoint,
 ) (*TableRestore, error) {
-	idAlloc := kvenc.NewAllocator()
-	idAlloc.Reset(cp.AllocBase)
+	idAlloc := kv.NewPanickingAllocator(cp.AllocBase)
 	encoder, err := kvenc.New(dbInfo.Name, idAlloc)
 	if err != nil {
 		return nil, errors.Trace(err)

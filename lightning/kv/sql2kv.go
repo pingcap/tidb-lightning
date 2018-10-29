@@ -6,6 +6,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 
@@ -31,13 +32,13 @@ type TableKVEncoder struct {
 	bufValues []interface{}
 
 	encoder     kvec.KvEncoder
-	idAllocator *kvec.Allocator
+	idAllocator autoid.Allocator
 }
 
 func NewTableKVEncoder(
 	dbName string,
 	table string, tableID int64,
-	columns int, sqlMode string, alloc *kvec.Allocator) (*TableKVEncoder, error) {
+	columns int, sqlMode string, alloc autoid.Allocator) (*TableKVEncoder, error) {
 
 	encoder, err := kvec.New(dbName, alloc)
 	if err != nil {
@@ -94,10 +95,6 @@ func (kvcodec *TableKVEncoder) makeStatments(maxRows int) ([]uint32, error) {
 	}
 
 	return stmtIds, nil
-}
-
-func (kvcodec *TableKVEncoder) ResetRowID(rowID int64) {
-	kvcodec.idAllocator.Reset(rowID)
 }
 
 func (kvcodec *TableKVEncoder) Close() error {
