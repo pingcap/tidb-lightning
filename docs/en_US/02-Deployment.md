@@ -64,7 +64,7 @@ We recommend the following configuration of the single machine:
 - 10 Gigabit network card
 
 `tidb-lightning` is a CPU intensive program. In an environment with mixed components, the resources
-allocated to `tidb-lightning` must be limited or otherwise other components may not be able to run.
+allocated to `tidb-lightning` must be limited. Otherwise, other components might not be able to run.
 We recommend setting the `region-concurrency` to 75% of CPU logical cores. For instance, if the CPU
 has 32 logical cores, the `region-concurrency` can be set to 24.
 
