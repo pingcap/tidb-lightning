@@ -48,7 +48,7 @@ To achieve the best performance, it is recommended to use the following hardware
         `tikv-server`, but the import speed may be affected.
 
 If you have got enough machines, you could deploy multiple Lightning/Importer servers,
-each working on a distinct set of tables, to import the data in parallel.
+with each working on a distinct set of tables, to import the data in parallel.
 
 ### Deploying to single machine
 
