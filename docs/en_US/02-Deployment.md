@@ -23,7 +23,7 @@ Before starting TiDB Lightning, please note that:
 `tidb-lightning` and `tikv-importer` are resource-intensive programs. It is recommended to deploy them into
 two dedicated machines.
 
-To achieve the best performance, we recommend the following hardware configurations:
+To achieve the best performance, it is recommended to use the following hardware configuration:
 
 - `tidb-lightning`
 
