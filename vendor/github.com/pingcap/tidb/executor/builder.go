@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -448,13 +449,12 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
-	e := &PrepareExec{
+	return &PrepareExec{
 		baseExecutor: base,
 		is:           b.is,
 		name:         v.Name,
 		sqlText:      v.SQLText,
 	}
-	return e
 }
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
@@ -538,15 +538,15 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	baseExec.initCap = chunk.ZeroCapacity
 
 	ivs := &InsertValues{
-		baseExecutor:          baseExec,
-		Table:                 v.Table,
-		Columns:               v.Columns,
-		Lists:                 v.Lists,
-		SetList:               v.SetList,
-		GenColumns:            v.GenCols.Columns,
-		GenExprs:              v.GenCols.Exprs,
-		needFillDefaultValues: v.NeedFillDefaultValue,
-		SelectExec:            selectExec,
+		baseExecutor: baseExec,
+		Table:        v.Table,
+		Columns:      v.Columns,
+		Lists:        v.Lists,
+		SetList:      v.SetList,
+		GenColumns:   v.GenCols.Columns,
+		GenExprs:     v.GenCols.Exprs,
+		hasRefCols:   v.NeedFillDefaultValue,
+		SelectExec:   selectExec,
 	}
 
 	if v.IsReplace {
@@ -659,14 +659,15 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 
 // buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
 func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
-	e := &ExplainExec{
+	explainExec := &ExplainExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		explain:      v,
 	}
-	e.rows = make([][]string, 0, len(v.Rows))
-	for _, row := range v.Rows {
-		e.rows = append(e.rows, row)
+	if v.Analyze {
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		explainExec.analyzeExec = b.build(v.ExecPlan)
 	}
-	return e
+	return explainExec
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) Executor {
@@ -887,6 +888,27 @@ func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
 		}
 		for i := range f.Args {
 			f.Args[i] = castFunc(b.ctx, f.Args[i])
+			if f.Name != ast.AggFuncAvg && f.Name != ast.AggFuncSum {
+				continue
+			}
+			// After wrapping cast on the argument, flen etc. may not the same
+			// as the type of the aggregation function. The following part set
+			// the type of the argument exactly as the type of the aggregation
+			// function.
+			// Note: If the `Tp` of argument is the same as the `Tp` of the
+			// aggregation function, it will not wrap cast function on it
+			// internally. The reason of the special handling for `Column` is
+			// that the `RetType` of `Column` refers to the `infoschema`, so we
+			// need to set a new variable for it to avoid modifying the
+			// definition in `infoschema`.
+			if col, ok := f.Args[i].(*expression.Column); ok {
+				col.RetType = types.NewFieldType(col.RetType.Tp)
+			}
+			// originTp is used when the the `Tp` of column is TypeFloat32 while
+			// the type of the aggregation function is TypeFloat64.
+			originTp := f.Args[i].GetType().Tp
+			*(f.Args[i].GetType()) = *(f.RetTp)
+			f.Args[i].GetType().Tp = originTp
 		}
 	}
 }

@@ -375,7 +375,13 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 }
 
 func (s *session) CommitTxn(ctx context.Context) error {
+	stmt := executor.ExecStmt{
+		Text:      "commit",
+		Ctx:       s,
+		StartTime: time.Now(),
+	}
 	err := s.doCommitWithRetry(ctx)
+	stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
 	label := metrics.LblOK
 	if err != nil {
 		label = metrics.LblError
@@ -711,6 +717,9 @@ func (s *session) SetProcessInfo(sql string) {
 		Time:    time.Now(),
 		State:   s.Status(),
 		Info:    sql,
+	}
+	if sql == "" {
+		pi.Command = "Sleep"
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
@@ -1062,8 +1071,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
-	// Add statsUpdateHandle.
-	if do.StatsHandle() != nil {
+	// Add stats collector, and it will be freed by background stats worker
+	// which periodically updates stats using the collected data.
+	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
 	}
 
