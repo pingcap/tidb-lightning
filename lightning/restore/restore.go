@@ -1,12 +1,14 @@
 package restore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +25,7 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/pkg/errors"
 )
@@ -394,9 +397,14 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 		return nil, errors.Trace(err)
 	}
 
-	var chunks []*mydump.TableRegion
-	if cp.Status < CheckpointStatusAllWritten {
-		chunks = t.loadChunks(rc.cfg.Mydumper.MinRegionSize, cp)
+	// no need to do anything if the chunks are already populated
+	if len(cp.Chunks) > 0 {
+		common.AppLogger.Infof("[%s] reusing %d chunks from checkpoint", t.tableName, len(cp.Chunks))
+	} else if cp.Status < CheckpointStatusAllWritten {
+		t.populateChunks(rc.cfg.Mydumper.MinRegionSize, cp, t.tableInfo)
+		if err := rc.checkpointsDB.InsertChunkCheckpoints(ctx, t.tableName, cp.Chunks); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -409,7 +417,11 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 	handledChunksCount := new(int32)
 
 	// Restore table data
-	for _, chunk := range chunks {
+	for chunkIndex, chunk := range cp.Chunks {
+		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
+			continue
+		}
+
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -429,7 +441,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunk, cp)
+		cr, err := newChunkRestore(chunkIndex, chunk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -449,7 +461,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 			if err != nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
 				if !common.IsContextCanceledError(err) {
-					common.AppLogger.Errorf("[%s] chunk %s run task error %s", t.tableName, cr.name, errors.ErrorStack(err))
+					common.AppLogger.Errorf("[%s] chunk #%d (%s) run task error %s", t.tableName, cr.index, &cr.chunk.Key, errors.ErrorStack(err))
 				}
 				chunkErrMutex.Lock()
 				if chunkErr == nil {
@@ -461,7 +473,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
 
 			handled := int(atomic.AddInt32(handledChunksCount, 1))
-			common.AppLogger.Infof("[%s] handled region count = %d (%s)", t.tableName, handled, common.Percent(handled, len(chunks)))
+			common.AppLogger.Infof("[%s] handled region count = %d (%s)", t.tableName, handled, common.Percent(handled, len(cp.Chunks)))
 		}(worker, cr)
 	}
 
@@ -520,7 +532,7 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 
 	// 4. do table checksum
 	if cp.Status < CheckpointStatusCompleted {
-		err := t.compareChecksum(ctx, rc.cfg)
+		err := t.compareChecksum(ctx, rc.cfg, cp)
 		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusCompleted)
 		if err != nil {
 			common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
@@ -797,33 +809,25 @@ func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {
 ////////////////////////////////////////////////////////////////
 
 type chunkRestore struct {
-	parser  *mydump.ChunkParser
-	path    string
-	name    string
-	columns []byte
-	chunk   mydump.Chunk
+	parser *mydump.ChunkParser
+	index  int
+	chunk  *ChunkCheckpoint
 }
 
-func newChunkRestore(chunk *mydump.TableRegion, cp *TableCheckpoint) (*chunkRestore, error) {
-	reader, err := os.Open(chunk.File)
+func newChunkRestore(index int, chunk *ChunkCheckpoint) (*chunkRestore, error) {
+	reader, err := os.Open(chunk.Key.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	parser := mydump.NewChunkParser(reader)
 
-	pos, ok := cp.ChunkPos(chunk.File, chunk.Offset())
-	if !ok {
-		pos = chunk.Offset()
-	}
-	reader.Seek(pos, io.SeekStart)
-	parser.Pos = pos
+	reader.Seek(chunk.Chunk.Offset, io.SeekStart)
+	parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax)
 
 	return &chunkRestore{
-		parser:  parser,
-		path:    chunk.File,
-		name:    chunk.Name(),
-		columns: chunk.Columns,
-		chunk:   chunk.Chunk,
+		parser: parser,
+		index:  index,
+		chunk:  chunk,
 	}, nil
 }
 
@@ -840,9 +844,6 @@ type TableRestore struct {
 	encoder   kvenc.KvEncoder
 	alloc     autoid.Allocator
 
-	checksumLock     sync.Mutex
-	checksum         verify.KVChecksum
-	rows             uint64
 	checkpointStatus CheckpointStatus
 	engine           *kv.OpenedEngine
 }
@@ -872,7 +873,6 @@ func NewTableRestore(
 		tableMeta: tableMeta,
 		encoder:   encoder,
 		alloc:     idAlloc,
-		checksum:  cp.Checksum,
 	}, nil
 }
 
@@ -881,27 +881,52 @@ func (tr *TableRestore) Close() {
 	common.AppLogger.Infof("[%s] restore done", tr.tableName)
 }
 
-func (t *TableRestore) loadChunks(minChunkSize int64, cp *TableCheckpoint) []*mydump.TableRegion {
+var tidbRowIDColumnRegex = regexp.MustCompile(fmt.Sprintf("`%[1]s`|(?i:\\b%[1]s\\b)", model.ExtraHandleName))
+
+func (t *TableRestore) populateChunks(minChunkSize int64, cp *TableCheckpoint, tableInfo *TidbTableInfo) {
 	common.AppLogger.Infof("[%s] load chunks", t.tableName)
 	timer := time.Now()
 
 	founder := mydump.NewRegionFounder(minChunkSize)
 	chunks := founder.MakeTableRegions(t.tableMeta)
 
-	// Ref: https://github.com/golang/go/wiki/SliceTricks#filtering-without-allocating
-	// Remove all regions which have been imported
-	newChunks := chunks[:0]
+	cp.Chunks = make([]*ChunkCheckpoint, 0, len(chunks))
+
 	for _, chunk := range chunks {
-		if pos, ok := cp.ChunkPos(chunk.File, chunk.Chunk.Offset); !ok || pos < chunk.Chunk.EndOffset {
-			newChunks = append(newChunks, chunk)
+		columns := chunk.Columns
+
+		shouldIncludeRowID := !tableInfo.core.PKIsHandle && !tidbRowIDColumnRegex.Match(columns)
+		if shouldIncludeRowID {
+			// we need to inject the _tidb_rowid column
+			if len(columns) != 0 {
+				// column listing already exists, just append the new column.
+				columns = append(columns[:len(columns)-1], (",`" + model.ExtraHandleName.String() + "`)")...)
+			} else {
+				// we need to recreate the columns
+				var buf bytes.Buffer
+				buf.WriteString("(`")
+				for _, columnInfo := range tableInfo.core.Columns {
+					buf.WriteString(columnInfo.Name.String())
+					buf.WriteString("`,`")
+				}
+				buf.WriteString(model.ExtraHandleName.String())
+				buf.WriteString("`)")
+				columns = buf.Bytes()
+			}
 		}
+
+		cp.Chunks = append(cp.Chunks, &ChunkCheckpoint{
+			Key: ChunkCheckpointKey{
+				Path:   chunk.File,
+				Offset: chunk.Chunk.Offset,
+			},
+			Columns:            columns,
+			ShouldIncludeRowID: shouldIncludeRowID,
+			Chunk:              chunk.Chunk,
+		})
 	}
 
-	common.AppLogger.Infof(
-		"[%s] load %d chunks (%d are new) takes %v",
-		t.tableName, len(chunks), len(newChunks), time.Since(timer),
-	)
-	return newChunks
+	common.AppLogger.Infof("[%s] load %d chunks takes %v", t.tableName, len(chunks), time.Since(timer))
 }
 
 func (tr *TableRestore) restoreTableMeta(ctx context.Context, cfg *config.Config) error {
@@ -938,29 +963,34 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 		return errors.Trace(err)
 	}
 	closedEngine.Cleanup(ctx)
-	common.AppLogger.Infof("[%s] local checksum %v, has imported %d rows", tr.tableName, tr.checksum, tr.rows)
 	return nil
 }
 
 // do checksum for each table.
-func (tr *TableRestore) compareChecksum(ctx context.Context, cfg *config.Config) error {
+func (tr *TableRestore) compareChecksum(ctx context.Context, cfg *config.Config, cp *TableCheckpoint) error {
 	if !cfg.PostRestore.Checksum {
 		common.AppLogger.Infof("[%s] Skip checksum.", tr.tableName)
 		return nil
 	}
+
+	var localChecksum verify.KVChecksum
+	for _, chunk := range cp.Chunks {
+		localChecksum.Add(&chunk.Checksum)
+	}
+	common.AppLogger.Infof("[%s] local checksum %+v", tr.tableName, localChecksum)
 
 	remoteChecksum, err := DoChecksum(ctx, cfg.TiDB, tr.tableName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if remoteChecksum.Checksum != tr.checksum.Sum() ||
-		remoteChecksum.TotalKVs != tr.checksum.SumKVS() ||
-		remoteChecksum.TotalBytes != tr.checksum.SumSize() {
+	if remoteChecksum.Checksum != localChecksum.Sum() ||
+		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
+		remoteChecksum.TotalBytes != localChecksum.SumSize() {
 		return errors.Errorf("checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)",
-			remoteChecksum.Checksum, tr.checksum.Sum(),
-			remoteChecksum.TotalKVs, tr.checksum.SumKVS(),
-			remoteChecksum.TotalBytes, tr.checksum.SumSize(),
+			remoteChecksum.Checksum, localChecksum.Sum(),
+			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
+			remoteChecksum.TotalBytes, localChecksum.SumSize(),
 		)
 	}
 
@@ -1100,8 +1130,8 @@ func (cr *chunkRestore) restore(
 		default:
 		}
 
-		endOffset := mathutil.MinInt64(cr.chunk.EndOffset, cr.parser.Pos+rc.cfg.Mydumper.ReadBlockSize)
-		if cr.parser.Pos >= endOffset {
+		endOffset := mathutil.MinInt64(cr.chunk.Chunk.EndOffset, cr.parser.Pos()+rc.cfg.Mydumper.ReadBlockSize)
+		if cr.parser.Pos() >= endOffset {
 			break
 		}
 
@@ -1110,18 +1140,23 @@ func (cr *chunkRestore) restore(
 		var sqls strings.Builder
 		sqls.WriteString("INSERT INTO ")
 		sqls.WriteString(t.tableName)
-		sqls.Write(cr.columns)
+		sqls.Write(cr.chunk.Columns)
 		sqls.WriteString(" VALUES")
 		var sep byte = ' '
 	readLoop:
-		for cr.parser.Pos < endOffset {
+		for cr.parser.Pos() < endOffset {
 			err := cr.parser.ReadRow()
 			switch errors.Cause(err) {
 			case nil:
 				sqls.WriteByte(sep)
 				sep = ','
 				lastRow := cr.parser.LastRow()
-				sqls.Write(lastRow.Row)
+				if cr.chunk.ShouldIncludeRowID {
+					sqls.Write(lastRow.Row[:len(lastRow.Row)-1])
+					fmt.Fprintf(&sqls, ",%d)", lastRow.RowID)
+				} else {
+					sqls.Write(lastRow.Row)
+				}
 			case io.EOF:
 				break readLoop
 			default:
@@ -1136,13 +1171,12 @@ func (cr *chunkRestore) restore(
 		metrics.MarkTiming(readMark, start)
 
 		var (
-			totalKVs          []kvenc.KvPair
-			totalAffectedRows uint64
-			localChecksum     verify.KVChecksum
+			totalKVs      []kvenc.KvPair
+			localChecksum verify.KVChecksum
 		)
 		// sql -> kv
 		start = time.Now()
-		kvs, affectedRows, err := kvEncoder.SQL2KV(sqls.String())
+		kvs, _, err := kvEncoder.SQL2KV(sqls.String())
 		metrics.MarkTiming(encodeMark, start)
 		common.AppLogger.Debugf("len(kvs) %d, len(sql) %d", len(kvs), sqls.Len())
 		if err != nil {
@@ -1152,7 +1186,6 @@ func (cr *chunkRestore) restore(
 
 		totalKVs = append(totalKVs, kvs...)
 		localChecksum.Update(kvs)
-		totalAffectedRows += affectedRows
 
 		// kv -> deliver ( -> tikv )
 		start = time.Now()
@@ -1177,23 +1210,22 @@ func (cr *chunkRestore) restore(
 
 		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)
-		t.checksumLock.Lock()
-		t.checksum.Add(&localChecksum)
-		t.rows += totalAffectedRows
+		cr.chunk.Checksum.Add(&localChecksum)
+		cr.chunk.Chunk.Offset = cr.parser.Pos()
+		cr.chunk.Chunk.PrevRowIDMax = cr.parser.LastRow().RowID
 		rc.saveCpCh <- saveCp{
 			tableName: t.tableName,
 			merger: &ChunkCheckpointMerger{
+				Key:       cr.chunk.Key,
 				AllocBase: t.alloc.Base() + 1,
-				Checksum:  t.checksum,
-				Path:      cr.path,
-				Offset:    cr.chunk.Offset,
-				Pos:       cr.parser.Pos,
+				Checksum:  cr.chunk.Checksum,
+				Pos:       cr.chunk.Chunk.Offset,
+				RowID:     cr.chunk.Chunk.PrevRowIDMax,
 			},
 		}
-		t.checksumLock.Unlock()
 	}
 
-	common.AppLogger.Infof("[%s] restore chunk [%s] takes %v", t.tableName, cr.name, time.Since(timer))
+	common.AppLogger.Infof("[%s] restore chunk #%d (%s) takes %v", t.tableName, cr.index, &cr.chunk.Key, time.Since(timer))
 
 	return nil
 }

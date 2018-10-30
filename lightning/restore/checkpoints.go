@@ -13,6 +13,7 @@ import (
 	"github.com/satori/go.uuid"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 )
 
@@ -51,46 +52,62 @@ func (status CheckpointStatus) MetricName() string {
 	}
 }
 
+type ChunkCheckpointKey struct {
+	Path   string
+	Offset int64
+}
+
+func (key *ChunkCheckpointKey) String() string {
+	return fmt.Sprintf("%s:%d", key.Path, key.Offset)
+}
+
+type ChunkCheckpoint struct {
+	Key                ChunkCheckpointKey
+	Columns            []byte
+	ShouldIncludeRowID bool
+	Chunk              mydump.Chunk
+	Checksum           verify.KVChecksum
+}
+
 type TableCheckpoint struct {
 	Status    CheckpointStatus
 	Engine    uuid.UUID
 	AllocBase int64
-	Checksum  verify.KVChecksum
-	chunks    map[chunkCheckpoint]int64
+	Chunks    []*ChunkCheckpoint // a sorted array
 }
 
 func (cp *TableCheckpoint) resetChunks() {
-	cp.chunks = make(map[chunkCheckpoint]int64)
+	cp.Chunks = nil
 }
 
-func (cp *TableCheckpoint) ChunkPos(path string, offset int64) (int64, bool) {
-	pos, ok := cp.chunks[chunkCheckpoint{path: path, offset: offset}]
-	return pos, ok
-}
-
-type chunkCheckpoint struct {
-	path   string
-	offset int64
+type chunkCheckpointDiff struct {
+	path     string
+	offset   int64
+	pos      int64
+	rowID    int64
+	checksum verify.KVChecksum
 }
 
 type TableCheckpointDiff struct {
-	hasStatus   bool
-	hasChecksum bool
-	status      CheckpointStatus
-	allocBase   int64
-	checksum    verify.KVChecksum
-	chunks      map[chunkCheckpoint]int64
+	hasStatus bool
+	hasChunks bool
+	status    CheckpointStatus
+	allocBase int64
+	chunks    map[ChunkCheckpointKey]chunkCheckpointDiff
 }
 
 func NewTableCheckpointDiff() *TableCheckpointDiff {
 	return &TableCheckpointDiff{
 		status: CheckpointStatusMaxInvalid + 1,
-		chunks: make(map[chunkCheckpoint]int64),
+		chunks: make(map[ChunkCheckpointKey]chunkCheckpointDiff),
 	}
 }
 
 func (cpd *TableCheckpointDiff) String() string {
-	return fmt.Sprintf("{hasStatus:%v, hasChecksum:%v, status:%d, allocBase:%d, checksum:%v, chunks:[%d]}", cpd.hasStatus, cpd.hasChecksum, cpd.status, cpd.allocBase, cpd.checksum, len(cpd.chunks))
+	return fmt.Sprintf(
+		"{hasStatus:%v, hasChunks:%v, status:%d, allocBase:%d, chunks:[%d]}",
+		cpd.hasStatus, cpd.hasChunks, cpd.status, cpd.allocBase, len(cpd.chunks),
+	)
 }
 
 type TableCheckpointMerger interface {
@@ -116,25 +133,28 @@ func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 }
 
 type ChunkCheckpointMerger struct {
+	Key       ChunkCheckpointKey
 	AllocBase int64
 	Checksum  verify.KVChecksum
-	Path      string
-	Offset    int64
 	Pos       int64
+	RowID     int64
 }
 
 func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
-	cpd.hasChecksum = true
+	cpd.hasChunks = true
 	cpd.allocBase = merger.AllocBase
-	cpd.checksum = merger.Checksum
-	chcp := chunkCheckpoint{path: merger.Path, offset: merger.Offset}
-	cpd.chunks[chcp] = merger.Pos
+	cpd.chunks[merger.Key] = chunkCheckpointDiff{
+		pos:      merger.Pos,
+		rowID:    merger.RowID,
+		checksum: merger.Checksum,
+	}
 }
 
 type CheckpointsDB interface {
 	Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	Close() error
+	InsertChunkCheckpoints(ctx context.Context, tableName string, checkpoints []*ChunkCheckpoint) error
 	Update(checkpointDiffs map[string]*TableCheckpointDiff)
 
 	RemoveCheckpoint(ctx context.Context, tableName string) error
@@ -162,8 +182,11 @@ func (*NullCheckpointsDB) Get(_ context.Context, tableName string) (*TableCheckp
 	return &TableCheckpoint{
 		Status: CheckpointStatusLoaded,
 		Engine: uuid.NewV4(),
-		chunks: make(map[chunkCheckpoint]int64),
 	}, nil
+}
+
+func (*NullCheckpointsDB) InsertChunkCheckpoints(_ context.Context, _ string, _ []*ChunkCheckpoint) error {
+	return nil
 }
 
 func (*NullCheckpointsDB) Update(map[string]*TableCheckpointDiff) {}
@@ -190,18 +213,25 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 			engine binary(16) NOT NULL,
 			status tinyint unsigned DEFAULT 30,
 			alloc_base bigint NOT NULL DEFAULT 0,
+			create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			INDEX(node_id, session)
+		);
+		CREATE TABLE IF NOT EXISTS %[1]s.chunk_v3 (
+			table_name varchar(261) NOT NULL,
+			path varchar(2048) NOT NULL,
+			offset bigint NOT NULL,
+			columns text NULL,
+			should_include_row_id BOOL NOT NULL,
+			end_offset bigint NOT NULL,
+			pos bigint NOT NULL,
+			prev_rowid_max bigint NOT NULL,
+			rowid_max bigint NOT NULL,
 			kvc_bytes bigint unsigned NOT NULL DEFAULT 0,
 			kvc_kvs bigint unsigned NOT NULL DEFAULT 0,
 			kvc_checksum bigint unsigned NOT NULL DEFAULT 0,
 			create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-			INDEX(node_id, session)
-		);
-		CREATE TABLE IF NOT EXISTS %[1]s.chunk_v2 (
-			table_name varchar(261) NOT NULL,
-			path varchar(2048) NOT NULL,
-			offset bigint NOT NULL,
-			pos bigint NOT NULL,
 			PRIMARY KEY(table_name, path, offset)
 		);
 	`, schema))
@@ -271,7 +301,14 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 
 	purpose := "(read checkpoint " + tableName + ")"
 	err := common.TransactWithRetry(ctx, cpdb.db, purpose, func(c context.Context, tx *sql.Tx) error {
-		query := fmt.Sprintf(`SELECT path, offset, pos FROM %s.chunk_v2 WHERE table_name = ?`, cpdb.schema)
+		query := fmt.Sprintf(`
+			SELECT
+				path, offset, columns, should_include_row_id,
+				pos, end_offset, prev_rowid_max, rowid_max,
+				kvc_bytes, kvc_kvs, kvc_checksum
+			FROM %s.chunk_v3 WHERE table_name = ?
+			ORDER BY path, offset;
+		`, cpdb.schema)
 		rows, err := tx.QueryContext(c, query, tableName)
 		if err != nil {
 			return errors.Trace(err)
@@ -279,32 +316,35 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		defer rows.Close()
 		for rows.Next() {
 			var (
-				ccp chunkCheckpoint
-				pos int64
+				value       = new(ChunkCheckpoint)
+				kvcBytes    uint64
+				kvcKVs      uint64
+				kvcChecksum uint64
 			)
-			if err := rows.Scan(&ccp.path, &ccp.offset, &pos); err != nil {
+			if err := rows.Scan(
+				&value.Key.Path, &value.Key.Offset, &value.Columns, &value.ShouldIncludeRowID,
+				&value.Chunk.Offset, &value.Chunk.EndOffset, &value.Chunk.PrevRowIDMax, &value.Chunk.RowIDMax,
+				&kvcBytes, &kvcKVs, &kvcChecksum,
+			); err != nil {
 				return errors.Trace(err)
 			}
-			cp.chunks[ccp] = pos
+			value.Checksum = verify.MakeKVChecksum(kvcBytes, kvcKVs, kvcChecksum)
+			cp.Chunks = append(cp.Chunks, value)
 		}
 		if err := rows.Err(); err != nil {
 			return errors.Trace(err)
 		}
 
 		query = fmt.Sprintf(`
-			SELECT status, engine, alloc_base, kvc_bytes, kvc_kvs, kvc_checksum
-			FROM %s.table_v1 WHERE table_name = ?
+			SELECT status, engine, alloc_base FROM %s.table_v1 WHERE table_name = ?
 		`, cpdb.schema)
 		row := tx.QueryRowContext(c, query, tableName)
 
 		var (
-			status      uint8
-			engine      []byte
-			kvcBytes    uint64
-			kvcKVs      uint64
-			kvcChecksum uint64
+			status uint8
+			engine []byte
 		)
-		if err := row.Scan(&status, &engine, &cp.AllocBase, &kvcBytes, &kvcKVs, &kvcChecksum); err != nil {
+		if err := row.Scan(&status, &engine, &cp.AllocBase); err != nil {
 			cp.resetChunks()
 			return errors.Trace(err)
 		}
@@ -314,7 +354,6 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 			return errors.Trace(err)
 		}
 		cp.Status = CheckpointStatus(status)
-		cp.Checksum = verify.MakeKVChecksum(kvcBytes, kvcKVs, kvcChecksum)
 		return nil
 	})
 	if err != nil {
@@ -328,12 +367,52 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 	return cp, nil
 }
 
+func (cpdb *MySQLCheckpointsDB) InsertChunkCheckpoints(ctx context.Context, tableName string, checkpoints []*ChunkCheckpoint) error {
+	err := common.TransactWithRetry(ctx, cpdb.db, "(update chunk checkpoints for "+tableName+")", func(c context.Context, tx *sql.Tx) error {
+		stmt, err := tx.PrepareContext(c, fmt.Sprintf(`
+			REPLACE INTO %s.chunk_v3 (
+				table_name, path, offset, columns, should_include_row_id,
+				pos, end_offset, prev_rowid_max, rowid_max,
+				kvc_bytes, kvc_kvs, kvc_checksum
+			) VALUES (
+				?, ?, ?, ?, ?,
+				?, ?, ?, ?,
+				?, ?, ?
+			);
+		`, cpdb.schema))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer stmt.Close()
+
+		for _, value := range checkpoints {
+			_, err = stmt.ExecContext(
+				c,
+				tableName, value.Key.Path, value.Key.Offset, value.Columns, value.ShouldIncludeRowID,
+				value.Chunk.Offset, value.Chunk.EndOffset, value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax,
+				value.Checksum.SumSize(), value.Checksum.SumKVS(), value.Checksum.Sum(),
+			)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
 func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
 	chunkQuery := fmt.Sprintf(`
-		REPLACE INTO %s.chunk_v2 (table_name, path, offset, pos) VALUES (?, ?, ?, ?);
+		UPDATE %s.chunk_v3 SET pos = ?, prev_rowid_max = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ?
+		WHERE table_name = ? AND path = ? AND offset = ?;
 	`, cpdb.schema)
 	checksumQuery := fmt.Sprintf(`
-		UPDATE %s.table_v1 SET alloc_base = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ? WHERE table_name = ?;
+		UPDATE %s.table_v1 SET alloc_base = ? WHERE table_name = ?;
 	`, cpdb.schema)
 	statusQuery := fmt.Sprintf(`
 		UPDATE %s.table_v1 SET status = ? WHERE table_name = ?;
@@ -362,13 +441,17 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 					return errors.Trace(e)
 				}
 			}
-			if cpd.hasChecksum {
-				if _, e := checksumStmt.ExecContext(c, cpd.allocBase, cpd.checksum.SumSize(), cpd.checksum.SumKVS(), cpd.checksum.Sum(), tableName); e != nil {
+			if cpd.hasChunks {
+				if _, e := checksumStmt.ExecContext(c, cpd.allocBase, tableName); e != nil {
 					return errors.Trace(e)
 				}
 			}
-			for chcp, pos := range cpd.chunks {
-				if _, e := chunkStmt.ExecContext(c, tableName, chcp.path, chcp.offset, pos); e != nil {
+			for key, diff := range cpd.chunks {
+				if _, e := chunkStmt.ExecContext(
+					c,
+					diff.pos, diff.rowID, diff.checksum.SumSize(), diff.checksum.SumKVS(), diff.checksum.Sum(),
+					tableName, key.Path, key.Offset,
+				); e != nil {
 					return errors.Trace(e)
 				}
 			}
@@ -409,11 +492,11 @@ func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName 
 	)
 
 	if tableName == "all" {
-		deleteChunkFmt = "DELETE FROM %[1]s.chunk_v2 WHERE table_name IN (SELECT table_name FROM %[1]s.table_v1 WHERE node_id = ?)"
+		deleteChunkFmt = "DELETE FROM %[1]s.chunk_v3 WHERE table_name IN (SELECT table_name FROM %[1]s.table_v1 WHERE node_id = ?)"
 		deleteTableFmt = "DELETE FROM %s.table_v1 WHERE node_id = ?"
 		arg = nodeID
 	} else {
-		deleteChunkFmt = "DELETE FROM %s.chunk_v2 WHERE table_name = ?"
+		deleteChunkFmt = "DELETE FROM %s.chunk_v3 WHERE table_name = ?"
 		deleteTableFmt = "DELETE FROM %s.table_v1 WHERE table_name = ?"
 		arg = tableName
 	}
@@ -485,7 +568,7 @@ func (cpdb *MySQLCheckpointsDB) destroyErrorCheckpoints(ctx context.Context, tab
 		SELECT table_name FROM %s.table_v1 WHERE %s = ? AND status <= %d;
 	`, cpdb.schema, conditionColumn, CheckpointStatusMaxInvalid)
 	deleteChunkQuery := fmt.Sprintf(`
-		DELETE FROM %[1]s.chunk_v2 WHERE table_name IN (SELECT table_name FROM %[1]s.table_v1 WHERE %[2]s = ? AND status <= %[3]d)
+		DELETE FROM %[1]s.chunk_v3 WHERE table_name IN (SELECT table_name FROM %[1]s.table_v1 WHERE %[2]s = ? AND status <= %[3]d)
 	`, cpdb.schema, conditionColumn, CheckpointStatusMaxInvalid)
 	deleteTableQuery := fmt.Sprintf(`
 		DELETE FROM %s.table_v1 WHERE %s = ? AND status <= %d
@@ -538,9 +621,6 @@ func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer
 			hex(engine) AS engine,
 			status,
 			alloc_base,
-			kvc_bytes,
-			kvc_kvs,
-			kvc_checksum,
 			create_time,
 			update_time
 		FROM %s.table_v1;
@@ -559,8 +639,17 @@ func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer
 			table_name,
 			path,
 			offset,
-			pos
-		FROM %s.chunk_v2;
+			columns,
+			pos,
+			end_offset,
+			prev_rowid_max,
+			rowid_max,
+			kvc_bytes,
+			kvc_kvs,
+			kvc_checksum,
+			create_time,
+			update_time
+		FROM %s.chunk_v3;
 	`, cpdb.schema))
 	if err != nil {
 		return errors.Trace(err)
