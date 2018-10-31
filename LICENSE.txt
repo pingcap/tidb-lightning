@@ -1,7 +1,7 @@
 PingCAP CONFIDENTIAL
 ____________________
 
- [2015] - [2018] PingCAP Incorporated
+ Copyright (C) 2017 - 2018 PingCAP Incorporated
  All Rights Reserved.
 
 NOTICE:  All information contained herein is, and remains
