@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/pkg/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
