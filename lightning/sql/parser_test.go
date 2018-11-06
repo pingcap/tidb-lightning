@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pkg/errors"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"

@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 type simpleRewriter struct {
@@ -56,12 +56,42 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 	return rewriter.pop(), nil
 }
 
+// ParseSimpleExprsWithSchema parses simple expression string to Expression.
+// The expression string must only reference the column in the given schema.
+func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
+	exprStr = "select " + exprStr
+	stmts, err := parser.New().Parse(exprStr, "", "")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
+	exprs := make([]Expression, 0, len(fields))
+	for _, field := range fields {
+		expr, err := RewriteSimpleExprWithSchema(ctx, field.Expr, schema)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs, nil
+}
+
+// RewriteSimpleExprWithSchema rewrites simple ast.ExprNode to expression.Expression.
+func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema) (Expression, error) {
+	rewriter := &simpleRewriter{ctx: ctx, schema: schema}
+	expr.Accept(rewriter)
+	if rewriter.err != nil {
+		return nil, errors.Trace(rewriter.err)
+	}
+	return rewriter.pop(), nil
+}
+
 func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
 	col := sr.schema.FindColumnByName(nodeColName.Name.Name.L)
 	if col != nil {
 		return col, nil
 	}
-	return nil, errBadField.GenByArgs(nodeColName.Name.Name.O, "expression")
+	return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")
 }
 
 func (sr *simpleRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
@@ -107,6 +137,11 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		if v.Sel == nil {
 			sr.inToExpression(len(v.List), v.Not, &v.Type)
 		}
+	case *ast.ParamMarkerExpr:
+		tp := types.NewFieldType(mysql.TypeUnspecified)
+		types.DefaultParamTypeForValue(v.GetValue(), tp)
+		value := &Constant{Value: v.Datum, RetType: tp}
+		sr.push(value)
 	case *ast.RowExpr:
 		sr.rowToScalarFunc(v)
 	case *ast.ParenthesesExpr:
@@ -133,7 +168,7 @@ func (sr *simpleRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		lLen := GetRowLen(left)
 		rLen := GetRowLen(right)
 		if lLen != 1 || rLen != 1 {
-			sr.err = ErrOperandColumns.GenByArgs(1)
+			sr.err = ErrOperandColumns.GenWithStackByArgs(1)
 			return
 		}
 		function, sr.err = NewFunction(sr.ctx, v.Op.String(), types.NewFieldType(mysql.TypeUnspecified), left, right)
@@ -163,7 +198,7 @@ func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	switch v.FnName.L {
 	case ast.Nullif:
 		if len(v.Args) != 2 {
-			sr.err = ErrIncorrectParameterCount.GenByArgs(v.FnName.O)
+			sr.err = ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
 			return true
 		}
 		param2 := sr.pop()
@@ -194,6 +229,7 @@ func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	}
 }
 
+// constructBinaryOpFunction works as following:
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( (a0 op b0) EQ 0, 0,
@@ -209,7 +245,7 @@ func (sr *simpleRewriter) constructBinaryOpFunction(l Expression, r Expression, 
 	if lLen == 1 && rLen == 1 {
 		return NewFunction(sr.ctx, op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
-		return nil, ErrOperandColumns.GenByArgs(lLen)
+		return nil, ErrOperandColumns.GenWithStackByArgs(lLen)
 	}
 	switch op {
 	case ast.EQ, ast.NE, ast.NullEQ:
@@ -268,7 +304,7 @@ func (sr *simpleRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 	}
 	expr := sr.pop()
 	if GetRowLen(expr) != 1 {
-		sr.err = ErrOperandColumns.GenByArgs(1)
+		sr.err = ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
 	newExpr, err := NewFunction(sr.ctx, op, &v.Type, expr)
@@ -346,7 +382,7 @@ func (sr *simpleRewriter) betweenToExpression(v *ast.BetweenExpr) {
 func (sr *simpleRewriter) isNullToExpression(v *ast.IsNullExpr) {
 	arg := sr.pop()
 	if GetRowLen(arg) != 1 {
-		sr.err = ErrOperandColumns.GenByArgs(1)
+		sr.err = ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
 	function := sr.notToExpression(v.Not, ast.IsNull, &v.Type, arg)
@@ -379,7 +415,7 @@ func (sr *simpleRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 		op = ast.IsFalsity
 	}
 	if GetRowLen(arg) != 1 {
-		sr.err = ErrOperandColumns.GenByArgs(1)
+		sr.err = ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
 	function := sr.notToExpression(v.Not, op, &v.Type, arg)
@@ -396,7 +432,7 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 	l, leftFt := GetRowLen(leftExpr), leftExpr.GetType()
 	for i := 0; i < lLen; i++ {
 		if l != GetRowLen(elems[i]) {
-			sr.err = ErrOperandColumns.GenByArgs(l)
+			sr.err = ErrOperandColumns.GenWithStackByArgs(l)
 			return
 		}
 	}

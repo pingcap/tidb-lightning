@@ -8,7 +8,7 @@ import (
 	"runtime"
 
 	"github.com/BurntSushi/toml"
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 

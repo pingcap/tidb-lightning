@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pkg/errors"
 )
 
 var (

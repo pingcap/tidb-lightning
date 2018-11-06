@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"

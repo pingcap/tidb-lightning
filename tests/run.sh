@@ -28,11 +28,20 @@ start_services() {
         sleep 1
     done
 
+    # Tries to limit the max number of open files under the system limit
+    cat - > "$TEST_DIR/tikv-config.toml" <<EOF
+[rocksdb]
+max-open-files = 4096
+[raftdb]
+max-open-files = 4096
+EOF
+
     echo "Starting TiKV..."
     bin/tikv-server \
         --pd 127.0.0.1:2379 \
         -A 127.0.0.1:20160 \
         --log-file "$TEST_DIR/tikv.log" \
+        -C "$TEST_DIR/tikv-config.toml" \
         -s "$TEST_DIR/tikv" &
     sleep 1
 

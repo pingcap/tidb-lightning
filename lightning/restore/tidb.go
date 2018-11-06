@@ -1,6 +1,7 @@
 package restore
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -8,13 +9,12 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb/model"
-	"golang.org/x/net/context"
 )
 
 type TiDBManager struct {
