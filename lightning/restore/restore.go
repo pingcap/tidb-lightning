@@ -1028,8 +1028,8 @@ func DoChecksum(ctx context.Context, dsn config.DBStore, table string) (*RemoteC
 	// set it back finally
 	defer func() {
 		err = UpdateGCLifeTime(ctx, db, ori)
-		if err != nil {
-			common.AppLogger.Errorf("[%s] update tikv_gc_life_time error %s", table, errors.ErrorStack(err))
+		if err != nil && !common.IsContextCanceledError(err) {
+			common.AppLogger.Errorf("[%s] update tikv_gc_life_time error %v", table, errors.ErrorStack(err))
 		}
 	}()
 
