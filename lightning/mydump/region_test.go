@@ -39,7 +39,8 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	founder := NewRegionFounder(defMinRegionSize)
 
 	for _, meta := range dbMeta.Tables {
-		regions := founder.MakeTableRegions(meta)
+		regions, err := founder.MakeTableRegions(meta)
+		c.Assert(err, IsNil)
 
 		table := meta.Name
 		fmt.Printf("[%s] region count ===============> %d\n", table, len(regions))
@@ -100,7 +101,8 @@ func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
 	founder := NewRegionFounder(defMinRegionSize)
 
 	for _, meta := range dbMeta.Tables {
-		regions := founder.MakeTableRegions(meta)
+		regions, err := founder.MakeTableRegions(meta)
+		c.Assert(err, IsNil)
 
 		tolValTuples := 0
 		for _, reg := range regions {

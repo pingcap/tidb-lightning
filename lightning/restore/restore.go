@@ -401,7 +401,9 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 	if len(cp.Chunks) > 0 {
 		common.AppLogger.Infof("[%s] reusing %d chunks from checkpoint", t.tableName, len(cp.Chunks))
 	} else if cp.Status < CheckpointStatusAllWritten {
-		t.populateChunks(rc.cfg.Mydumper.MinRegionSize, cp, t.tableInfo)
+		if err := t.populateChunks(rc.cfg.Mydumper.MinRegionSize, cp, t.tableInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if err := rc.checkpointsDB.InsertChunkCheckpoints(ctx, t.tableName, cp.Chunks); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -883,12 +885,15 @@ func (tr *TableRestore) Close() {
 
 var tidbRowIDColumnRegex = regexp.MustCompile(fmt.Sprintf("`%[1]s`|(?i:\\b%[1]s\\b)", model.ExtraHandleName))
 
-func (t *TableRestore) populateChunks(minChunkSize int64, cp *TableCheckpoint, tableInfo *TidbTableInfo) {
+func (t *TableRestore) populateChunks(minChunkSize int64, cp *TableCheckpoint, tableInfo *TidbTableInfo) error {
 	common.AppLogger.Infof("[%s] load chunks", t.tableName)
 	timer := time.Now()
 
 	founder := mydump.NewRegionFounder(minChunkSize)
-	chunks := founder.MakeTableRegions(t.tableMeta)
+	chunks, err := founder.MakeTableRegions(t.tableMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	cp.Chunks = make([]*ChunkCheckpoint, 0, len(chunks))
 
@@ -927,6 +932,7 @@ func (t *TableRestore) populateChunks(minChunkSize int64, cp *TableCheckpoint, t
 	}
 
 	common.AppLogger.Infof("[%s] load %d chunks takes %v", t.tableName, len(chunks), time.Since(timer))
+	return nil
 }
 
 func (tr *TableRestore) restoreTableMeta(ctx context.Context, cfg *config.Config) error {

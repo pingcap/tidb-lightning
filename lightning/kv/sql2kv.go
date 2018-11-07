@@ -1,13 +1,13 @@
 package kv
 
 import (
-	"github.com/pkg/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -100,10 +100,6 @@ func (kvcodec *TableKVEncoder) makeStatments(maxRows int) ([]uint32, error) {
 func (kvcodec *TableKVEncoder) Close() error {
 	metric.KvEncoderCounter.WithLabelValues("closed").Inc()
 	return errors.Trace(kvcodec.encoder.Close())
-}
-
-func (kvcodec *TableKVEncoder) NextRowID() int64 {
-	return kvcodec.idAllocator.Base() + 1
 }
 
 func (kvcodec *TableKVEncoder) SQL2KV(sql string) ([]kvec.KvPair, uint64, error) {

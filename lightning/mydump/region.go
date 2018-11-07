@@ -79,7 +79,7 @@ func NewRegionFounder(minRegionSize int64) *RegionFounder {
 	}
 }
 
-func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
+func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) ([]*TableRegion, error) {
 	var lock sync.Mutex
 	var wg sync.WaitGroup
 
@@ -87,6 +87,8 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 	table := meta.Name
 	processors := f.processors
 	minRegionSize := f.minRegionSize
+
+	var chunkErr error
 
 	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
@@ -96,19 +98,24 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 			common.AppLogger.Debugf("[%s] loading file's region (%s) ...", table, file)
 
 			chunks, err := splitExactChunks(db, table, file, minRegionSize)
+			lock.Lock()
 			if err == nil {
-				lock.Lock()
 				filesRegions = append(filesRegions, chunks...)
-				lock.Unlock()
 			} else {
-				common.AppLogger.Errorf("failed to extract chunks from file (%s): %s", file, err.Error())
+				chunkErr = errors.Annotatef(err, "%s", file)
 			}
+			lock.Unlock()
 
 			processors <- pid
 			wg.Done()
 		}(<-processors, dataFile)
 	}
 	wg.Wait()
+
+	if chunkErr != nil {
+		common.AppLogger.Errorf("failed to extract chunks from file: %v", chunkErr)
+		return nil, chunkErr
+	}
 
 	// Setup files' regions
 	sort.Sort(filesRegions) // ps : sort region by - (fileName, fileOffset)
@@ -123,7 +130,7 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) []*TableRegion {
 		region.Chunk.RowIDMax = totalRowCount
 	}
 
-	return filesRegions
+	return filesRegions, nil
 }
 
 func splitExactChunks(db string, table string, file string, minChunkSize int64) ([]*TableRegion, error) {

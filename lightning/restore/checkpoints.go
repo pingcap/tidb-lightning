@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/joho/sqltocsv"
 	"github.com/pkg/errors"
 	"github.com/satori/go.uuid"
@@ -142,7 +143,7 @@ type ChunkCheckpointMerger struct {
 
 func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.hasChunks = true
-	cpd.allocBase = merger.AllocBase
+	cpd.allocBase = mathutil.MaxInt64(cpd.allocBase, merger.AllocBase)
 	cpd.chunks[merger.Key] = chunkCheckpointDiff{
 		pos:      merger.Pos,
 		rowID:    merger.RowID,
