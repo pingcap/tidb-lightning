@@ -412,7 +412,7 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 		WHERE table_name = ? AND path = ? AND offset = ?;
 	`, cpdb.schema)
 	checksumQuery := fmt.Sprintf(`
-		UPDATE %s.table_v1 SET alloc_base = ? WHERE table_name = ?;
+		UPDATE %s.table_v1 SET alloc_base = GREATEST(?, alloc_base) WHERE table_name = ?;
 	`, cpdb.schema)
 	statusQuery := fmt.Sprintf(`
 		UPDATE %s.table_v1 SET status = ? WHERE table_name = ?;
