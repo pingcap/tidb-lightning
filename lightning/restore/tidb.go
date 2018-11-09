@@ -9,12 +9,12 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb/model"
+	"github.com/pkg/errors"
 )
 
 type TiDBManager struct {
@@ -183,7 +183,7 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas map[string
 }
 
 func (timgr *TiDBManager) getCreateTableStmt(ctx context.Context, schema, table string) (string, error) {
-	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", schema, table)
+	query := fmt.Sprintf("SHOW CREATE TABLE %s", common.UniqueTable(schema, table))
 	var tbl, createTable string
 	err := common.QueryRowWithRetry(ctx, timgr.db, query, &tbl, &createTable)
 	return createTable, errors.Annotatef(err, "%s", query)
@@ -202,7 +202,8 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 }
 
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, schema string, table string, incr int64) error {
-	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` AUTO_INCREMENT=%d", schema, table, incr)
+	tableName := common.UniqueTable(schema, table)
+	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
 	common.AppLogger.Infof("[%s.%s] %s", schema, table, query)
 	err := common.ExecWithRetry(ctx, db, query, query)
 	if err != nil {

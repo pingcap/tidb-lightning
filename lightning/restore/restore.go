@@ -407,6 +407,19 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 		if err := rc.checkpointsDB.InsertChunkCheckpoints(ctx, t.tableName, cp.Chunks); err != nil {
 			return nil, errors.Trace(err)
 		}
+
+		// rebase the allocator so it exceeds the number of rows.
+		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.core.AutoIncID)
+		for _, chunk := range cp.Chunks {
+			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, chunk.Chunk.RowIDMax)
+		}
+		t.alloc.Rebase(t.tableInfo.ID, cp.AllocBase, false)
+		rc.saveCpCh <- saveCp{
+			tableName: t.tableName,
+			merger: &RebaseCheckpointMerger{
+				AllocBase: cp.AllocBase,
+			},
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -1221,12 +1234,17 @@ func (cr *chunkRestore) restore(
 		cr.chunk.Chunk.PrevRowIDMax = cr.parser.LastRow().RowID
 		rc.saveCpCh <- saveCp{
 			tableName: t.tableName,
-			merger: &ChunkCheckpointMerger{
-				Key:       cr.chunk.Key,
+			merger: &RebaseCheckpointMerger{
 				AllocBase: t.alloc.Base() + 1,
-				Checksum:  cr.chunk.Checksum,
-				Pos:       cr.chunk.Chunk.Offset,
-				RowID:     cr.chunk.Chunk.PrevRowIDMax,
+			},
+		}
+		rc.saveCpCh <- saveCp{
+			tableName: t.tableName,
+			merger: &ChunkCheckpointMerger{
+				Key:      cr.chunk.Key,
+				Checksum: cr.chunk.Checksum,
+				Pos:      cr.chunk.Chunk.Offset,
+				RowID:    cr.chunk.Chunk.PrevRowIDMax,
 			},
 		}
 	}

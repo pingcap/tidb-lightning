@@ -91,7 +91,7 @@ type chunkCheckpointDiff struct {
 
 type TableCheckpointDiff struct {
 	hasStatus bool
-	hasChunks bool
+	hasRebase bool
 	status    CheckpointStatus
 	allocBase int64
 	chunks    map[ChunkCheckpointKey]chunkCheckpointDiff
@@ -106,8 +106,8 @@ func NewTableCheckpointDiff() *TableCheckpointDiff {
 
 func (cpd *TableCheckpointDiff) String() string {
 	return fmt.Sprintf(
-		"{hasStatus:%v, hasChunks:%v, status:%d, allocBase:%d, chunks:[%d]}",
-		cpd.hasStatus, cpd.hasChunks, cpd.status, cpd.allocBase, len(cpd.chunks),
+		"{hasStatus:%v, hasRebase:%v, status:%d, allocBase:%d, chunks:[%d]}",
+		cpd.hasStatus, cpd.hasRebase, cpd.status, cpd.allocBase, len(cpd.chunks),
 	)
 }
 
@@ -134,21 +134,27 @@ func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 }
 
 type ChunkCheckpointMerger struct {
-	Key       ChunkCheckpointKey
-	AllocBase int64
-	Checksum  verify.KVChecksum
-	Pos       int64
-	RowID     int64
+	Key      ChunkCheckpointKey
+	Checksum verify.KVChecksum
+	Pos      int64
+	RowID    int64
 }
 
 func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
-	cpd.hasChunks = true
-	cpd.allocBase = mathutil.MaxInt64(cpd.allocBase, merger.AllocBase)
 	cpd.chunks[merger.Key] = chunkCheckpointDiff{
 		pos:      merger.Pos,
 		rowID:    merger.RowID,
 		checksum: merger.Checksum,
 	}
+}
+
+type RebaseCheckpointMerger struct {
+	AllocBase int64
+}
+
+func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
+	cpd.hasRebase = true
+	cpd.allocBase = mathutil.MaxInt64(cpd.allocBase, merger.AllocBase)
 }
 
 type CheckpointsDB interface {
@@ -442,7 +448,7 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 					return errors.Trace(e)
 				}
 			}
-			if cpd.hasChunks {
+			if cpd.hasRebase {
 				if _, e := checksumStmt.ExecContext(c, cpd.allocBase, tableName); e != nil {
 					return errors.Trace(e)
 				}
