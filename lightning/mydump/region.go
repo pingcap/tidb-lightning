@@ -103,6 +103,7 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) ([]*TableRegion, err
 				filesRegions = append(filesRegions, chunks...)
 			} else {
 				chunkErr = errors.Annotatef(err, "%s", file)
+				common.AppLogger.Errorf("failed to extract chunks from file: %v", chunkErr)
 			}
 			lock.Unlock()
 
@@ -113,7 +114,6 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) ([]*TableRegion, err
 	wg.Wait()
 
 	if chunkErr != nil {
-		common.AppLogger.Errorf("failed to extract chunks from file: %v", chunkErr)
 		return nil, chunkErr
 	}
 

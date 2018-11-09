@@ -17,20 +17,42 @@ import (
 %%{
 #`
 
+# This is a ragel parser to quickly scan through a data source file consisting
+# of INSERT statements only. You may find detailed syntax explanation on its
+# website <https://www.colm.net/open-source/ragel/>.
+
 machine chunk_parser;
 
+# We treat all unimportant patterns as "comments". This include:
+#  - Real SQL comments `/* ... */` and `-- ...`
+#  - Whitespace
+#  - Separators `,` and `;`
+#  - The keywords `INSERT` and `INTO` (suffix `i` means case-insensitive).
 block_comment = '/*' any* :>> '*/';
 line_comment = /--[^\n]*\n/;
 comment = block_comment | line_comment | space | [,;] | 'insert'i | 'into'i;
 
+# The patterns parse quoted strings.
+# They do NOT handle the escape-by-doubling syntax like `'ten o''clock'`, this
+# will be handled as two tokens: `'ten o'` and `'clock'`. See the `name` rule
+# below for why this doesn't matter.
 single_quoted = "'" (^"'" | "\\" any)** "'";
 double_quoted = '"' (^'"' | '\\' any)** '"';
 back_quoted = '`' ^'`'* '`';
 unquoted = ^([,;()'"`] | space)+;
 
+# Matches a "row" of the form `( ... )`, where the content doesn't matter.
 row = '(' (^[)'"`] | single_quoted | double_quoted | back_quoted)* ')';
+
+# Matches a table name, which consists of one or more identifiers. This allows
+# us to match a qualified name like `foo.bar`, and also double-backquote like
+# ``` `foo``bar` ```.
 name = (back_quoted | double_quoted | unquoted)+;
 
+# The actual parser only produces 3 kinds of tokens:
+#  - The keyword VALUES, as a separator between column names and data rows
+#  - A row (which can be a list of columns or values depending on context)
+#  - A table name
 main := |*
 	comment;
 
