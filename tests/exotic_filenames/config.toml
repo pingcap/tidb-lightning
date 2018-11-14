@@ -1,0 +1,24 @@
+[lightning]
+check-requirements = false
+file = "/dev/stderr"
+level = "warning"
+
+[tikv-importer]
+addr = "127.0.0.1:8808"
+
+[mydumper]
+data-source-dir = "tests/exotic_filenames/data"
+region-min-size = 48
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+log-level = "error"
+
+[post-restore]
+checksum = true
+compact = true
+analyze = true
