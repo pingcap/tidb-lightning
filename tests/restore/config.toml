@@ -1,7 +1,7 @@
 [lightning]
 table-concurrency = 4
 check-requirements = false
-file = "/dev/stderr"
+file = "/tmp/lightning_test_result/lightning.log"
 level = "warning"
 
 [tikv-importer]

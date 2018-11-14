@@ -2,7 +2,7 @@
 # pprof-port = 28423
 table-concurrency = 1
 check-requirements = false
-file = "/dev/stderr"
+file = "/tmp/lightning_test_result/lightning.log"
 level = "error"
 
 [checkpoint]
