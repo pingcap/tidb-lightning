@@ -163,7 +163,7 @@ func (s *testParserSuite) testParseRealFile(c *C) {
 	c.Assert(err, IsNil)
 	dbMeta := loader.GetDatabases()["mocker_test"]
 	for _, tblMeta := range dbMeta.Tables {
-		sqlCreteTable, _ := ExportStatement(tblMeta.SchemaFile)
+		sqlCreteTable, _ := ExportStatement(tblMeta.SchemaFile, "auto")
 		store.init(string(sqlCreteTable))
 
 		// read from file

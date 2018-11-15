@@ -21,6 +21,7 @@ type MDDatabaseMeta struct {
 	Name       string
 	SchemaFile string
 	Tables     map[string]*MDTableMeta
+	charSet    string
 }
 
 func (m *MDDatabaseMeta) String() string {
@@ -32,7 +33,7 @@ func (m *MDDatabaseMeta) String() string {
 }
 
 func (m *MDDatabaseMeta) GetSchema() string {
-	schema, err := ExportStatement(m.SchemaFile)
+	schema, err := ExportStatement(m.SchemaFile, m.charSet)
 	if err != nil {
 		common.AppLogger.Errorf("failed to extract database schema (%s) : %s", m.SchemaFile, err.Error())
 		return ""
@@ -45,10 +46,11 @@ type MDTableMeta struct {
 	Name       string
 	SchemaFile string
 	DataFiles  []string
+	charSet    string
 }
 
 func (m *MDTableMeta) GetSchema() string {
-	schema, err := ExportStatement(m.SchemaFile)
+	schema, err := ExportStatement(m.SchemaFile, m.charSet)
 	if err != nil {
 		common.AppLogger.Errorf("failed to extract table schema (%s) : %s", m.SchemaFile, err.Error())
 		return ""
@@ -64,6 +66,7 @@ type MDLoader struct {
 	noSchema bool
 	dbs      map[string]*MDDatabaseMeta
 	filter   *filter.Filter
+	charSet  string
 }
 
 func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
@@ -72,6 +75,7 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 		noSchema: cfg.Mydumper.NoSchema,
 		dbs:      make(map[string]*MDDatabaseMeta),
 		filter:   filter.New(true, cfg.BWList),
+		charSet:  cfg.Mydumper.CharacterSet,
 	}
 
 	if err := mdl.setup(mdl.dir); err != nil {
@@ -134,6 +138,7 @@ func (l *MDLoader) setupDBs(files map[string]string) error {
 			Name:       dbname,
 			SchemaFile: fpath,
 			Tables:     make(map[string]*MDTableMeta),
+			charSet:    l.charSet,
 		}
 	}
 
@@ -176,6 +181,7 @@ func (l *MDLoader) setupTables(files map[string]string) error {
 				Name:       table,
 				SchemaFile: fpath,
 				DataFiles:  make([]string, 0, 16),
+				charSet:    l.charSet,
 			}
 		}
 	}
@@ -221,8 +227,9 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 				return errors.Errorf("invalid data sql file, miss host db - %s", fpath)
 			}
 			dbMeta = &MDDatabaseMeta{
-				Name:   db,
-				Tables: make(map[string]*MDTableMeta),
+				Name:    db,
+				Tables:  make(map[string]*MDTableMeta),
+				charSet: l.charSet,
 			}
 			l.dbs[db] = dbMeta
 		}
@@ -235,6 +242,7 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 				DB:        db,
 				Name:      table,
 				DataFiles: make([]string, 0, 16),
+				charSet:   l.charSet,
 			}
 			dbMeta.Tables[table] = tableMeta
 		}

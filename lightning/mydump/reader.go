@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pkg/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pkg/errors"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
@@ -21,17 +21,45 @@ var (
 
 var (
 	ErrInsertStatementNotFound = errors.New("insert statement not found")
+	errInvalidSchemaEncoding   = errors.New("invalid schema encoding")
 )
 
 var (
-	// if there are too many encodings involved, consider switching strategy to
-	// perform `chardet` first.
 	supportedSchemaEncodings = []encoding.Encoding{
 		simplifiedchinese.GB18030,
 	}
 )
 
-func ExportStatement(sqlFile string) ([]byte, error) {
+func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
+	switch characterSet {
+	case "binary":
+	default:
+		if utf8.Valid(data) {
+			break
+		}
+		if characterSet == "utf8mb4" {
+			return nil, errInvalidSchemaEncoding
+		}
+		// try gb18030 next if the encoding is "auto"
+		// if we support too many encodings, consider switching strategy to
+		// perform `chardet` first.
+		fallthrough
+	case "gb18030":
+		decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// check for U+FFFD to see if decoding contains errors.
+		// https://groups.google.com/d/msg/golang-nuts/pENT3i4zJYk/v2X3yyiICwAJ
+		if bytes.ContainsRune(decoded, '\ufffd') {
+			return nil, errInvalidSchemaEncoding
+		}
+		data = decoded
+	}
+	return data, nil
+}
+
+func ExportStatement(sqlFile string, characterSet string) ([]byte, error) {
 	fd, err := os.Open(sqlFile)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -72,24 +100,12 @@ func ExportStatement(sqlFile string) ([]byte, error) {
 		}
 	}
 
-	if utf8.Valid(data) {
-		return data, nil
+	data, err = decodeCharacterSet(data, characterSet)
+	if err != nil {
+		common.AppLogger.Errorf("cannot guess encoding for input file, please convert to UTF-8 manually: %s", sqlFile)
+		return nil, errors.Annotatef(err, "failed to decode %s", sqlFile)
 	}
-
-	for _, encoding := range supportedSchemaEncodings {
-		decoded, err := encoding.NewDecoder().Bytes(data)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		// check for U+FFFD to see if decoding contains errors.
-		// https://groups.google.com/d/msg/golang-nuts/pENT3i4zJYk/v2X3yyiICwAJ
-		if !bytes.ContainsRune(decoded, '\ufffd') {
-			return decoded, nil
-		}
-	}
-
-	common.AppLogger.Errorf("cannot guess encoding for input file, please convert to UTF-8 manually: %s", sqlFile)
-	return nil, errors.New("invalid schema encoding")
+	return data, nil
 }
 
 type MDDataReader struct {
