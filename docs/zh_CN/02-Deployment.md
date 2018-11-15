@@ -145,7 +145,7 @@ TiDB Lightning 可随 TiDB 集群一起以 [Ansible 部署][tidb-ansible]。
 
 ### TiDB 集群
 
-在开始导入之前，请先部署一套要进行导入的 TiDB 集群 (版本要求 2.0.4 以上)。建议使用最新版。
+在开始导入之前，请先部署一套要进行导入的 TiDB 集群 (版本要求 2.0.9 及以上)。建议使用最新版。
 
 部署方法可参考 [TiDB 快速入门指南](https://pingcap.com/docs-cn/QUICKSTART/)。
 
