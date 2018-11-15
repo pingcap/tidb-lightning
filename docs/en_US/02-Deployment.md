@@ -155,7 +155,7 @@ Manual deployment
 
 ### TiDB cluster
 
-Before importing, you should have deployed the TiDB cluster, with cluster version 2.0.4 or above.
+Before importing, you should have deployed the TiDB cluster, with cluster version 2.0.9 or above.
 Using the latest version is highly recommended.
 
 You can find deployment instructions in the
