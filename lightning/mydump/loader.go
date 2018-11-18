@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pingcap/tidb-enterprise-tools/pkg/filter"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pkg/errors"
@@ -62,6 +63,7 @@ type MDLoader struct {
 	dir      string
 	noSchema bool
 	dbs      map[string]*MDDatabaseMeta
+	filter   *filter.Filter
 }
 
 func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
@@ -69,6 +71,7 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 		dir:      cfg.Mydumper.SourceDir,
 		noSchema: cfg.Mydumper.NoSchema,
 		dbs:      make(map[string]*MDDatabaseMeta),
+		filter:   filter.New(true, cfg.BWList),
 	}
 
 	if err := mdl.setup(mdl.dir); err != nil {
@@ -110,6 +113,10 @@ func (l *MDLoader) setup(dir string) error {
 	return l.setupTablesData(files)
 }
 
+func (l *MDLoader) shouldSkip(table *filter.Table) bool {
+	return len(l.filter.ApplyOn([]*filter.Table{table})) == 0
+}
+
 func (l *MDLoader) setupDBs(files map[string]string) error {
 	for fpath, fname := range files {
 		if !strings.HasSuffix(fname, "-schema-create.sql") {
@@ -118,6 +125,11 @@ func (l *MDLoader) setupDBs(files map[string]string) error {
 
 		idx := strings.Index(fname, "-schema-create.sql")
 		dbname := fname[:idx]
+		if l.shouldSkip(&filter.Table{Schema: dbname}) {
+			common.AppLogger.Infof("ignoring schema file %s", fname)
+			continue
+		}
+
 		l.dbs[dbname] = &MDDatabaseMeta{
 			Name:       dbname,
 			SchemaFile: fpath,
@@ -148,6 +160,11 @@ func (l *MDLoader) setupTables(files map[string]string) error {
 		}
 
 		db, table := fields[0], fields[1]
+		if l.shouldSkip(&filter.Table{Schema: db, Name: table}) {
+			common.AppLogger.Infof("ignoring table file %s", fname)
+			continue
+		}
+
 		dbMeta, ok := l.dbs[db]
 		if !ok {
 			return errors.Errorf("invalid table schema file, cannot find db - %s", fpath)
@@ -193,6 +210,11 @@ func (l *MDLoader) setupTablesData(files map[string]string) error {
 		}
 
 		db, table := fields[0], fields[1]
+		if l.shouldSkip(&filter.Table{Schema: db, Name: table}) {
+			common.AppLogger.Infof("ignoring data file %s", fname)
+			continue
+		}
+
 		dbMeta, ok := l.dbs[db]
 		if !ok {
 			if !l.noSchema {
