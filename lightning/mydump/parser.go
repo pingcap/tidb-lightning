@@ -89,7 +89,7 @@ func (parser *ChunkParser) readBlock() error {
 
 	n, err := io.ReadFull(parser.reader, block)
 	switch err {
-	case io.ErrUnexpectedEOF:
+	case io.ErrUnexpectedEOF, io.EOF:
 		parser.isLastChunk = true
 		fallthrough
 	case nil:

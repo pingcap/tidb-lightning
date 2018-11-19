@@ -19,7 +19,7 @@ func (s *testMydumpParserSuite) TearDownSuite(c *C) {}
 func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	reader := strings.NewReader(
 		"/* whatever pragmas */;" +
-			"INSERT INTO `namespaced`.`table` (columns, more, columns) VALUES (1, 2, 3), (4, 5, 6);" +
+			"INSERT INTO `namespaced`.`table` (columns, more, columns) VALUES (1, 2, 3),\n(4, 5, 6);" +
 			"INSERT `namespaced`.`table` (x,y,z) VALUES (7,8,9);" +
 			"insert another_table values (10, 11, 12, '(13)', '(', 14, ')');",
 	)

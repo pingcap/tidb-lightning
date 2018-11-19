@@ -123,7 +123,8 @@ func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) ([]*TableRegion, err
 	for i, region := range filesRegions {
 		region.ID = i
 
-		// Re-adjust the row IDs so they won't be overlapping.
+		// Every chunk's PrevRowIDMax was uninitialized (set to 0). We need to
+		// re-adjust the row IDs so they won't be overlapping.
 		chunkRowCount := region.Chunk.RowIDMax - region.Chunk.PrevRowIDMax
 		region.Chunk.PrevRowIDMax = totalRowCount
 		totalRowCount += chunkRowCount
