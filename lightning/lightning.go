@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"runtime"
+	"runtime/pprof"
 	"sync"
 
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -61,6 +63,14 @@ func (l *Lightning) Run() error {
 
 	if l.handleCommandFlagsAndExits() {
 		return nil
+	}
+	if l.cfg.App.ProfileCPU {
+		f, err := os.Create("cpuprofile")
+		if err != nil {
+			common.AppLogger.Fatalf("Cannot create CPU profile", err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
 	}
 
 	l.wg.Add(1)

@@ -67,6 +67,7 @@ type Lightning struct {
 	RegionConcurrency int  `toml:"region-concurrency" json:"region-concurrency"`
 	ProfilePort       int  `toml:"pprof-port" json:"pprof-port"`
 	CheckRequirements bool `toml:"check-requirements" json:"check-requirements"`
+	ProfileCPU        bool `toml:"profile-cpu" json:"profile-cpu"`
 }
 
 // PostRestore has some options which will be executed after kv restored.
