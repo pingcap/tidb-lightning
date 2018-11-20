@@ -1,12 +1,13 @@
 package kv
 
 import (
-	"github.com/pkg/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	sqltool "github.com/pingcap/tidb-lightning/lightning/sql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -31,13 +32,13 @@ type TableKVEncoder struct {
 	bufValues []interface{}
 
 	encoder     kvec.KvEncoder
-	idAllocator *kvec.Allocator
+	idAllocator autoid.Allocator
 }
 
 func NewTableKVEncoder(
 	dbName string,
 	table string, tableID int64,
-	columns int, sqlMode string, alloc *kvec.Allocator) (*TableKVEncoder, error) {
+	columns int, sqlMode string, alloc autoid.Allocator) (*TableKVEncoder, error) {
 
 	encoder, err := kvec.New(dbName, alloc)
 	if err != nil {
@@ -96,23 +97,15 @@ func (kvcodec *TableKVEncoder) makeStatments(maxRows int) ([]uint32, error) {
 	return stmtIds, nil
 }
 
-func (kvcodec *TableKVEncoder) ResetRowID(rowID int64) {
-	kvcodec.idAllocator.Reset(rowID)
-}
-
 func (kvcodec *TableKVEncoder) Close() error {
 	metric.KvEncoderCounter.WithLabelValues("closed").Inc()
 	return errors.Trace(kvcodec.encoder.Close())
 }
 
-func (kvcodec *TableKVEncoder) NextRowID() int64 {
-	return kvcodec.idAllocator.Base() + 1
-}
-
-func (kvcodec *TableKVEncoder) SQL2KV(sql []byte) ([]kvec.KvPair, uint64, error) {
+func (kvcodec *TableKVEncoder) SQL2KV(sql string) ([]kvec.KvPair, uint64, error) {
 	if PrepareStmtMode {
 		// via prepare statment
-		kvPairs, rowsAffected, err := kvcodec.encodeViaPstmt(sql)
+		kvPairs, rowsAffected, err := kvcodec.encodeViaPstmt([]byte(sql))
 		if err == nil {
 			return kvPairs, rowsAffected, nil
 		}
@@ -120,7 +113,7 @@ func (kvcodec *TableKVEncoder) SQL2KV(sql []byte) ([]kvec.KvPair, uint64, error)
 	}
 
 	// via sql execution
-	kvPairs, rowsAffected, err := kvcodec.encoder.Encode(string(sql), kvcodec.tableID)
+	kvPairs, rowsAffected, err := kvcodec.encoder.Encode(sql, kvcodec.tableID)
 	if err != nil {
 		common.AppLogger.Errorf("[sql2kv] sql encode error = %v", err)
 		return nil, 0, errors.Trace(err)

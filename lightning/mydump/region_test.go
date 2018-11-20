@@ -2,6 +2,8 @@ package mydump_test
 
 import (
 	"bytes"
+	"fmt"
+	"path/filepath"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -20,8 +22,15 @@ type testMydumpRegionSuite struct{}
 func (s *testMydumpRegionSuite) SetUpSuite(c *C)    {}
 func (s *testMydumpRegionSuite) TearDownSuite(c *C) {}
 
+var expectedTuplesCount = map[string]int64{
+	"i":                     1,
+	"report_case_high_risk": 1,
+	"tbl_autoid":            10000,
+	"tbl_multi_index":       10000,
+}
+
 /*
-	TODO : test with specified 'fuzzyRegionSize' & 'regionBlockSize' ...
+	TODO : test with specified 'regionBlockSize' ...
 */
 func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
@@ -30,35 +39,41 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	founder := NewRegionFounder(defMinRegionSize)
 
 	for _, meta := range dbMeta.Tables {
-		regions := founder.MakeTableRegions(meta)
+		regions, err := founder.MakeTableRegions(meta)
+		c.Assert(err, IsNil)
 
-		// table := meta.Name
-		// fmt.Printf("[%s] region count ===============> %d\n", table, len(regions))
-		// for _, region := range regions {
-		// 	fname := filepath.Base(region.File)
-		// 	fmt.Printf("[%s] rowID = %5d / rows = %5d / offset = %10d / size = %10d \n",
-		// 		fname, region.BeginRowID, region.Rows, region.Offset, region.Size)
-		// }
+		table := meta.Name
+		fmt.Printf("[%s] region count ===============> %d\n", table, len(regions))
+		for _, region := range regions {
+			fname := filepath.Base(region.File)
+			fmt.Printf("[%s] rowID = %5d / rows = %5d / offset = %10d / size = %10d \n",
+				fname,
+				region.RowIDMin(),
+				region.Rows(),
+				region.Offset(),
+				region.Size())
+		}
 
 		// check - region-size vs file-size
 		var tolFileSize int64 = 0
-		var tolRegionSize int64 = 0
 		for _, file := range meta.DataFiles {
 			fileSize, err := common.GetFileSize(file)
 			c.Assert(err, IsNil)
 			tolFileSize += fileSize
 		}
-		for _, region := range regions {
-			tolRegionSize += region.Size
-		}
-		c.Assert(tolRegionSize, Equals, tolFileSize)
+		// var tolRegionSize int64 = 0
+		// for _, region := range regions {
+		// 	tolRegionSize += region.Size()
+		// }
+		// c.Assert(tolRegionSize, Equals, tolFileSize)
+		// (The size will not be equal since the comments at the end are omitted)
 
 		// check - rows num
-		// var tolRows int64 = 0
-		// for _, region := range regions {
-		// 	tolRows += region.Rows
-		// }
-		// c.Assert(tolRows, Equals, int64(10000))
+		var tolRows int64 = 0
+		for _, region := range regions {
+			tolRows += region.Rows()
+		}
+		c.Assert(tolRows, Equals, expectedTuplesCount[table])
 
 		// check - range
 		regionNum := len(regions)
@@ -66,11 +81,11 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		for i := 1; i < regionNum; i++ {
 			reg := regions[i]
 			if preReg.File == reg.File {
-				c.Assert(reg.Offset, Equals, preReg.Offset+preReg.Size)
-				// c.Assert(reg.BeginRowID, Equals, preReg.BeginRowID+preReg.Rows)
+				c.Assert(reg.Offset(), Equals, preReg.Offset()+preReg.Size())
+				c.Assert(reg.RowIDMin(), Equals, preReg.RowIDMin()+preReg.Rows())
 			} else {
 				c.Assert(reg.Offset, Equals, 0)
-				// c.Assert(reg.BeginRowID, Equals, 1)
+				c.Assert(reg.RowIDMin(), Equals, 1)
 			}
 			preReg = reg
 		}
@@ -85,27 +100,21 @@ func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
 	dbMeta := loader.GetDatabases()["mocker_test"]
 	founder := NewRegionFounder(defMinRegionSize)
 
-	expectedTuplesCount := map[string]int{
-		"i": 1,
-		"report_case_high_risk": 1,
-		"tbl_autoid":            10000,
-		"tbl_multi_index":       10000,
-	}
-
 	for _, meta := range dbMeta.Tables {
-		regions := founder.MakeTableRegions(meta)
+		regions, err := founder.MakeTableRegions(meta)
+		c.Assert(err, IsNil)
 
 		tolValTuples := 0
 		for _, reg := range regions {
-			regReader, _ := NewRegionReader(reg.File, reg.Offset, reg.Size)
-			stmts, _ := regReader.Read(reg.Size)
+			regReader, _ := NewRegionReader(reg.File, reg.Offset(), reg.Size())
+			stmts, _ := regReader.Read(reg.Size())
 			for _, stmt := range stmts {
 				parts := bytes.Split(stmt, []byte("),"))
 				tolValTuples += len(parts)
 			}
 		}
 
-		c.Assert(tolValTuples, Equals, expectedTuplesCount[meta.Name])
+		c.Assert(int64(tolValTuples), Equals, expectedTuplesCount[meta.Name])
 	}
 
 	return

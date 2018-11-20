@@ -26,7 +26,7 @@ check_contains 'sum(id): 28'
 check_contains 'sum(k): 32'
 
 # Verify the log contains the expected messages at the last few lines
-tail -10 "$TEST_DIR/lightning-error-summary.log" > "$TEST_DIR/lightning-error-summary.tail"
+tail -20 "$TEST_DIR/lightning-error-summary.log" > "$TEST_DIR/lightning-error-summary.tail"
 grep -Fq '[error] Totally **2** tables failed to be imported.' "$TEST_DIR/lightning-error-summary.tail"
 grep -Fq '[`error_summary`.`a`] [checksum] checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
 grep -Fq '[`error_summary`.`c`] [checksum] checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"

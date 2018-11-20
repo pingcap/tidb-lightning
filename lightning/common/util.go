@@ -16,8 +16,8 @@ import (
 	"path/filepath"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/pkg/errors"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -229,7 +229,8 @@ func IsRetryableError(err error) bool {
 }
 
 // IsContextCanceledError returns whether the error is caused by context
-// cancellation.
+// cancellation. This function returns `false` (not a context-canceled error) if
+// `err == nil`.
 func IsContextCanceledError(err error) bool {
 	err = errors.Cause(err)
 	return err == context.Canceled || status.Code(err) == codes.Canceled
