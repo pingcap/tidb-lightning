@@ -9,11 +9,11 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
-	"github.com/pingcap/tidb/model"
 	"github.com/pkg/errors"
 )
 

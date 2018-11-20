@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-sql-driver/mysql"
-	tmysql "github.com/pingcap/tidb/mysql"
+	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

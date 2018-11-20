@@ -45,6 +45,11 @@ func NewTableKVEncoder(
 		common.AppLogger.Errorf("err %s", errors.ErrorStack(err))
 		return nil, errors.Trace(err)
 	}
+	err = encoder.SetSystemVariable("tidb_opt_write_row_id", "1")
+	if err != nil {
+		encoder.Close()
+		return nil, errors.Trace(err)
+	}
 
 	kvcodec := &TableKVEncoder{
 		table:       table,

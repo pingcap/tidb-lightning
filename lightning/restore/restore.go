@@ -17,6 +17,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/cznic/mathutil"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
@@ -25,7 +26,6 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/pkg/errors"
 )
