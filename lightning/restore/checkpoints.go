@@ -34,6 +34,13 @@ const insertCheckpointRetry = 3
 
 const nodeID = 0
 
+const (
+	// the table names to store each kind of checkpoint in the checkpoint database
+	// remember to increase the version number in case of incompatible change.
+	checkpointTableNameTable = "table_v1"
+	checkpointTableNameChunk = "chunk_v3"
+)
+
 func (status CheckpointStatus) MetricName() string {
 	switch status {
 	case CheckpointStatusLoaded:
@@ -212,7 +219,7 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 	// Apparently we could execute multiple DDL statements in Exec()
 	err := common.ExecWithRetry(ctx, db, "(create checkpoints database)", fmt.Sprintf(`
 		CREATE DATABASE IF NOT EXISTS %[1]s;
-		CREATE TABLE IF NOT EXISTS %[1]s.table_v1 (
+		CREATE TABLE IF NOT EXISTS %[1]s.%[2]s (
 			node_id int unsigned NOT NULL,
 			session bigint unsigned NOT NULL,
 			table_name varchar(261) NOT NULL PRIMARY KEY,
@@ -224,7 +231,7 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			INDEX(node_id, session)
 		);
-		CREATE TABLE IF NOT EXISTS %[1]s.chunk_v3 (
+		CREATE TABLE IF NOT EXISTS %[1]s.%[3]s (
 			table_name varchar(261) NOT NULL,
 			path varchar(2048) NOT NULL,
 			offset bigint NOT NULL,
@@ -241,7 +248,7 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY(table_name, path, offset)
 		);
-	`, schema))
+	`, schema, checkpointTableNameTable, checkpointTableNameChunk))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -268,12 +275,12 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, dbInfo map[strin
 		// We do need to capture the error is display a user friendly message
 		// (multiple nodes cannot import the same table) though.
 		stmt, err := tx.PrepareContext(c, fmt.Sprintf(`
-			INSERT INTO %s.table_v1 (node_id, session, table_name, hash, engine) VALUES (?, ?, ?, ?, ?)
+			INSERT INTO %s.%s (node_id, session, table_name, hash, engine) VALUES (?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE session = CASE
 				WHEN node_id = VALUES(node_id) AND hash = VALUES(hash)
 				THEN VALUES(session)
 			END;
-		`, cpdb.schema))
+		`, cpdb.schema, checkpointTableNameTable))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -313,9 +320,9 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 				path, offset, columns, should_include_row_id,
 				pos, end_offset, prev_rowid_max, rowid_max,
 				kvc_bytes, kvc_kvs, kvc_checksum
-			FROM %s.chunk_v3 WHERE table_name = ?
+			FROM %s.%s WHERE table_name = ?
 			ORDER BY path, offset;
-		`, cpdb.schema)
+		`, cpdb.schema, checkpointTableNameChunk)
 		rows, err := tx.QueryContext(c, query, tableName)
 		if err != nil {
 			return errors.Trace(err)
@@ -343,8 +350,8 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		}
 
 		query = fmt.Sprintf(`
-			SELECT status, engine, alloc_base FROM %s.table_v1 WHERE table_name = ?
-		`, cpdb.schema)
+			SELECT status, engine, alloc_base FROM %s.%s WHERE table_name = ?
+		`, cpdb.schema, checkpointTableNameTable)
 		row := tx.QueryRowContext(c, query, tableName)
 
 		var (
@@ -377,7 +384,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 func (cpdb *MySQLCheckpointsDB) InsertChunkCheckpoints(ctx context.Context, tableName string, checkpoints []*ChunkCheckpoint) error {
 	err := common.TransactWithRetry(ctx, cpdb.db, "(update chunk checkpoints for "+tableName+")", func(c context.Context, tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(c, fmt.Sprintf(`
-			REPLACE INTO %s.chunk_v3 (
+			REPLACE INTO %s.%s (
 				table_name, path, offset, columns, should_include_row_id,
 				pos, end_offset, prev_rowid_max, rowid_max,
 				kvc_bytes, kvc_kvs, kvc_checksum
@@ -386,7 +393,7 @@ func (cpdb *MySQLCheckpointsDB) InsertChunkCheckpoints(ctx context.Context, tabl
 				?, ?, ?, ?,
 				?, ?, ?
 			);
-		`, cpdb.schema))
+		`, cpdb.schema, checkpointTableNameChunk))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -415,15 +422,15 @@ func (cpdb *MySQLCheckpointsDB) InsertChunkCheckpoints(ctx context.Context, tabl
 
 func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
 	chunkQuery := fmt.Sprintf(`
-		UPDATE %s.chunk_v3 SET pos = ?, prev_rowid_max = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ?
+		UPDATE %s.%s SET pos = ?, prev_rowid_max = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ?
 		WHERE table_name = ? AND path = ? AND offset = ?;
-	`, cpdb.schema)
+	`, cpdb.schema, checkpointTableNameChunk)
 	checksumQuery := fmt.Sprintf(`
-		UPDATE %s.table_v1 SET alloc_base = GREATEST(?, alloc_base) WHERE table_name = ?;
-	`, cpdb.schema)
+		UPDATE %s.%s SET alloc_base = GREATEST(?, alloc_base) WHERE table_name = ?;
+	`, cpdb.schema, checkpointTableNameTable)
 	statusQuery := fmt.Sprintf(`
-		UPDATE %s.table_v1 SET status = ? WHERE table_name = ?;
-	`, cpdb.schema)
+		UPDATE %s.%s SET status = ? WHERE table_name = ?;
+	`, cpdb.schema, checkpointTableNameTable)
 
 	err := common.TransactWithRetry(context.Background(), cpdb.db, "(update checkpoints)", func(c context.Context, tx *sql.Tx) error {
 		chunkStmt, e := tx.PrepareContext(c, chunkQuery)
@@ -499,17 +506,17 @@ func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName 
 	)
 
 	if tableName == "all" {
-		deleteChunkFmt = "DELETE FROM %[1]s.chunk_v3 WHERE table_name IN (SELECT table_name FROM %[1]s.table_v1 WHERE node_id = ?)"
-		deleteTableFmt = "DELETE FROM %s.table_v1 WHERE node_id = ?"
+		deleteChunkFmt = "DELETE FROM %[1]s.%[2]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[3]s WHERE node_id = ?)"
+		deleteTableFmt = "DELETE FROM %s.%s WHERE node_id = ?"
 		arg = nodeID
 	} else {
-		deleteChunkFmt = "DELETE FROM %s.chunk_v3 WHERE table_name = ?"
-		deleteTableFmt = "DELETE FROM %s.table_v1 WHERE table_name = ?"
+		deleteChunkFmt = "DELETE FROM %s.%s WHERE table_name = ?%.0s" // the %.0s is to consume the third parameter.
+		deleteTableFmt = "DELETE FROM %s.%s WHERE table_name = ?"
 		arg = tableName
 	}
 
-	deleteChunkQuery := fmt.Sprintf(deleteChunkFmt, cpdb.schema)
-	deleteTableQuery := fmt.Sprintf(deleteTableFmt, cpdb.schema)
+	deleteChunkQuery := fmt.Sprintf(deleteChunkFmt, cpdb.schema, checkpointTableNameChunk, checkpointTableNameTable)
+	deleteTableQuery := fmt.Sprintf(deleteTableFmt, cpdb.schema, checkpointTableNameTable)
 	err := common.TransactWithRetry(ctx, cpdb.db, fmt.Sprintf("(remove checkpoints of %s)", tableName), func(c context.Context, tx *sql.Tx) error {
 		if _, e := tx.ExecContext(c, deleteChunkQuery, arg); e != nil {
 			return errors.Trace(e)
@@ -533,8 +540,8 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 		colName, arg = "table_name", tableName
 	}
 	query := fmt.Sprintf(`
-		UPDATE %s.table_v1 SET status = %d WHERE %s = ? AND status <= %d;
-	`, cpdb.schema, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
+		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
+	`, cpdb.schema, checkpointTableNameTable, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
 
 	err := common.ExecWithRetry(ctx, cpdb.db, fmt.Sprintf("(ignore error checkpoints for %s)", tableName), query, arg)
 	return errors.Trace(err)
@@ -572,14 +579,14 @@ func (cpdb *MySQLCheckpointsDB) destroyErrorCheckpoints(ctx context.Context, tab
 	}
 
 	selectQuery := fmt.Sprintf(`
-		SELECT table_name FROM %s.table_v1 WHERE %s = ? AND status <= %d;
-	`, cpdb.schema, conditionColumn, CheckpointStatusMaxInvalid)
+		SELECT table_name FROM %s.%s WHERE %s = ? AND status <= %d;
+	`, cpdb.schema, checkpointTableNameTable, conditionColumn, CheckpointStatusMaxInvalid)
 	deleteChunkQuery := fmt.Sprintf(`
-		DELETE FROM %[1]s.chunk_v3 WHERE table_name IN (SELECT table_name FROM %[1]s.table_v1 WHERE %[2]s = ? AND status <= %[3]d)
-	`, cpdb.schema, conditionColumn, CheckpointStatusMaxInvalid)
+		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
+	`, cpdb.schema, conditionColumn, CheckpointStatusMaxInvalid, checkpointTableNameChunk, checkpointTableNameTable)
 	deleteTableQuery := fmt.Sprintf(`
-		DELETE FROM %s.table_v1 WHERE %s = ? AND status <= %d
-	`, cpdb.schema, conditionColumn, CheckpointStatusMaxInvalid)
+		DELETE FROM %s.%s WHERE %s = ? AND status <= %d
+	`, cpdb.schema, checkpointTableNameTable, conditionColumn, CheckpointStatusMaxInvalid)
 
 	var targetTables []string
 
@@ -630,8 +637,8 @@ func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer
 			alloc_base,
 			create_time,
 			update_time
-		FROM %s.table_v1;
-	`, cpdb.schema))
+		FROM %s.%s;
+	`, cpdb.schema, checkpointTableNameTable))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -656,8 +663,8 @@ func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer
 			kvc_checksum,
 			create_time,
 			update_time
-		FROM %s.chunk_v3;
-	`, cpdb.schema))
+		FROM %s.%s;
+	`, cpdb.schema, checkpointTableNameChunk))
 	if err != nil {
 		return errors.Trace(err)
 	}
