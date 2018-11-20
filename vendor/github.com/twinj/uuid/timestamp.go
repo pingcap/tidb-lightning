@@ -12,7 +12,7 @@ const (
 	defaultSpinResolution = 1024
 )
 
-// 4.1.4.  Timestamp https://www.ietf.org/rfc/rfc4122.txt
+// Timestamp as per 4.1.4.  Timestamp https://www.ietf.org/rfc/rfc4122.txt
 //
 // The timestamp is a 60-bit value.  For UUID version 1, this is
 //
@@ -33,7 +33,7 @@ const (
 // generated 60-bit value, as described in Section 4.4.
 type Timestamp uint64
 
-// Converts Unix formatted time to RFC4122 UUID formatted times
+// Now converts Unix formatted time to RFC4122 UUID formatted times
 // UUID UTC base time is October 15, 1582.
 // Unix base time is January 1, 1970.
 // Converts time to 100 nanosecond ticks since epoch. Uses time.Now
@@ -41,23 +41,23 @@ func Now() Timestamp {
 	return Timestamp(time.Now().UnixNano()/100 + gregorianToUNIXOffset)
 }
 
-// Converts UUID Timestamp to UTC time.Time
+// Time converts UUID Timestamp to UTC time.Time
 // Note some higher clock resolutions will lose accuracy if above 100 ns ticks
 func (o Timestamp) Time() time.Time {
 	return time.Unix(0, int64((o-gregorianToUNIXOffset)*100)).UTC()
 }
 
-// Returns the timestamp as modified by the duration
-func (o Timestamp) Add(pDuration time.Duration) Timestamp {
-	return o + Timestamp(pDuration/100)
+// Add returns the timestamp as modified by the duration
+func (o Timestamp) Add(duration time.Duration) Timestamp {
+	return o + Timestamp(duration/100)
 }
 
-// Returns the timestamp as modified by the duration
-func (o Timestamp) Sub(pDuration time.Duration) Timestamp {
-	return o - Timestamp(pDuration/100)
+// Sub returns the timestamp as modified by the duration
+func (o Timestamp) Sub(duration time.Duration) Timestamp {
+	return o - Timestamp(duration/100)
 }
 
-// Converts UUID Timestamp to time.Time and then calls the Stringer
+// String Converts UUID Timestamp to time.Time and then calls the Stringer
 func (o Timestamp) String() string {
 	return o.Time().String()
 }
@@ -93,21 +93,24 @@ type spinner struct {
 
 	// the tracked spin stamp
 	Timestamp
+
+	now func() Timestamp
 }
 
 func (o *spinner) next() Timestamp {
 	for {
-		now := Now()
+		now := o.now()
 		// if clock reading changed since last UUID generated
 		if o.Timestamp == now {
 			o.Count++
 			if o.Count == o.Resolution {
-				for Now() < o.Timestamp+Timestamp(o.Resolution) {
+				for o.now() < o.Timestamp+Timestamp(o.Resolution) {
 				}
 				continue
 			}
 			break
 		}
+
 		// reset count of UUIDs with this timestamp
 		o.Count = 0
 		o.Timestamp = now
