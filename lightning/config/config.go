@@ -8,8 +8,9 @@ import (
 	"runtime"
 
 	"github.com/BurntSushi/toml"
-	"github.com/pkg/errors"
+	"github.com/pingcap/tidb-enterprise-tools/pkg/filter"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -41,6 +42,7 @@ type Config struct {
 	// ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
 	Checkpoint   Checkpoint      `toml:"checkpoint" json:"checkpoint"`
 	Mydumper     MydumperRuntime `toml:"mydumper" json:"mydumper"`
+	BWList       *filter.Rules   `toml:"black-white-list" json:"black-white-list"`
 	TikvImporter TikvImporter    `toml:"tikv-importer" json:"tikv-importer"`
 	PostRestore  PostRestore     `toml:"post-restore" json:"post-restore"`
 
