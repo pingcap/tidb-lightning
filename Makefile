@@ -1,12 +1,5 @@
 ### Makefile for tidb-lightning
 
-GOPATH ?= $(shell go env GOPATH)
-
-# Ensure GOPATH is set before running build process.
-ifeq "$(GOPATH)" ""
-  $(error Please set the environment variable GOPATH before running `make`)
-endif
-
 LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.ReleaseVersion=$(shell git describe --tags --dirty="-dev")"
 LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.BuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GitHash=$(shell git rev-parse HEAD)"
@@ -23,8 +16,8 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := GO111MODULE=off CGO_ENABLED=0 $(GO) build
-GOTEST    := GO111MODULE=off CGO_ENABLED=1 $(GO) test -p 3
+GOBUILD   := GO111MODULE=on CGO_ENABLED=0 $(GO) build -mod vendor
+GOTEST    := GO111MODULE=on CGO_ENABLED=1 $(GO) test -mod vendor -p 3
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
