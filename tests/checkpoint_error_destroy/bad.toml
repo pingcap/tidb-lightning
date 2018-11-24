@@ -1,0 +1,26 @@
+[lightning]
+check-requirements = false
+file = "/tmp/lightning_test_result/lightning.log"
+level = "info"
+
+[checkpoint]
+enable = true
+
+[tikv-importer]
+addr = "127.0.0.1:8808"
+
+[mydumper]
+data-source-dir = "tests/checkpoint_error_destroy/bad-data"
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+log-level = "error"
+
+[post-restore]
+checksum = true
+compact = false
+analyze = false

@@ -141,6 +141,11 @@ func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
 	return tables, nil
 }
 
+func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
+	query := "DROP TABLE " + tableName
+	return errors.Trace(common.ExecWithRetry(ctx, timgr.db, query, query))
+}
+
 func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas map[string]*mydump.MDDatabaseMeta) (map[string]*TidbDBInfo, error) {
 	result := make(map[string]*TidbDBInfo, len(schemas))
 	for schema := range schemas {

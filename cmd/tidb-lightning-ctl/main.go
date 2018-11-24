@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/kv"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
 	"github.com/pkg/errors"
+	"github.com/satori/go.uuid"
 )
 
 func main() {
@@ -139,7 +140,39 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tableName s
 	}
 	defer target.Close()
 
-	return errors.Trace(cpdb.DestroyErrorCheckpoint(ctx, tableName, target))
+	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer importer.Close()
+
+	targetTables, err := cpdb.DestroyErrorCheckpoint(ctx, tableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var lastErr error
+
+	for _, table := range targetTables {
+		fmt.Fprintln(os.Stderr, "Dropping table:", table.TableName)
+		err := target.DropTable(ctx, table.TableName)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "* Encountered error while dropping table:", err)
+			lastErr = err
+		}
+	}
+
+	for _, table := range targetTables {
+		if table.Engine == uuid.Nil {
+			continue
+		}
+		if closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, table.Engine); err == nil {
+			fmt.Fprintln(os.Stderr, "Cleaning up engine:", table.TableName, table.Engine)
+			closedEngine.Cleanup(ctx)
+		}
+	}
+
+	return errors.Trace(lastErr)
 }
 
 func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) error {

@@ -164,6 +164,11 @@ func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.allocBase = mathutil.MaxInt64(cpd.allocBase, merger.AllocBase)
 }
 
+type DestroyedTableCheckpoint struct {
+	TableName string
+	Engine    uuid.UUID
+}
+
 type CheckpointsDB interface {
 	Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
@@ -173,7 +178,7 @@ type CheckpointsDB interface {
 
 	RemoveCheckpoint(ctx context.Context, tableName string) error
 	IgnoreErrorCheckpoint(ctx context.Context, tableName string) error
-	DestroyErrorCheckpoint(ctx context.Context, tableName string, target *TiDBManager) error
+	DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error)
 	DumpTables(ctx context.Context, csv io.Writer) error
 	DumpChunks(ctx context.Context, csv io.Writer) error
 }
@@ -488,8 +493,8 @@ func (*NullCheckpointsDB) RemoveCheckpoint(context.Context, string) error {
 func (*NullCheckpointsDB) IgnoreErrorCheckpoint(context.Context, string) error {
 	return errors.Trace(cannotManageNullDB)
 }
-func (*NullCheckpointsDB) DestroyErrorCheckpoint(context.Context, string, *TiDBManager) error {
-	return errors.Trace(cannotManageNullDB)
+func (*NullCheckpointsDB) DestroyErrorCheckpoint(context.Context, string) ([]DestroyedTableCheckpoint, error) {
+	return nil, errors.Trace(cannotManageNullDB)
 }
 func (*NullCheckpointsDB) DumpTables(context.Context, io.Writer) error {
 	return errors.Trace(cannotManageNullDB)
@@ -547,24 +552,7 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 	return errors.Trace(err)
 }
 
-func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string, target *TiDBManager) error {
-	targetTables, err := cpdb.destroyErrorCheckpoints(ctx, tableName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	common.AppLogger.Info("Going to drop the following tables:", targetTables)
-	for _, tableName := range targetTables {
-		query := "DROP TABLE " + tableName
-		err := common.ExecWithRetry(ctx, target.db, query, query)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func (cpdb *MySQLCheckpointsDB) destroyErrorCheckpoints(ctx context.Context, tableName string) ([]string, error) {
+func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error) {
 	var (
 		conditionColumn string
 		arg             interface{}
@@ -579,7 +567,7 @@ func (cpdb *MySQLCheckpointsDB) destroyErrorCheckpoints(ctx context.Context, tab
 	}
 
 	selectQuery := fmt.Sprintf(`
-		SELECT table_name FROM %s.%s WHERE %s = ? AND status <= %d;
+		SELECT table_name, engine FROM %s.%s WHERE %s = ? AND status <= %d;
 	`, cpdb.schema, checkpointTableNameTable, conditionColumn, CheckpointStatusMaxInvalid)
 	deleteChunkQuery := fmt.Sprintf(`
 		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
@@ -588,7 +576,7 @@ func (cpdb *MySQLCheckpointsDB) destroyErrorCheckpoints(ctx context.Context, tab
 		DELETE FROM %s.%s WHERE %s = ? AND status <= %d
 	`, cpdb.schema, checkpointTableNameTable, conditionColumn, CheckpointStatusMaxInvalid)
 
-	var targetTables []string
+	var targetTables []DestroyedTableCheckpoint
 
 	err := common.TransactWithRetry(ctx, cpdb.db, fmt.Sprintf("(destroy error checkpoints for %s)", tableName), func(c context.Context, tx *sql.Tx) error {
 		// Obtain the list of tables
@@ -599,11 +587,17 @@ func (cpdb *MySQLCheckpointsDB) destroyErrorCheckpoints(ctx context.Context, tab
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var matchedTableName string
-			if e := rows.Scan(&matchedTableName); e != nil {
+			var (
+				matchedTableName string
+				matchedEngine    []byte
+			)
+			if e := rows.Scan(&matchedTableName, &matchedEngine); e != nil {
 				return errors.Trace(e)
 			}
-			targetTables = append(targetTables, matchedTableName)
+			targetTables = append(targetTables, DestroyedTableCheckpoint{
+				TableName: matchedTableName,
+				Engine:    uuid.FromBytesOrNil(matchedEngine),
+			})
 		}
 		if e := rows.Err(); e != nil {
 			return errors.Trace(e)
