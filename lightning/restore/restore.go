@@ -95,6 +95,7 @@ type RestoreController struct {
 	regionWorkers   *RestoreWorkerPool
 	importer        *kv.Importer
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
+	alterTableLock  sync.Mutex
 
 	errorSummaries errorSummaries
 
@@ -534,7 +535,9 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
+		rc.alterTableLock.Lock()
 		err := t.restoreTableMeta(ctx, rc.cfg)
+		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
 			common.AppLogger.Errorf(
