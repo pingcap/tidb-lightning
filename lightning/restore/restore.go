@@ -1175,6 +1175,8 @@ func (cr *chunkRestore) restore(
 				return
 			}
 			err = stream.Put(b.totalKVs)
+			b.totalKVs = nil
+			block.cond.Signal()
 			if e := stream.Close(); e != nil {
 				if err != nil {
 					common.AppLogger.Warnf("failed to close write stream: %s", e.Error())
@@ -1281,6 +1283,13 @@ func (cr *chunkRestore) restore(
 		}
 
 		block.cond.L.Lock()
+		for len(block.totalKVs) > len(kvs) * 128 {
+			// ^ hack to create a back-pressure preventing sending too many KV pairs at once
+			// this happens when delivery is slower than encoding.
+			// note that the KV pairs will retain the memory buffer backing the KV encoder
+			// and thus blow up the memory usage and will easily cause lightning to go OOM.
+			block.cond.Wait()
+		}
 		block.totalKVs = append(block.totalKVs, kvs...)
 		block.localChecksum.Update(kvs)
 		block.chunkOffset = cr.parser.Pos()
