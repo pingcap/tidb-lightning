@@ -1140,6 +1140,83 @@ func (cr *chunkRestore) restore(
 	encodeTotalDur := time.Duration(0)
 	deliverTotalDur := time.Duration(0)
 
+	var block struct {
+		cond            *sync.Cond
+		encodeCompleted bool
+		totalKVs        []kvenc.KvPair
+		localChecksum   verify.KVChecksum
+		chunkOffset     int64
+		chunkRowID      int64
+	}
+	block.cond = sync.NewCond(new(sync.Mutex))
+	deliverCompleteCh := make(chan error)
+
+	go func() {
+		for {
+			block.cond.L.Lock()
+			for !block.encodeCompleted && len(block.totalKVs) == 0 {
+				block.cond.Wait()
+			}
+			b := block
+			block.totalKVs = nil
+			block.localChecksum = verify.MakeKVChecksum(0, 0, 0)
+			block.cond.L.Unlock()
+
+			if b.encodeCompleted && len(b.totalKVs) == 0 {
+				deliverCompleteCh <- nil
+				return
+			}
+
+			// kv -> deliver ( -> tikv )
+			start := time.Now()
+			stream, err := engine.NewWriteStream(ctx)
+			if err != nil {
+				deliverCompleteCh <- errors.Trace(err)
+				return
+			}
+			err = stream.Put(b.totalKVs)
+			if e := stream.Close(); e != nil {
+				if err != nil {
+					common.AppLogger.Warnf("failed to close write stream: %s", e.Error())
+				} else {
+					err = e
+				}
+			}
+			deliverDur := time.Since(start)
+			deliverTotalDur += deliverDur
+			metric.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
+			metric.BlockDeliverBytesHistogram.Observe(float64(b.localChecksum.SumSize()))
+
+			if err != nil {
+				// TODO : retry ~
+				common.AppLogger.Errorf("kv deliver failed = %s\n", err.Error())
+				deliverCompleteCh <- errors.Trace(err)
+				return
+			}
+
+			// Update the table, and save a checkpoint.
+			// (the write to the importer is effective immediately, thus update these here)
+			cr.chunk.Checksum.Add(&b.localChecksum)
+			cr.chunk.Chunk.Offset = b.chunkOffset
+			cr.chunk.Chunk.PrevRowIDMax = b.chunkRowID
+			rc.saveCpCh <- saveCp{
+				tableName: t.tableName,
+				merger: &RebaseCheckpointMerger{
+					AllocBase: t.alloc.Base() + 1,
+				},
+			}
+			rc.saveCpCh <- saveCp{
+				tableName: t.tableName,
+				merger: &ChunkCheckpointMerger{
+					Key:      cr.chunk.Key,
+					Checksum: cr.chunk.Checksum,
+					Pos:      cr.chunk.Chunk.Offset,
+					RowID:    cr.chunk.Chunk.PrevRowIDMax,
+				},
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1190,10 +1267,6 @@ func (cr *chunkRestore) restore(
 		metric.BlockReadSecondsHistogram.Observe(readDur.Seconds())
 		metric.BlockReadBytesHistogram.Observe(float64(sqls.Len()))
 
-		var (
-			totalKVs      []kvenc.KvPair
-			localChecksum verify.KVChecksum
-		)
 		// sql -> kv
 		start = time.Now()
 		kvs, _, err := kvEncoder.SQL2KV(sqls.String())
@@ -1207,61 +1280,31 @@ func (cr *chunkRestore) restore(
 			return errors.Trace(err)
 		}
 
-		totalKVs = append(totalKVs, kvs...)
-		localChecksum.Update(kvs)
-
-		// kv -> deliver ( -> tikv )
-		start = time.Now()
-		stream, err := engine.NewWriteStream(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = stream.Put(totalKVs)
-		if e := stream.Close(); e != nil {
-			if err != nil {
-				common.AppLogger.Warnf("failed to close write stream: %s", e.Error())
-			} else {
-				err = e
-			}
-		}
-		deliverDur := time.Since(start)
-		deliverTotalDur += deliverDur
-		metric.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
-		metric.BlockDeliverBytesHistogram.Observe(float64(localChecksum.SumSize()))
-
-		if err != nil {
-			// TODO : retry ~
-			common.AppLogger.Errorf("kv deliver failed = %s\n", err.Error())
-			return errors.Trace(err)
-		}
-
-		// Update the table, and save a checkpoint.
-		// (the write to the importer is effective immediately, thus update these here)
-		cr.chunk.Checksum.Add(&localChecksum)
-		cr.chunk.Chunk.Offset = cr.parser.Pos()
-		cr.chunk.Chunk.PrevRowIDMax = cr.parser.LastRow().RowID
-		rc.saveCpCh <- saveCp{
-			tableName: t.tableName,
-			merger: &RebaseCheckpointMerger{
-				AllocBase: t.alloc.Base() + 1,
-			},
-		}
-		rc.saveCpCh <- saveCp{
-			tableName: t.tableName,
-			merger: &ChunkCheckpointMerger{
-				Key:      cr.chunk.Key,
-				Checksum: cr.chunk.Checksum,
-				Pos:      cr.chunk.Chunk.Offset,
-				RowID:    cr.chunk.Chunk.PrevRowIDMax,
-			},
-		}
+		block.cond.L.Lock()
+		block.totalKVs = append(block.totalKVs, kvs...)
+		block.localChecksum.Update(kvs)
+		block.chunkOffset = cr.parser.Pos()
+		block.chunkRowID = cr.parser.LastRow().RowID
+		block.cond.Signal()
+		block.cond.L.Unlock()
 	}
 
-	common.AppLogger.Infof(
-		"[%s] restore chunk #%d (%s) takes %v (read: %v, encode: %v, deliver: %v)",
-		t.tableName, cr.index, &cr.chunk.Key, time.Since(timer),
-		readTotalDur, encodeTotalDur, deliverTotalDur,
-	)
+	block.cond.L.Lock()
+	block.encodeCompleted = true
+	block.cond.Signal()
+	block.cond.L.Unlock()
 
-	return nil
+	select {
+	case err := <-deliverCompleteCh:
+		if err == nil {
+			common.AppLogger.Infof(
+				"[%s] restore chunk #%d (%s) takes %v (read: %v, encode: %v, deliver: %v)",
+				t.tableName, cr.index, &cr.chunk.Key, time.Since(timer),
+				readTotalDur, encodeTotalDur, deliverTotalDur,
+			)
+		}
+		return errors.Trace(err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
