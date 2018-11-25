@@ -35,8 +35,6 @@ const (
 	Level1Compact    = 1
 )
 
-var metrics = common.NewMetrics()
-
 const (
 	defaultGCLifeTime = 100 * time.Hour
 )
@@ -187,8 +185,6 @@ outside:
 		}
 	}
 
-	statistic := metrics.DumpTiming()
-	common.AppLogger.Infof("Timing statistic :\n%s", statistic)
 	common.AppLogger.Infof("the whole procedure takes %v", time.Since(timer))
 
 	rc.errorSummaries.emitLog()
@@ -973,7 +969,7 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 
 	start := time.Now()
 	defer func() {
-		metrics.MarkTiming(fmt.Sprintf("[%s]_kv_flush", tr.tableName), start)
+		metric.ImportSecondsHistogram.Observe(time.Since(start).Seconds())
 		common.AppLogger.Infof("[%s] kv deliver all flushed !", tr.tableName)
 	}()
 
@@ -1139,11 +1135,10 @@ func (cr *chunkRestore) restore(
 		}
 	}()
 
-	readMark := fmt.Sprintf("[%s]_read_file", t.tableName)
-	encodeMark := fmt.Sprintf("[%s]_sql_2_kv", t.tableName)
-	deliverMark := fmt.Sprintf("[%s]_deliver_write", t.tableName)
-
 	timer := time.Now()
+	readTotalDur := time.Duration(0)
+	encodeTotalDur := time.Duration(0)
+	deliverTotalDur := time.Duration(0)
 
 	for {
 		select {
@@ -1190,7 +1185,10 @@ func (cr *chunkRestore) restore(
 		}
 		sqls.WriteByte(';')
 
-		metrics.MarkTiming(readMark, start)
+		readDur := time.Since(start)
+		readTotalDur += readDur
+		metric.BlockReadSecondsHistogram.Observe(readDur.Seconds())
+		metric.BlockReadBytesHistogram.Observe(float64(sqls.Len()))
 
 		var (
 			totalKVs      []kvenc.KvPair
@@ -1199,7 +1197,10 @@ func (cr *chunkRestore) restore(
 		// sql -> kv
 		start = time.Now()
 		kvs, _, err := kvEncoder.SQL2KV(sqls.String())
-		metrics.MarkTiming(encodeMark, start)
+		encodeDur := time.Since(start)
+		encodeTotalDur += encodeDur
+		metric.BlockEncodeSecondsHistogram.Observe(encodeDur.Seconds())
+
 		common.AppLogger.Debugf("len(kvs) %d, len(sql) %d", len(kvs), sqls.Len())
 		if err != nil {
 			common.AppLogger.Errorf("kv encode failed = %s\n", err.Error())
@@ -1223,7 +1224,11 @@ func (cr *chunkRestore) restore(
 				err = e
 			}
 		}
-		metrics.MarkTiming(deliverMark, start)
+		deliverDur := time.Since(start)
+		deliverTotalDur += deliverDur
+		metric.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
+		metric.BlockDeliverBytesHistogram.Observe(float64(localChecksum.SumSize()))
+
 		if err != nil {
 			// TODO : retry ~
 			common.AppLogger.Errorf("kv deliver failed = %s\n", err.Error())
@@ -1252,7 +1257,11 @@ func (cr *chunkRestore) restore(
 		}
 	}
 
-	common.AppLogger.Infof("[%s] restore chunk #%d (%s) takes %v", t.tableName, cr.index, &cr.chunk.Key, time.Since(timer))
+	common.AppLogger.Infof(
+		"[%s] restore chunk #%d (%s) takes %v (read: %v, encode: %v, deliver: %v)",
+		t.tableName, cr.index, &cr.chunk.Key, time.Since(timer),
+		readTotalDur, encodeTotalDur, deliverTotalDur,
+	)
 
 	return nil
 }

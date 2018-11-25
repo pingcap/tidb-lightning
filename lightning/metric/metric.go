@@ -74,6 +74,55 @@ var (
 	//  - running
 	//  - finished
 	//  - failed
+
+	ImportSecondsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "import_seconds",
+			Help:      "time needed to import a table",
+			Buckets:   prometheus.ExponentialBuckets(0.125, 2, 6),
+		},
+	)
+	BlockReadSecondsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "block_read_seconds",
+			Help:      "time needed to read a block",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 7),
+		},
+	)
+	BlockReadBytesHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "block_read_bytes",
+			Help:      "number of bytes being read out from data source",
+			Buckets:   prometheus.ExponentialBuckets(1024, 2, 8),
+		},
+	)
+	BlockEncodeSecondsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "block_encode_seconds",
+			Help:      "time needed to encode a block",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+		},
+	)
+	BlockDeliverSecondsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "block_deliver_seconds",
+			Help:      "time needed to deliver a block",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+		},
+	)
+	BlockDeliverBytesHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "block_deliver_bytes",
+			Help:      "number of bytes being sent out to importer",
+			Buckets:   prometheus.ExponentialBuckets(512, 2, 10),
+		},
+	)
 )
 
 func init() {
@@ -82,6 +131,12 @@ func init() {
 	prometheus.MustRegister(KvEncoderCounter)
 	prometheus.MustRegister(TableCounter)
 	prometheus.MustRegister(ChunkCounter)
+	prometheus.MustRegister(ImportSecondsHistogram)
+	prometheus.MustRegister(BlockReadSecondsHistogram)
+	prometheus.MustRegister(BlockReadBytesHistogram)
+	prometheus.MustRegister(BlockEncodeSecondsHistogram)
+	prometheus.MustRegister(BlockDeliverSecondsHistogram)
+	prometheus.MustRegister(BlockDeliverBytesHistogram)
 }
 
 func RecordTableCount(status string, err error) {
