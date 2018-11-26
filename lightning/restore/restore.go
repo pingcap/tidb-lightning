@@ -996,9 +996,11 @@ func (tr *TableRestore) compareChecksum(ctx context.Context, cfg *config.Config,
 	for _, chunk := range cp.Chunks {
 		localChecksum.Add(&chunk.Checksum)
 	}
-	common.AppLogger.Infof("[%s] local checksum %+v", tr.tableName, localChecksum)
 
+	start := time.Now()
 	remoteChecksum, err := DoChecksum(ctx, cfg.TiDB, tr.tableName)
+	dur := time.Since(start)
+	metric.ChecksumSecondsHistogram.Observe(dur.Seconds())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1013,7 +1015,7 @@ func (tr *TableRestore) compareChecksum(ctx context.Context, cfg *config.Config,
 		)
 	}
 
-	common.AppLogger.Infof("[%s] checksum pass", tr.tableName)
+	common.AppLogger.Infof("[%s] checksum pass, %+v takes %v", tr.tableName, localChecksum, dur)
 	return nil
 }
 

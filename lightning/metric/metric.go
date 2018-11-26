@@ -123,6 +123,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(512, 2, 10),
 		},
 	)
+	ChecksumSecondsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "checksum_seconds",
+			Help:      "time needed to complete the checksum stage",
+			Buckets:   prometheus.ExponentialBuckets(1, 2.2679331552660544, 10),
+		},
+	)
 )
 
 func init() {
@@ -137,6 +145,7 @@ func init() {
 	prometheus.MustRegister(BlockEncodeSecondsHistogram)
 	prometheus.MustRegister(BlockDeliverSecondsHistogram)
 	prometheus.MustRegister(BlockDeliverBytesHistogram)
+	prometheus.MustRegister(ChecksumSecondsHistogram)
 }
 
 func RecordTableCount(status string, err error) {
