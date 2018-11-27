@@ -1112,6 +1112,29 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 
 ////////////////////////////////////////////////////////////////
 
+const (
+	maxKVQueueSize  = 128
+	maxDeliverBytes = 31 << 20 // 31 MB. hardcoded by importer, so do we
+)
+
+func splitIntoDeliveryStreams(totalKVs []kvenc.KvPair, splitSize int) [][]kvenc.KvPair {
+	res := make([][]kvenc.KvPair, 0, 1)
+	i := 0
+	cumSize := 0
+
+	for j, pair := range totalKVs {
+		size := len(pair.Key) + len(pair.Val)
+		if i < j && cumSize + size > splitSize {
+			res = append(res, totalKVs[i:j])
+			i = j
+			cumSize = 0
+		}
+		cumSize += size
+	}
+
+	return append(res, totalKVs[i:])
+}
+
 func (cr *chunkRestore) restore(
 	ctx context.Context,
 	t *TableRestore,
@@ -1177,8 +1200,17 @@ func (cr *chunkRestore) restore(
 				deliverCompleteCh <- errors.Trace(err)
 				return
 			}
-			err = stream.Put(b.totalKVs)
+
+			for _, kvs := range splitIntoDeliveryStreams(b.totalKVs, maxDeliverBytes) {
+				e := stream.Put(kvs)
+				if err != nil {
+					common.AppLogger.Warnf("failed to put write stream: %s", e.Error())
+				} else {
+					err = e
+				}
+			}
 			b.totalKVs = nil
+
 			block.cond.Signal()
 			if e := stream.Close(); e != nil {
 				if err != nil {
@@ -1286,7 +1318,7 @@ func (cr *chunkRestore) restore(
 		}
 
 		block.cond.L.Lock()
-		for len(block.totalKVs) > len(kvs) * 128 {
+		for len(block.totalKVs) > len(kvs) * maxKVQueueSize {
 			// ^ hack to create a back-pressure preventing sending too many KV pairs at once
 			// this happens when delivery is slower than encoding.
 			// note that the KV pairs will retain the memory buffer backing the KV encoder
