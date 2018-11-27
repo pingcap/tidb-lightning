@@ -968,11 +968,6 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 	common.AppLogger.Infof("[%s] flush kv deliver ...", tr.tableName)
 
 	start := time.Now()
-	defer func() {
-		dur := time.Since(start)
-		metric.ImportSecondsHistogram.Observe(dur.Seconds())
-		common.AppLogger.Infof("[%s] kv deliver all flushed, takes %v", tr.tableName, dur)
-	}()
 
 	err := closedEngine.Import(ctx)
 	if err != nil {
@@ -982,6 +977,11 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 		return errors.Trace(err)
 	}
 	closedEngine.Cleanup(ctx)
+
+	dur := time.Since(start)
+	metric.ImportSecondsHistogram.Observe(dur.Seconds())
+	common.AppLogger.Infof("[%s] kv deliver all flushed, takes %v", tr.tableName, dur)
+
 	return nil
 }
 
