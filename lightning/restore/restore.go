@@ -1202,11 +1202,12 @@ func (cr *chunkRestore) restore(
 			}
 
 			for _, kvs := range splitIntoDeliveryStreams(b.totalKVs, maxDeliverBytes) {
-				e := stream.Put(kvs)
-				if err != nil {
-					common.AppLogger.Warnf("failed to put write stream: %s", e.Error())
-				} else {
-					err = e
+				if e := stream.Put(kvs); e != nil {
+					if err != nil {
+						common.AppLogger.Warnf("failed to put write stream: %s", e.Error())
+					} else {
+						err = e
+					}
 				}
 			}
 			b.totalKVs = nil
