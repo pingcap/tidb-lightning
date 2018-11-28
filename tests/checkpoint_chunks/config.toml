@@ -1,5 +1,4 @@
 [lightning]
-# pprof-port = 12683
 region-concurrency = 1
 check-requirements = false
 file = "/tmp/lightning_test_result/lightning.log"
