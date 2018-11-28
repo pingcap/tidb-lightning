@@ -33,7 +33,8 @@ var (
 func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 	switch characterSet {
 	case "binary":
-	default:
+		// do nothing
+	case "auto", "utf8mb4":
 		if utf8.Valid(data) {
 			break
 		}
@@ -55,6 +56,8 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 			return nil, errInvalidSchemaEncoding
 		}
 		data = decoded
+	default:
+		return nil, errors.Errorf("Unsupported encoding %s", characterSet)
 	}
 	return data, nil
 }
@@ -102,8 +105,8 @@ func ExportStatement(sqlFile string, characterSet string) ([]byte, error) {
 
 	data, err = decodeCharacterSet(data, characterSet)
 	if err != nil {
-		common.AppLogger.Errorf("cannot guess encoding for input file, please convert to UTF-8 manually: %s", sqlFile)
-		return nil, errors.Annotatef(err, "failed to decode %s", sqlFile)
+		common.AppLogger.Errorf("cannot decode input file as %s encoding, please convert it manually: %s", characterSet, sqlFile)
+		return nil, errors.Annotatef(err, "failed to decode %s as %s", sqlFile, characterSet)
 	}
 	return data, nil
 }

@@ -47,7 +47,7 @@ run_sql 'SELECT sum(`主键`) AS s FROM charsets.utf8mb4'
 check_contains 's: 1119'
 run_sql 'DROP TABLE charsets.utf8mb4;'
 
-run_lightning 'utf8mb4-utf8mb4'
+run_lightning 'utf8mb4-binary'
 run_sql 'SELECT sum(`主键`) AS s FROM charsets.utf8mb4'
 check_contains 's: 1119'
 
