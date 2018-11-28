@@ -9,6 +9,11 @@ shutdown_proxy() {
 }
 trap shutdown_proxy EXIT
 
+# Wait until the importer_proxy server is ready to avoid spurious HTTP error
+while ! curl -o /dev/null http://127.0.0.1:40250/ -s; do
+    sleep 1
+done
+
 # Populate the mydumper source
 DBPATH="$TEST_DIR/restore.mydump"
 TABLE_COUNT=35
