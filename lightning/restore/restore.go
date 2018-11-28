@@ -92,6 +92,7 @@ type RestoreController struct {
 	tableWorkers    *RestoreWorkerPool
 	regionWorkers   *RestoreWorkerPool
 	importer        *kv.Importer
+	tidbMgr         *TiDBManager
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 	alterTableLock  sync.Mutex
 
@@ -113,12 +114,18 @@ func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDData
 		return nil, errors.Trace(err)
 	}
 
+	tidbMgr, err := NewTiDBManager(cfg.TiDB)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	rc := &RestoreController{
 		cfg:           cfg,
 		dbMetas:       dbMetas,
 		tableWorkers:  NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
 		regionWorkers: NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
 		importer:      importer,
+		tidbMgr:       tidbMgr,
 
 		errorSummaries: errorSummaries{
 			summary: make(map[string]errorSummary),
@@ -153,6 +160,7 @@ func (rc *RestoreController) Wait() {
 
 func (rc *RestoreController) Close() {
 	rc.importer.Close()
+	rc.tidbMgr.Close()
 }
 
 func (rc *RestoreController) Run(ctx context.Context) error {
@@ -163,7 +171,6 @@ func (rc *RestoreController) Run(ctx context.Context) error {
 		rc.restoreSchema,
 		rc.restoreTables,
 		rc.fullCompact,
-		rc.analyze,
 		rc.switchToNormalMode,
 		rc.cleanCheckpoints,
 	}
@@ -529,10 +536,12 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 		}
 	}
 
+	setSessionConcurrencyVars(ctx, rc.tidbMgr.db, rc.cfg.TiDB)
+
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
-		err := t.restoreTableMeta(ctx, rc.cfg)
+		err := t.restoreTableMeta(ctx, rc.tidbMgr.db)
 		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
@@ -545,11 +554,31 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 	}
 
 	// 4. do table checksum
-	if cp.Status < CheckpointStatusCompleted {
-		err := t.compareChecksum(ctx, rc.cfg, cp)
-		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusCompleted)
+	if cp.Status < CheckpointStatusChecksummed {
+		var err error
+		if !rc.cfg.PostRestore.Checksum {
+			common.AppLogger.Infof("[%s] Skip checksum.", t.tableName)
+		} else {
+			err = t.compareChecksum(ctx, rc.tidbMgr.db, cp)
+		}
+		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusChecksummed)
 		if err != nil {
 			common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
+			return errors.Trace(err)
+		}
+	}
+
+	// 5. do table analyze
+	if cp.Status < CheckpointStatusAnalyzed {
+		var err error
+		if !rc.cfg.PostRestore.Analyze {
+			common.AppLogger.Infof("[%s] Skip analyze.", t.tableName)
+		} else {
+			err = t.analyzeTable(ctx, rc.tidbMgr.db)
+		}
+		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusAnalyzed)
+		if err != nil {
+			common.AppLogger.Errorf("[%s] analyze failed: %v", t.tableName, err.Error())
 			return errors.Trace(err)
 		}
 	}
@@ -569,18 +598,6 @@ func (rc *RestoreController) fullCompact(ctx context.Context) error {
 
 func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
 	return errors.Trace(rc.importer.Compact(ctx, level))
-}
-
-// analyze will analyze table for all tables.
-func (rc *RestoreController) analyze(ctx context.Context) error {
-	if !rc.cfg.PostRestore.Analyze {
-		common.AppLogger.Info("Skip analyze table.")
-		return nil
-	}
-
-	tables := rc.getTables()
-	err := analyzeTable(ctx, rc.cfg.TiDB, tables)
-	return errors.Trace(err)
 }
 
 func (rc *RestoreController) switchToImportMode(ctx context.Context) error {
@@ -739,49 +756,6 @@ func (rc *RestoreController) getTables() []string {
 	}
 
 	return tables
-}
-
-func analyzeTable(ctx context.Context, dsn config.DBStore, tables []string) error {
-	totalTimer := time.Now()
-	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
-	if err != nil {
-		common.AppLogger.Errorf("connect db failed %v, the next operation is: ANALYZE TABLE. You should do it one by one manually", err)
-		return errors.Trace(err)
-	}
-	defer db.Close()
-
-	// speed up executing analyze table temporarily
-	setSessionVarInt(ctx, db, "tidb_build_stats_concurrency", 16)
-	setSessionVarInt(ctx, db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
-
-	// TODO: do it concurrently.
-	var analyzeErr error
-	for _, table := range tables {
-		timer := time.Now()
-		common.AppLogger.Infof("[%s] analyze", table)
-		query := fmt.Sprintf("ANALYZE TABLE %s", table)
-		err := common.ExecWithRetry(ctx, db, query, query)
-		if err != nil {
-			if analyzeErr == nil {
-				analyzeErr = err
-			}
-			common.AppLogger.Errorf("%s error %s", query, errors.ErrorStack(err))
-			continue
-		}
-		common.AppLogger.Infof("[%s] analyze takes %v", table, time.Since(timer))
-	}
-
-	common.AppLogger.Infof("doing all tables analyze takes %v", time.Since(totalTimer))
-	return errors.Trace(analyzeErr)
-}
-
-////////////////////////////////////////////////////////////////
-
-func setSessionVarInt(ctx context.Context, db *sql.DB, name string, value int) {
-	stmt := fmt.Sprintf("set session %s = ?", name)
-	if err := common.ExecWithRetry(ctx, db, stmt, stmt, value); err != nil {
-		common.AppLogger.Warnf("failed to set variable @%s to %d: %s", name, value, err.Error())
-	}
 }
 
 ////////////////////////////////////////////////////////////////
@@ -947,16 +921,10 @@ func (t *TableRestore) populateChunks(minChunkSize int64, cp *TableCheckpoint, t
 	return nil
 }
 
-func (tr *TableRestore) restoreTableMeta(ctx context.Context, cfg *config.Config) error {
+func (tr *TableRestore) restoreTableMeta(ctx context.Context, db *sql.DB) error {
 	timer := time.Now()
-	dsn := cfg.TiDB
-	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer db.Close()
 
-	err = AlterAutoIncrement(ctx, db, tr.tableMeta.DB, tr.tableMeta.Name, tr.alloc.Base()+1)
+	err := AlterAutoIncrement(ctx, db, tr.tableMeta.DB, tr.tableMeta.Name, tr.alloc.Base()+1)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -986,19 +954,14 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 }
 
 // do checksum for each table.
-func (tr *TableRestore) compareChecksum(ctx context.Context, cfg *config.Config, cp *TableCheckpoint) error {
-	if !cfg.PostRestore.Checksum {
-		common.AppLogger.Infof("[%s] Skip checksum.", tr.tableName)
-		return nil
-	}
-
+func (tr *TableRestore) compareChecksum(ctx context.Context, db *sql.DB, cp *TableCheckpoint) error {
 	var localChecksum verify.KVChecksum
 	for _, chunk := range cp.Chunks {
 		localChecksum.Add(&chunk.Checksum)
 	}
 
 	start := time.Now()
-	remoteChecksum, err := DoChecksum(ctx, cfg.TiDB, tr.tableName)
+	remoteChecksum, err := DoChecksum(ctx, db, tr.tableName)
 	dur := time.Since(start)
 	metric.ChecksumSecondsHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -1019,6 +982,18 @@ func (tr *TableRestore) compareChecksum(ctx context.Context, cfg *config.Config,
 	return nil
 }
 
+func (tr *TableRestore) analyzeTable(ctx context.Context, db *sql.DB) error {
+	timer := time.Now()
+	common.AppLogger.Infof("[%s] analyze", tr.tableName)
+	query := fmt.Sprintf("ANALYZE TABLE %s", tr.tableName)
+	err := common.ExecWithRetry(ctx, db, query, query)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	common.AppLogger.Infof("[%s] analyze takes %v", tr.tableName, time.Since(timer))
+	return nil
+}
+
 // RemoteChecksum represents a checksum result got from tidb.
 type RemoteChecksum struct {
 	Schema     string
@@ -1032,15 +1007,22 @@ func (c *RemoteChecksum) String() string {
 	return fmt.Sprintf("[%s] remote_checksum=%d, total_kvs=%d, total_bytes=%d", common.UniqueTable(c.Schema, c.Table), c.Checksum, c.TotalKVs, c.TotalBytes)
 }
 
+func setSessionConcurrencyVars(ctx context.Context, db *sql.DB, dsn config.DBStore) {
+	err := common.ExecWithRetry(ctx, db, "(set session concurrency variables)", `SET
+		SESSION tidb_build_stats_concurrency = ?,
+		SESSION tidb_distsql_scan_concurrency = ?,
+		SESSION tidb_index_serial_scan_concurrency = ?,
+		SESSION tidb_checksum_table_concurrency = ?;
+	`, dsn.BuildStatsConcurrency, dsn.DistSQLScanConcurrency, dsn.IndexSerialScanConcurrency, dsn.ChecksumTableConcurrency)
+	if err != nil {
+		common.AppLogger.Warnf("failed to set session concurrency variables: %s", err.Error())
+	}
+}
+
 // DoChecksum do checksum for tables.
 // table should be in <db>.<table>, format.  e.g. foo.bar
-func DoChecksum(ctx context.Context, dsn config.DBStore, table string) (*RemoteChecksum, error) {
+func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum, error) {
 	timer := time.Now()
-	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer db.Close()
 
 	ori, err := increaseGCLifeTime(ctx, db)
 	if err != nil {
@@ -1053,11 +1035,6 @@ func DoChecksum(ctx context.Context, dsn config.DBStore, table string) (*RemoteC
 			common.AppLogger.Errorf("[%s] update tikv_gc_life_time error %v", table, errors.ErrorStack(err))
 		}
 	}()
-
-	// speed up executing checksum table temporarily
-	// FIXME: now we do table checksum separately, will it be too frequent to update these variables?
-	setSessionVarInt(ctx, db, "tidb_checksum_table_concurrency", 16)
-	setSessionVarInt(ctx, db, "tidb_distsql_scan_concurrency", dsn.DistSQLScanConcurrency)
 
 	// ADMIN CHECKSUM TABLE <table>,<table>  example.
 	// 	mysql> admin checksum table test.t;
@@ -1175,7 +1152,7 @@ func (cr *chunkRestore) restore(
 		chunkRowID      int64
 	}
 	block.cond = sync.NewCond(new(sync.Mutex))
-	deliverCompleteCh := make(chan error)
+	deliverCompleteCh := make(chan error, 1)
 
 	go func() {
 		for {

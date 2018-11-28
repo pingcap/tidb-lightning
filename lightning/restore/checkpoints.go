@@ -27,7 +27,8 @@ const (
 	CheckpointStatusClosed         CheckpointStatus = 90
 	CheckpointStatusImported       CheckpointStatus = 120
 	CheckpointStatusAlteredAutoInc CheckpointStatus = 150
-	CheckpointStatusCompleted      CheckpointStatus = 180
+	CheckpointStatusChecksummed    CheckpointStatus = 180
+	CheckpointStatusAnalyzed       CheckpointStatus = 210
 )
 
 const insertCheckpointRetry = 3
@@ -53,8 +54,10 @@ func (status CheckpointStatus) MetricName() string {
 		return "imported"
 	case CheckpointStatusAlteredAutoInc:
 		return "altered_auto_inc"
-	case CheckpointStatusCompleted:
+	case CheckpointStatusChecksummed:
 		return "checksum"
+	case CheckpointStatusAnalyzed:
+		return "analyzed"
 	default:
 		return "invalid"
 	}
