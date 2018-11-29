@@ -43,7 +43,7 @@ batch-size = 500 # GB
 
 [mydumper]
 # block size of file reading
-read-block-size = 4096 # Byte (default = 4 KB)
+read-block-size = 65536 # Byte (default = 64 KB)
 # split source data file into multiple region/chunk to execute restoring in parallel
 region-min-size = 268435456 # Byte (default = 256 MB)
 # mydumper local source data directory
