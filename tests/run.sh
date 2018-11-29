@@ -10,13 +10,14 @@ stop_services() {
     killall -9 tidb-server || true
     killall -9 tikv-importer || true
 
-    find "$TEST_DIR" -d -mindepth 1 -not -name 'cov.*' -delete || true
+    find "$TEST_DIR" -d -mindepth 1 -not -name 'cov.*' -not \( -depth 1 -name '*.log' \) -delete || true
 }
 
 start_services() {
     stop_services
 
     mkdir -p "$TEST_DIR"
+    rm -f "$TEST_DIR"/*.log
 
     echo "Starting PD..."
     bin/pd-server \
