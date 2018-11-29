@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"runtime"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/tidb-enterprise-tools/pkg/filter"
@@ -49,6 +50,7 @@ type Config struct {
 	BWList       *filter.Rules   `toml:"black-white-list" json:"black-white-list"`
 	TikvImporter TikvImporter    `toml:"tikv-importer" json:"tikv-importer"`
 	PostRestore  PostRestore     `toml:"post-restore" json:"post-restore"`
+	Cron         Cron            `toml:"cron" json:"cron"`
 
 	// command line flags
 	ConfigFile   string `json:"config-file"`
@@ -100,6 +102,28 @@ type Checkpoint struct {
 	KeepAfterSuccess bool   `toml:"keep-after-success" json:"keep-after-success"`
 }
 
+type Cron struct {
+	Compact     Duration `toml:"compact" json:"compact"`
+	SwitchMode  Duration `toml:"switch-mode" json:"switch-mode"`
+	LogProgress Duration `toml:"log-progress" json:"log-progress"`
+}
+
+// A duration which can be deserialized from a TOML string.
+// Implemented as https://github.com/BurntSushi/toml#using-the-encodingtextunmarshaler-interface
+type Duration struct {
+	time.Duration
+}
+
+func (d *Duration) UnmarshalText(text []byte) error {
+	var err error
+	d.Duration, err = time.ParseDuration(string(text))
+	return err
+}
+
+func (d *Duration) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
+}
+
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
@@ -113,6 +137,11 @@ func NewConfig() *Config {
 			DistSQLScanConcurrency:     100,
 			IndexSerialScanConcurrency: 20,
 			ChecksumTableConcurrency:   16,
+		},
+		Cron: Cron{
+			Compact:     Duration{Duration: 5 * time.Minute},
+			SwitchMode:  Duration{Duration: 5 * time.Minute},
+			LogProgress: Duration{Duration: 5 * time.Minute},
 		},
 	}
 }

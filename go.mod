@@ -19,6 +19,7 @@ require (
 	github.com/pingcap/tidb-enterprise-tools v1.0.1-0.20181116033341-5832f7307d74
 	github.com/pkg/errors v0.8.0
 	github.com/prometheus/client_golang v0.9.0
+	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/satori/go.uuid v1.2.0
 	github.com/siddontang/go v0.0.0-20170517070808-cb568a3e5cc0 // indirect
 	github.com/sirupsen/logrus v1.2.0
