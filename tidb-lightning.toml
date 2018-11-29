@@ -50,6 +50,13 @@ region-min-size = 268435456 # Byte (default = 256 MB)
 data-source-dir = "/tmp/export-20180328-200751"
 # if no-schema is set true, lightning will get schema information from tidb-server directly without creating them.
 no-schema=false
+# the character set of the schema files; only supports one of:
+#  - utf8mb4: the schema files must be encoded as UTF-8, otherwise will emit errors
+#  - gb18030: the schema files must be encoded as GB-18030, otherwise will emit errors
+#  - auto:    (default) automatically detect if the schema is UTF-8 or GB-18030, error if the encoding is neither
+#  - binary:  do not try to decode the schema files
+# note that the *data* files are always parsed as binary regardless of schema encoding.
+#character-set = "auto"
 
 # configuration for tidb server address(one is enough) and pd server address(one is enough).
 [tidb]

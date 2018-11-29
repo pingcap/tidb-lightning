@@ -81,6 +81,7 @@ type MydumperRuntime struct {
 	MinRegionSize int64  `toml:"region-min-size" json:"region-min-size"`
 	SourceDir     string `toml:"data-source-dir" json:"data-source-dir"`
 	NoSchema      bool   `toml:"no-schema" json:"no-schema"`
+	CharacterSet  string `toml:"character-set" json:"character-set"`
 }
 
 type TikvImporter struct {
@@ -154,6 +155,9 @@ func (cfg *Config) Load() error {
 	}
 	if cfg.Mydumper.ReadBlockSize <= 0 {
 		cfg.Mydumper.ReadBlockSize = ReadBlockSize
+	}
+	if len(cfg.Mydumper.CharacterSet) == 0 {
+		cfg.Mydumper.CharacterSet = "auto"
 	}
 
 	// hendle kv import

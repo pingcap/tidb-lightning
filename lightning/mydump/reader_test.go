@@ -27,7 +27,7 @@ func (s *testMydumpReaderSuite) TestExportStatementNoTrailingNewLine(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name())
+	data, err := ExportStatement(file.Name(), "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
@@ -47,7 +47,7 @@ func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name())
+	data, err := ExportStatement(file.Name(), "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE TABLE a (b int(11) COMMENT '总案例');"))
 }
@@ -62,7 +62,7 @@ func (s *testMydumpReaderSuite) TestExportStatementGibberishError(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name())
+	data, err := ExportStatement(file.Name(), "auto")
 	c.Assert(data, IsNil)
 	c.Assert(err, NotNil)
 }
