@@ -555,31 +555,31 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 
 	// 4. do table checksum
 	if cp.Status < CheckpointStatusChecksummed {
-		var err error
 		if !rc.cfg.PostRestore.Checksum {
 			common.AppLogger.Infof("[%s] Skip checksum.", t.tableName)
+			rc.saveStatusCheckpoint(t.tableName, nil, CheckpointStatusChecksumSkipped)
 		} else {
-			err = t.compareChecksum(ctx, rc.tidbMgr.db, cp)
-		}
-		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusChecksummed)
-		if err != nil {
-			common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
-			return errors.Trace(err)
+			err := t.compareChecksum(ctx, rc.tidbMgr.db, cp)
+			rc.saveStatusCheckpoint(t.tableName, nil, CheckpointStatusChecksummed)
+			if err != nil {
+				common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
+				return errors.Trace(err)
+			}
 		}
 	}
 
 	// 5. do table analyze
 	if cp.Status < CheckpointStatusAnalyzed {
-		var err error
 		if !rc.cfg.PostRestore.Analyze {
 			common.AppLogger.Infof("[%s] Skip analyze.", t.tableName)
+			rc.saveStatusCheckpoint(t.tableName, nil, CheckpointStatusAnalyzeSkipped)
 		} else {
-			err = t.analyzeTable(ctx, rc.tidbMgr.db)
-		}
-		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusAnalyzed)
-		if err != nil {
-			common.AppLogger.Errorf("[%s] analyze failed: %v", t.tableName, err.Error())
-			return errors.Trace(err)
+			err := t.analyzeTable(ctx, rc.tidbMgr.db)
+			rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusAnalyzed)
+			if err != nil {
+				common.AppLogger.Errorf("[%s] analyze failed: %v", t.tableName, err.Error())
+				return errors.Trace(err)
+			}
 		}
 	}
 
@@ -1101,7 +1101,7 @@ func splitIntoDeliveryStreams(totalKVs []kvenc.KvPair, splitSize int) [][]kvenc.
 
 	for j, pair := range totalKVs {
 		size := len(pair.Key) + len(pair.Val)
-		if i < j && cumSize + size > splitSize {
+		if i < j && cumSize+size > splitSize {
 			res = append(res, totalKVs[i:j])
 			i = j
 			cumSize = 0
@@ -1296,7 +1296,7 @@ func (cr *chunkRestore) restore(
 		}
 
 		block.cond.L.Lock()
-		for len(block.totalKVs) > len(kvs) * maxKVQueueSize {
+		for len(block.totalKVs) > len(kvs)*maxKVQueueSize {
 			// ^ hack to create a back-pressure preventing sending too many KV pairs at once
 			// this happens when delivery is slower than encoding.
 			// note that the KV pairs will retain the memory buffer backing the KV encoder
