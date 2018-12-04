@@ -21,13 +21,16 @@ import (
 type CheckpointStatus uint8
 
 const (
-	CheckpointStatusMaxInvalid     CheckpointStatus = 25
-	CheckpointStatusLoaded         CheckpointStatus = 30
-	CheckpointStatusAllWritten     CheckpointStatus = 60
-	CheckpointStatusClosed         CheckpointStatus = 90
-	CheckpointStatusImported       CheckpointStatus = 120
-	CheckpointStatusAlteredAutoInc CheckpointStatus = 150
-	CheckpointStatusCompleted      CheckpointStatus = 180
+	CheckpointStatusMaxInvalid      CheckpointStatus = 25
+	CheckpointStatusLoaded          CheckpointStatus = 30
+	CheckpointStatusAllWritten      CheckpointStatus = 60
+	CheckpointStatusClosed          CheckpointStatus = 90
+	CheckpointStatusImported        CheckpointStatus = 120
+	CheckpointStatusAlteredAutoInc  CheckpointStatus = 150
+	CheckpointStatusChecksumSkipped CheckpointStatus = 170
+	CheckpointStatusChecksummed     CheckpointStatus = 180
+	CheckpointStatusAnalyzeSkipped  CheckpointStatus = 200
+	CheckpointStatusAnalyzed        CheckpointStatus = 210
 )
 
 const insertCheckpointRetry = 3
@@ -53,8 +56,10 @@ func (status CheckpointStatus) MetricName() string {
 		return "imported"
 	case CheckpointStatusAlteredAutoInc:
 		return "altered_auto_inc"
-	case CheckpointStatusCompleted:
+	case CheckpointStatusChecksummed, CheckpointStatusChecksumSkipped:
 		return "checksum"
+	case CheckpointStatusAnalyzed, CheckpointStatusAnalyzeSkipped:
+		return "analyzed"
 	default:
 		return "invalid"
 	}

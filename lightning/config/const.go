@@ -6,7 +6,7 @@ const (
 	_G = _M << 10
 
 	// mydumper
-	ReadBlockSize int64 = 32 * _K
+	ReadBlockSize int64 = 64 * _K
 	MinRegionSize int64 = 256 * _M
 
 	// kv import

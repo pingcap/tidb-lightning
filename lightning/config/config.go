@@ -21,15 +21,19 @@ const (
 )
 
 type DBStore struct {
-	Host                   string `toml:"host" json:"host"`
-	Port                   int    `toml:"port" json:"port"`
-	User                   string `toml:"user" json:"user"`
-	Psw                    string `toml:"password" json:"-"`
-	StatusPort             int    `toml:"status-port" json:"status-port"`
-	PdAddr                 string `toml:"pd-addr" json:"pd-addr"`
-	SQLMode                string `toml:"sql-mode" json:"sql-mode"`
-	LogLevel               string `toml:"log-level" json:"log-level"`
-	DistSQLScanConcurrency int    `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
+	Host       string `toml:"host" json:"host"`
+	Port       int    `toml:"port" json:"port"`
+	User       string `toml:"user" json:"user"`
+	Psw        string `toml:"password" json:"-"`
+	StatusPort int    `toml:"status-port" json:"status-port"`
+	PdAddr     string `toml:"pd-addr" json:"pd-addr"`
+	SQLMode    string `toml:"sql-mode" json:"sql-mode"`
+	LogLevel   string `toml:"log-level" json:"log-level"`
+
+	DistSQLScanConcurrency     int `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
+	BuildStatsConcurrency      int `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
+	IndexSerialScanConcurrency int `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
+	ChecksumTableConcurrency   int `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
 }
 
 type Config struct {
@@ -104,8 +108,11 @@ func NewConfig() *Config {
 			CheckRequirements: true,
 		},
 		TiDB: DBStore{
-			SQLMode:                "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
-			DistSQLScanConcurrency: 16,
+			SQLMode:                    "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+			BuildStatsConcurrency:      20,
+			DistSQLScanConcurrency:     100,
+			IndexSerialScanConcurrency: 20,
+			ChecksumTableConcurrency:   16,
 		},
 	}
 }

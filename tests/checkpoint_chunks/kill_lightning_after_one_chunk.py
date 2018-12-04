@@ -24,4 +24,4 @@ while True:
             kill_lightning(pidfile, sleep_dur=0)
             break
 
-    time.sleep(0.25)
+    time.sleep(0.05)

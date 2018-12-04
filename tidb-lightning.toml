@@ -43,7 +43,7 @@ batch-size = 500 # GB
 
 [mydumper]
 # block size of file reading
-read-block-size = 4096 # Byte (default = 4 KB)
+read-block-size = 65536 # Byte (default = 64 KB)
 # split source data file into multiple region/chunk to execute restoring in parallel
 region-min-size = 268435456 # Byte (default = 256 MB)
 # mydumper local source data directory
@@ -69,11 +69,16 @@ status-port = 10080
 pd-addr = "127.0.0.1:2379"
 # lightning uses some code of tidb(used as library), and the flag controls it's log level.
 log-level = "error"
-# set tidb session variable to speed up checksum/analyze table.
-distsql-scan-concurrency = 16
+
+# set tidb session variables to speed up checksum/analyze table.
+# see https://pingcap.com/docs/sql/statistics/#control-analyze-concurrency for the meaning of each setting
+build-stats-concurrency = 20
+distsql-scan-concurrency = 100
+index-serial-scan-concurrency = 20
+checksum-table-concurrency = 16
 
 # post-restore provide some options which will be executed after all kv data has been imported into the tikv cluster.
-# the execution order are(if set true): checksum -> compact -> analyze
+# the execution order are(if set true): checksum -> analyze
 [post-restore]
 # if set true, checksum will do ADMIN CHECKSUM TABLE <table> for each table.
 checksum = true
