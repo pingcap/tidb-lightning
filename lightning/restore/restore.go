@@ -192,7 +192,7 @@ outside:
 			err = nil
 			break outside
 		default:
-			common.AppLogger.Errorf("run cause error : %s", errors.ErrorStack(err))
+			common.AppLogger.Errorf("run cause error : %v", err)
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			break outside // ps : not continue
 		}
@@ -631,7 +631,7 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 			rc.saveStatusCheckpoint(t.tableName, nil, CheckpointStatusChecksumSkipped)
 		} else {
 			err := t.compareChecksum(ctx, rc.tidbMgr.db, cp)
-			rc.saveStatusCheckpoint(t.tableName, nil, CheckpointStatusChecksummed)
+			rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusChecksummed)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
 				return errors.Trace(err)

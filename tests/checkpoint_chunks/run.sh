@@ -52,7 +52,7 @@ PIDFILE="$PIDFILE" run_lightning
 run_sql 'SELECT count(i), sum(i) FROM cpch_tsr.tbl;'
 check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
 check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
-run_sql "SELECT count(*) FROM tidb_lightning_checkpoint_test_cpch.table_v1 WHERE status = 210"
+run_sql "SELECT count(*) FROM tidb_lightning_checkpoint_test_cpch.table_v1 WHERE status >= 200"
 check_contains "count(*): 1"
 run_sql "SELECT count(*) FROM tidb_lightning_checkpoint_test_cpch.chunk_v3 WHERE pos = end_offset"
 check_contains "count(*): $CHUNK_COUNT"
