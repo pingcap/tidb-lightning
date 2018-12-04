@@ -177,6 +177,7 @@ func (rc *RestoreController) Run(ctx context.Context) error {
 		rc.restoreSchema,
 		rc.restoreTables,
 		rc.fullCompact,
+		rc.switchToNormalMode,
 		rc.cleanCheckpoints,
 	}
 
@@ -326,7 +327,6 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 	defer logProgressTicker.Stop()
 
 	rc.switchToImportMode(ctx)
-	defer rc.switchToNormalMode(ctx)
 
 	start := time.Now()
 
@@ -359,8 +359,8 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			nanoseconds := float64(time.Since(start).Nanoseconds())
 			estimated := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
 			finished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
-			totalTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending))
-			completedTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStateCompleted))
+			totalTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
+			completedTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStateCompleted, metric.TableResultSuccess))
 			bytesRead := metric.ReadHistogramSum(metric.BlockReadBytesHistogram)
 
 			var remaining string
@@ -664,6 +664,15 @@ func (rc *RestoreController) fullCompact(ctx context.Context) error {
 		return nil
 	}
 
+	// wait until any existing level-1 compact to complete first.
+	common.AppLogger.Info("Wait for existing level 1 compaction to finish")
+	start := time.Now()
+	atomic.CompareAndSwapInt32(&rc.compactState, compactStateWanted, compactStateIdle)
+	for !atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateDoing) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	common.AppLogger.Infof("Wait for existing level 1 compaction to finish takes %v", time.Since(start))
+
 	return errors.Trace(rc.doCompact(ctx, FullLevelCompact))
 }
 
@@ -675,8 +684,9 @@ func (rc *RestoreController) switchToImportMode(ctx context.Context) {
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
 }
 
-func (rc *RestoreController) switchToNormalMode(ctx context.Context) {
+func (rc *RestoreController) switchToNormalMode(ctx context.Context) error {
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
+	return nil
 }
 
 func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
