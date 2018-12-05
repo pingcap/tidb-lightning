@@ -507,6 +507,8 @@ func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
 	content, err := ioutil.ReadFile(path)
 	if err == nil {
 		cpdb.checkpoints.Unmarshal(content)
+	} else {
+		common.AppLogger.Warnf("failed to open checkpoint file %s, going to create a new one: %v", path, err)
 	}
 	return cpdb
 }
