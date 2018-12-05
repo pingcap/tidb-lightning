@@ -1,9 +1,5 @@
 package config
 
-import (
-	"time"
-)
-
 const (
 	_K = int64(1 << 10)
 	_M = _K << 10
@@ -15,6 +11,4 @@ const (
 
 	// kv import
 	KVMaxBatchSize int64 = 200 * _G
-
-	defaultCompactInterval time.Duration = 5 * time.Minute
 )

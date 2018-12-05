@@ -322,9 +322,11 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 	compactTicker := time.NewTicker(rc.cfg.Cron.Compact.Duration)
 	switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
-	defer compactTicker.Stop()
-	defer switchModeTicker.Stop()
-	defer logProgressTicker.Stop()
+	defer func() {
+		compactTicker.Stop()
+		switchModeTicker.Stop()
+		logProgressTicker.Stop()
+	}()
 
 	rc.switchToImportMode(ctx)
 
@@ -333,8 +335,10 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 	for {
 		select {
 		case <-ctx.Done():
+			common.AppLogger.Warnf("Stopping periodic actions due to %v", ctx.Err())
 			return
 		case <-stop:
+			common.AppLogger.Info("Everything imported, stopping periodic actions")
 			return
 
 		case <-compactTicker.C:
