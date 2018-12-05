@@ -166,7 +166,7 @@ func (cfg *Config) Load() error {
 		cfg.Checkpoint.Schema = "tidb_lightning_checkpoint"
 	}
 	if len(cfg.Checkpoint.Driver) == 0 {
-		cfg.Checkpoint.Driver = "mysql"
+		cfg.Checkpoint.Driver = "file"
 	}
 	if len(cfg.Checkpoint.DSN) == 0 {
 		switch cfg.Checkpoint.Driver {
