@@ -28,13 +28,24 @@ func (s *testMydumpLoaderSuite) TestLoader(c *C) {
 	mdl, err = md.NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)
 
-	dbMeta := mdl.GetDatabases()["mocker_test"]
+	dbMetas := mdl.GetDatabases()
+	c.Assert(len(dbMetas), Equals, 1)
+	dbMeta := dbMetas[0]
+	c.Assert(dbMeta.Name, Equals, "mocker_test")
 	c.Assert(len(dbMeta.Tables), Equals, 4)
 
-	for _, table := range []string{"tbl_multi_index", "tbl_autoid"} {
-		c.Assert(dbMeta.Tables[table].Name, Equals, table)
+	expected := []struct {
+		name      string
+		dataFiles int
+	}{
+		{name: "i", dataFiles: 1},
+		{name: "report_case_high_risk", dataFiles: 1},
+		{name: "tbl_autoid", dataFiles: 1},
+		{name: "tbl_multi_index", dataFiles: 1},
 	}
 
-	c.Assert(len(dbMeta.Tables["tbl_autoid"].DataFiles), Equals, 1)
-	c.Assert(len(dbMeta.Tables["tbl_multi_index"].DataFiles), Equals, 1)
+	for i, table := range expected {
+		c.Assert(dbMeta.Tables[i].Name, Equals, table.name)
+		c.Assert(len(dbMeta.Tables[i].DataFiles), Equals, table.dataFiles)
+	}
 }

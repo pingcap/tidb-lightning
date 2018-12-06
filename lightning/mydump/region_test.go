@@ -35,7 +35,7 @@ var expectedTuplesCount = map[string]int64{
 func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
 	loader, _ := NewMyDumpLoader(cfg)
-	dbMeta := loader.GetDatabases()["mocker_test"]
+	dbMeta := loader.GetDatabases()[0]
 	founder := NewRegionFounder(defMinRegionSize)
 
 	for _, meta := range dbMeta.Tables {
@@ -97,7 +97,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
 	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
 	loader, _ := NewMyDumpLoader(cfg)
-	dbMeta := loader.GetDatabases()["mocker_test"]
+	dbMeta := loader.GetDatabases()[0]
 	founder := NewRegionFounder(defMinRegionSize)
 
 	for _, meta := range dbMeta.Tables {

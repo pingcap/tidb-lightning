@@ -2,7 +2,9 @@ package mydump
 
 import (
 	"encoding/json"
-	"sort"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/pingcap/tidb-enterprise-tools/pkg/filter"
@@ -20,7 +22,7 @@ var (
 type MDDatabaseMeta struct {
 	Name       string
 	SchemaFile string
-	Tables     map[string]*MDTableMeta
+	Tables     []*MDTableMeta
 	charSet    string
 }
 
@@ -62,20 +64,26 @@ func (m *MDTableMeta) GetSchema() string {
 	Mydumper File Loader
 */
 type MDLoader struct {
-	dir      string
-	noSchema bool
-	dbs      map[string]*MDDatabaseMeta
-	filter   *filter.Filter
-	charSet  string
+	dir           string
+	noSchema      bool
+	dbSchemas     []fileInfo
+	tableSchemas  []fileInfo
+	tableDatas    []fileInfo
+	dbs           []*MDDatabaseMeta
+	filter        *filter.Filter
+	dbIndexMap    map[string]int
+	tableIndexMap map[filter.Table]int
+	charSet       string
 }
 
 func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	mdl := &MDLoader{
-		dir:      cfg.Mydumper.SourceDir,
-		noSchema: cfg.Mydumper.NoSchema,
-		dbs:      make(map[string]*MDDatabaseMeta),
-		filter:   filter.New(true, cfg.BWList),
-		charSet:  cfg.Mydumper.CharacterSet,
+		dir:           cfg.Mydumper.SourceDir,
+		noSchema:      cfg.Mydumper.NoSchema,
+		filter:        filter.New(false, cfg.BWList),
+		dbIndexMap:    make(map[string]int),
+		tableIndexMap: make(map[filter.Table]int),
+		charSet:       cfg.Mydumper.CharacterSet,
 	}
 
 	if err := mdl.setup(mdl.dir); err != nil {
@@ -85,6 +93,34 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 
 	return mdl, nil
 }
+
+type fileType int
+
+const (
+	fileTypeDatabaseSchema fileType = iota
+	fileTypeTableSchema
+	fileTypeTableDataSQL
+)
+
+func (ftype fileType) String() string {
+	switch ftype {
+	case fileTypeDatabaseSchema:
+		return "database schema"
+	case fileTypeTableSchema:
+		return "table schema"
+	case fileTypeTableDataSQL:
+		return "table data SQL"
+	default:
+		return "(unknown)"
+	}
+}
+
+type fileInfo struct {
+	tableName filter.Table
+	path      string
+}
+
+var tableNameRegexp = regexp.MustCompile(`^([^.]+)\.(.*?)(?:\.[0-9]+)?$`)
 
 func (l *MDLoader) setup(dir string) error {
 	/*
@@ -97,169 +133,159 @@ func (l *MDLoader) setup(dir string) error {
 		return errors.Annotatef(errDirNotExists, "dir %s", dir)
 	}
 
-	files := common.ListFiles(dir)
-
-	common.AppLogger.Debugf("Files detected : %+v", files)
+	if err := l.listFiles(dir); err != nil {
+		common.AppLogger.Errorf("list file failed : %s", err.Error())
+		return errors.Trace(err)
+	}
 
 	if !l.noSchema {
-		// DB : [table , table ...]
-		if err := l.setupDBs(files); err != nil {
-			return errors.Trace(err)
+		// setup database schema
+		if len(l.dbSchemas) == 0 {
+			return errors.Annotatef(errMissingFile, "missing {schema}-schema-create.sql")
+		}
+		for _, fileInfo := range l.dbSchemas {
+			if _, dbExists := l.insertDB(fileInfo.tableName.Schema, fileInfo.path); dbExists {
+				return errors.Errorf("invalid database schema file, duplicated item - %s", fileInfo.path)
+			}
 		}
 
-		// Table : create table ~
-		if err := l.setupTables(files); err != nil {
-			return errors.Trace(err)
+		// setup table schema
+		for _, fileInfo := range l.tableSchemas {
+			_, dbExists, tableExists := l.insertTable(fileInfo.tableName, fileInfo.path)
+			if !dbExists {
+				return errors.Errorf("invalid table schema file, cannot find db - %s", fileInfo.path)
+			} else if tableExists {
+				return errors.Errorf("invalid table schema file, duplicated item - %s", fileInfo.path)
+			}
 		}
 	}
 
 	// Sql file for restore data
-	return l.setupTablesData(files)
+	for _, fileInfo := range l.tableDatas {
+		tableMeta, dbExists, tableExists := l.insertTable(fileInfo.tableName, "")
+		if !l.noSchema {
+			if !dbExists {
+				return errors.Errorf("invalid data file, miss host db - %s", fileInfo.path)
+			} else if !tableExists {
+				return errors.Errorf("invalid data file, miss host table - %s", fileInfo.path)
+			}
+		}
+		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.path)
+	}
+	// no need to do further sorting, since `filepath.Walk` yields the paths in
+	// a deterministic (lexicographical) order, meaning the chunk order will be
+	// the same everytime (as long as the source is immutable).
+
+	return nil
+}
+
+func (l *MDLoader) listFiles(dir string) error {
+	err := filepath.Walk(dir, func(path string, f os.FileInfo, err error) error {
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if f == nil || f.IsDir() {
+			return nil
+		}
+
+		fname := strings.TrimSpace(f.Name())
+		info := fileInfo{path: path}
+
+		var (
+			ftype         fileType
+			qualifiedName string
+		)
+		switch {
+		case strings.HasSuffix(fname, "-schema-create.sql"):
+			ftype = fileTypeDatabaseSchema
+			qualifiedName = fname[:len(fname)-18] + "."
+
+		case strings.HasSuffix(fname, "-schema.sql"):
+			ftype = fileTypeTableSchema
+			qualifiedName = fname[:len(fname)-11]
+
+			// ignore functionality :
+			// 		- view
+			//		- triggers
+		case strings.HasSuffix(fname, "-schema-view.sql"),
+			strings.HasSuffix(fname, "-schema-trigger.sql"),
+			strings.HasSuffix(fname, "-schema-post.sql"):
+			common.AppLogger.Warn("[loader] ignore unsupport view/trigger:", path)
+			return nil
+		case strings.HasSuffix(fname, ".sql"):
+			ftype = fileTypeTableDataSQL
+			qualifiedName = fname[:len(fname)-4]
+		default:
+			return nil
+		}
+
+		matchRes := tableNameRegexp.FindStringSubmatch(qualifiedName)
+		if len(matchRes) != 3 {
+			common.AppLogger.Debugf("[loader] ignore almost %s file: %s", ftype, path)
+			return nil
+		}
+		info.tableName.Schema = matchRes[1]
+		info.tableName.Name = matchRes[2]
+
+		if l.shouldSkip(&info.tableName) {
+			common.AppLogger.Infof("[filter] ignoring table file %s", path)
+			return nil
+		}
+
+		switch ftype {
+		case fileTypeDatabaseSchema:
+			l.dbSchemas = append(l.dbSchemas, info)
+		case fileTypeTableSchema:
+			l.tableSchemas = append(l.tableSchemas, info)
+		case fileTypeTableDataSQL:
+			l.tableDatas = append(l.tableDatas, info)
+		}
+		return nil
+	})
+
+	return errors.Trace(err)
 }
 
 func (l *MDLoader) shouldSkip(table *filter.Table) bool {
 	return len(l.filter.ApplyOn([]*filter.Table{table})) == 0
 }
 
-func (l *MDLoader) setupDBs(files map[string]string) error {
-	for fpath, fname := range files {
-		if !strings.HasSuffix(fname, "-schema-create.sql") {
-			continue
-		}
-
-		idx := strings.Index(fname, "-schema-create.sql")
-		dbname := fname[:idx]
-		if l.shouldSkip(&filter.Table{Schema: dbname}) {
-			common.AppLogger.Infof("ignoring schema file %s", fname)
-			continue
-		}
-
-		l.dbs[dbname] = &MDDatabaseMeta{
-			Name:       dbname,
-			SchemaFile: fpath,
-			Tables:     make(map[string]*MDTableMeta),
+func (l *MDLoader) insertDB(dbName string, path string) (*MDDatabaseMeta, bool) {
+	dbIndex, ok := l.dbIndexMap[dbName]
+	if ok {
+		return l.dbs[dbIndex], true
+	} else {
+		l.dbIndexMap[dbName] = len(l.dbs)
+		ptr := &MDDatabaseMeta{
+			Name:       dbName,
+			SchemaFile: path,
 			charSet:    l.charSet,
 		}
+		l.dbs = append(l.dbs, ptr)
+		return ptr, false
 	}
-
-	if len(l.dbs) == 0 {
-		return errors.Annotatef(errMissingFile, "missing {schema}-schema-create.sql")
-	}
-
-	return nil
 }
 
-func (l *MDLoader) setupTables(files map[string]string) error {
-	for fpath, fname := range files {
-		// filepath.Base(path)
-		if !strings.HasSuffix(fname, "-schema.sql") {
-			continue
+func (l *MDLoader) insertTable(tableName filter.Table, path string) (*MDTableMeta, bool, bool) {
+	dbMeta, dbExists := l.insertDB(tableName.Schema, "")
+	tableIndex, ok := l.tableIndexMap[tableName]
+	if ok {
+		return dbMeta.Tables[tableIndex], dbExists, true
+	} else {
+		l.tableIndexMap[tableName] = len(dbMeta.Tables)
+		ptr := &MDTableMeta{
+			DB:         tableName.Schema,
+			Name:       tableName.Name,
+			SchemaFile: path,
+			DataFiles:  make([]string, 0, 16),
+			charSet:    l.charSet,
 		}
-
-		idx := strings.Index(fname, "-schema.sql")
-		name := fname[:idx]
-		fields := strings.Split(name, ".")
-		if len(fields) != 2 {
-			common.AppLogger.Warnf("invalid table schema file - %s", fpath)
-			continue
-		}
-
-		db, table := fields[0], fields[1]
-		if l.shouldSkip(&filter.Table{Schema: db, Name: table}) {
-			common.AppLogger.Infof("ignoring table file %s", fname)
-			continue
-		}
-
-		dbMeta, ok := l.dbs[db]
-		if !ok {
-			return errors.Errorf("invalid table schema file, cannot find db - %s", fpath)
-		} else if _, exists := dbMeta.Tables[table]; exists {
-			return errors.Errorf("invalid table schema file, duplicated item - %s", fpath)
-		} else {
-			dbMeta.Tables[table] = &MDTableMeta{
-				DB:         db,
-				Name:       table,
-				SchemaFile: fpath,
-				DataFiles:  make([]string, 0, 16),
-				charSet:    l.charSet,
-			}
-		}
+		dbMeta.Tables = append(dbMeta.Tables, ptr)
+		return ptr, dbExists, false
 	}
-
-	return nil
 }
 
-func (l *MDLoader) setupTablesData(files map[string]string) error {
-	for fpath, fname := range files {
-		if !strings.HasSuffix(fname, ".sql") ||
-			strings.Index(fname, "-schema.sql") >= 0 ||
-			strings.Index(fname, "-schema-create.sql") >= 0 {
-			continue
-		}
-
-		// ignore functionality :
-		// 		- view
-		//		- triggers
-		if strings.Index(fname, "-schema-view.sql") >= 0 ||
-			strings.Index(fname, "-schema-triggers.sql") >= 0 ||
-			strings.Index(fname, "-schema-post.sql") >= 0 {
-			common.AppLogger.Warnf("[loader] ignore unsupport view/trigger: %s", fpath)
-			continue
-		}
-
-		idx := strings.Index(fname, ".sql")
-		name := fname[:idx]
-		fields := strings.Split(name, ".")
-		if len(fields) < 2 {
-			common.AppLogger.Warnf("invalid db table sql file - %s", fpath)
-			continue
-		}
-
-		db, table := fields[0], fields[1]
-		if l.shouldSkip(&filter.Table{Schema: db, Name: table}) {
-			common.AppLogger.Infof("ignoring data file %s", fname)
-			continue
-		}
-
-		dbMeta, ok := l.dbs[db]
-		if !ok {
-			if !l.noSchema {
-				return errors.Errorf("invalid data sql file, miss host db - %s", fpath)
-			}
-			dbMeta = &MDDatabaseMeta{
-				Name:    db,
-				Tables:  make(map[string]*MDTableMeta),
-				charSet: l.charSet,
-			}
-			l.dbs[db] = dbMeta
-		}
-		tableMeta, ok := dbMeta.Tables[table]
-		if !ok {
-			if !l.noSchema {
-				return errors.Errorf("invalid data sql file, miss host table - %s", fpath)
-			}
-			tableMeta = &MDTableMeta{
-				DB:        db,
-				Name:      table,
-				DataFiles: make([]string, 0, 16),
-				charSet:   l.charSet,
-			}
-			dbMeta.Tables[table] = tableMeta
-		}
-		// tableMeta.Rows += l.countTableFileRows(fpath)
-		tableMeta.DataFiles = append(tableMeta.DataFiles, fpath)
-	}
-
-	// sort all tables' data files by file-name
-	for _, dbMeta := range l.dbs {
-		for _, tblMeta := range dbMeta.Tables {
-			sort.Strings(tblMeta.DataFiles)
-		}
-	}
-
-	return nil
-}
-
-func (l *MDLoader) GetDatabases() map[string]*MDDatabaseMeta {
+func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 	return l.dbs
 }

@@ -32,7 +32,7 @@ echo "Import finished"
 
 # Dump the import events, then count OpenEngine and CloseEngine events.
 # Abort if number of unbalanced OpenEngine is >= 4
-python2.7 tests/restore/count_open_engines.py
+python2.7 tests/restore/count_open_engines.py 4 40250
 
 # Verify all data are imported
 for i in $(seq "$TABLE_COUNT"); do
