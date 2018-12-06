@@ -103,7 +103,6 @@ type Checkpoint struct {
 }
 
 type Cron struct {
-	Compact     Duration `toml:"compact" json:"compact"`
 	SwitchMode  Duration `toml:"switch-mode" json:"switch-mode"`
 	LogProgress Duration `toml:"log-progress" json:"log-progress"`
 }
@@ -139,7 +138,6 @@ func NewConfig() *Config {
 			ChecksumTableConcurrency:   16,
 		},
 		Cron: Cron{
-			Compact:     Duration{Duration: 5 * time.Minute},
 			SwitchMode:  Duration{Duration: 5 * time.Minute},
 			LogProgress: Duration{Duration: 5 * time.Minute},
 		},

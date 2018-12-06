@@ -89,8 +89,6 @@ analyze = true
 
 # cron performs some periodic actions in background
 [cron]
-# how long to wait to perform a level 1 compaction
-compact = "5m"
 # duration between which Lightning will automatically refresh the import mode status.
 # should be shorter than the corresponding TiKV setting
 switch-mode = "5m"

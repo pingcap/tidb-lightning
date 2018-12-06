@@ -41,7 +41,6 @@ const (
 
 const (
 	compactStateIdle int32 = iota
-	compactStateWanted
 	compactStateDoing
 )
 
@@ -319,11 +318,9 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 }
 
 func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}) {
-	compactTicker := time.NewTicker(rc.cfg.Cron.Compact.Duration)
 	switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
 	defer func() {
-		compactTicker.Stop()
 		switchModeTicker.Stop()
 		logProgressTicker.Stop()
 	}()
@@ -340,19 +337,6 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 		case <-stop:
 			common.AppLogger.Info("Everything imported, stopping periodic actions")
 			return
-
-		case <-compactTicker.C:
-			// perform a level-1 compact if wanted.
-			if atomic.CompareAndSwapInt32(&rc.compactState, compactStateWanted, compactStateDoing) {
-				go func() {
-					err := rc.doCompact(ctx, Level1Compact)
-					if err != nil {
-						// log it and continue
-						common.AppLogger.Warnf("compact %d failed %v", Level1Compact, err)
-					}
-					atomic.StoreInt32(&rc.compactState, compactStateIdle)
-				}()
-			}
 
 		case <-switchModeTicker.C:
 			// periodically switch to import mode, as requested by TiKV 3.0
@@ -607,8 +591,17 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 			return errors.Trace(err)
 		}
 
-		// 2. scheduled for a compact level 1
-		atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateWanted)
+		// 2. perform a level-1 compact if idling.
+		if atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateDoing) {
+			go func() {
+				err := rc.doCompact(ctx, Level1Compact)
+				if err != nil {
+					// log it and continue
+					common.AppLogger.Warnf("compact %d failed %v", Level1Compact, err)
+				}
+				atomic.StoreInt32(&rc.compactState, compactStateIdle)
+			}()
+		}
 	}
 
 	setSessionConcurrencyVars(ctx, rc.tidbMgr.db, rc.cfg.TiDB)
@@ -671,7 +664,6 @@ func (rc *RestoreController) fullCompact(ctx context.Context) error {
 	// wait until any existing level-1 compact to complete first.
 	common.AppLogger.Info("Wait for existing level 1 compaction to finish")
 	start := time.Now()
-	atomic.CompareAndSwapInt32(&rc.compactState, compactStateWanted, compactStateIdle)
 	for !atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateDoing) {
 		time.Sleep(100 * time.Millisecond)
 	}
