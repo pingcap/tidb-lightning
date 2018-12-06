@@ -97,6 +97,7 @@ type Checkpoint struct {
 	Enable           bool   `toml:"enable" json:"enable"`
 	Schema           string `toml:"schema" json:"schema"`
 	DSN              string `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	Driver           string `toml:"driver" json:"driver"`
 	KeepAfterSuccess bool   `toml:"keep-after-success" json:"keep-after-success"`
 }
 
@@ -175,8 +176,16 @@ func (cfg *Config) Load() error {
 	if len(cfg.Checkpoint.Schema) == 0 {
 		cfg.Checkpoint.Schema = "tidb_lightning_checkpoint"
 	}
+	if len(cfg.Checkpoint.Driver) == 0 {
+		cfg.Checkpoint.Driver = "file"
+	}
 	if len(cfg.Checkpoint.DSN) == 0 {
-		cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw)
+		switch cfg.Checkpoint.Driver {
+		case "mysql":
+			cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw)
+		case "file":
+			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
+		}
 	}
 
 	return nil

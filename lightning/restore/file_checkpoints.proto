@@ -1,0 +1,30 @@
+syntax = "proto3";
+option go_package = "restore";
+
+message CheckpointsModel {
+    // key is table_name
+    map<string, TableCheckpointModel> checkpoints = 1;
+}
+
+message TableCheckpointModel {
+    bytes hash = 1;
+    bytes engine = 2;
+    uint32 status = 3;
+    int64 alloc_base = 4;
+    // key is "$path:$offset"
+    map<string, ChunkCheckpointModel> chunks = 5;
+}
+
+message ChunkCheckpointModel {
+    string path = 1;
+    int64 offset = 2;
+    bytes columns = 3;
+    bool should_include_row_id = 4;
+    int64 end_offset = 5;
+    int64 pos = 6;
+    int64 prev_rowid_max = 7;
+    int64 rowid_max = 8;
+    uint64 kvc_bytes = 9;
+    uint64 kvc_kvs = 10;
+    fixed64 kvc_checksum = 11;
+}

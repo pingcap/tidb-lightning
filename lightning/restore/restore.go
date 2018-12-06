@@ -142,16 +142,26 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 	if !cfg.Checkpoint.Enable {
 		return NewNullCheckpointsDB(), nil
 	}
-	db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
-	if err != nil {
-		return nil, errors.Trace(err)
+
+	switch cfg.Checkpoint.Driver {
+	case "mysql":
+		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema)
+		if err != nil {
+			db.Close()
+			return nil, errors.Trace(err)
+		}
+		return cpdb, nil
+
+	case "file":
+		return NewFileCheckpointsDB(cfg.Checkpoint.DSN), nil
+
+	default:
+		return nil, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
 	}
-	cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema)
-	if err != nil {
-		db.Close()
-		return nil, errors.Trace(err)
-	}
-	return cpdb, nil
 }
 
 func (rc *RestoreController) Wait() {

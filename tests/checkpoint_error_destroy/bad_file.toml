@@ -1,23 +1,17 @@
 [lightning]
-# pprof-port = 28423
-table-concurrency = 1
 check-requirements = false
 file = "/tmp/lightning_test_result/lightning.log"
-level = "error"
+level = "info"
 
 [checkpoint]
 enable = true
-schema = "tidb_lightning_checkpoint_test_cppk"
-driver = "mysql"
-keep-after-success = true
+driver = "file"
 
 [tikv-importer]
-addr = "127.0.0.1:20180"
+addr = "127.0.0.1:8808"
 
 [mydumper]
-data-source-dir = "/tmp/lightning_test_result/cppk.mydump"
-read-block-size = 1
-region-min-size = 1
+data-source-dir = "tests/checkpoint_error_destroy/bad-data"
 
 [tidb]
 host = "127.0.0.1"

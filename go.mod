@@ -11,6 +11,7 @@ require (
 	github.com/cznic/strutil v0.0.0-20150430124730-1eb03e3cc9d3
 	github.com/cznic/y v0.0.0-20160420101755-9fdf92d4aac0
 	github.com/go-sql-driver/mysql v1.4.0
+	github.com/gogo/protobuf v1.1.1
 	github.com/joho/sqltocsv v0.0.0-20180904231936-b24deec2b806
 	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
 	github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26

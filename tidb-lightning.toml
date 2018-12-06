@@ -28,10 +28,15 @@ max-backups = 14
 enable = true
 # The schema name (database name) to store the checkpoints
 schema = "tidb_lightning_checkpoint"
-# The data source name (DSN) in the form "USER:PASS@tcp(HOST:PORT)/".
-# If not specified, the TiDB server from the [tidb] section will be used to store the checkpoints. You could also
-# specify a different MySQL-compatible database server if you like.
-#dsn = "root@tcp(127.0.0.1:4000)/"
+# Where to store the checkpoints.
+# Set to "file" to store as a local file.
+# Set to "mysql" to store into a remote MySQL-compatible database
+driver = "file"
+# The data source name (DSN) indicating the location of the checkpoint storage.
+# For "file" driver, the DSN is a path. If not specified, Lightning would default to "/tmp/CHKPTSCHEMA.pb".
+# For "mysql" driver, the DSN is a URL in the form "USER:PASS@tcp(HOST:PORT)/".
+# If not specified, the TiDB server from the [tidb] section will be used to store the checkpoints.
+#dsn = "/tmp/tidb_lightning_checkpoint.pb"
 # Whether to keep the checkpoints after all data are imported. If false, the checkpoints will be deleted. The schema
 # needs to be dropped manually, however.
 #keep-after-success = false

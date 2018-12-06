@@ -56,3 +56,22 @@ run_sql "SELECT count(*) FROM tidb_lightning_checkpoint_test_cpch.table_v1 WHERE
 check_contains "count(*): 1"
 run_sql "SELECT count(*) FROM tidb_lightning_checkpoint_test_cpch.chunk_v3 WHERE pos = end_offset"
 check_contains "count(*): $CHUNK_COUNT"
+
+# Repeat, but using the file checkpoint
+run_sql 'DROP DATABASE IF EXISTS cpch_tsr'
+run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test_cpch'
+rm -f "$TEST_DIR/cpch.pb"
+
+set +e
+for i in $(seq "$CHUNK_COUNT"); do
+    echo "******** Importing Chunk using File checkpoint Now (step $i/$CHUNK_COUNT) ********"
+    PIDFILE="$PIDFILE" run_lightning file
+done
+set -e
+
+echo "******** Verify File checkpoint no-op ********"
+PIDFILE="$PIDFILE" run_lightning file
+run_sql 'SELECT count(i), sum(i) FROM cpch_tsr.tbl;'
+check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
+check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
+[ -f "$TEST_DIR/cpch.pb" ]
