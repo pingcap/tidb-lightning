@@ -91,3 +91,11 @@ checksum = true
 compact = true
 # if set true, analyze will do ANALYZE TABLE <table> for each table.
 analyze = true
+
+# cron performs some periodic actions in background
+[cron]
+# duration between which Lightning will automatically refresh the import mode status.
+# should be shorter than the corresponding TiKV setting
+switch-mode = "5m"
+# the duration which the an import progress will be printed to the log.
+log-progress = "5m"

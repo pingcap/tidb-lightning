@@ -1,7 +1,10 @@
 package metric
 
 import (
+	"math"
+
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 var (
@@ -156,4 +159,22 @@ func RecordTableCount(status string, err error) {
 		result = TableResultSuccess
 	}
 	TableCounter.WithLabelValues(status, result).Inc()
+}
+
+// ReadCounter reports the current value of the counter.
+func ReadCounter(counter prometheus.Counter) float64 {
+	var metric dto.Metric
+	if err := counter.Write(&metric); err != nil {
+		return math.NaN()
+	}
+	return metric.Counter.GetValue()
+}
+
+// ReadCounter reports the sum of all observed values in the histogram.
+func ReadHistogramSum(histogram prometheus.Histogram) float64 {
+	var metric dto.Metric
+	if err := histogram.Write(&metric); err != nil {
+		return math.NaN()
+	}
+	return metric.Histogram.GetSampleSum()
 }

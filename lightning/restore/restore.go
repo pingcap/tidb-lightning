@@ -39,6 +39,11 @@ const (
 	defaultGCLifeTime = 100 * time.Hour
 )
 
+const (
+	compactStateIdle int32 = iota
+	compactStateDoing
+)
+
 var (
 	requiredTiDBVersion = *semver.New("2.0.4")
 	requiredPDVersion   = *semver.New("2.0.4")
@@ -95,6 +100,7 @@ type RestoreController struct {
 	tidbMgr         *TiDBManager
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 	alterTableLock  sync.Mutex
+	compactState    int32
 
 	errorSummaries errorSummaries
 
@@ -177,7 +183,6 @@ func (rc *RestoreController) Run(ctx context.Context) error {
 	timer := time.Now()
 	opts := []func(context.Context) error{
 		rc.checkRequirements,
-		rc.switchToImportMode,
 		rc.restoreSchema,
 		rc.restoreTables,
 		rc.fullCompact,
@@ -196,7 +201,7 @@ outside:
 			err = nil
 			break outside
 		default:
-			common.AppLogger.Errorf("run cause error : %s", errors.ErrorStack(err))
+			common.AppLogger.Errorf("run cause error : %v", err)
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			break outside // ps : not continue
 		}
@@ -263,7 +268,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 			}
 		}
 	}
-	metric.ChunkCounter.WithLabelValues("estimated").Add(float64(estimatedChunkCount))
+	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(float64(estimatedChunkCount))
 }
 
 func (rc *RestoreController) saveStatusCheckpoint(tableName string, err error, statusIfSucceed CheckpointStatus) {
@@ -322,6 +327,60 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 	}
 }
 
+func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}) {
+	switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
+	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
+	defer func() {
+		switchModeTicker.Stop()
+		logProgressTicker.Stop()
+	}()
+
+	rc.switchToImportMode(ctx)
+
+	start := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			common.AppLogger.Warnf("Stopping periodic actions due to %v", ctx.Err())
+			return
+		case <-stop:
+			common.AppLogger.Info("Everything imported, stopping periodic actions")
+			return
+
+		case <-switchModeTicker.C:
+			// periodically switch to import mode, as requested by TiKV 3.0
+			rc.switchToImportMode(ctx)
+
+		case <-logProgressTicker.C:
+			// log the current progress periodically, so OPS will know that we're still working
+			nanoseconds := float64(time.Since(start).Nanoseconds())
+			estimated := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
+			finished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
+			totalTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
+			completedTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStateCompleted, metric.TableResultSuccess))
+			bytesRead := metric.ReadHistogramSum(metric.BlockReadBytesHistogram)
+
+			var remaining string
+			if finished >= estimated {
+				remaining = ", post-processing"
+			} else if finished > 0 {
+				remainNanoseconds := (estimated/finished - 1) * nanoseconds
+				remaining = fmt.Sprintf(", remaining %s", time.Duration(remainNanoseconds).Round(time.Second))
+			}
+
+			// Note: a speed of 28 MiB/s roughly corresponds to 100 GiB/hour.
+			common.AppLogger.Infof(
+				"progress: %.0f/%.0f chunks (%.1f%%), %.0f/%.0f tables (%.1f%%), speed %.2f MiB/s%s",
+				finished, estimated, finished/estimated*100,
+				completedTables, totalTables, completedTables/totalTables*100,
+				bytesRead/(1048576e-9*nanoseconds),
+				remaining,
+			)
+		}
+	}
+}
+
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	timer := time.Now()
 	var wg sync.WaitGroup
@@ -330,6 +389,9 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		restoreErrLock sync.Mutex
 		restoreErr     error
 	)
+
+	stopPeriodicActions := make(chan struct{}, 1)
+	go rc.runPeriodicActions(ctx, stopPeriodicActions)
 
 	for dbName, dbMeta := range rc.dbMetas {
 		dbInfo, ok := rc.dbInfos[dbName]
@@ -393,6 +455,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	}
 
 	wg.Wait()
+	stopPeriodicActions <- struct{}{}
 	common.AppLogger.Infof("restore all tables data takes %v", time.Since(timer))
 
 	restoreErrLock.Lock()
@@ -538,11 +601,16 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 			return errors.Trace(err)
 		}
 
-		// 2. compact level 1
-		err = rc.doCompact(ctx, Level1Compact)
-		if err != nil {
-			// log it and continue
-			common.AppLogger.Warnf("[%s] do compact %d failed err %v", t.tableName, Level1Compact, errors.ErrorStack(err))
+		// 2. perform a level-1 compact if idling.
+		if atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateDoing) {
+			go func() {
+				err := rc.doCompact(ctx, Level1Compact)
+				if err != nil {
+					// log it and continue
+					common.AppLogger.Warnf("compact %d failed %v", Level1Compact, err)
+				}
+				atomic.StoreInt32(&rc.compactState, compactStateIdle)
+			}()
 		}
 	}
 
@@ -570,7 +638,7 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 			rc.saveStatusCheckpoint(t.tableName, nil, CheckpointStatusChecksumSkipped)
 		} else {
 			err := t.compareChecksum(ctx, rc.tidbMgr.db, cp)
-			rc.saveStatusCheckpoint(t.tableName, nil, CheckpointStatusChecksummed)
+			rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusChecksummed)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
 				return errors.Trace(err)
@@ -603,6 +671,14 @@ func (rc *RestoreController) fullCompact(ctx context.Context) error {
 		return nil
 	}
 
+	// wait until any existing level-1 compact to complete first.
+	common.AppLogger.Info("Wait for existing level 1 compaction to finish")
+	start := time.Now()
+	for !atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateDoing) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	common.AppLogger.Infof("Wait for existing level 1 compaction to finish takes %v", time.Since(start))
+
 	return errors.Trace(rc.doCompact(ctx, FullLevelCompact))
 }
 
@@ -610,16 +686,19 @@ func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
 	return errors.Trace(rc.importer.Compact(ctx, level))
 }
 
-func (rc *RestoreController) switchToImportMode(ctx context.Context) error {
-	return errors.Trace(rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import))
+func (rc *RestoreController) switchToImportMode(ctx context.Context) {
+	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
 }
 
 func (rc *RestoreController) switchToNormalMode(ctx context.Context) error {
-	return errors.Trace(rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal))
+	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
+	return nil
 }
 
-func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) error {
-	return errors.Trace(rc.importer.SwitchMode(ctx, mode))
+func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
+	if err := rc.importer.SwitchMode(ctx, mode); err != nil {
+		common.AppLogger.Warnf("cannot switch to %s mode: %v", mode.String(), err)
+	}
 }
 
 func (rc *RestoreController) checkRequirements(_ context.Context) error {
