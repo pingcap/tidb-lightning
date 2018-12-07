@@ -138,3 +138,25 @@ analyze = true
 switch-mode = "5m"
 # the duration which the an import progress will be printed to the log.
 log-progress = "5m"
+
+## Table filter options. See the documentation for details
+# [black-white-list]
+# do-dbs = ["patterns"]
+# ignore-dbs = ["patterns"]
+#
+# [[black-white-list.do-tables]]
+# db-name = "db-pattern"
+# table-name = "table-pattern"
+#
+# [[black-white-list.ignore-tables]]
+# db-name = "db-pattern"
+# table-name = "table-pattern"
+
+## Rules to rename existing databases/tables and possibly merge them together.
+## The patterns support wildcards with `*` and `?`.
+## Routes are applied _after_ black-white-list.
+# [[routes]]
+# schema-pattern = "shard_db_*"
+# table-pattern = "shard_table_*"
+# target-schema = "shard_db"
+# target-table = "shard_table"
