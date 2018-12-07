@@ -64,29 +64,37 @@ func (m *MDTableMeta) GetSchema() string {
 	Mydumper File Loader
 */
 type MDLoader struct {
-	dir           string
-	noSchema      bool
+	dir      string
+	noSchema bool
+	dbs      []*MDDatabaseMeta
+	filter   *filter.Filter
+	charSet  string
+}
+
+type mdLoaderSetup struct {
+	loader        *MDLoader
 	dbSchemas     []fileInfo
 	tableSchemas  []fileInfo
 	tableDatas    []fileInfo
-	dbs           []*MDDatabaseMeta
-	filter        *filter.Filter
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
-	charSet       string
 }
 
 func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	mdl := &MDLoader{
-		dir:           cfg.Mydumper.SourceDir,
-		noSchema:      cfg.Mydumper.NoSchema,
-		filter:        filter.New(false, cfg.BWList),
-		dbIndexMap:    make(map[string]int),
-		tableIndexMap: make(map[filter.Table]int),
-		charSet:       cfg.Mydumper.CharacterSet,
+		dir:      cfg.Mydumper.SourceDir,
+		noSchema: cfg.Mydumper.NoSchema,
+		filter:   filter.New(false, cfg.BWList),
+		charSet:  cfg.Mydumper.CharacterSet,
 	}
 
-	if err := mdl.setup(mdl.dir); err != nil {
+	setup := mdLoaderSetup{
+		loader:        mdl,
+		dbIndexMap:    make(map[string]int),
+		tableIndexMap: make(map[filter.Table]int),
+	}
+
+	if err := setup.setup(mdl.dir); err != nil {
 		// common.AppLogger.Errorf("init mydumper loader failed : %s\n", err.Error())
 		return nil, errors.Trace(err)
 	}
@@ -122,7 +130,17 @@ type fileInfo struct {
 
 var tableNameRegexp = regexp.MustCompile(`^([^.]+)\.(.*?)(?:\.[0-9]+)?$`)
 
-func (l *MDLoader) setup(dir string) error {
+// setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
+//
+// The database and tables are inserted in a consistent order, so creating an
+// MDLoader twice with the same data source is going to produce the same array,
+// even after killing Lightning.
+//
+// This is achieved by using `filepath.Walk` internally which guarantees the
+// files are visited in lexicographical order (note that this does not mean the
+// databases and tables in the end are ordered lexicographically since they may
+// be stored in different subdirectories).
+func (s *mdLoaderSetup) setup(dir string) error {
 	/*
 		Mydumper file names format
 			db    —— {db}-schema-create.sql
@@ -133,25 +151,25 @@ func (l *MDLoader) setup(dir string) error {
 		return errors.Annotatef(errDirNotExists, "dir %s", dir)
 	}
 
-	if err := l.listFiles(dir); err != nil {
+	if err := s.listFiles(dir); err != nil {
 		common.AppLogger.Errorf("list file failed : %s", err.Error())
 		return errors.Trace(err)
 	}
 
-	if !l.noSchema {
+	if !s.loader.noSchema {
 		// setup database schema
-		if len(l.dbSchemas) == 0 {
+		if len(s.dbSchemas) == 0 {
 			return errors.Annotatef(errMissingFile, "missing {schema}-schema-create.sql")
 		}
-		for _, fileInfo := range l.dbSchemas {
-			if _, dbExists := l.insertDB(fileInfo.tableName.Schema, fileInfo.path); dbExists {
+		for _, fileInfo := range s.dbSchemas {
+			if _, dbExists := s.insertDB(fileInfo.tableName.Schema, fileInfo.path); dbExists {
 				return errors.Errorf("invalid database schema file, duplicated item - %s", fileInfo.path)
 			}
 		}
 
 		// setup table schema
-		for _, fileInfo := range l.tableSchemas {
-			_, dbExists, tableExists := l.insertTable(fileInfo.tableName, fileInfo.path)
+		for _, fileInfo := range s.tableSchemas {
+			_, dbExists, tableExists := s.insertTable(fileInfo.tableName, fileInfo.path)
 			if !dbExists {
 				return errors.Errorf("invalid table schema file, cannot find db - %s", fileInfo.path)
 			} else if tableExists {
@@ -161,9 +179,9 @@ func (l *MDLoader) setup(dir string) error {
 	}
 
 	// Sql file for restore data
-	for _, fileInfo := range l.tableDatas {
-		tableMeta, dbExists, tableExists := l.insertTable(fileInfo.tableName, "")
-		if !l.noSchema {
+	for _, fileInfo := range s.tableDatas {
+		tableMeta, dbExists, tableExists := s.insertTable(fileInfo.tableName, "")
+		if !s.loader.noSchema {
 			if !dbExists {
 				return errors.Errorf("invalid data file, miss host db - %s", fileInfo.path)
 			} else if !tableExists {
@@ -172,14 +190,14 @@ func (l *MDLoader) setup(dir string) error {
 		}
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.path)
 	}
-	// no need to do further sorting, since `filepath.Walk` yields the paths in
-	// a deterministic (lexicographical) order, meaning the chunk order will be
-	// the same everytime (as long as the source is immutable).
 
 	return nil
 }
 
-func (l *MDLoader) listFiles(dir string) error {
+func (s *mdLoaderSetup) listFiles(dir string) error {
+	// `filepath.Walk` yields the paths in a deterministic (lexicographical) order,
+	// meaning the file and chunk orders will be the same everytime it is called
+	// (as long as the source is immutable).
 	err := filepath.Walk(dir, func(path string, f os.FileInfo, err error) error {
 		if err != nil {
 			return errors.Trace(err)
@@ -228,18 +246,18 @@ func (l *MDLoader) listFiles(dir string) error {
 		info.tableName.Schema = matchRes[1]
 		info.tableName.Name = matchRes[2]
 
-		if l.shouldSkip(&info.tableName) {
+		if s.loader.shouldSkip(&info.tableName) {
 			common.AppLogger.Infof("[filter] ignoring table file %s", path)
 			return nil
 		}
 
 		switch ftype {
 		case fileTypeDatabaseSchema:
-			l.dbSchemas = append(l.dbSchemas, info)
+			s.dbSchemas = append(s.dbSchemas, info)
 		case fileTypeTableSchema:
-			l.tableSchemas = append(l.tableSchemas, info)
+			s.tableSchemas = append(s.tableSchemas, info)
 		case fileTypeTableDataSQL:
-			l.tableDatas = append(l.tableDatas, info)
+			s.tableDatas = append(s.tableDatas, info)
 		}
 		return nil
 	})
@@ -251,35 +269,35 @@ func (l *MDLoader) shouldSkip(table *filter.Table) bool {
 	return len(l.filter.ApplyOn([]*filter.Table{table})) == 0
 }
 
-func (l *MDLoader) insertDB(dbName string, path string) (*MDDatabaseMeta, bool) {
-	dbIndex, ok := l.dbIndexMap[dbName]
+func (s *mdLoaderSetup) insertDB(dbName string, path string) (*MDDatabaseMeta, bool) {
+	dbIndex, ok := s.dbIndexMap[dbName]
 	if ok {
-		return l.dbs[dbIndex], true
+		return s.loader.dbs[dbIndex], true
 	} else {
-		l.dbIndexMap[dbName] = len(l.dbs)
+		s.dbIndexMap[dbName] = len(s.loader.dbs)
 		ptr := &MDDatabaseMeta{
 			Name:       dbName,
 			SchemaFile: path,
-			charSet:    l.charSet,
+			charSet:    s.loader.charSet,
 		}
-		l.dbs = append(l.dbs, ptr)
+		s.loader.dbs = append(s.loader.dbs, ptr)
 		return ptr, false
 	}
 }
 
-func (l *MDLoader) insertTable(tableName filter.Table, path string) (*MDTableMeta, bool, bool) {
-	dbMeta, dbExists := l.insertDB(tableName.Schema, "")
-	tableIndex, ok := l.tableIndexMap[tableName]
+func (s *mdLoaderSetup) insertTable(tableName filter.Table, path string) (*MDTableMeta, bool, bool) {
+	dbMeta, dbExists := s.insertDB(tableName.Schema, "")
+	tableIndex, ok := s.tableIndexMap[tableName]
 	if ok {
 		return dbMeta.Tables[tableIndex], dbExists, true
 	} else {
-		l.tableIndexMap[tableName] = len(dbMeta.Tables)
+		s.tableIndexMap[tableName] = len(dbMeta.Tables)
 		ptr := &MDTableMeta{
 			DB:         tableName.Schema,
 			Name:       tableName.Name,
 			SchemaFile: path,
 			DataFiles:  make([]string, 0, 16),
-			charSet:    l.charSet,
+			charSet:    s.loader.charSet,
 		}
 		dbMeta.Tables = append(dbMeta.Tables, ptr)
 		return ptr, dbExists, false
