@@ -99,7 +99,7 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		safeCreateTable := createTableIfNotExistsStmt(sqlCreateTable)
+		safeCreateTable := createTableIfNotExistsStmt(sqlCreateTable, tbl)
 		sql2 := common.SQLWithRetry{
 			DB:           timgr.db,
 			Logger:       sql.Logger.With(zap.String("table", common.UniqueTable(database, tbl))),
@@ -115,15 +115,20 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 	return errors.Trace(err)
 }
 
-var createTableRegexp = regexp.MustCompile(`(?i)CREATE TABLE( IF NOT EXISTS)?`)
+var createTableRegexp = regexp.MustCompile(
+	`(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?` +
+		"(?:[0-9a-z$_\u0080-\U0010ffff]+|\"(?:[^\"]|\"\"|\\.)*\"|`(?:[^`]|``)*`)",
+)
 
-func createTableIfNotExistsStmt(createTable string) string {
-	indices := createTableRegexp.FindStringSubmatchIndex(createTable)
-	// if the " IF NOT EXISTS" group is missing, that submatch will be empty.
-	if len(indices) == 4 && indices[2] == indices[3] {
-		before := createTable[:indices[1]]
-		after := createTable[indices[1]:]
-		createTable = before + " IF NOT EXISTS " + after
+func createTableIfNotExistsStmt(createTable, tblName string) string {
+	if loc := createTableRegexp.FindStringIndex(createTable); len(loc) == 2 {
+		var res strings.Builder
+		res.Grow(len(createTable))
+		res.WriteString(createTable[:loc[0]])
+		res.WriteString("CREATE TABLE IF NOT EXISTS ")
+		common.WriteMySQLIdentifier(&res, tblName)
+		res.WriteString(createTable[loc[1]:])
+		return res.String()
 	}
 	return createTable
 }
