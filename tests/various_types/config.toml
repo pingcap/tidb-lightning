@@ -1,5 +1,5 @@
 [lightning]
-check-requirements = false
+check-requirements = true
 file = "/tmp/lightning_test_result/lightning.log"
 level = "warning"
 

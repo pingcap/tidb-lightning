@@ -45,9 +45,9 @@ const (
 )
 
 var (
-	requiredTiDBVersion = *semver.New("2.0.4")
-	requiredPDVersion   = *semver.New("2.0.4")
-	requiredTiKVVersion = *semver.New("2.0.4")
+	requiredTiDBVersion = *semver.New("2.1.0")
+	requiredPDVersion   = *semver.New("2.1.0")
+	requiredTiKVVersion = *semver.New("2.1.0")
 )
 
 func init() {
@@ -711,14 +711,11 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 	if err := rc.checkTiDBVersion(client); err != nil {
 		return errors.Trace(err)
 	}
-	// TODO: Reenable the PD/TiKV version check after we upgrade the dependency to 2.1.
 	if err := rc.checkPDVersion(client); err != nil {
-		// return errors.Trace(err)
-		common.AppLogger.Infof("PD version check failed: %v", err)
+		return errors.Trace(err)
 	}
 	if err := rc.checkTiKVVersion(client); err != nil {
-		// return errors.Trace(err)
-		common.AppLogger.Infof("TiKV version check failed: %v", err)
+		return errors.Trace(err)
 	}
 
 	return nil
