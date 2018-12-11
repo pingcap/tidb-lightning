@@ -93,8 +93,8 @@ func ExportStatement(sqlFile string, characterSet string) ([]byte, error) {
 
 		buffer = append(buffer, []byte(line)...)
 		if buffer[len(buffer)-1] == ';' {
-			statment := string(buffer)
-			if !(strings.HasPrefix(statment, "/*") && strings.HasSuffix(statment, "*/;")) {
+			statement := string(buffer)
+			if !(strings.HasPrefix(statement, "/*") && strings.HasSuffix(statement, "*/;")) {
 				data = append(data, buffer...)
 			}
 			buffer = buffer[:0]
@@ -145,7 +145,7 @@ func NewMDDataReader(file string, offset int64) (*MDDataReader, error) {
 		fsize:      fstat.Size(),
 		file:       file,
 		start:      offset,
-		stmtHeader: getInsertStatmentHeader(file),
+		stmtHeader: getInsertStatementHeader(file),
 	}
 
 	if len(mdr.stmtHeader) == 0 {
@@ -212,7 +212,7 @@ func (r *MDDataReader) currOffset() int64 {
 	return off
 }
 
-func getInsertStatmentHeader(file string) []byte {
+func getInsertStatementHeader(file string) []byte {
 	f, err := os.Open(file)
 	if err != nil {
 		common.AppLogger.Errorf("open file failed (%s) : %v", file, err)
@@ -267,7 +267,7 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 				return
 			}
 			if sqlLen == len(r.stmtHeader) {
-				return // ps : empty sql statment without any actual values ~
+				return // ps : empty sql statement without any actual values ~
 			}
 
 			// check suffix
@@ -293,7 +293,7 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 			(...);
 		'''
 	*/
-	var statment = make([]byte, 0, minSize+4096)
+	var statement = make([]byte, 0, minSize+4096)
 	var readSize, lineSize int64
 	var line []byte
 	var err error
@@ -317,14 +317,14 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 				continue
 			}
 
-			if len(statment) == 0 && !bytes.HasPrefix(line, r.stmtHeader) {
-				statment = append(statment, r.stmtHeader...)
+			if len(statement) == 0 && !bytes.HasPrefix(line, r.stmtHeader) {
+				statement = append(statement, r.stmtHeader...)
 			}
-			statment = append(statment, line...)
+			statement = append(statement, line...)
 
-			if statment[len(statment)-1] == ';' {
-				appendSQL(statment)
-				statment = make([]byte, 0, minSize+4096)
+			if statement[len(statement)-1] == ';' {
+				appendSQL(statement)
+				statement = make([]byte, 0, minSize+4096)
 			}
 		}
 
@@ -335,8 +335,8 @@ func (r *MDDataReader) Read(minSize int64) ([][]byte, error) {
 		}
 	}
 
-	if len(statment) > 0 {
-		appendSQL(statment)
+	if len(statement) > 0 {
+		appendSQL(statement)
 	}
 
 	return stmts, nil

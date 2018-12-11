@@ -172,12 +172,12 @@ func (s *testParserSuite) testParseRealFile(c *C) {
 			defer reader.Close()
 
 			for {
-				statments, err := reader.Read(4 * 1024)
+				statements, err := reader.Read(4 * 1024)
 				if errors.Cause(err) == io.EOF {
 					break
 				}
 
-				for _, sql := range statments {
+				for _, sql := range statements {
 					sql2storage(c, sql, store)
 				}
 			}
