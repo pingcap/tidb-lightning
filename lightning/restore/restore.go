@@ -92,7 +92,7 @@ func (es *errorSummaries) record(tableName string, err error, status CheckpointS
 
 type RestoreController struct {
 	cfg             *config.Config
-	dbMetas         map[string]*mydump.MDDatabaseMeta
+	dbMetas         []*mydump.MDDatabaseMeta
 	dbInfos         map[string]*TidbDBInfo
 	tableWorkers    *RestoreWorkerPool
 	regionWorkers   *RestoreWorkerPool
@@ -109,7 +109,7 @@ type RestoreController struct {
 	checkpointsWg sync.WaitGroup
 }
 
-func NewRestoreController(ctx context.Context, dbMetas map[string]*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
+func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
 	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -222,14 +222,14 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	defer tidbMgr.Close()
 
 	if !rc.cfg.Mydumper.NoSchema {
-		for db, dbMeta := range rc.dbMetas {
+		for _, dbMeta := range rc.dbMetas {
 			timer := time.Now()
 			common.AppLogger.Infof("restore table schema for `%s`", dbMeta.Name)
 			tablesSchema := make(map[string]string)
-			for tbl, tblMeta := range dbMeta.Tables {
-				tablesSchema[tbl] = tblMeta.GetSchema()
+			for _, tblMeta := range dbMeta.Tables {
+				tablesSchema[tblMeta.Name] = tblMeta.GetSchema()
 			}
-			err = tidbMgr.InitSchema(ctx, db, tablesSchema)
+			err = tidbMgr.InitSchema(ctx, dbMeta.Name, tablesSchema)
 			if err != nil {
 				return errors.Errorf("db schema failed to init : %v", err)
 			}
@@ -393,16 +393,16 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	stopPeriodicActions := make(chan struct{}, 1)
 	go rc.runPeriodicActions(ctx, stopPeriodicActions)
 
-	for dbName, dbMeta := range rc.dbMetas {
-		dbInfo, ok := rc.dbInfos[dbName]
+	for _, dbMeta := range rc.dbMetas {
+		dbInfo, ok := rc.dbInfos[dbMeta.Name]
 		if !ok {
-			common.AppLogger.Errorf("database %s not found in rc.dbInfos", dbName)
+			common.AppLogger.Errorf("database %s not found in rc.dbInfos", dbMeta.Name)
 			continue
 		}
-		for tbl, tableMeta := range dbMeta.Tables {
-			tableInfo, ok := dbInfo.Tables[tbl]
+		for _, tableMeta := range dbMeta.Tables {
+			tableInfo, ok := dbInfo.Tables[tableMeta.Name]
 			if !ok {
-				return errors.Errorf("table info %s not found", tbl)
+				return errors.Errorf("table info %s not found", tableMeta.Name)
 			}
 
 			select {
@@ -839,8 +839,8 @@ func (rc *RestoreController) getTables() []string {
 	tables := make([]string, 0, numOfTables)
 
 	for _, dbMeta := range rc.dbMetas {
-		for tbl := range dbMeta.Tables {
-			tables = append(tables, common.UniqueTable(dbMeta.Name, tbl))
+		for _, tableMeta := range dbMeta.Tables {
+			tables = append(tables, common.UniqueTable(dbMeta.Name, tableMeta.Name))
 		}
 	}
 

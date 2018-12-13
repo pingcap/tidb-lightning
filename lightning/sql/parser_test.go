@@ -161,7 +161,7 @@ func (s *testParserSuite) testParseRealFile(c *C) {
 	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "../mydump/examples"}}
 	loader, err := NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)
-	dbMeta := loader.GetDatabases()["mocker_test"]
+	dbMeta := loader.GetDatabases()[0]
 	for _, tblMeta := range dbMeta.Tables {
 		sqlCreteTable, _ := ExportStatement(tblMeta.SchemaFile, "auto")
 		store.init(string(sqlCreteTable))

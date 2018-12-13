@@ -77,3 +77,6 @@ run_sql "$PARTIAL_IMPORT_QUERY"
 check_contains "s: $(( (1000 * $CHUNK_COUNT + 1001) * $CHUNK_COUNT * $TABLE_COUNT ))"
 run_sql "SELECT count(*) FROM tidb_lightning_checkpoint_test_cppk.table_v1 WHERE status >= 200"
 check_contains "count(*): $TABLE_COUNT"
+
+# Ensure every restart won't open more engines.
+python2.7 tests/restore/count_open_engines.py 1 38227

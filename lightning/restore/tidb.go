@@ -146,16 +146,16 @@ func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error
 	return errors.Trace(common.ExecWithRetry(ctx, timgr.db, query, query))
 }
 
-func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas map[string]*mydump.MDDatabaseMeta) (map[string]*TidbDBInfo, error) {
+func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.MDDatabaseMeta) (map[string]*TidbDBInfo, error) {
 	result := make(map[string]*TidbDBInfo, len(schemas))
-	for schema := range schemas {
-		tables, err := timgr.getTables(schema)
+	for _, schema := range schemas {
+		tables, err := timgr.getTables(schema.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
 		dbInfo := &TidbDBInfo{
-			Name:   schema,
+			Name:   schema.Name,
 			Tables: make(map[string]*TidbTableInfo),
 		}
 
@@ -166,7 +166,7 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas map[string
 				metric.RecordTableCount(metric.TableStatePending, err)
 				return nil, err
 			}
-			createTableStmt, err := timgr.getCreateTableStmt(ctx, schema, tableName)
+			createTableStmt, err := timgr.getCreateTableStmt(ctx, schema.Name, tableName)
 			metric.RecordTableCount(metric.TableStatePending, err)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -182,7 +182,7 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas map[string
 			dbInfo.Tables[tableName] = tableInfo
 		}
 
-		result[schema] = dbInfo
+		result[schema.Name] = dbInfo
 	}
 	return result, nil
 }
