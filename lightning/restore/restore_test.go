@@ -16,7 +16,7 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 		errRegexp  string
 	}{
 		{"t1", "CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", ""},
-		{"t2", "CREATE TABLE `t2` (`c1` varchar(30000) NOT NULL)", "failed to ExecDDLSQL.*"},
+		{"t2", "CREATE TABLE `t2` (`c1` varchar(30000) NOT NULL)", "failed to ExecDDLSQL `mockdb`.`t2`:.*"},
 	}
 
 	dbInfo := &TidbDBInfo{Name: "mockdb", Tables: map[string]*TidbTableInfo{}}
@@ -35,7 +35,7 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 			c.Assert(err, ErrorMatches, tc.errRegexp)
 		} else {
 			c.Assert(tr, NotNil)
-			c.Assert(err, Equals, nil)
+			c.Assert(err, IsNil)
 		}
 	}
 }
