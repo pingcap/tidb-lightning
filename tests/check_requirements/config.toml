@@ -1,0 +1,23 @@
+[lightning]
+check-requirements = true
+file = "/tmp/lightning_test_result/lightning.log"
+level = "warning"
+
+[tikv-importer]
+addr = "127.0.0.1:8808"
+
+[mydumper]
+data-source-dir = "tests/check_requirements/data"
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+log-level = "error"
+
+[post-restore]
+checksum = false
+compact = false
+analyze = false
