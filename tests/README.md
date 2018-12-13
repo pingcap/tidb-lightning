@@ -30,9 +30,8 @@ Run `make test` to execute the unit tests.
 Run `make integration_test` to execute the integration tests. This command will
 
 1. Check that all 4 executables exist.
-2. Build a `tidb-lightning` executable for collecting code coverage
-3. Build the `importer_proxy` executable for capturing gRPC calls to tikv-importer
-4. Execute `tests/run.sh`
+2. Build a `tidb-lightning` executable for collecting code coverage with failpoint support
+3. Execute `tests/run.sh`
 
 If the first three steps are done before, you could also run `tests/run.sh` directly.
 This script will

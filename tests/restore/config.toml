@@ -5,7 +5,7 @@ file = "/tmp/lightning_test_result/lightning.log"
 level = "warning"
 
 [tikv-importer]
-addr = "127.0.0.1:20170"
+addr = "127.0.0.1:8808"
 
 [mydumper]
 data-source-dir = "/tmp/lightning_test_result/restore.mydump"
