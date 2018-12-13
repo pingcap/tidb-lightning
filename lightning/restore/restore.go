@@ -935,12 +935,12 @@ func NewTableRestore(
 	idAlloc := kv.NewPanickingAllocator(cp.AllocBase)
 	encoder, err := kvenc.New(dbInfo.Name, idAlloc)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotatef(err, "failed to kvenc.New %s", tableName)
 	}
 	// create table in encoder.
 	err = encoder.ExecDDLSQL(tableInfo.CreateTableStmt)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotatef(err, "failed to ExecDDLSQL %s", tableName)
 	}
 
 	return &TableRestore{
