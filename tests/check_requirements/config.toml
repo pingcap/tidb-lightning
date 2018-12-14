@@ -7,7 +7,7 @@ level = "warning"
 addr = "127.0.0.1:8808"
 
 [mydumper]
-data-source-dir = "tests/various_types/data"
+data-source-dir = "tests/check_requirements/data"
 
 [tidb]
 host = "127.0.0.1"
@@ -18,6 +18,6 @@ pd-addr = "127.0.0.1:2379"
 log-level = "error"
 
 [post-restore]
-checksum = true
-compact = true
-analyze = true
+checksum = false
+compact = false
+analyze = false
