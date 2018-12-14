@@ -79,7 +79,7 @@ func (kvcodec *TableKVEncoder) init(sqlMode string) error {
 		reserve := (encodeBatchRows * kvcodec.columns) << 1 // TODO : rows x ( cols + indices )
 		kvcodec.bufValues = make([]interface{}, 0, reserve)
 
-		stmtIds, err := kvcodec.makeStatments(encodeBatchRows)
+		stmtIds, err := kvcodec.makeStatements(encodeBatchRows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -89,10 +89,10 @@ func (kvcodec *TableKVEncoder) init(sqlMode string) error {
 	return nil
 }
 
-func (kvcodec *TableKVEncoder) makeStatments(maxRows int) ([]uint32, error) {
+func (kvcodec *TableKVEncoder) makeStatements(maxRows int) ([]uint32, error) {
 	stmtIds := make([]uint32, maxRows+1)
 	for rows := 1; rows <= maxRows; rows++ {
-		stmtID, err := kvcodec.prepareStatment(rows)
+		stmtID, err := kvcodec.prepareStatement(rows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -109,7 +109,7 @@ func (kvcodec *TableKVEncoder) Close() error {
 
 func (kvcodec *TableKVEncoder) SQL2KV(sql string) ([]kvec.KvPair, uint64, error) {
 	if PrepareStmtMode {
-		// via prepare statment
+		// via prepare statement
 		kvPairs, rowsAffected, err := kvcodec.encodeViaPstmt([]byte(sql))
 		if err == nil {
 			return kvPairs, rowsAffected, nil
@@ -185,10 +185,10 @@ func (kvcodec *TableKVEncoder) applyStmtID(rows int) (uint32, error) {
 		return kvcodec.stmtIds[rows], nil
 	}
 
-	return kvcodec.prepareStatment(rows)
+	return kvcodec.prepareStatement(rows)
 }
 
-func (kvcodec *TableKVEncoder) prepareStatment(rows int) (uint32, error) {
+func (kvcodec *TableKVEncoder) prepareStatement(rows int) (uint32, error) {
 	stmt := sqltool.MakePrepareStatement(kvcodec.table, kvcodec.columns, rows)
 	stmtID, err := kvcodec.encoder.PrepareStmt(stmt)
 	if err != nil {
