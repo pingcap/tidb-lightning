@@ -2,6 +2,7 @@
 
 set -eu
 
+run_sql "DROP DATABASE IF EXISTS noschema;"
 run_lightning schema_config
 run_sql "show databases"
 check_not_contains "noschema"
