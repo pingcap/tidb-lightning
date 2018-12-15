@@ -40,7 +40,7 @@ func BenchmarkTableKVEncoder_SQL2KV(b *testing.B) {
 	}
 
 	sql := string(sqlContent)
-	kvs, effectedRows, err := encoder.SQL2KV(sql)
+	kvs, affectRows, err := encoder.SQL2KV(sql)
 	if err != nil {
 		b.Fatalf("encoder.SQL2KV: %v", err)
 	}
@@ -49,7 +49,7 @@ func BenchmarkTableKVEncoder_SQL2KV(b *testing.B) {
 		bytes += len(kv.Key)
 		bytes += len(kv.Val)
 	}
-	b.Logf("Kvs: %d, effectedRows: %d, bytes: %d", len(kvs), effectedRows, bytes)
+	b.Logf("Kvs: %d, affectRows: %d, bytes: %d", len(kvs), affectRows, bytes)
 
 	b.ReportAllocs()
 	b.ResetTimer()
