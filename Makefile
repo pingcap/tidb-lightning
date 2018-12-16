@@ -76,8 +76,12 @@ lightning_for_integration_test:
 	$(GOFAIL_ENABLE)
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
-		-o bin/tidb-lightning.test \
+		-o $(LIGHTNING_BIN).test \
 		github.com/pingcap/tidb-lightning/cmd
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb-lightning/... \
+		-o $(LIGHTNING_CTL_BIN).test \
+		github.com/pingcap/tidb-lightning/cmd/tidb-lightning-ctl
 	$(GOFAIL_DISABLE)
 
 integration_test: lightning_for_integration_test
