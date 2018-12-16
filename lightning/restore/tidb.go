@@ -101,34 +101,6 @@ func safeCreateTable(ctx context.Context, db *sql.DB, createTable string) error 
 	return errors.Trace(err)
 }
 
-func (timgr *TiDBManager) GetSchemas() ([]*model.DBInfo, error) {
-	schemas, err := timgr.getSchemas()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// schema.Tables is empty, we need to set them manually.
-	for _, schema := range schemas {
-		tables, err := timgr.getTables(schema.Name.String())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		schema.Tables = tables
-	}
-	return schemas, nil
-}
-
-func (timgr *TiDBManager) getSchemas() ([]*model.DBInfo, error) {
-	baseURL := *timgr.baseURL
-	baseURL.Path = "schema"
-
-	var schemas []*model.DBInfo
-	err := common.GetJSON(timgr.client, baseURL.String(), &schemas)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return schemas, nil
-}
-
 func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
 	baseURL := *timgr.baseURL
 	baseURL.Path = fmt.Sprintf("schema/%s", schema)

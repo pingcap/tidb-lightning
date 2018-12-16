@@ -1240,7 +1240,6 @@ func (cr *chunkRestore) restore(
 		t.dbInfo.Name,
 		t.tableInfo.Name,
 		t.tableInfo.ID,
-		t.tableInfo.Columns,
 		rc.cfg.TiDB.SQLMode,
 		t.alloc,
 	)

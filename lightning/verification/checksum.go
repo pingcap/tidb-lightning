@@ -1,7 +1,6 @@
 package verification
 
 import (
-	"fmt"
 	"hash/crc64"
 
 	kvec "github.com/pingcap/tidb/util/kvencoder"
@@ -66,8 +65,4 @@ func (c *KVChecksum) SumSize() uint64 {
 
 func (c *KVChecksum) SumKVS() uint64 {
 	return c.kvs
-}
-
-func (c *KVChecksum) String() string {
-	return fmt.Sprintf("checksum = %d / kvs = %d / bytes = %d", c.checksum, c.kvs, c.bytes)
 }

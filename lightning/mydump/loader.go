@@ -1,7 +1,6 @@
 package mydump
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,23 +23,6 @@ type MDDatabaseMeta struct {
 	SchemaFile string
 	Tables     []*MDTableMeta
 	charSet    string
-}
-
-func (m *MDDatabaseMeta) String() string {
-	v, err := json.Marshal(m)
-	if err != nil {
-		common.AppLogger.Errorf("json marshal MDDatabaseMeta error %s", errors.ErrorStack(err))
-	}
-	return string(v)
-}
-
-func (m *MDDatabaseMeta) GetSchema() string {
-	schema, err := ExportStatement(m.SchemaFile, m.charSet)
-	if err != nil {
-		common.AppLogger.Errorf("failed to extract database schema (%s) : %s", m.SchemaFile, err.Error())
-		return ""
-	}
-	return string(schema)
 }
 
 type MDTableMeta struct {
