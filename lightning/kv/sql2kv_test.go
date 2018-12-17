@@ -1,6 +1,7 @@
 package kv
 
 import (
+	"fmt"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/pingcap/tidb/util/logutil"
@@ -8,7 +9,7 @@ import (
 	"testing"
 )
 
-func BenchmarkTableKVEncoder_SQL2KV(b *testing.B) {
+func benchmarkTable(b *testing.B, table string, column int) {
 	logConfig := logutil.LogConfig{
 		Level: "panic",
 		File: logutil.FileLogConfig{
@@ -20,11 +21,11 @@ func BenchmarkTableKVEncoder_SQL2KV(b *testing.B) {
 		b.Fatalf("logutil.InitLogger: %v", err)
 	}
 
-	encoder, err := NewTableKVEncoder("schr", "s0", 1, 22, config.NewConfig().TiDB.SQLMode, kvenc.NewAllocator())
+	encoder, err := NewTableKVEncoder("schr", table, 1, column, config.NewConfig().TiDB.SQLMode, kvenc.NewAllocator())
 	if err != nil {
 		b.Fatal()
 	}
-	creatTable, err := ioutil.ReadFile("testdata/schr.s0-schema.sql")
+	creatTable, err := ioutil.ReadFile(fmt.Sprintf("testdata/schr.%s-schema.sql", table))
 	if err != nil {
 		b.Fatal()
 	}
@@ -34,7 +35,7 @@ func BenchmarkTableKVEncoder_SQL2KV(b *testing.B) {
 		b.Fatalf("ExecDDLSQL: %v", err)
 	}
 
-	sqlContent, err := ioutil.ReadFile("testdata/schr.s0.1.sql")
+	sqlContent, err := ioutil.ReadFile(fmt.Sprintf("testdata/schr.%s.1.sql", table))
 	if err != nil {
 		b.Fatal()
 	}
@@ -49,7 +50,7 @@ func BenchmarkTableKVEncoder_SQL2KV(b *testing.B) {
 		bytes += len(kv.Key)
 		bytes += len(kv.Val)
 	}
-	b.Logf("Kvs: %d, affectRows: %d, bytes: %d", len(kvs), affectRows, bytes)
+	b.Logf("Table: %s, kvs: %d, affectRows: %d, bytes: %d", table, len(kvs), affectRows, bytes)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -60,4 +61,12 @@ func BenchmarkTableKVEncoder_SQL2KV(b *testing.B) {
 			b.Fatalf("SQL2KV: %v", err)
 		}
 	}
+}
+
+func BenchmarkTableKVEncoder_SQL2KV(b *testing.B) {
+	benchmarkTable(b, "s0", 22)
+}
+
+func BenchmarkTableKVEncoder_SQL2KV2(b *testing.B) {
+	benchmarkTable(b, "s11", 55)
 }
