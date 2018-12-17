@@ -32,6 +32,53 @@ func (s *testMydumpReaderSuite) TestExportStatementNoTrailingNewLine(c *C) {
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
 
+func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
+	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	c.Assert(err, IsNil)
+	defer os.Remove(file.Name())
+
+	_, err = file.Write([]byte(`
+		/* whatever blabla 
+			multiple lines comment
+			multiple lines comment
+			multiple lines comment
+			multiple lines comment
+			multiple lines comment
+		 */;
+		CREATE DATABASE whatever;  
+`))
+	c.Assert(err, IsNil)
+	err = file.Close()
+	c.Assert(err, IsNil)
+
+	data, err := ExportStatement(file.Name(), "auto")
+	c.Assert(err, IsNil)
+	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
+}
+
+func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(c *C) {
+	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	c.Assert(err, IsNil)
+	defer os.Remove(file.Name())
+
+	_, err = file.Write([]byte(`
+		/* whatever blabla 
+			multiple lines comment
+			multiple lines comment
+			multiple lines comment
+			multiple lines comment
+			multiple lines comment
+		 */;
+		CREATE DATABASE whatever;`))
+	c.Assert(err, IsNil)
+	err = file.Close()
+	c.Assert(err, IsNil)
+
+	data, err := ExportStatement(file.Name(), "auto")
+	c.Assert(err, IsNil)
+	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
+}
+
 func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
 	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
