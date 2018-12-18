@@ -102,7 +102,7 @@ type fileType int
 const (
 	fileTypeDatabaseSchema fileType = iota
 	fileTypeTableSchema
-	fileTypeTableDataSQL
+	fileTypeTableData
 )
 
 func (ftype fileType) String() string {
@@ -111,8 +111,8 @@ func (ftype fileType) String() string {
 		return "database schema"
 	case fileTypeTableSchema:
 		return "table schema"
-	case fileTypeTableDataSQL:
-		return "table data SQL"
+	case fileTypeTableData:
+		return "table data"
 	default:
 		return "(unknown)"
 	}
@@ -203,6 +203,8 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 		}
 
 		fname := strings.TrimSpace(f.Name())
+		lowerFName := strings.ToLower(fname)
+
 		info := fileInfo{path: path}
 
 		var (
@@ -210,24 +212,24 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 			qualifiedName string
 		)
 		switch {
-		case strings.HasSuffix(fname, "-schema-create.sql"):
+		case strings.HasSuffix(lowerFName, "-schema-create.sql"):
 			ftype = fileTypeDatabaseSchema
 			qualifiedName = fname[:len(fname)-18] + "."
 
-		case strings.HasSuffix(fname, "-schema.sql"):
+		case strings.HasSuffix(lowerFName, "-schema.sql"):
 			ftype = fileTypeTableSchema
 			qualifiedName = fname[:len(fname)-11]
 
 			// ignore functionality :
 			// 		- view
 			//		- triggers
-		case strings.HasSuffix(fname, "-schema-view.sql"),
-			strings.HasSuffix(fname, "-schema-trigger.sql"),
-			strings.HasSuffix(fname, "-schema-post.sql"):
+		case strings.HasSuffix(lowerFName, "-schema-view.sql"),
+			strings.HasSuffix(lowerFName, "-schema-trigger.sql"),
+			strings.HasSuffix(lowerFName, "-schema-post.sql"):
 			common.AppLogger.Warn("[loader] ignore unsupport view/trigger:", path)
 			return nil
-		case strings.HasSuffix(fname, ".sql"):
-			ftype = fileTypeTableDataSQL
+		case strings.HasSuffix(lowerFName, ".sql"), strings.HasSuffix(lowerFName, ".csv"):
+			ftype = fileTypeTableData
 			qualifiedName = fname[:len(fname)-4]
 		default:
 			return nil
@@ -251,7 +253,7 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 			s.dbSchemas = append(s.dbSchemas, info)
 		case fileTypeTableSchema:
 			s.tableSchemas = append(s.tableSchemas, info)
-		case fileTypeTableDataSQL:
+		case fileTypeTableData:
 			s.tableDatas = append(s.tableDatas, info)
 		}
 		return nil
