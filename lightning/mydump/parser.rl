@@ -41,8 +41,11 @@ double_quoted = '"' (^'"' | '\\' any)** '"';
 back_quoted = '`' ^'`'* '`';
 unquoted = ^([,;()'"`] | space)+;
 
+content = ^[()'"`] | single_quoted | double_quoted | back_quoted;
+
 # Matches a "row" of the form `( ... )`, where the content doesn't matter.
-row = '(' (^[)'"`] | single_quoted | double_quoted | back_quoted)* ')';
+# Parenthesis can nest for one level.
+row = '(' (content | '(' content* ')')* ')';
 
 # Matches a table name, which consists of one or more identifiers. This allows
 # us to match a qualified name like `foo.bar`, and also double-backquote like
