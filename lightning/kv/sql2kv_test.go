@@ -50,7 +50,7 @@ func benchmarkTable(b *testing.B, table string, column int) {
 		bytes += len(kv.Key)
 		bytes += len(kv.Val)
 	}
-	b.Logf("Table: %s, kvs: %d, affectRows: %d, bytes: %d", table, len(kvs), affectRows, bytes)
+	b.Logf("Table: %s, column: %d, kvs: %d, affectRows: %d, bytes: %d", table, column, len(kvs), affectRows, bytes)
 
 	b.ReportAllocs()
 	b.ResetTimer()
