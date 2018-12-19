@@ -14,6 +14,7 @@ require (
 	github.com/gogo/protobuf v1.1.1
 	github.com/joho/sqltocsv v0.0.0-20180904231936-b24deec2b806
 	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
+	github.com/pingcap/gofail v0.0.0-20181121072748-c3f835e5a7d8
 	github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26
 	github.com/pingcap/parser v0.0.0-20181113072426-4a9a1b13b591
 	github.com/pingcap/tidb v0.0.0-20181120082053-012cb6da9443
@@ -24,7 +25,6 @@ require (
 	github.com/satori/go.uuid v1.2.0
 	github.com/siddontang/go v0.0.0-20170517070808-cb568a3e5cc0 // indirect
 	github.com/sirupsen/logrus v1.2.0
-	golang.org/x/sys v0.0.0-20180905080454-ebe1bf3edb33
 	golang.org/x/text v0.3.0
 	google.golang.org/appengine v1.1.1-0.20180731164958-4216e58b9158 // indirect
 	google.golang.org/grpc v1.16.0

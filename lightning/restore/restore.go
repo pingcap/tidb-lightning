@@ -324,6 +324,20 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 		}
 
 		lock.Unlock()
+
+		// gofail: var FailIfImportedChunk struct{}
+		// if _, ok := scp.merger.(*ChunkCheckpointMerger); ok {
+		// 	wg.Wait()
+		// 	panic("forcing failure due to FailIfImportedChunk")
+		// }
+		// continue
+
+		// gofail: var FailIfStatusBecomes int
+		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && int(merger.Status) == FailIfStatusBecomes {
+		// 	wg.Wait()
+		// 	panic("forcing failure due to FailIfStatusBecomes")
+		// }
+		// continue
 	}
 }
 
@@ -595,6 +609,7 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 		// the lock ensures the import() step will not be concurrent.
 		rc.postProcessLock.Lock()
 		err := t.importKV(ctx, closedEngine)
+		// gofail: var SlowDownImport struct{}
 		rc.postProcessLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusImported)
 		if err != nil {

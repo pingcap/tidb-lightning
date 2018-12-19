@@ -2,17 +2,6 @@
 
 set -euE
 
-# Start the tikv-importer proxy so we could kill the progress immediately after each import
-PIDFILE="$TEST_DIR/cpch.pid"
-KILLER_PID=0
-bin/importer_proxy --control 127.0.0.1:63804 --listen 127.0.0.1:19557 &
-shutdown_proxy() {
-    kill -9 "$KILLER_PID" || true
-    curl -o "$TEST_DIR/cpch.dump.jsonl" http://127.0.0.1:63804/api/v1/dump
-    curl -X POST http://127.0.0.1:63804/api/v1/shutdown
-}
-trap shutdown_proxy EXIT
-
 # Populate the mydumper source
 DBPATH="$TEST_DIR/cpch.mydump"
 CHUNK_COUNT=5
@@ -29,10 +18,9 @@ for i in $(seq "$CHUNK_COUNT"); do
     done
 done
 
-# Start the background killer (kill the lightning instance as soon as one chunk is imported)
+# Set the failpoint to kill the lightning instance as soon as one chunk is imported
 # If checkpoint does work, this should only kill $CHUNK_COUNT instances of lightnings.
-"tests/$TEST_NAME/kill_lightning_after_one_chunk.py" "$PIDFILE" &
-KILLER_PID="$!"
+export GOFAIL_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/FailIfImportedChunk=return'
 
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS cpch_tsr'
@@ -41,14 +29,15 @@ run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test_cpch'
 set +e
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk Now (step $i/$CHUNK_COUNT) ********"
-    PIDFILE="$PIDFILE" run_lightning
+    run_lightning 2> /dev/null
+    [ $? -ne 0 ] || exit 1
 done
 set -e
 
 # After everything is done, there should be no longer new calls to WriteEngine/CloseAndRecv
 # (and thus `kill_lightning_after_one_chunk` will spare this final check)
 echo "******** Verify checkpoint no-op ********"
-PIDFILE="$PIDFILE" run_lightning
+run_lightning
 run_sql 'SELECT count(i), sum(i) FROM cpch_tsr.tbl;'
 check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
 check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
@@ -65,12 +54,13 @@ rm -f "$TEST_DIR/cpch.pb"
 set +e
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk using File checkpoint Now (step $i/$CHUNK_COUNT) ********"
-    PIDFILE="$PIDFILE" run_lightning file
+    run_lightning file 2> /dev/null
+    [ $? -ne 0 ] || exit 1
 done
 set -e
 
 echo "******** Verify File checkpoint no-op ********"
-PIDFILE="$PIDFILE" run_lightning file
+run_lightning file
 run_sql 'SELECT count(i), sum(i) FROM cpch_tsr.tbl;'
 check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
 check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
