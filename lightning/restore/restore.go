@@ -96,6 +96,7 @@ type RestoreController struct {
 	dbInfos         map[string]*TidbDBInfo
 	tableWorkers    *RestoreWorkerPool
 	regionWorkers   *RestoreWorkerPool
+	postProcWorkers *RestoreWorkerPool
 	importer        *kv.Importer
 	tidbMgr         *TiDBManager
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
@@ -126,12 +127,13 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 	}
 
 	rc := &RestoreController{
-		cfg:           cfg,
-		dbMetas:       dbMetas,
-		tableWorkers:  NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
-		regionWorkers: NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
-		importer:      importer,
-		tidbMgr:       tidbMgr,
+		cfg:             cfg,
+		dbMetas:         dbMetas,
+		tableWorkers:    NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
+		regionWorkers:   NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
+		postProcWorkers: NewRestoreWorkerPool(ctx, cfg.App.PostProcConcurrency, "post-process"),
+		importer:        importer,
+		tidbMgr:         tidbMgr,
 
 		errorSummaries: errorSummaries{
 			summary: make(map[string]errorSummary),
@@ -607,10 +609,12 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 	// FIXME: flush is an asynchronous operation, what if flush failed?
 	if cp.Status < CheckpointStatusImported {
 		// the lock ensures the import() step will not be concurrent.
+		worker := rc.postProcWorkers.Apply()
 		rc.postProcessLock.Lock()
 		err := t.importKV(ctx, closedEngine)
 		// gofail: var SlowDownImport struct{}
 		rc.postProcessLock.Unlock()
+		rc.postProcWorkers.Recycle(worker)
 		rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusImported)
 		if err != nil {
 			return errors.Trace(err)
@@ -619,7 +623,9 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 		// 2. perform a level-1 compact if idling.
 		if atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateDoing) {
 			go func() {
+				worker := rc.postProcWorkers.Apply()
 				err := rc.doCompact(ctx, Level1Compact)
+				rc.postProcWorkers.Recycle(worker)
 				if err != nil {
 					// log it and continue
 					common.AppLogger.Warnf("compact %d failed %v", Level1Compact, err)
@@ -652,7 +658,9 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 			common.AppLogger.Infof("[%s] Skip checksum.", t.tableName)
 			rc.saveStatusCheckpoint(t.tableName, nil, CheckpointStatusChecksumSkipped)
 		} else {
+			worker := rc.postProcWorkers.Apply()
 			err := t.compareChecksum(ctx, rc.tidbMgr.db, cp)
+			rc.postProcWorkers.Recycle(worker)
 			rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusChecksummed)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
@@ -667,7 +675,9 @@ func (t *TableRestore) postProcess(ctx context.Context, closedEngine *kv.ClosedE
 			common.AppLogger.Infof("[%s] Skip analyze.", t.tableName)
 			rc.saveStatusCheckpoint(t.tableName, nil, CheckpointStatusAnalyzeSkipped)
 		} else {
+			worker := rc.postProcWorkers.Apply()
 			err := t.analyzeTable(ctx, rc.tidbMgr.db)
+			rc.postProcWorkers.Recycle(worker)
 			rc.saveStatusCheckpoint(t.tableName, err, CheckpointStatusAnalyzed)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] analyze failed: %v", t.tableName, err.Error())

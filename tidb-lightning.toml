@@ -14,6 +14,10 @@ table-concurrency = 8
 # region-concurrency default to runtime.NumCPU()
 # region-concurrency =
 
+# post-process-concurrency controls the maximum simultaneous post-process jobs (import, compact, checksum and analyze)
+# can be done in parallel. This is to prevent adding too much stress on the cluster.
+post-process-concurrency = 8
+
 # logging
 level = "info"
 file = "tidb-lightning.log"
