@@ -1333,6 +1333,7 @@ func (cr *chunkRestore) restore(
 		}
 	}()
 
+	var buffer bytes.Buffer
 	for {
 		select {
 		case <-ctx.Done():
@@ -1345,27 +1346,27 @@ func (cr *chunkRestore) restore(
 			break
 		}
 
+		buffer.Reset()
 		start := time.Now()
 
-		var sqls strings.Builder
-		sqls.WriteString("INSERT INTO ")
-		sqls.WriteString(t.tableName)
-		sqls.Write(cr.chunk.Columns)
-		sqls.WriteString(" VALUES")
+		buffer.WriteString("INSERT INTO ")
+		buffer.WriteString(t.tableName)
+		buffer.Write(cr.chunk.Columns)
+		buffer.WriteString(" VALUES")
 		var sep byte = ' '
 	readLoop:
 		for cr.parser.Pos() < endOffset {
 			err := cr.parser.ReadRow()
 			switch errors.Cause(err) {
 			case nil:
-				sqls.WriteByte(sep)
+				buffer.WriteByte(sep)
 				sep = ','
 				lastRow := cr.parser.LastRow()
 				if cr.chunk.ShouldIncludeRowID {
-					sqls.Write(lastRow.Row[:len(lastRow.Row)-1])
-					fmt.Fprintf(&sqls, ",%d)", lastRow.RowID)
+					buffer.Write(lastRow.Row[:len(lastRow.Row)-1])
+					fmt.Fprintf(&buffer, ",%d)", lastRow.RowID)
 				} else {
-					sqls.Write(lastRow.Row)
+					buffer.Write(lastRow.Row)
 				}
 			case io.EOF:
 				break readLoop
@@ -1373,24 +1374,24 @@ func (cr *chunkRestore) restore(
 				return errors.Trace(err)
 			}
 		}
-		if sep != ',' { // quick and dirty way to check if `sqls` actually contained any values
+		if sep != ',' { // quick and dirty way to check if `buffer` actually contained any values
 			continue
 		}
-		sqls.WriteByte(';')
+		buffer.WriteByte(';')
 
 		readDur := time.Since(start)
 		readTotalDur += readDur
 		metric.BlockReadSecondsHistogram.Observe(readDur.Seconds())
-		metric.BlockReadBytesHistogram.Observe(float64(sqls.Len()))
+		metric.BlockReadBytesHistogram.Observe(float64(buffer.Len()))
 
 		// sql -> kv
 		start = time.Now()
-		kvs, _, err := kvEncoder.SQL2KV(sqls.String())
+		kvs, _, err := kvEncoder.SQL2KV(buffer.String())
 		encodeDur := time.Since(start)
 		encodeTotalDur += encodeDur
 		metric.BlockEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 
-		common.AppLogger.Debugf("len(kvs) %d, len(sql) %d", len(kvs), sqls.Len())
+		common.AppLogger.Debugf("len(kvs) %d, len(sql) %d", len(kvs), buffer.Len())
 		if err != nil {
 			common.AppLogger.Errorf("kv encode failed = %s\n", err.Error())
 			return errors.Trace(err)
