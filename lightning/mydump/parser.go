@@ -12,7 +12,7 @@ type ChunkParser struct {
 	// states for the lexer
 	reader      io.Reader
 	buf         []byte
-	bufSize     int
+	blockBuf    []byte
 	isLastChunk bool
 
 	lastRow Row
@@ -43,8 +43,8 @@ type Row struct {
 // NewChunkParser creates a new parser which can read chunks out of a file.
 func NewChunkParser(reader io.Reader) *ChunkParser {
 	return &ChunkParser{
-		reader:  reader,
-		bufSize: 8192,
+		reader:   reader,
+		blockBuf: make([]byte, 8192),
 	}
 }
 
@@ -85,15 +85,13 @@ func tryAppendTo(out *[]byte, tail []byte) {
 }
 
 func (parser *ChunkParser) readBlock() error {
-	block := make([]byte, parser.bufSize)
-
-	n, err := io.ReadFull(parser.reader, block)
+	n, err := io.ReadFull(parser.reader, parser.blockBuf)
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:
 		parser.isLastChunk = true
 		fallthrough
 	case nil:
-		tryAppendTo(&parser.buf, block[:n])
+		tryAppendTo(&parser.buf, parser.blockBuf[:n])
 		return nil
 	default:
 		return errors.Trace(err)
