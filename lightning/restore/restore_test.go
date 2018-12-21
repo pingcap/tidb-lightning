@@ -53,8 +53,11 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 	}
 }
 
+const sqlFile = "/Users/lonng/devs/tmp/dbgen/schr.s0.1.sql" // 1G
+//const sqlFile = "../kv/testdata/schr.s11.1.sql" // 1.5MB
+
 func BenchmarkChunkRestoreReuseBuffer(b *testing.B) {
-	sql, err := ioutil.ReadFile("../kv/testdata/schr.s11.1.sql")
+	sql, err := ioutil.ReadFile(sqlFile)
 	if err != nil {
 		b.Fatalf("read sql data: %v", err)
 	}
@@ -102,7 +105,7 @@ func BenchmarkChunkRestoreReuseBuffer(b *testing.B) {
 }
 
 func BenchmarkChunkRestoreReuseBuffer2(b *testing.B) {
-	sql, err := ioutil.ReadFile("../kv/testdata/schr.s11.1.sql")
+	sql, err := ioutil.ReadFile(sqlFile)
 	if err != nil {
 		b.Fatalf("read sql data: %v", err)
 	}
@@ -151,7 +154,7 @@ func BenchmarkChunkRestoreReuseBuffer2(b *testing.B) {
 }
 
 func BenchmarkChunkRestoreReuseBuffer3(b *testing.B) {
-	sql, err := ioutil.ReadFile("../kv/testdata/schr.s11.1.sql")
+	sql, err := ioutil.ReadFile(sqlFile)
 	if err != nil {
 		b.Fatalf("read sql data: %v", err)
 	}
