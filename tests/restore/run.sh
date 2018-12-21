@@ -2,18 +2,6 @@
 
 set -eu
 
-# Start the tikv-importer proxy to catch potential table concurrency violation
-bin/importer_proxy --control 127.0.0.1:40250 --import-delay 500 &
-shutdown_proxy() {
-    curl -X POST http://127.0.0.1:40250/api/v1/shutdown
-}
-trap shutdown_proxy EXIT
-
-# Wait until the importer_proxy server is ready to avoid spurious HTTP error
-while ! curl -o /dev/null http://127.0.0.1:40250/ -s; do
-    sleep 1
-done
-
 # Populate the mydumper source
 DBPATH="$TEST_DIR/restore.mydump"
 TABLE_COUNT=35
@@ -25,14 +13,14 @@ for i in $(seq "$TABLE_COUNT"); do
     echo "INSERT INTO tbl$i VALUES (1);" > "$DBPATH/restore_tsr.tbl$i.sql"
 done
 
+# Count OpenEngine and CloseEngine events.
+# Abort if number of unbalanced OpenEngine is >= 4
+export GOFAIL_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/kv/FailIfEngineCountExceeds=return(4)'
+
 # Start importing
 run_sql 'DROP DATABASE IF EXISTS restore_tsr'
 run_lightning
 echo "Import finished"
-
-# Dump the import events, then count OpenEngine and CloseEngine events.
-# Abort if number of unbalanced OpenEngine is >= 4
-python2.7 tests/restore/count_open_engines.py 4 40250
 
 # Verify all data are imported
 for i in $(seq "$TABLE_COUNT"); do

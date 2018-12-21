@@ -1,20 +1,14 @@
 [lightning]
-region-concurrency = 1
 check-requirements = false
 file = "/tmp/lightning_test_result/lightning.log"
-level = "error"
-
-[checkpoint]
-enable = true
-schema = "tidb_lightning_checkpoint_test_cpch"
-driver = "mysql"
-keep-after-success = true
+level = "warning"
 
 [tikv-importer]
 addr = "127.0.0.1:8808"
 
 [mydumper]
-data-source-dir = "/tmp/lightning_test_result/cpch.mydump"
+data-source-dir = "tests/no_schema/data"
+no-schema = true
 
 [tidb]
 host = "127.0.0.1"
@@ -26,5 +20,5 @@ log-level = "error"
 
 [post-restore]
 checksum = true
-compact = false
-analyze = false
+compact = true
+analyze = true

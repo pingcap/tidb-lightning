@@ -57,10 +57,16 @@ run_sql "SELECT ref FROM vt.binary WHERE pk = x'55dc0343db6a420898729096305b8c07
 check_contains 'ref: 41'
 
 run_sql 'SELECT count(pk), count(DISTINCT js) FROM vt.json'
-check_contains 'count(pk): 91'
-check_contains 'count(DISTINCT js): 91'
+check_contains 'count(pk): 92'
+check_contains 'count(DISTINCT js): 92'
 run_sql 'SELECT pk FROM vt.json WHERE js = json_array(1, 2, 3)'
 check_contains 'pk: 1089'
+run_sql 'SELECT js FROM vt.json WHERE pk = 2000'
+check_contains 'js: {'
+check_contains '"52": 1'
+check_contains '"54": 1'
+check_contains '"68": 1'
+check_contains '"126": 1'
 
 run_sql 'SELECT count(*) FROM vt.`enum-set`'
 check_contains 'count(*): 25'

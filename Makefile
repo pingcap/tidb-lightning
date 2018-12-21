@@ -24,6 +24,9 @@ LINUX     := "Linux"
 MAC       := "Darwin"
 PACKAGES  := $$(go list ./...| grep -vE 'vendor|cmd|test|proto|diff|bin')
 
+GOFAIL_ENABLE  := $$(find $$PWD/lightning/ -type d | xargs gofail enable)
+GOFAIL_DISABLE := $$(find $$PWD/lightning/ -type d | xargs gofail disable)
+
 RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
@@ -60,19 +63,28 @@ lightning-ctl:
 
 test:
 	mkdir -p "$(TEST_DIR)"
+	@hash gofail || $(GO) get -v github.com/pingcap/gofail
+	# ^FIXME switch back to etcd-io/gofail after their issue #16 is fixed.
+	$(GOFAIL_ENABLE)
 	@export log_level=error;\
 	$(GOTEST) -cover -covermode=count -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES)
+	$(GOFAIL_DISABLE)
 
-integration_test:
-	@which bin/tidb-server
-	@which bin/tikv-server
-	@which bin/pd-server
-	@which bin/tikv-importer
+lightning_for_integration_test:
+	@hash gofail || $(GO) get -v github.com/pingcap/gofail
+	# ^FIXME switch back to etcd-io/gofail after their issue #16 is fixed.
+	$(GOFAIL_ENABLE)
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
 		-o bin/tidb-lightning.test \
 		github.com/pingcap/tidb-lightning/cmd
-	$(GOBUILD) -o bin/importer_proxy tests/_utils/importer_proxy.go
+	$(GOFAIL_DISABLE)
+
+integration_test: lightning_for_integration_test
+	@which bin/tidb-server
+	@which bin/tikv-server
+	@which bin/pd-server
+	@which bin/tikv-importer
 	tests/run.sh
 
 coverage:

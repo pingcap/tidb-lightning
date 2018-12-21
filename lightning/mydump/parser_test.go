@@ -109,3 +109,31 @@ func (s *testMydumpParserSuite) TestReadChunks(c *C) {
 		},
 	})
 }
+
+func (s *testMydumpParserSuite) TestNestedRow(c *C) {
+	reader := strings.NewReader(`
+		INSERT INTO exam_detail VALUES
+		("123",CONVERT("{}" USING UTF8MB4)),
+		("456",CONVERT("{\"a\":4}" USING UTF8MB4)),
+		("789",CONVERT("[]" USING UTF8MB4));
+	`)
+
+	parser := mydump.NewChunkParser(reader)
+	chunks, err := parser.ReadChunks(96)
+
+	c.Assert(err, IsNil)
+	c.Assert(chunks, DeepEquals, []mydump.Chunk{
+		{
+			Offset:       0,
+			EndOffset:    117,
+			PrevRowIDMax: 0,
+			RowIDMax:     2,
+		},
+		{
+			Offset:       117,
+			EndOffset:    156,
+			PrevRowIDMax: 2,
+			RowIDMax:     3,
+		},
+	})
+}
