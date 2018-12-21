@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
+	wk "github.com/pingcap/tidb-lightning/lightning/worker"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/util/kvencoder"
@@ -94,9 +95,9 @@ type RestoreController struct {
 	cfg             *config.Config
 	dbMetas         []*mydump.MDDatabaseMeta
 	dbInfos         map[string]*TidbDBInfo
-	tableWorkers    *RestoreWorkerPool
-	regionWorkers   *RestoreWorkerPool
-	postProcWorkers *RestoreWorkerPool
+	tableWorkers    *wk.Pool
+	regionWorkers   *wk.Pool
+	postProcWorkers *wk.Pool
 	importer        *kv.Importer
 	tidbMgr         *TiDBManager
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
@@ -129,9 +130,9 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 	rc := &RestoreController{
 		cfg:             cfg,
 		dbMetas:         dbMetas,
-		tableWorkers:    NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
-		regionWorkers:   NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
-		postProcWorkers: NewRestoreWorkerPool(ctx, cfg.App.PostProcConcurrency, "post-process"),
+		tableWorkers:    wk.NewPool(cfg.App.TableConcurrency, "table"),
+		regionWorkers:   wk.NewPool(cfg.App.RegionConcurrency, "region"),
+		postProcWorkers: wk.NewPool(cfg.App.PostProcConcurrency, "post-process"),
 		importer:        importer,
 		tidbMgr:         tidbMgr,
 
@@ -442,7 +443,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 
 			worker := rc.tableWorkers.Apply()
 			wg.Add(1)
-			go func(w *RestoreWorker, t *TableRestore, cp *TableCheckpoint) {
+			go func(w wk.Worker, t *TableRestore, cp *TableCheckpoint) {
 				defer wg.Done()
 
 				closedEngine, err := t.restore(ctx, rc, cp)
@@ -557,7 +558,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 
 		worker := rc.regionWorkers.Apply()
 		wg.Add(1)
-		go func(w *RestoreWorker, cr *chunkRestore) {
+		go func(w wk.Worker, cr *chunkRestore) {
 			// Restore a chunk.
 			defer func() {
 				cr.close()
@@ -867,42 +868,6 @@ func (rc *RestoreController) getTables() []string {
 	}
 
 	return tables
-}
-
-////////////////////////////////////////////////////////////////
-
-type RestoreWorkerPool struct {
-	limit   int
-	workers chan *RestoreWorker
-	name    string
-}
-
-type RestoreWorker struct {
-	ID int64
-}
-
-func NewRestoreWorkerPool(ctx context.Context, limit int, name string) *RestoreWorkerPool {
-	workers := make(chan *RestoreWorker, limit)
-	for i := 0; i < limit; i++ {
-		workers <- &RestoreWorker{ID: int64(i + 1)}
-	}
-
-	metric.IdleWorkersGauge.WithLabelValues(name).Set(float64(limit))
-	return &RestoreWorkerPool{
-		limit:   limit,
-		workers: workers,
-		name:    name,
-	}
-}
-
-func (pool *RestoreWorkerPool) Apply() *RestoreWorker {
-	worker := <-pool.workers
-	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
-	return worker
-}
-func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {
-	pool.workers <- worker
-	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
 }
 
 ////////////////////////////////////////////////////////////////
