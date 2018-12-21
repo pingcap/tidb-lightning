@@ -1,6 +1,7 @@
 package mydump
 
 import (
+	"bytes"
 	"io"
 
 	"github.com/pkg/errors"
@@ -24,6 +25,10 @@ type ChunkParser struct {
 	// The list of columns in the form `(a, b, c)` in the last INSERT statement.
 	// Assumed to be constant throughout the entire file.
 	Columns []byte
+
+	// cache
+	remainBuf *bytes.Buffer
+	appendBuf *bytes.Buffer
 }
 
 // Chunk represents a portion of the data file.
@@ -43,8 +48,10 @@ type Row struct {
 // NewChunkParser creates a new parser which can read chunks out of a file.
 func NewChunkParser(reader io.Reader) *ChunkParser {
 	return &ChunkParser{
-		reader:   reader,
-		blockBuf: make([]byte, 8192),
+		reader:    reader,
+		blockBuf:  make([]byte, 8192),
+		remainBuf: &bytes.Buffer{},
+		appendBuf: &bytes.Buffer{},
 	}
 }
 
@@ -91,7 +98,12 @@ func (parser *ChunkParser) readBlock() error {
 		parser.isLastChunk = true
 		fallthrough
 	case nil:
-		tryAppendTo(&parser.buf, parser.blockBuf[:n])
+		parser.remainBuf.Reset()
+		parser.remainBuf.Write(parser.buf)
+		parser.appendBuf.Reset()
+		parser.appendBuf.Write(parser.remainBuf.Bytes())
+		parser.appendBuf.Write(parser.blockBuf[:n])
+		parser.buf = parser.appendBuf.Bytes()
 		return nil
 	default:
 		return errors.Trace(err)
