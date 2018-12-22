@@ -3,11 +3,7 @@ package mydump
 import (
 	"fmt"
 	"os"
-	"runtime"
-	"sort"
-	"sync"
 
-	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pkg/errors"
 )
 
@@ -18,8 +14,7 @@ type TableRegion struct {
 	Table string
 	File  string
 
-	Columns []byte
-	Chunk   Chunk
+	Chunk Chunk
 }
 
 func (reg *TableRegion) Name() string {
@@ -57,107 +52,32 @@ func (rs regionSlice) Less(i, j int) bool {
 
 ////////////////////////////////////////////////////////////////
 
-type RegionFounder struct {
-	processors    chan int
-	minRegionSize int64
-}
-
-func NewRegionFounder(minRegionSize int64) *RegionFounder {
-	concurrency := runtime.NumCPU() >> 1
-	if concurrency == 0 {
-		concurrency = 1
-	}
-
-	processors := make(chan int, concurrency)
-	for i := 0; i < concurrency; i++ {
-		processors <- i
-	}
-
-	return &RegionFounder{
-		processors:    processors,
-		minRegionSize: minRegionSize,
-	}
-}
-
-func (f *RegionFounder) MakeTableRegions(meta *MDTableMeta) ([]*TableRegion, error) {
-	var lock sync.Mutex
-	var wg sync.WaitGroup
-
-	db := meta.DB
-	table := meta.Name
-	processors := f.processors
-	minRegionSize := f.minRegionSize
-
-	var chunkErr error
-
+func MakeTableRegions(meta *MDTableMeta, columns int) ([]*TableRegion, error) {
 	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
-	for _, dataFile := range meta.DataFiles {
-		wg.Add(1)
-		go func(pid int, file string) {
-			common.AppLogger.Debugf("[%s] loading file's region (%s) ...", table, file)
 
-			chunks, err := splitExactChunks(db, table, file, minRegionSize)
-			lock.Lock()
-			if err == nil {
-				filesRegions = append(filesRegions, chunks...)
-			} else {
-				chunkErr = errors.Annotatef(err, "%s", file)
-				common.AppLogger.Errorf("failed to extract chunks from file: %v", chunkErr)
-			}
-			lock.Unlock()
-
-			processors <- pid
-			wg.Done()
-		}(<-processors, dataFile)
-	}
-	wg.Wait()
-
-	if chunkErr != nil {
-		return nil, chunkErr
-	}
-
-	// Setup files' regions
-	sort.Sort(filesRegions) // ps : sort region by - (fileName, fileOffset)
-	var totalRowCount int64
-	for i, region := range filesRegions {
-		region.ID = i
-
-		// Every chunk's PrevRowIDMax was uninitialized (set to 0). We need to
-		// re-adjust the row IDs so they won't be overlapping.
-		chunkRowCount := region.Chunk.RowIDMax - region.Chunk.PrevRowIDMax
-		region.Chunk.PrevRowIDMax = totalRowCount
-		totalRowCount += chunkRowCount
-		region.Chunk.RowIDMax = totalRowCount
+	prevRowIDMax := int64(0)
+	for i, dataFile := range meta.DataFiles {
+		dataFileInfo, err := os.Stat(dataFile)
+		if err != nil {
+			return nil, errors.Annotatef(err, "cannot stat %s", dataFile)
+		}
+		dataFileSize := dataFileInfo.Size()
+		rowIDMax := prevRowIDMax + dataFileSize/(int64(columns)+2)
+		filesRegions = append(filesRegions, &TableRegion{
+			ID:    i,
+			DB:    meta.DB,
+			Table: meta.Name,
+			File:  dataFile,
+			Chunk: Chunk{
+				Offset:       0,
+				EndOffset:    dataFileSize,
+				PrevRowIDMax: prevRowIDMax,
+				RowIDMax:     rowIDMax,
+			},
+		})
+		prevRowIDMax = rowIDMax
 	}
 
 	return filesRegions, nil
-}
-
-func splitExactChunks(db string, table string, file string, minChunkSize int64) ([]*TableRegion, error) {
-	reader, err := os.Open(file)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer reader.Close()
-
-	parser := NewChunkParser(reader)
-	chunks, err := parser.ReadChunks(minChunkSize)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	annotatedChunks := make([]*TableRegion, len(chunks))
-	for i, chunk := range chunks {
-		annotatedChunks[i] = &TableRegion{
-			ID:      -1,
-			DB:      db,
-			Table:   table,
-			File:    file,
-			Columns: parser.Columns,
-			Chunk:   chunk,
-		}
-	}
-
-	return annotatedChunks, nil
 }

@@ -36,10 +36,9 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
 	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabases()[0]
-	founder := NewRegionFounder(defMinRegionSize)
 
 	for _, meta := range dbMeta.Tables {
-		regions, err := founder.MakeTableRegions(meta)
+		regions, err := MakeTableRegions(meta, 1)
 		c.Assert(err, IsNil)
 
 		table := meta.Name
@@ -61,19 +60,18 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 			c.Assert(err, IsNil)
 			tolFileSize += fileSize
 		}
-		// var tolRegionSize int64 = 0
-		// for _, region := range regions {
-		// 	tolRegionSize += region.Size()
-		// }
-		// c.Assert(tolRegionSize, Equals, tolFileSize)
-		// (The size will not be equal since the comments at the end are omitted)
-
-		// check - rows num
-		var tolRows int64 = 0
+		var tolRegionSize int64 = 0
 		for _, region := range regions {
-			tolRows += region.Rows()
+			tolRegionSize += region.Size()
 		}
-		c.Assert(tolRows, Equals, expectedTuplesCount[table])
+		c.Assert(tolRegionSize, Equals, tolFileSize)
+
+		// // check - rows num
+		// var tolRows int64 = 0
+		// for _, region := range regions {
+		// 	tolRows += region.Rows()
+		// }
+		// c.Assert(tolRows, Equals, expectedTuplesCount[table])
 
 		// check - range
 		regionNum := len(regions)
@@ -98,10 +96,9 @@ func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
 	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
 	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabases()[0]
-	founder := NewRegionFounder(defMinRegionSize)
 
 	for _, meta := range dbMeta.Tables {
-		regions, err := founder.MakeTableRegions(meta)
+		regions, err := MakeTableRegions(meta, 1)
 		c.Assert(err, IsNil)
 
 		tolValTuples := 0

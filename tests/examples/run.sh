@@ -46,9 +46,9 @@ check_contains 'sum(crc32(name)): 21388950023608'
 
 # Ensure the AUTO_INCREMENT value is properly defined
 run_sql "insert into mocker_test.tbl_autoid (name) values ('new');"
-run_sql "select id from mocker_test.tbl_autoid where name = 'new';"
+run_sql "select id > 10000 from mocker_test.tbl_autoid where name = 'new';"
 check_not_contains '* 2. row *'
-check_contains 'id: 10001'
+check_contains 'id > 10000: 1'
 
 run_sql 'select count(*), avg(age), max(name), min(name), sum(crc32(name)) from mocker_test.tbl_multi_index;'
 check_contains 'count(*): 10000'

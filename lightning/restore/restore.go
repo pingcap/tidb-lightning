@@ -493,7 +493,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 	if len(cp.Chunks) > 0 {
 		common.AppLogger.Infof("[%s] reusing %d chunks from checkpoint", t.tableName, len(cp.Chunks))
 	} else if cp.Status < CheckpointStatusAllWritten {
-		if err := t.populateChunks(rc.cfg.Mydumper.MinRegionSize, cp, t.tableInfo); err != nil {
+		if err := t.populateChunks(rc.cfg.Mydumper.MinRegionSize, cp); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if err := rc.checkpointsDB.InsertChunkCheckpoints(ctx, t.tableName, cp.Chunks); err != nil {
@@ -973,12 +973,11 @@ func (tr *TableRestore) Close() {
 
 var tidbRowIDColumnRegex = regexp.MustCompile(fmt.Sprintf("`%[1]s`|(?i:\\b%[1]s\\b)", model.ExtraHandleName))
 
-func (t *TableRestore) populateChunks(minChunkSize int64, cp *TableCheckpoint, tableInfo *TidbTableInfo) error {
+func (t *TableRestore) populateChunks(minChunkSize int64, cp *TableCheckpoint) error {
 	common.AppLogger.Infof("[%s] load chunks", t.tableName)
 	timer := time.Now()
 
-	founder := mydump.NewRegionFounder(minChunkSize)
-	chunks, err := founder.MakeTableRegions(t.tableMeta)
+	chunks, err := mydump.MakeTableRegions(t.tableMeta, t.tableInfo.Columns)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -986,41 +985,44 @@ func (t *TableRestore) populateChunks(minChunkSize int64, cp *TableCheckpoint, t
 	cp.Chunks = make([]*ChunkCheckpoint, 0, len(chunks))
 
 	for _, chunk := range chunks {
-		columns := chunk.Columns
-
-		shouldIncludeRowID := !tableInfo.core.PKIsHandle && !tidbRowIDColumnRegex.Match(columns)
-		if shouldIncludeRowID {
-			// we need to inject the _tidb_rowid column
-			if len(columns) != 0 {
-				// column listing already exists, just append the new column.
-				columns = append(columns[:len(columns)-1], (",`" + model.ExtraHandleName.String() + "`)")...)
-			} else {
-				// we need to recreate the columns
-				var buf bytes.Buffer
-				buf.WriteString("(`")
-				for _, columnInfo := range tableInfo.core.Columns {
-					buf.WriteString(columnInfo.Name.String())
-					buf.WriteString("`,`")
-				}
-				buf.WriteString(model.ExtraHandleName.String())
-				buf.WriteString("`)")
-				columns = buf.Bytes()
-			}
-		}
-
 		cp.Chunks = append(cp.Chunks, &ChunkCheckpoint{
 			Key: ChunkCheckpointKey{
 				Path:   chunk.File,
 				Offset: chunk.Chunk.Offset,
 			},
-			Columns:            columns,
-			ShouldIncludeRowID: shouldIncludeRowID,
-			Chunk:              chunk.Chunk,
+			Columns: nil,
+			Chunk:   chunk.Chunk,
 		})
 	}
 
 	common.AppLogger.Infof("[%s] load %d chunks takes %v", t.tableName, len(chunks), time.Since(timer))
 	return nil
+}
+
+func (t *TableRestore) initializeColumns(columns []byte, ccp *ChunkCheckpoint) {
+	shouldIncludeRowID := !t.tableInfo.core.PKIsHandle && !tidbRowIDColumnRegex.Match(columns)
+	if shouldIncludeRowID {
+		// we need to inject the _tidb_rowid column
+		if len(columns) != 0 {
+			// column listing already exists, just append the new column.
+			columns = append(columns[:len(columns)-1], (",`" + model.ExtraHandleName.String() + "`)")...)
+		} else {
+			// we need to recreate the columns
+			var buf bytes.Buffer
+			buf.WriteString("(`")
+			for _, columnInfo := range t.tableInfo.core.Columns {
+				buf.WriteString(columnInfo.Name.String())
+				buf.WriteString("`,`")
+			}
+			buf.WriteString(model.ExtraHandleName.String())
+			buf.WriteString("`)")
+			columns = buf.Bytes()
+		}
+	} else if columns == nil {
+		columns = []byte{}
+	}
+	ccp.Columns = columns
+	ccp.ShouldIncludeRowID = shouldIncludeRowID
 }
 
 func (tr *TableRestore) restoreTableMeta(ctx context.Context, db *sql.DB) error {
@@ -1350,10 +1352,6 @@ func (cr *chunkRestore) restore(
 		buffer.Reset()
 		start := time.Now()
 
-		buffer.WriteString("INSERT INTO ")
-		buffer.WriteString(t.tableName)
-		buffer.Write(cr.chunk.Columns)
-		buffer.WriteString(" VALUES")
 		var sep byte = ' '
 	readLoop:
 		for cr.parser.Pos() < endOffset {
@@ -1361,7 +1359,16 @@ func (cr *chunkRestore) restore(
 			switch errors.Cause(err) {
 			case nil:
 				buffer.WriteByte(sep)
-				sep = ','
+				if sep == ' ' {
+					buffer.WriteString("INSERT INTO ")
+					buffer.WriteString(t.tableName)
+					if cr.chunk.Columns == nil {
+						t.initializeColumns(cr.parser.Columns, cr.chunk)
+					}
+					buffer.Write(cr.chunk.Columns)
+					buffer.WriteString(" VALUES ")
+					sep = ','
+				}
 				lastRow := cr.parser.LastRow()
 				if cr.chunk.ShouldIncludeRowID {
 					buffer.Write(lastRow.Row[:len(lastRow.Row)-1])
@@ -1370,6 +1377,7 @@ func (cr *chunkRestore) restore(
 					buffer.Write(lastRow.Row)
 				}
 			case io.EOF:
+				cr.chunk.Chunk.EndOffset = cr.parser.Pos()
 				break readLoop
 			default:
 				return errors.Trace(err)
