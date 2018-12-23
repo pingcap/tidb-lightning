@@ -32,6 +32,10 @@ type blockParser struct {
 	blockBuf    []byte
 	isLastChunk bool
 
+	// The list of columns in the form `(a, b, c)` in the last INSERT statement.
+	// Assumed to be constant throughout the entire file.
+	Columns []byte
+
 	lastRow Row
 	// Current file offset.
 	pos int64
@@ -60,9 +64,6 @@ type ChunkParser struct {
 	// The (quoted) table name used in the last INSERT statement. Assumed to be
 	// constant throughout the entire file.
 	TableName []byte
-	// The list of columns in the form `(a, b, c)` in the last INSERT statement.
-	// Assumed to be constant throughout the entire file.
-	Columns []byte
 }
 
 // Chunk represents a portion of the data file.
