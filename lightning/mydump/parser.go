@@ -34,7 +34,7 @@ type blockParser struct {
 
 	// The list of columns in the form `(a, b, c)` in the last INSERT statement.
 	// Assumed to be constant throughout the entire file.
-	Columns []byte
+	columns []byte
 
 	lastRow Row
 	// Current file offset.
@@ -82,7 +82,11 @@ type Row struct {
 
 type Parser interface {
 	Pos() (pos int64, rowID int64)
+	SetPos(pos int64, rowID int64)
+	Close() error
 	ReadRow() error
+	LastRow() Row
+	Columns() []byte
 }
 
 // NewChunkParser creates a new parser which can read chunks out of a file.
@@ -106,6 +110,17 @@ func (parser *blockParser) SetPos(pos int64, rowID int64) {
 // Pos returns the current file offset.
 func (parser *blockParser) Pos() (int64, int64) {
 	return parser.pos, parser.lastRow.RowID
+}
+
+func (parser *blockParser) Close() error {
+	if closer, ok := parser.reader.(io.Closer); ok {
+		return closer.Close()
+	}
+	return errors.New("this parser is not created with a reader that can be closed")
+}
+
+func (parser *blockParser) Columns() []byte {
+	return parser.columns
 }
 
 type token byte
@@ -182,14 +197,14 @@ func (parser *ChunkParser) ReadRow() error {
 				row.Row = content
 				return nil
 			case stateColumns:
-				parser.Columns = content
+				parser.columns = content
 				continue
 			}
 
 		case tokName:
 			st = stateColumns
 			parser.TableName = content
-			parser.Columns = nil
+			parser.columns = nil
 			continue
 
 		case tokValues:

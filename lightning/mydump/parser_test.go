@@ -50,7 +50,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 		Row:   []byte("(1, 2, 3)"),
 	})
 	c.Assert(parser.TableName, DeepEquals, []byte("`namespaced`.`table`"))
-	c.Assert(parser.Columns, DeepEquals, []byte("(columns, more, columns)"))
+	c.Assert(parser.Columns(), DeepEquals, []byte("(columns, more, columns)"))
 	offset, rowID := parser.Pos()
 	c.Assert(offset, Equals, int64(97))
 	c.Assert(rowID, Equals, int64(1))
@@ -61,7 +61,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 		Row:   []byte("(4, 5, 6)"),
 	})
 	c.Assert(parser.TableName, DeepEquals, []byte("`namespaced`.`table`"))
-	c.Assert(parser.Columns, DeepEquals, []byte("(columns, more, columns)"))
+	c.Assert(parser.Columns(), DeepEquals, []byte("(columns, more, columns)"))
 	offset, rowID = parser.Pos()
 	c.Assert(offset, Equals, int64(108))
 	c.Assert(rowID, Equals, int64(2))
@@ -72,7 +72,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 		Row:   []byte("(7,8,9)"),
 	})
 	c.Assert(parser.TableName, DeepEquals, []byte("`namespaced`.`table`"))
-	c.Assert(parser.Columns, DeepEquals, []byte("(x,y,z)"))
+	c.Assert(parser.Columns(), DeepEquals, []byte("(x,y,z)"))
 	offset, rowID = parser.Pos()
 	c.Assert(offset, Equals, int64(159))
 	c.Assert(rowID, Equals, int64(3))
@@ -83,7 +83,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 		Row:   []byte("(10, 11, 12, '(13)', '(', 14, ')')"),
 	})
 	c.Assert(parser.TableName, DeepEquals, []byte("another_table"))
-	c.Assert(parser.Columns, IsNil)
+	c.Assert(parser.Columns(), IsNil)
 	offset, rowID = parser.Pos()
 	c.Assert(offset, Equals, int64(222))
 	c.Assert(rowID, Equals, int64(4))

@@ -243,7 +243,7 @@ func (s *testMydumpCSVParserSuite) TestTSV(c *C) {
 		Row:   []byte(`('0',NULL,NULL,NULL,'foo','0000-00-00')`),
 	})
 	c.Assert(parser, posEq, 32, 1)
-	c.Assert(parser.Columns, DeepEquals, []byte("(`a`,`b`,`c`,`d`,`e`,`f`)"))
+	c.Assert(parser.Columns(), DeepEquals, []byte("(`a`,`b`,`c`,`d`,`e`,`f`)"))
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
