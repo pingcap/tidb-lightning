@@ -51,7 +51,9 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	})
 	c.Assert(parser.TableName, DeepEquals, []byte("`namespaced`.`table`"))
 	c.Assert(parser.Columns, DeepEquals, []byte("(columns, more, columns)"))
-	c.Assert(parser.Pos(), Equals, int64(97))
+	offset, rowID := parser.Pos()
+	c.Assert(offset, Equals, int64(97))
+	c.Assert(rowID, Equals, int64(1))
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -60,7 +62,9 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	})
 	c.Assert(parser.TableName, DeepEquals, []byte("`namespaced`.`table`"))
 	c.Assert(parser.Columns, DeepEquals, []byte("(columns, more, columns)"))
-	c.Assert(parser.Pos(), Equals, int64(108))
+	offset, rowID = parser.Pos()
+	c.Assert(offset, Equals, int64(108))
+	c.Assert(rowID, Equals, int64(2))
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -69,7 +73,9 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	})
 	c.Assert(parser.TableName, DeepEquals, []byte("`namespaced`.`table`"))
 	c.Assert(parser.Columns, DeepEquals, []byte("(x,y,z)"))
-	c.Assert(parser.Pos(), Equals, int64(159))
+	offset, rowID = parser.Pos()
+	c.Assert(offset, Equals, int64(159))
+	c.Assert(rowID, Equals, int64(3))
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -78,7 +84,9 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	})
 	c.Assert(parser.TableName, DeepEquals, []byte("another_table"))
 	c.Assert(parser.Columns, IsNil)
-	c.Assert(parser.Pos(), Equals, int64(222))
+	offset, rowID = parser.Pos()
+	c.Assert(offset, Equals, int64(222))
+	c.Assert(rowID, Equals, int64(4))
 
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 }
@@ -93,7 +101,7 @@ func (s *testMydumpParserSuite) TestReadChunks(c *C) {
 	ioWorkers := worker.NewPool(context.Background(), 5, "test")
 	parser := mydump.NewChunkParser(reader, config.ReadBlockSize, ioWorkers)
 
-	chunks, err := parser.ReadChunks(32)
+	chunks, err := mydump.ReadChunks(parser, 32)
 	c.Assert(err, IsNil)
 	c.Assert(chunks, DeepEquals, []mydump.Chunk{
 		mydump.Chunk{
@@ -139,7 +147,7 @@ func (s *testMydumpParserSuite) TestNestedRow(c *C) {
 
 	ioWorkers := worker.NewPool(context.Background(), 5, "test")
 	parser := mydump.NewChunkParser(reader, config.ReadBlockSize, ioWorkers)
-	chunks, err := parser.ReadChunks(96)
+	chunks, err := mydump.ReadChunks(parser, 96)
 
 	c.Assert(err, IsNil)
 	c.Assert(chunks, DeepEquals, []mydump.Chunk{
