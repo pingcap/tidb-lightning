@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -674,7 +675,7 @@ func (t *TableRestore) restoreEngine(
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunkIndex, chunk, rc.cfg.Mydumper.ReadBlockSize, rc.ioWorkers)
+		cr, err := newChunkRestore(chunkIndex, &rc.cfg.Mydumper, chunk, rc.cfg.Mydumper.ReadBlockSize, rc.ioWorkers)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1008,17 +1009,30 @@ func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
 }
 
 type chunkRestore struct {
-	parser *mydump.ChunkParser
+	parser mydump.Parser
 	index  int
 	chunk  *ChunkCheckpoint
 }
 
-func newChunkRestore(index int, chunk *ChunkCheckpoint, blockBufSize int64, ioWorkers *worker.Pool) (*chunkRestore, error) {
+func newChunkRestore(
+	index int,
+	cfg *config.MydumperRuntime,
+	chunk *ChunkCheckpoint,
+	blockBufSize int64,
+	ioWorkers *worker.Pool,
+) (*chunkRestore, error) {
 	reader, err := os.Open(chunk.Key.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	parser := mydump.NewChunkParser(reader, blockBufSize, ioWorkers)
+
+	var parser mydump.Parser
+	switch path.Ext(strings.ToLower(chunk.Key.Path)) {
+	case ".csv":
+		parser = mydump.NewCSVParser(&cfg.CSV, reader, blockBufSize, ioWorkers)
+	default:
+		parser = mydump.NewChunkParser(reader, blockBufSize, ioWorkers)
+	}
 
 	reader.Seek(chunk.Chunk.Offset, io.SeekStart)
 	parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax)
@@ -1031,7 +1045,7 @@ func newChunkRestore(index int, chunk *ChunkCheckpoint, blockBufSize int64, ioWo
 }
 
 func (cr *chunkRestore) close() {
-	cr.parser.Reader().(*os.File).Close()
+	cr.parser.Close()
 }
 
 type TableRestore struct {
@@ -1518,7 +1532,7 @@ func (cr *chunkRestore) restore(
 					buffer.WriteString("INSERT INTO ")
 					buffer.WriteString(t.tableName)
 					if cr.chunk.Columns == nil {
-						t.initializeColumns(cr.parser.Columns, cr.chunk)
+						t.initializeColumns(cr.parser.Columns(), cr.chunk)
 					}
 					buffer.Write(cr.chunk.Columns)
 					buffer.WriteString(" VALUES ")

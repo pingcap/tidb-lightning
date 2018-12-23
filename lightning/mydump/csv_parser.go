@@ -95,10 +95,10 @@ func (parser *CSVParser) ReadRow() error {
 				parser.appendField(content, true, '`')
 			case csvTokNewLine:
 				len := parser.rowBuf.Len()
-				parser.Columns = make([]byte, len+1)
-				copy(parser.Columns[:len], parser.rowBuf.Bytes())
-				parser.Columns[0] = '('
-				parser.Columns[len] = ')'
+				parser.columns = make([]byte, len+1)
+				copy(parser.columns[:len], parser.rowBuf.Bytes())
+				parser.columns[0] = '('
+				parser.columns[len] = ')'
 				parser.rowBuf.Reset()
 				break outside
 			}
