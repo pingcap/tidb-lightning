@@ -82,6 +82,23 @@ no-schema=false
 # note that the *data* files are always parsed as binary regardless of schema encoding.
 #character-set = "auto"
 
+# CSV files are imported according to MySQL's LOAD DATA INFILE rules.
+[mydumper.csv]
+# separator between fields, should be an ASCII character.
+separator = ','
+# string delimiter, can either be an ASCII character or empty string.
+delimiter = '"'
+# whether the CSV files contain a header. If true, the first line will be skipped
+header = true
+# whether the CSV contains any NULL value
+not-null = false
+# if non-null = true, fields containing this value will be treated as NULL
+null = '\N'
+# whether to interpret backslash-escape inside strings.
+backslash-escape = true
+# if a line ends with a separator, remove it.
+trim-last-separator = false
+
 # configuration for tidb server address(one is enough) and pd server address(one is enough).
 [tidb]
 host = "127.0.0.1"
