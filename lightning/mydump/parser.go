@@ -1,6 +1,7 @@
 package mydump
 
 import (
+	"bytes"
 	"io"
 
 	"github.com/pkg/errors"
@@ -12,7 +13,7 @@ type ChunkParser struct {
 	// states for the lexer
 	reader      io.Reader
 	buf         []byte
-	bufSize     int
+	blockBuf    []byte
 	isLastChunk bool
 
 	lastRow Row
@@ -24,6 +25,10 @@ type ChunkParser struct {
 	// The list of columns in the form `(a, b, c)` in the last INSERT statement.
 	// Assumed to be constant throughout the entire file.
 	Columns []byte
+
+	// cache
+	remainBuf *bytes.Buffer
+	appendBuf *bytes.Buffer
 }
 
 // Chunk represents a portion of the data file.
@@ -43,8 +48,10 @@ type Row struct {
 // NewChunkParser creates a new parser which can read chunks out of a file.
 func NewChunkParser(reader io.Reader) *ChunkParser {
 	return &ChunkParser{
-		reader:  reader,
-		bufSize: 8192,
+		reader:    reader,
+		blockBuf:  make([]byte, 8192),
+		remainBuf: &bytes.Buffer{},
+		appendBuf: &bytes.Buffer{},
 	}
 }
 
@@ -73,27 +80,21 @@ const (
 	tokName
 )
 
-func tryAppendTo(out *[]byte, tail []byte) {
-	if out == nil || len(tail) == 0 {
-		return
-	}
-	if len(*out) == 0 {
-		*out = tail
-	} else {
-		*out = append(*out, tail...)
-	}
-}
-
 func (parser *ChunkParser) readBlock() error {
-	block := make([]byte, parser.bufSize)
-
-	n, err := io.ReadFull(parser.reader, block)
+	n, err := io.ReadFull(parser.reader, parser.blockBuf)
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:
 		parser.isLastChunk = true
 		fallthrough
 	case nil:
-		tryAppendTo(&parser.buf, block[:n])
+		// `parser.buf` reference to `appendBuf.Bytes`, so should use remainBuf to
+		// hold the `parser.buf` rest data to prevent slice overlap
+		parser.remainBuf.Reset()
+		parser.remainBuf.Write(parser.buf)
+		parser.appendBuf.Reset()
+		parser.appendBuf.Write(parser.remainBuf.Bytes())
+		parser.appendBuf.Write(parser.blockBuf[:n])
+		parser.buf = parser.appendBuf.Bytes()
 		return nil
 	default:
 		return errors.Trace(err)
