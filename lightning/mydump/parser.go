@@ -80,17 +80,6 @@ const (
 	tokName
 )
 
-func tryAppendTo(out *[]byte, tail []byte) {
-	if out == nil || len(tail) == 0 {
-		return
-	}
-	if len(*out) == 0 {
-		*out = tail
-	} else {
-		*out = append(*out, tail...)
-	}
-}
-
 func (parser *ChunkParser) readBlock() error {
 	n, err := io.ReadFull(parser.reader, parser.blockBuf)
 	switch err {
@@ -98,6 +87,8 @@ func (parser *ChunkParser) readBlock() error {
 		parser.isLastChunk = true
 		fallthrough
 	case nil:
+		// `parser.buf` reference to `appendBuf.Bytes`, so should use remainBuf to
+		// hold the `parser.buf` rest data to prevent slice overlap
 		parser.remainBuf.Reset()
 		parser.remainBuf.Write(parser.buf)
 		parser.appendBuf.Reset()
