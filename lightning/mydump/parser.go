@@ -49,10 +49,10 @@ type Row struct {
 }
 
 // NewChunkParser creates a new parser which can read chunks out of a file.
-func NewChunkParser(reader io.Reader) *ChunkParser {
+func NewChunkParser(reader io.Reader, blockBufSize int64) *ChunkParser {
 	return &ChunkParser{
 		reader:    reader,
-		blockBuf:  make([]byte, 8192),
+		blockBuf:  make([]byte, blockBufSize),
 		remainBuf: &bytes.Buffer{},
 		appendBuf: &bytes.Buffer{},
 	}
@@ -85,7 +85,7 @@ const (
 
 func (parser *ChunkParser) readBlock() error {
 	startTime := time.Now()
-	n, err := io.ReadFull(parser.reader, parser.blockBuf)
+	n, err := parser.reader.Read(parser.blockBuf)
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:
 		parser.isLastChunk = true

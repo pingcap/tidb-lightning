@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pkg/errors"
 )
@@ -24,7 +25,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			"insert another_table values (10, 11, 12, '(13)', '(', 14, ')');",
 	)
 
-	parser := mydump.NewChunkParser(reader)
+	parser := mydump.NewChunkParser(reader, config.ReadBlockSize)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -72,7 +73,7 @@ func (s *testMydumpParserSuite) TestReadChunks(c *C) {
 		INSERT foo VALUES (29,30,31,32),(33,34,35,36);
 	`)
 
-	parser := mydump.NewChunkParser(reader)
+	parser := mydump.NewChunkParser(reader, config.ReadBlockSize)
 
 	chunks, err := parser.ReadChunks(32)
 	c.Assert(err, IsNil)
@@ -118,7 +119,7 @@ func (s *testMydumpParserSuite) TestNestedRow(c *C) {
 		("789",CONVERT("[]" USING UTF8MB4));
 	`)
 
-	parser := mydump.NewChunkParser(reader)
+	parser := mydump.NewChunkParser(reader, config.ReadBlockSize)
 	chunks, err := parser.ReadChunks(96)
 
 	c.Assert(err, IsNil)

@@ -547,7 +547,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunkIndex, chunk)
+		cr, err := newChunkRestore(chunkIndex, chunk, rc.cfg.Mydumper.ReadBlockSize)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -903,12 +903,12 @@ type chunkRestore struct {
 	chunk  *ChunkCheckpoint
 }
 
-func newChunkRestore(index int, chunk *ChunkCheckpoint) (*chunkRestore, error) {
+func newChunkRestore(index int, chunk *ChunkCheckpoint, blockBufSize int64) (*chunkRestore, error) {
 	reader, err := os.Open(chunk.Key.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	parser := mydump.NewChunkParser(reader)
+	parser := mydump.NewChunkParser(reader, blockBufSize)
 
 	reader.Seek(chunk.Chunk.Offset, io.SeekStart)
 	parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax)
