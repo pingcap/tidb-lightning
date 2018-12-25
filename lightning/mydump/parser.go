@@ -3,8 +3,11 @@ package mydump
 import (
 	"bytes"
 	"io"
+	"time"
 
 	"github.com/pkg/errors"
+
+	"github.com/pingcap/tidb-lightning/lightning/metric"
 )
 
 // ChunkParser is a parser of the data files (the file containing only INSERT
@@ -81,6 +84,7 @@ const (
 )
 
 func (parser *ChunkParser) readBlock() error {
+	startTime := time.Now()
 	n, err := io.ReadFull(parser.reader, parser.blockBuf)
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:
@@ -95,6 +99,7 @@ func (parser *ChunkParser) readBlock() error {
 		parser.appendBuf.Write(parser.remainBuf.Bytes())
 		parser.appendBuf.Write(parser.blockBuf[:n])
 		parser.buf = parser.appendBuf.Bytes()
+		metric.ChunkParserReadBlockSecondsHistogram.Observe(time.Since(startTime).Seconds())
 		return nil
 	default:
 		return errors.Trace(err)

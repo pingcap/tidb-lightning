@@ -102,6 +102,22 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1024, 2, 8),
 		},
 	)
+	ChunkParserReadBlockSecondsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "chunk_parser_read_block_seconds",
+			Help:      "time needed to chunk parser read a block",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+		},
+	)
+	ChunkParserReadRowSecondsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "chunk_parser_read_row_seconds",
+			Help:      "time needed to chunk parser read a row",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+		},
+	)
 	BlockEncodeSecondsHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "lightning",
@@ -149,6 +165,8 @@ func init() {
 	prometheus.MustRegister(BlockDeliverSecondsHistogram)
 	prometheus.MustRegister(BlockDeliverBytesHistogram)
 	prometheus.MustRegister(ChecksumSecondsHistogram)
+	prometheus.MustRegister(ChunkParserReadRowSecondsHistogram)
+	prometheus.MustRegister(ChunkParserReadBlockSecondsHistogram)
 }
 
 func RecordTableCount(status string, err error) {

@@ -1354,6 +1354,7 @@ func (cr *chunkRestore) restore(
 		var sep byte = ' '
 	readLoop:
 		for cr.parser.Pos() < endOffset {
+			readRowStartTime := time.Now()
 			err := cr.parser.ReadRow()
 			switch errors.Cause(err) {
 			case nil:
@@ -1368,6 +1369,7 @@ func (cr *chunkRestore) restore(
 					buffer.WriteString(" VALUES ")
 					sep = ','
 				}
+				metric.ChunkParserReadRowSecondsHistogram.Observe(time.Since(readRowStartTime).Seconds())
 				lastRow := cr.parser.LastRow()
 				if cr.chunk.ShouldIncludeRowID {
 					buffer.Write(lastRow.Row[:len(lastRow.Row)-1])
