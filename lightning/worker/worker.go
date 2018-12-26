@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 )
@@ -31,8 +32,10 @@ func NewRestoreWorkerPool(ctx context.Context, limit int, name string) *RestoreW
 }
 
 func (pool *RestoreWorkerPool) Apply() *RestoreWorker {
+	start := time.Now()
 	worker := <-pool.workers
 	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+	metric.ApplyWorkerSecondsHistogram.WithLabelValues(pool.name).Observe(time.Since(start).Seconds())
 	return worker
 }
 func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {

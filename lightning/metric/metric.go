@@ -118,6 +118,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 		},
 	)
+	ApplyWorkerSecondsHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "apply_worker_seconds",
+			Help:      "time needed to apply a worker",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+		}, []string{"name"},
+	)
 	BlockEncodeSecondsHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "lightning",
@@ -167,6 +175,7 @@ func init() {
 	prometheus.MustRegister(ChecksumSecondsHistogram)
 	prometheus.MustRegister(ChunkParserReadRowSecondsHistogram)
 	prometheus.MustRegister(ChunkParserReadBlockSecondsHistogram)
+	prometheus.MustRegister(ApplyWorkerSecondsHistogram)
 }
 
 func RecordTableCount(status string, err error) {
