@@ -26,7 +26,6 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/pkg/errors"
 )
@@ -1387,7 +1386,7 @@ func (cr *chunkRestore) restore(
 
 		// sql -> kv
 		start = time.Now()
-		kvs, _, err := kvEncoder.SQL2KV(hack.String(buffer.Bytes()))
+		kvs, _, err := kvEncoder.SQL2KV(buffer.String())
 		encodeDur := time.Since(start)
 		encodeTotalDur += encodeDur
 		metric.BlockEncodeSecondsHistogram.Observe(encodeDur.Seconds())
