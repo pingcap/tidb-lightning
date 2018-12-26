@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/pingcap/tidb-lightning/lightning/metric"
+	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
 // ChunkParser is a parser of the data files (the file containing only INSERT
@@ -32,6 +33,7 @@ type ChunkParser struct {
 	// cache
 	remainBuf *bytes.Buffer
 	appendBuf *bytes.Buffer
+	ioWorkers *worker.RestoreWorkerPool
 }
 
 // Chunk represents a portion of the data file.
@@ -49,12 +51,13 @@ type Row struct {
 }
 
 // NewChunkParser creates a new parser which can read chunks out of a file.
-func NewChunkParser(reader io.Reader, blockBufSize int64) *ChunkParser {
+func NewChunkParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.RestoreWorkerPool) *ChunkParser {
 	return &ChunkParser{
 		reader:    reader,
 		blockBuf:  make([]byte, blockBufSize),
 		remainBuf: &bytes.Buffer{},
 		appendBuf: &bytes.Buffer{},
+		ioWorkers: ioWorkers,
 	}
 }
 
@@ -85,7 +88,12 @@ const (
 
 func (parser *ChunkParser) readBlock() error {
 	startTime := time.Now()
+
+	// limit IO concurrency
+	w := parser.ioWorkers.Apply()
 	n, err := parser.reader.Read(parser.blockBuf)
+	defer parser.ioWorkers.Recycle(w)
+
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:
 		parser.isLastChunk = true
