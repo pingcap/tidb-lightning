@@ -936,7 +936,7 @@ func (t *TableRestore) populateChunks(batchSize int64, cp *TableCheckpoint) erro
 	common.AppLogger.Infof("[%s] load chunks", t.tableName)
 	timer := time.Now()
 
-	chunks, err := mydump.MakeTableRegions(t.tableMeta, t.tableInfo.Columns)
+	chunks, err := mydump.MakeTableRegions(t.tableMeta, t.tableInfo.Columns, batchSize)
 	if err != nil {
 		return errors.Trace(err)
 	}

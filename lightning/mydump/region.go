@@ -1,25 +1,19 @@
 package mydump
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/pkg/errors"
 )
 
 type TableRegion struct {
-	ID int
+	EngineID int
 
 	DB    string
 	Table string
 	File  string
 
 	Chunk Chunk
-}
-
-func (reg *TableRegion) Name() string {
-	return fmt.Sprintf("%s|%s|%d|%d",
-		reg.DB, reg.Table, reg.ID, reg.Chunk.Offset)
 }
 
 func (reg *TableRegion) RowIDMin() int64 {
@@ -52,12 +46,14 @@ func (rs regionSlice) Less(i, j int) bool {
 
 ////////////////////////////////////////////////////////////////
 
-func MakeTableRegions(meta *MDTableMeta, columns int) ([]*TableRegion, error) {
+func MakeTableRegions(meta *MDTableMeta, columns int, batchSize int64) ([]*TableRegion, error) {
 	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
 
 	prevRowIDMax := int64(0)
-	for i, dataFile := range meta.DataFiles {
+	curEngineID := 0
+	curEngineSize := int64(0)
+	for _, dataFile := range meta.DataFiles {
 		dataFileInfo, err := os.Stat(dataFile)
 		if err != nil {
 			return nil, errors.Annotatef(err, "cannot stat %s", dataFile)
@@ -65,7 +61,8 @@ func MakeTableRegions(meta *MDTableMeta, columns int) ([]*TableRegion, error) {
 		dataFileSize := dataFileInfo.Size()
 		rowIDMax := prevRowIDMax + dataFileSize/(int64(columns)+2)
 		filesRegions = append(filesRegions, &TableRegion{
-			ID:    i,
+			EngineID: curEngineID,
+
 			DB:    meta.DB,
 			Table: meta.Name,
 			File:  dataFile,
@@ -77,6 +74,12 @@ func MakeTableRegions(meta *MDTableMeta, columns int) ([]*TableRegion, error) {
 			},
 		})
 		prevRowIDMax = rowIDMax
+
+		curEngineSize += dataFileSize
+		if curEngineSize > batchSize {
+			curEngineSize = 0
+			curEngineID++
+		}
 	}
 
 	return filesRegions, nil
