@@ -260,16 +260,10 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 }
 
 func (rc *RestoreController) estimateChunkCountIntoMetrics() {
-	estimatedChunkCount := int64(0)
-	minRegionSize := rc.cfg.Mydumper.MinRegionSize
+	estimatedChunkCount := 0
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
-			for _, dataFile := range tableMeta.DataFiles {
-				info, err := os.Stat(dataFile)
-				if err == nil {
-					estimatedChunkCount += (info.Size() + minRegionSize - 1) / minRegionSize
-				}
-			}
+			estimatedChunkCount += len(tableMeta.DataFiles)
 		}
 	}
 	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(float64(estimatedChunkCount))
@@ -496,7 +490,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 	if len(cp.Chunks) > 0 {
 		common.AppLogger.Infof("[%s] reusing %d chunks from checkpoint", t.tableName, len(cp.Chunks))
 	} else if cp.Status < CheckpointStatusAllWritten {
-		if err := t.populateChunks(rc.cfg.Mydumper.MinRegionSize, cp); err != nil {
+		if err := t.populateChunks(rc.cfg.Mydumper.BatchSize, cp); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if err := rc.checkpointsDB.InsertChunkCheckpoints(ctx, t.tableName, cp.Chunks); err != nil {
@@ -938,7 +932,7 @@ func (tr *TableRestore) Close() {
 
 var tidbRowIDColumnRegex = regexp.MustCompile(fmt.Sprintf("`%[1]s`|(?i:\\b%[1]s\\b)", model.ExtraHandleName))
 
-func (t *TableRestore) populateChunks(minChunkSize int64, cp *TableCheckpoint) error {
+func (t *TableRestore) populateChunks(batchSize int64, cp *TableCheckpoint) error {
 	common.AppLogger.Infof("[%s] load chunks", t.tableName)
 	timer := time.Now()
 

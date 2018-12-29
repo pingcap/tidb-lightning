@@ -85,15 +85,14 @@ type PostRestore struct {
 
 type MydumperRuntime struct {
 	ReadBlockSize int64  `toml:"read-block-size" json:"read-block-size"`
-	MinRegionSize int64  `toml:"region-min-size" json:"region-min-size"`
+	BatchSize     int64  `toml:"batch-size" json:"batch-size"`
 	SourceDir     string `toml:"data-source-dir" json:"data-source-dir"`
 	NoSchema      bool   `toml:"no-schema" json:"no-schema"`
 	CharacterSet  string `toml:"character-set" json:"character-set"`
 }
 
 type TikvImporter struct {
-	Addr      string `toml:"addr" json:"addr"`
-	BatchSize int64  `toml:"batch-size" json:"batch-size"`
+	Addr string `toml:"addr" json:"addr"`
 }
 
 type Checkpoint struct {
@@ -187,19 +186,14 @@ func (cfg *Config) Load() error {
 	}
 
 	// handle mydumper
-	if cfg.Mydumper.MinRegionSize <= 0 {
-		cfg.Mydumper.MinRegionSize = MinRegionSize
+	if cfg.Mydumper.BatchSize <= 0 {
+		cfg.Mydumper.BatchSize = 10 * _G
 	}
 	if cfg.Mydumper.ReadBlockSize <= 0 {
 		cfg.Mydumper.ReadBlockSize = ReadBlockSize
 	}
 	if len(cfg.Mydumper.CharacterSet) == 0 {
 		cfg.Mydumper.CharacterSet = "auto"
-	}
-
-	// hendle kv import
-	if cfg.TikvImporter.BatchSize <= 0 {
-		cfg.TikvImporter.BatchSize = KVMaxBatchSize
 	}
 
 	if len(cfg.Checkpoint.Schema) == 0 {

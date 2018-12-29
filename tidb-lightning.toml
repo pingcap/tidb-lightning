@@ -50,14 +50,13 @@ driver = "file"
 
 [tikv-importer]
 addr = "127.0.0.1:8808"
-# size of batch to import kv data into TiKV: xxx (GB)
-batch-size = 500 # GB
 
 [mydumper]
 # block size of file reading
 read-block-size = 65536 # Byte (default = 64 KB)
-# split source data file into multiple region/chunk to execute restoring in parallel
-region-min-size = 268435456 # Byte (default = 256 MB)
+# minimum size (in terms of source data file) of each batch of import.
+# Lightning will split a large table into multiple engine files according to this size.
+batch-size = 10_737_418_240 # Byte (default = 10 GB)
 # mydumper local source data directory
 data-source-dir = "/tmp/export-20180328-200751"
 # if no-schema is set true, lightning will get schema information from tidb-server directly without creating them.
