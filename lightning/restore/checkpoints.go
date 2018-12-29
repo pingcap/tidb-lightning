@@ -96,14 +96,18 @@ type ChunkCheckpoint struct {
 	Checksum           verify.KVChecksum
 }
 
-type TableCheckpoint struct {
-	Status    CheckpointStatus
-	Engine    uuid.UUID
-	AllocBase int64
-	Chunks    []*ChunkCheckpoint // a sorted array
+type EngineCheckpoint struct {
+	Status CheckpointStatus
+	Chunks []*ChunkCheckpoint // a sorted array
 }
 
-func (cp *TableCheckpoint) resetChunks() {
+type TableCheckpoint struct {
+	Status    CheckpointStatus
+	AllocBase int64
+	Engines   []*EngineCheckpoint
+}
+
+func (cp *EngineCheckpoint) resetChunks() {
 	cp.Chunks = nil
 }
 
@@ -192,7 +196,7 @@ type CheckpointsDB interface {
 	Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	Close() error
-	InsertChunkCheckpoints(ctx context.Context, tableName string, checkpoints []*ChunkCheckpoint) error
+	InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints []*EngineCheckpoint) error
 	Update(checkpointDiffs map[string]*TableCheckpointDiff)
 
 	RemoveCheckpoint(ctx context.Context, tableName string) error
@@ -216,14 +220,13 @@ func (*NullCheckpointsDB) Close() error {
 	return nil
 }
 
-func (*NullCheckpointsDB) Get(_ context.Context, tableName string) (*TableCheckpoint, error) {
+func (*NullCheckpointsDB) Get(_ context.Context, _ string) (*TableCheckpoint, error) {
 	return &TableCheckpoint{
 		Status: CheckpointStatusLoaded,
-		Engine: uuid.NewV4(),
 	}, nil
 }
 
-func (*NullCheckpointsDB) InsertChunkCheckpoints(_ context.Context, _ string, _ []*ChunkCheckpoint) error {
+func (*NullCheckpointsDB) InsertEngineCheckpoints(_ context.Context, _ string, _ []*EngineCheckpoint) error {
 	return nil
 }
 
@@ -324,7 +327,8 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, dbInfo map[strin
 		for _, db := range dbInfo {
 			for _, table := range db.Tables {
 				tableName := common.UniqueTable(db.Name, table.Name)
-				_, err = stmt.ExecContext(c, nodeID, cpdb.session, tableName, 0, uuid.NewV4().Bytes())
+				engineUUID := uuid.NewV5(engineNamespace, tableName+":0")
+				_, err = stmt.ExecContext(c, nodeID, cpdb.session, tableName, 0, engineUUID.Bytes())
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -346,7 +350,9 @@ func (cpdb *MySQLCheckpointsDB) Close() error {
 
 func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*TableCheckpoint, error) {
 	cp := new(TableCheckpoint)
-	cp.resetChunks()
+	cp.Engines = []*EngineCheckpoint{{
+		Status: CheckpointStatusLoaded,
+	}}
 
 	purpose := "(read checkpoint " + tableName + ")"
 	err := common.TransactWithRetry(ctx, cpdb.db, purpose, func(c context.Context, tx *sql.Tx) error {
@@ -378,7 +384,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 				return errors.Trace(err)
 			}
 			value.Checksum = verify.MakeKVChecksum(kvcBytes, kvcKVs, kvcChecksum)
-			cp.Chunks = append(cp.Chunks, value)
+			cp.Engines[0].Chunks = append(cp.Engines[0].Chunks, value)
 		}
 		if err := rows.Err(); err != nil {
 			return errors.Trace(err)
@@ -394,15 +400,11 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 			engine []byte
 		)
 		if err := row.Scan(&status, &engine, &cp.AllocBase); err != nil {
-			cp.resetChunks()
-			return errors.Trace(err)
-		}
-		cp.Engine, err = uuid.FromBytes(engine)
-		if err != nil {
-			cp.resetChunks()
+			cp.Engines[0].resetChunks()
 			return errors.Trace(err)
 		}
 		cp.Status = CheckpointStatus(status)
+		cp.Engines[0].Status = CheckpointStatus(status)
 		return nil
 	})
 	if err != nil {
@@ -416,8 +418,8 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 	return cp, nil
 }
 
-func (cpdb *MySQLCheckpointsDB) InsertChunkCheckpoints(ctx context.Context, tableName string, checkpoints []*ChunkCheckpoint) error {
-	err := common.TransactWithRetry(ctx, cpdb.db, "(update chunk checkpoints for "+tableName+")", func(c context.Context, tx *sql.Tx) error {
+func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints []*EngineCheckpoint) error {
+	err := common.TransactWithRetry(ctx, cpdb.db, "(update engine checkpoints for "+tableName+")", func(c context.Context, tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(c, fmt.Sprintf(`
 			REPLACE INTO %s.%s (
 				table_name, path, offset, columns, should_include_row_id,
@@ -434,15 +436,17 @@ func (cpdb *MySQLCheckpointsDB) InsertChunkCheckpoints(ctx context.Context, tabl
 		}
 		defer stmt.Close()
 
-		for _, value := range checkpoints {
-			_, err = stmt.ExecContext(
-				c,
-				tableName, value.Key.Path, value.Key.Offset, value.Columns, value.ShouldIncludeRowID,
-				value.Chunk.Offset, value.Chunk.EndOffset, value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax,
-				value.Checksum.SumSize(), value.Checksum.SumKVS(), value.Checksum.Sum(),
-			)
-			if err != nil {
-				return errors.Trace(err)
+		for _, engine := range checkpoints {
+			for _, value := range engine.Chunks {
+				_, err = stmt.ExecContext(
+					c,
+					tableName, value.Key.Path, value.Key.Offset, value.Columns, value.ShouldIncludeRowID,
+					value.Chunk.Offset, value.Chunk.EndOffset, value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax,
+					value.Checksum.SumSize(), value.Checksum.SumKVS(), value.Checksum.Sum(),
+				)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 
@@ -579,20 +583,17 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 
 	tableModel := cpdb.checkpoints.Checkpoints[tableName]
 
-	engine, err := uuid.FromBytes(tableModel.Engine)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	cp := &TableCheckpoint{
 		Status:    CheckpointStatus(tableModel.Status),
-		Engine:    engine,
 		AllocBase: tableModel.AllocBase,
-		Chunks:    make([]*ChunkCheckpoint, 0, len(tableModel.Chunks)),
+		Engines: []*EngineCheckpoint{{
+			Status: CheckpointStatus(tableModel.Status),
+			Chunks: make([]*ChunkCheckpoint, 0, len(tableModel.Chunks)),
+		}},
 	}
 
 	for _, chunkModel := range tableModel.Chunks {
-		cp.Chunks = append(cp.Chunks, &ChunkCheckpoint{
+		cp.Engines[0].Chunks = append(cp.Engines[0].Chunks, &ChunkCheckpoint{
 			Key: ChunkCheckpointKey{
 				Path:   chunkModel.Path,
 				Offset: chunkModel.Offset,
@@ -608,14 +609,14 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 			Checksum: verify.MakeKVChecksum(chunkModel.KvcBytes, chunkModel.KvcKvs, chunkModel.KvcChecksum),
 		})
 	}
-	sort.Slice(cp.Chunks, func(i, j int) bool {
-		return cp.Chunks[i].Key.less(&cp.Chunks[j].Key)
+	sort.Slice(cp.Engines[0].Chunks, func(i, j int) bool {
+		return cp.Engines[0].Chunks[i].Key.less(&cp.Engines[0].Chunks[j].Key)
 	})
 
 	return cp, nil
 }
 
-func (cpdb *FileCheckpointsDB) InsertChunkCheckpoints(_ context.Context, tableName string, checkpoints []*ChunkCheckpoint) error {
+func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableName string, checkpoints []*EngineCheckpoint) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
@@ -624,25 +625,27 @@ func (cpdb *FileCheckpointsDB) InsertChunkCheckpoints(_ context.Context, tableNa
 		tableModel.Chunks = make(map[string]*ChunkCheckpointModel)
 	}
 
-	for _, value := range checkpoints {
-		key := value.Key.String()
-		chunk, ok := tableModel.Chunks[key]
-		if !ok {
-			chunk = &ChunkCheckpointModel{
-				Path:               value.Key.Path,
-				Offset:             value.Key.Offset,
-				Columns:            value.Columns,
-				ShouldIncludeRowId: value.ShouldIncludeRowID,
+	for _, engine := range checkpoints {
+		for _, value := range engine.Chunks {
+			key := value.Key.String()
+			chunk, ok := tableModel.Chunks[key]
+			if !ok {
+				chunk = &ChunkCheckpointModel{
+					Path:               value.Key.Path,
+					Offset:             value.Key.Offset,
+					Columns:            value.Columns,
+					ShouldIncludeRowId: value.ShouldIncludeRowID,
+				}
+				tableModel.Chunks[key] = chunk
 			}
-			tableModel.Chunks[key] = chunk
+			chunk.Pos = value.Chunk.Offset
+			chunk.EndOffset = value.Chunk.EndOffset
+			chunk.PrevRowidMax = value.Chunk.PrevRowIDMax
+			chunk.RowidMax = value.Chunk.RowIDMax
+			chunk.KvcBytes = value.Checksum.SumSize()
+			chunk.KvcKvs = value.Checksum.SumKVS()
+			chunk.KvcChecksum = value.Checksum.Sum()
 		}
-		chunk.Pos = value.Chunk.Offset
-		chunk.EndOffset = value.Chunk.EndOffset
-		chunk.PrevRowidMax = value.Chunk.PrevRowIDMax
-		chunk.RowidMax = value.Chunk.RowIDMax
-		chunk.KvcBytes = value.Checksum.SumSize()
-		chunk.KvcKvs = value.Checksum.SumKVS()
-		chunk.KvcChecksum = value.Checksum.Sum()
 	}
 
 	return errors.Trace(cpdb.save())

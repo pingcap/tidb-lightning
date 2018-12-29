@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/pkg/errors"
+	"github.com/satori/go.uuid"
 )
 
 const (
@@ -51,6 +52,8 @@ var (
 	requiredPDVersion   = *semver.New("2.1.0")
 	requiredTiKVVersion = *semver.New("2.1.0")
 )
+
+var engineNamespace = uuid.Must(uuid.FromString("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf"))
 
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
@@ -476,31 +479,35 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 }
 
 func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) (*kv.ClosedEngine, error) {
+	engineUUID := uuid.NewV5(engineNamespace, t.tableName+":0")
+
 	if cp.Status >= CheckpointStatusClosed {
-		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, cp.Engine)
+		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, engineUUID)
 		return closedEngine, errors.Trace(err)
 	}
 
-	engine, err := rc.importer.OpenEngine(ctx, t.tableName, cp.Engine)
+	engine, err := rc.importer.OpenEngine(ctx, t.tableName, engineUUID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// no need to do anything if the chunks are already populated
-	if len(cp.Chunks) > 0 {
-		common.AppLogger.Infof("[%s] reusing %d chunks from checkpoint", t.tableName, len(cp.Chunks))
+	if len(cp.Engines[0].Chunks) > 0 {
+		common.AppLogger.Infof("[%s] reusing %d engines from checkpoint", t.tableName, len(cp.Engines[0].Chunks))
 	} else if cp.Status < CheckpointStatusAllWritten {
 		if err := t.populateChunks(rc.cfg.Mydumper.BatchSize, cp); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err := rc.checkpointsDB.InsertChunkCheckpoints(ctx, t.tableName, cp.Chunks); err != nil {
+		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, t.tableName, cp.Engines[:]); err != nil {
 			return nil, errors.Trace(err)
 		}
 
 		// rebase the allocator so it exceeds the number of rows.
 		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.core.AutoIncID)
-		for _, chunk := range cp.Chunks {
-			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, chunk.Chunk.RowIDMax)
+		for _, engine := range cp.Engines {
+			for _, chunk := range engine.Chunks {
+				cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, chunk.Chunk.RowIDMax)
+			}
 		}
 		t.alloc.Rebase(t.tableInfo.ID, cp.AllocBase, false)
 		rc.saveCpCh <- saveCp{
@@ -521,64 +528,66 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 	handledChunksCount := new(int32)
 
 	// Restore table data
-	for chunkIndex, chunk := range cp.Chunks {
-		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
-			continue
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		chunkErrMutex.Lock()
-		err := chunkErr
-		chunkErrMutex.Unlock()
-		if err != nil {
-			break
-		}
-
-		// Flows :
-		// 	1. read mydump file
-		// 	2. sql -> kvs
-		// 	3. load kvs data (into kv deliver server)
-		// 	4. flush kvs data (into tikv node)
-
-		cr, err := newChunkRestore(chunkIndex, chunk, rc.cfg.Mydumper.ReadBlockSize, rc.ioWorkers)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Inc()
-
-		restoreWorker := rc.regionWorkers.Apply()
-		wg.Add(1)
-		go func(w *worker.RestoreWorker, cr *chunkRestore) {
-			// Restore a chunk.
-			defer func() {
-				cr.close()
-				wg.Done()
-				rc.regionWorkers.Recycle(w)
-			}()
-			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
-			err := cr.restore(ctx, t, engine, rc)
-			if err != nil {
-				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
-				if !common.IsContextCanceledError(err) {
-					common.AppLogger.Errorf("[%s] chunk #%d (%s) run task error %s", t.tableName, cr.index, &cr.chunk.Key, errors.ErrorStack(err))
-				}
-				chunkErrMutex.Lock()
-				if chunkErr == nil {
-					chunkErr = err
-				}
-				chunkErrMutex.Unlock()
-				return
+	for _, engineCp := range cp.Engines {
+		for chunkIndex, chunk := range engineCp.Chunks {
+			if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
+				continue
 			}
-			metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
 
-			handled := int(atomic.AddInt32(handledChunksCount, 1))
-			common.AppLogger.Infof("[%s] handled region count = %d (%s)", t.tableName, handled, common.Percent(handled, len(cp.Chunks)))
-		}(restoreWorker, cr)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
+
+			chunkErrMutex.Lock()
+			err := chunkErr
+			chunkErrMutex.Unlock()
+			if err != nil {
+				break
+			}
+
+			// Flows :
+			// 	1. read mydump file
+			// 	2. sql -> kvs
+			// 	3. load kvs data (into kv deliver server)
+			// 	4. flush kvs data (into tikv node)
+
+			cr, err := newChunkRestore(chunkIndex, chunk, rc.cfg.Mydumper.ReadBlockSize, rc.ioWorkers)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Inc()
+
+			restoreWorker := rc.regionWorkers.Apply()
+			wg.Add(1)
+			go func(w *worker.RestoreWorker, cr *chunkRestore) {
+				// Restore a chunk.
+				defer func() {
+					cr.close()
+					wg.Done()
+					rc.regionWorkers.Recycle(w)
+				}()
+				metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
+				err := cr.restore(ctx, t, engine, rc)
+				if err != nil {
+					metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
+					if !common.IsContextCanceledError(err) {
+						common.AppLogger.Errorf("[%s] chunk #%d (%s) run task error %s", t.tableName, cr.index, &cr.chunk.Key, errors.ErrorStack(err))
+					}
+					chunkErrMutex.Lock()
+					if chunkErr == nil {
+						chunkErr = err
+					}
+					chunkErrMutex.Unlock()
+					return
+				}
+				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
+
+				handled := int(atomic.AddInt32(handledChunksCount, 1))
+				common.AppLogger.Infof("[%s] handled region count = %d (%s)", t.tableName, handled, common.Percent(handled, len(engineCp.Chunks)))
+			}(restoreWorker, cr)
+		}
 	}
 
 	wg.Wait()
@@ -941,10 +950,13 @@ func (t *TableRestore) populateChunks(batchSize int64, cp *TableCheckpoint) erro
 		return errors.Trace(err)
 	}
 
-	cp.Chunks = make([]*ChunkCheckpoint, 0, len(chunks))
+	cp.Engines = []*EngineCheckpoint{{
+		Status: CheckpointStatusLoaded,
+		Chunks: make([]*ChunkCheckpoint, 0, len(chunks)),
+	}}
 
 	for _, chunk := range chunks {
-		cp.Chunks = append(cp.Chunks, &ChunkCheckpoint{
+		cp.Engines[0].Chunks = append(cp.Engines[0].Chunks, &ChunkCheckpoint{
 			Key: ChunkCheckpointKey{
 				Path:   chunk.File,
 				Offset: chunk.Chunk.Offset,
@@ -1019,8 +1031,10 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 // do checksum for each table.
 func (tr *TableRestore) compareChecksum(ctx context.Context, db *sql.DB, cp *TableCheckpoint) error {
 	var localChecksum verify.KVChecksum
-	for _, chunk := range cp.Chunks {
-		localChecksum.Add(&chunk.Checksum)
+	for _, engine := range cp.Engines {
+		for _, chunk := range engine.Chunks {
+			localChecksum.Add(&chunk.Checksum)
+		}
 	}
 
 	start := time.Now()
