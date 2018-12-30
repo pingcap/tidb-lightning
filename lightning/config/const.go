@@ -9,6 +9,8 @@ const (
 	ReadBlockSize int64 = 64 * _K
 	MinRegionSize int64 = 256 * _M
 
+	BufferSizeScale = 5
+
 	// kv import
 	KVMaxBatchSize int64 = 200 * _G
 )

@@ -106,7 +106,7 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "lightning",
 			Name:      "chunk_parser_read_block_seconds",
-			Help:      "time needed to chunk parser read a block",
+			Help:      "time needed for chunk parser read a block",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 		},
 	)
@@ -114,7 +114,7 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "lightning",
 			Name:      "chunk_parser_read_row_seconds",
-			Help:      "time needed to chunk parser read a row",
+			Help:      "time needed for chunk parser read a row",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 		},
 	)

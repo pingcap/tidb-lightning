@@ -12,11 +12,8 @@ require (
 	github.com/cznic/y v0.0.0-20160420101755-9fdf92d4aac0
 	github.com/go-sql-driver/mysql v1.4.0
 	github.com/gogo/protobuf v1.1.1
-	github.com/google/pprof v0.0.0-20181206194817-3ea8567a2e57 // indirect
-	github.com/ianlancetaylor/demangle v0.0.0-20181102032728-5e5cf60278f6 // indirect
 	github.com/joho/sqltocsv v0.0.0-20180904231936-b24deec2b806
 	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
-	github.com/pingcap/errors v0.11.0
 	github.com/pingcap/gofail v0.0.0-20181121072748-c3f835e5a7d8
 	github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26
 	github.com/pingcap/parser v0.0.0-20181113072426-4a9a1b13b591

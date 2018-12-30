@@ -7,6 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
@@ -54,7 +55,7 @@ type Row struct {
 func NewChunkParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.RestoreWorkerPool) *ChunkParser {
 	return &ChunkParser{
 		reader:    reader,
-		blockBuf:  make([]byte, blockBufSize),
+		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),
 		remainBuf: &bytes.Buffer{},
 		appendBuf: &bytes.Buffer{},
 		ioWorkers: ioWorkers,
@@ -92,7 +93,7 @@ func (parser *ChunkParser) readBlock() error {
 	// limit IO concurrency
 	w := parser.ioWorkers.Apply()
 	n, err := parser.reader.Read(parser.blockBuf)
-	defer parser.ioWorkers.Recycle(w)
+	parser.ioWorkers.Recycle(w)
 
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:
