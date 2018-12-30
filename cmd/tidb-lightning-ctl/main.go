@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/kv"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
 	"github.com/pkg/errors"
-	"github.com/satori/go.uuid"
 )
 
 func main() {
@@ -163,12 +162,11 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tableName s
 	}
 
 	for _, table := range targetTables {
-		if table.Engine == uuid.Nil {
-			continue
-		}
-		if closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, 0); err == nil {
-			fmt.Fprintln(os.Stderr, "Cleaning up engine:", table.TableName, 0)
-			closedEngine.Cleanup(ctx)
+		for engineID := 0; engineID < table.EnginesCount; engineID++ {
+			if closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, engineID); err == nil {
+				fmt.Fprintln(os.Stderr, "Cleaning up engine:", table.TableName, engineID)
+				closedEngine.Cleanup(ctx)
+			}
 		}
 	}
 

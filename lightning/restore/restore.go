@@ -270,7 +270,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 }
 
 func (rc *RestoreController) saveStatusCheckpoint(tableName string, err error, statusIfSucceed CheckpointStatus) {
-	merger := &StatusCheckpointMerger{Status: statusIfSucceed}
+	merger := &StatusCheckpointMerger{Status: statusIfSucceed, EngineID: -1}
 
 	switch {
 	case err == nil:

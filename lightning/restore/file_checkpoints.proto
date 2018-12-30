@@ -8,11 +8,15 @@ message CheckpointsModel {
 
 message TableCheckpointModel {
     bytes hash = 1;
-    bytes engine = 2;
     uint32 status = 3;
     int64 alloc_base = 4;
+    repeated EngineCheckpointModel engines = 6;
+}
+
+message EngineCheckpointModel {
+    uint32 status = 1;
     // key is "$path:$offset"
-    map<string, ChunkCheckpointModel> chunks = 5;
+    map<string, ChunkCheckpointModel> chunks = 2;
 }
 
 message ChunkCheckpointModel {

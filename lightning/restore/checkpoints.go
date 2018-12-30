@@ -223,8 +223,8 @@ func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 }
 
 type DestroyedTableCheckpoint struct {
-	TableName string
-	Engine    uuid.UUID
+	TableName    string
+	EnginesCount int
 }
 
 type CheckpointsDB interface {
@@ -596,7 +596,6 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, dbInfo map[string
 			if _, ok := cpdb.checkpoints.Checkpoints[tableName]; !ok {
 				cpdb.checkpoints.Checkpoints[tableName] = &TableCheckpointModel{
 					Status: uint32(CheckpointStatusLoaded),
-					Engine: uuid.NewV4().Bytes(),
 				}
 			}
 			// TODO check if hash matches
@@ -622,32 +621,39 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 	cp := &TableCheckpoint{
 		Status:    CheckpointStatus(tableModel.Status),
 		AllocBase: tableModel.AllocBase,
-		Engines: []*EngineCheckpoint{{
-			Status: CheckpointStatus(tableModel.Status),
-			Chunks: make([]*ChunkCheckpoint, 0, len(tableModel.Chunks)),
-		}},
+		Engines:   make([]*EngineCheckpoint, 0, len(tableModel.Engines)),
 	}
 
-	for _, chunkModel := range tableModel.Chunks {
-		cp.Engines[0].Chunks = append(cp.Engines[0].Chunks, &ChunkCheckpoint{
-			Key: ChunkCheckpointKey{
-				Path:   chunkModel.Path,
-				Offset: chunkModel.Offset,
-			},
-			Columns:            chunkModel.Columns,
-			ShouldIncludeRowID: chunkModel.ShouldIncludeRowId,
-			Chunk: mydump.Chunk{
-				Offset:       chunkModel.Pos,
-				EndOffset:    chunkModel.EndOffset,
-				PrevRowIDMax: chunkModel.PrevRowidMax,
-				RowIDMax:     chunkModel.RowidMax,
-			},
-			Checksum: verify.MakeKVChecksum(chunkModel.KvcBytes, chunkModel.KvcKvs, chunkModel.KvcChecksum),
+	for _, engineModel := range tableModel.Engines {
+		engine := &EngineCheckpoint{
+			Status: CheckpointStatus(engineModel.Status),
+			Chunks: make([]*ChunkCheckpoint, 0, len(engineModel.Chunks)),
+		}
+
+		for _, chunkModel := range engineModel.Chunks {
+			engine.Chunks = append(engine.Chunks, &ChunkCheckpoint{
+				Key: ChunkCheckpointKey{
+					Path:   chunkModel.Path,
+					Offset: chunkModel.Offset,
+				},
+				Columns:            chunkModel.Columns,
+				ShouldIncludeRowID: chunkModel.ShouldIncludeRowId,
+				Chunk: mydump.Chunk{
+					Offset:       chunkModel.Pos,
+					EndOffset:    chunkModel.EndOffset,
+					PrevRowIDMax: chunkModel.PrevRowidMax,
+					RowIDMax:     chunkModel.RowidMax,
+				},
+				Checksum: verify.MakeKVChecksum(chunkModel.KvcBytes, chunkModel.KvcKvs, chunkModel.KvcChecksum),
+			})
+		}
+
+		sort.Slice(engine.Chunks, func(i, j int) bool {
+			return engine.Chunks[i].Key.less(&engine.Chunks[j].Key)
 		})
+
+		cp.Engines = append(cp.Engines, engine)
 	}
-	sort.Slice(cp.Engines[0].Chunks, func(i, j int) bool {
-		return cp.Engines[0].Chunks[i].Key.less(&cp.Engines[0].Chunks[j].Key)
-	})
 
 	return cp, nil
 }
@@ -657,14 +663,18 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 	defer cpdb.lock.Unlock()
 
 	tableModel := cpdb.checkpoints.Checkpoints[tableName]
-	if tableModel.Chunks == nil {
-		tableModel.Chunks = make(map[string]*ChunkCheckpointModel)
+	for i := len(tableModel.Engines); i < len(checkpoints); i++ {
+		tableModel.Engines = append(tableModel.Engines, &EngineCheckpointModel{
+			Status: uint32(CheckpointStatusLoaded),
+			Chunks: make(map[string]*ChunkCheckpointModel),
+		})
 	}
 
-	for _, engine := range checkpoints {
+	for engineID, engine := range checkpoints {
+		engineModel := tableModel.Engines[engineID]
 		for _, value := range engine.Chunks {
 			key := value.Key.String()
-			chunk, ok := tableModel.Chunks[key]
+			chunk, ok := engineModel.Chunks[key]
 			if !ok {
 				chunk = &ChunkCheckpointModel{
 					Path:               value.Key.Path,
@@ -672,7 +682,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 					Columns:            value.Columns,
 					ShouldIncludeRowId: value.ShouldIncludeRowID,
 				}
-				tableModel.Chunks[key] = chunk
+				engineModel.Chunks[key] = chunk
 			}
 			chunk.Pos = value.Chunk.Offset
 			chunk.EndOffset = value.Chunk.EndOffset
@@ -699,9 +709,14 @@ func (cpdb *FileCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoin
 		if cpd.hasRebase {
 			tableModel.AllocBase = cpd.allocBase
 		}
-		for _, engineDiff := range cpd.engines {
+		for engineID, engineDiff := range cpd.engines {
+			engineModel := tableModel.Engines[engineID]
+			if engineDiff.hasStatus {
+				engineModel.Status = uint32(engineDiff.status)
+			}
+
 			for key, diff := range engineDiff.chunks {
-				chunkModel := tableModel.Chunks[key.String()]
+				chunkModel := engineModel.Chunks[key.String()]
 				chunkModel.Pos = diff.pos
 				chunkModel.PrevRowidMax = diff.rowID
 				chunkModel.KvcBytes = diff.checksum.SumSize()
@@ -828,8 +843,8 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 				return errors.Trace(e)
 			}
 			targetTables = append(targetTables, DestroyedTableCheckpoint{
-				TableName: matchedTableName,
-				Engine:    uuid.FromBytesOrNil(matchedEngine),
+				TableName:    matchedTableName,
+				EnginesCount: 1,
 			})
 		}
 		if e := rows.Err(); e != nil {
@@ -923,6 +938,11 @@ func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTa
 		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
 			tableModel.Status = uint32(CheckpointStatusLoaded)
 		}
+		for _, engineModel := range tableModel.Engines {
+			if engineModel.Status <= uint32(CheckpointStatusMaxInvalid) {
+				engineModel.Status = uint32(CheckpointStatusLoaded)
+			}
+		}
 	}
 	return errors.Trace(cpdb.save())
 }
@@ -940,8 +960,8 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 		}
 		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
 			targetTables = append(targetTables, DestroyedTableCheckpoint{
-				TableName: tableName,
-				Engine:    uuid.FromBytesOrNil(tableModel.Engine),
+				TableName:    tableName,
+				EnginesCount: len(tableModel.Engines),
 			})
 		}
 	}
