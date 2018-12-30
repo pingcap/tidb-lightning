@@ -191,6 +191,13 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	}
 	defer tablesFile.Close()
 
+	enginesFileName := path.Join(dumpFolder, "engines.csv")
+	enginesFile, err := os.Create(tablesFileName)
+	if err != nil {
+		return errors.Annotatef(err, "failed to create %s", enginesFileName)
+	}
+	defer enginesFile.Close()
+
 	chunksFileName := path.Join(dumpFolder, "chunks.csv")
 	chunksFile, err := os.Create(chunksFileName)
 	if err != nil {
@@ -199,6 +206,9 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	defer chunksFile.Close()
 
 	if err := cpdb.DumpTables(ctx, tablesFile); err != nil {
+		return errors.Trace(err)
+	}
+	if err := cpdb.DumpEngines(ctx, enginesFile); err != nil {
 		return errors.Trace(err)
 	}
 	if err := cpdb.DumpChunks(ctx, chunksFile); err != nil {

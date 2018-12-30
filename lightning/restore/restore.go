@@ -487,13 +487,13 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 	}
 
 	// no need to do anything if the chunks are already populated
-	if len(cp.Engines[0].Chunks) > 0 {
-		common.AppLogger.Infof("[%s] reusing %d engines from checkpoint", t.tableName, len(cp.Engines[0].Chunks))
+	if len(cp.Engines) > 0 {
+		common.AppLogger.Infof("[%s] reusing %d engines and %d chunks from checkpoint", t.tableName, len(cp.Engines), cp.CountChunks())
 	} else if cp.Status < CheckpointStatusAllWritten {
 		if err := t.populateChunks(rc.cfg.Mydumper.BatchSize, cp); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, t.tableName, cp.Engines[:]); err != nil {
+		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, t.tableName, cp.Engines); err != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -945,13 +945,11 @@ func (t *TableRestore) populateChunks(batchSize int64, cp *TableCheckpoint) erro
 		return errors.Trace(err)
 	}
 
-	cp.Engines = []*EngineCheckpoint{{
-		Status: CheckpointStatusLoaded,
-		Chunks: make([]*ChunkCheckpoint, 0, len(chunks)),
-	}}
-
 	for _, chunk := range chunks {
-		cp.Engines[0].Chunks = append(cp.Engines[0].Chunks, &ChunkCheckpoint{
+		for chunk.EngineID >= len(cp.Engines) {
+			cp.Engines = append(cp.Engines, &EngineCheckpoint{Status: CheckpointStatusLoaded})
+		}
+		cp.Engines[chunk.EngineID].Chunks = append(cp.Engines[chunk.EngineID].Chunks, &ChunkCheckpoint{
 			Key: ChunkCheckpointKey{
 				Path:   chunk.File,
 				Offset: chunk.Chunk.Offset,
@@ -961,7 +959,7 @@ func (t *TableRestore) populateChunks(batchSize int64, cp *TableCheckpoint) erro
 		})
 	}
 
-	common.AppLogger.Infof("[%s] load %d chunks takes %v", t.tableName, len(chunks), time.Since(timer))
+	common.AppLogger.Infof("[%s] load %d engines and %d chunks takes %v", t.tableName, len(cp.Engines), len(chunks), time.Since(timer))
 	return nil
 }
 
