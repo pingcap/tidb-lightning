@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/pkg/errors"
-	"github.com/satori/go.uuid"
 )
 
 const (
@@ -52,8 +51,6 @@ var (
 	requiredPDVersion   = *semver.New("2.1.0")
 	requiredTiKVVersion = *semver.New("2.1.0")
 )
-
-var engineNamespace = uuid.Must(uuid.FromString("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf"))
 
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
@@ -479,14 +476,12 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 }
 
 func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) (*kv.ClosedEngine, error) {
-	engineUUID := uuid.NewV5(engineNamespace, t.tableName+":0")
-
 	if cp.Status >= CheckpointStatusClosed {
-		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, engineUUID)
+		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, 0)
 		return closedEngine, errors.Trace(err)
 	}
 
-	engine, err := rc.importer.OpenEngine(ctx, t.tableName, engineUUID)
+	engine, err := rc.importer.OpenEngine(ctx, t.tableName, 0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

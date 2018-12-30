@@ -166,8 +166,8 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tableName s
 		if table.Engine == uuid.Nil {
 			continue
 		}
-		if closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, table.Engine); err == nil {
-			fmt.Fprintln(os.Stderr, "Cleaning up engine:", table.TableName, table.Engine)
+		if closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, 0); err == nil {
+			fmt.Fprintln(os.Stderr, "Cleaning up engine:", table.TableName, 0)
 			closedEngine.Cleanup(ctx)
 		}
 	}

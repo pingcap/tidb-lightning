@@ -327,8 +327,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, dbInfo map[strin
 		for _, db := range dbInfo {
 			for _, table := range db.Tables {
 				tableName := common.UniqueTable(db.Name, table.Name)
-				engineUUID := uuid.NewV5(engineNamespace, tableName+":0")
-				_, err = stmt.ExecContext(c, nodeID, cpdb.session, tableName, 0, engineUUID.Bytes())
+				_, err = stmt.ExecContext(c, nodeID, cpdb.session, tableName, 0, uuid.Nil)
 				if err != nil {
 					return errors.Trace(err)
 				}
