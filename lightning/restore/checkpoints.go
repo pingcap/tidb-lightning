@@ -119,25 +119,45 @@ type chunkCheckpointDiff struct {
 	checksum verify.KVChecksum
 }
 
+type engineCheckpointDiff struct {
+	hasStatus bool
+	status    CheckpointStatus
+	chunks    map[ChunkCheckpointKey]chunkCheckpointDiff
+}
+
 type TableCheckpointDiff struct {
 	hasStatus bool
 	hasRebase bool
 	status    CheckpointStatus
 	allocBase int64
-	chunks    map[ChunkCheckpointKey]chunkCheckpointDiff
+	engines   map[int]engineCheckpointDiff
 }
 
 func NewTableCheckpointDiff() *TableCheckpointDiff {
 	return &TableCheckpointDiff{
-		status: CheckpointStatusMaxInvalid + 1,
-		chunks: make(map[ChunkCheckpointKey]chunkCheckpointDiff),
+		status:  CheckpointStatusMaxInvalid + 1,
+		engines: make(map[int]engineCheckpointDiff),
 	}
+}
+
+func (cpd *TableCheckpointDiff) insertEngineCheckpointDiff(engineID int, newDiff engineCheckpointDiff) {
+	if oldDiff, ok := cpd.engines[engineID]; ok {
+		if newDiff.hasStatus {
+			oldDiff.hasStatus = true
+			oldDiff.status = newDiff.status
+		}
+		for key, chunkDiff := range newDiff.chunks {
+			oldDiff.chunks[key] = chunkDiff
+		}
+		newDiff = oldDiff
+	}
+	cpd.engines[engineID] = newDiff
 }
 
 func (cpd *TableCheckpointDiff) String() string {
 	return fmt.Sprintf(
-		"{hasStatus:%v, hasRebase:%v, status:%d, allocBase:%d, chunks:[%d]}",
-		cpd.hasStatus, cpd.hasRebase, cpd.status, cpd.allocBase, len(cpd.chunks),
+		"{hasStatus:%v, hasRebase:%v, status:%d, allocBase:%d, engines:[%d]}",
+		cpd.hasStatus, cpd.hasRebase, cpd.status, cpd.allocBase, len(cpd.engines),
 	)
 }
 
@@ -151,7 +171,8 @@ type TableCheckpointMerger interface {
 }
 
 type StatusCheckpointMerger struct {
-	Status CheckpointStatus
+	EngineID int // -1 == apply to whole table.
+	Status   CheckpointStatus
 }
 
 func (merger *StatusCheckpointMerger) SetInvalid() {
@@ -159,11 +180,21 @@ func (merger *StatusCheckpointMerger) SetInvalid() {
 }
 
 func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
-	cpd.status = merger.Status
-	cpd.hasStatus = true
+	if merger.EngineID == -1 || merger.Status <= CheckpointStatusMaxInvalid {
+		cpd.status = merger.Status
+		cpd.hasStatus = true
+	}
+	if merger.EngineID >= 0 {
+		cpd.insertEngineCheckpointDiff(merger.EngineID, engineCheckpointDiff{
+			hasStatus: true,
+			status:    merger.Status,
+			chunks:    make(map[ChunkCheckpointKey]chunkCheckpointDiff),
+		})
+	}
 }
 
 type ChunkCheckpointMerger struct {
+	EngineID int
 	Key      ChunkCheckpointKey
 	Checksum verify.KVChecksum
 	Pos      int64
@@ -171,11 +202,15 @@ type ChunkCheckpointMerger struct {
 }
 
 func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
-	cpd.chunks[merger.Key] = chunkCheckpointDiff{
-		pos:      merger.Pos,
-		rowID:    merger.RowID,
-		checksum: merger.Checksum,
-	}
+	cpd.insertEngineCheckpointDiff(merger.EngineID, engineCheckpointDiff{
+		chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
+			merger.Key: {
+				pos:      merger.Pos,
+				rowID:    merger.RowID,
+				checksum: merger.Checksum,
+			},
+		},
+	})
 }
 
 type RebaseCheckpointMerger struct {
@@ -498,13 +533,15 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 					return errors.Trace(e)
 				}
 			}
-			for key, diff := range cpd.chunks {
-				if _, e := chunkStmt.ExecContext(
-					c,
-					diff.pos, diff.rowID, diff.checksum.SumSize(), diff.checksum.SumKVS(), diff.checksum.Sum(),
-					tableName, key.Path, key.Offset,
-				); e != nil {
-					return errors.Trace(e)
+			for _, engineDiff := range cpd.engines {
+				for key, diff := range engineDiff.chunks {
+					if _, e := chunkStmt.ExecContext(
+						c,
+						diff.pos, diff.rowID, diff.checksum.SumSize(), diff.checksum.SumKVS(), diff.checksum.Sum(),
+						tableName, key.Path, key.Offset,
+					); e != nil {
+						return errors.Trace(e)
+					}
 				}
 			}
 		}
@@ -662,13 +699,15 @@ func (cpdb *FileCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoin
 		if cpd.hasRebase {
 			tableModel.AllocBase = cpd.allocBase
 		}
-		for key, diff := range cpd.chunks {
-			chunkModel := tableModel.Chunks[key.String()]
-			chunkModel.Pos = diff.pos
-			chunkModel.PrevRowidMax = diff.rowID
-			chunkModel.KvcBytes = diff.checksum.SumSize()
-			chunkModel.KvcKvs = diff.checksum.SumKVS()
-			chunkModel.KvcChecksum = diff.checksum.Sum()
+		for _, engineDiff := range cpd.engines {
+			for key, diff := range engineDiff.chunks {
+				chunkModel := tableModel.Chunks[key.String()]
+				chunkModel.Pos = diff.pos
+				chunkModel.PrevRowidMax = diff.rowID
+				chunkModel.KvcBytes = diff.checksum.SumSize()
+				chunkModel.KvcKvs = diff.checksum.SumKVS()
+				chunkModel.KvcChecksum = diff.checksum.Sum()
+			}
 		}
 	}
 
