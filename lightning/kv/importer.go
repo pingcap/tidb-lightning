@@ -330,7 +330,11 @@ func (engine *ClosedEngine) Import(ctx context.Context) error {
 		timer := time.Now()
 		_, err = engine.importer.cli.ImportEngine(ctx, req)
 		if !common.IsRetryableError(err) {
-			common.AppLogger.Infof("[%s] [%s] import takes %v", engine.tag, engine.uuid, time.Since(timer))
+			if err == nil {
+				common.AppLogger.Infof("[%s] [%s] import takes %v", engine.tag, engine.uuid, time.Since(timer))
+			} else if !common.IsContextCanceledError(err) {
+				common.AppLogger.Errorf("[%s] [%s] import failed and cannot retry, err %v", engine.tag, engine.uuid, err)
+			}
 			return errors.Trace(err)
 		}
 		common.AppLogger.Warnf("[%s] [%s] import failed and retry %d time, err %v", engine.tag, engine.uuid, i+1, err)

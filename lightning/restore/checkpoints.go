@@ -139,7 +139,6 @@ type TableCheckpointDiff struct {
 
 func NewTableCheckpointDiff() *TableCheckpointDiff {
 	return &TableCheckpointDiff{
-		status:  CheckpointStatusMaxInvalid + 1,
 		engines: make(map[int]engineCheckpointDiff),
 	}
 }
@@ -488,10 +487,6 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		return nil, errors.Trace(err)
 	}
 
-	if cp.Status <= CheckpointStatusMaxInvalid {
-		return nil, errors.Errorf("Checkpoint for %s has invalid status: %d", tableName, cp.Status)
-	}
-
 	return cp, nil
 }
 
@@ -600,7 +595,7 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 			}
 			for engineID, engineDiff := range cpd.engines {
 				if engineDiff.hasStatus {
-					if _, e := engineStatusStmt.ExecContext(c, cpd.status, tableName, engineID); e != nil {
+					if _, e := engineStatusStmt.ExecContext(c, engineDiff.status, tableName, engineID); e != nil {
 						return errors.Trace(e)
 					}
 				}
