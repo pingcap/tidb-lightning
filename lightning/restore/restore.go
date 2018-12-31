@@ -437,8 +437,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			go func(t *TableRestore, cp *TableCheckpoint) {
 				defer wg.Done()
 				err := t.restoreTable(ctx, rc, cp)
-				restoreErr.Set(t.tableName, err)
 				metric.RecordTableCount("completed", err)
+				restoreErr.Set(t.tableName, err)
 			}(tr, cp)
 		}
 	}

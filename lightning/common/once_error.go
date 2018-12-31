@@ -18,7 +18,7 @@ type OnceError struct {
 func (oe *OnceError) Set(tag string, e error) {
 	if e != nil {
 		oe.lock.Lock()
-		if oe.err != nil {
+		if oe.err == nil {
 			oe.err = e
 		}
 		oe.lock.Unlock()
