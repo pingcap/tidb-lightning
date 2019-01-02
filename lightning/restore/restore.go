@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
+	"github.com/pingcap/tidb-lightning/lightning/worker"
+
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/util/kvencoder"
@@ -94,8 +96,9 @@ type RestoreController struct {
 	cfg             *config.Config
 	dbMetas         []*mydump.MDDatabaseMeta
 	dbInfos         map[string]*TidbDBInfo
-	tableWorkers    *RestoreWorkerPool
-	regionWorkers   *RestoreWorkerPool
+	tableWorkers    *worker.RestoreWorkerPool
+	regionWorkers   *worker.RestoreWorkerPool
+	ioWorkers       *worker.RestoreWorkerPool
 	importer        *kv.Importer
 	tidbMgr         *TiDBManager
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
@@ -128,8 +131,9 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 	rc := &RestoreController{
 		cfg:           cfg,
 		dbMetas:       dbMetas,
-		tableWorkers:  NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
-		regionWorkers: NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
+		tableWorkers:  worker.NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
+		regionWorkers: worker.NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
+		ioWorkers:     worker.NewRestoreWorkerPool(ctx, cfg.App.IOConcurrency, "io"),
 		importer:      importer,
 		tidbMgr:       tidbMgr,
 
@@ -438,9 +442,9 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			// Note: We still need tableWorkers to control the concurrency of tables. In the future, we will investigate more about
 			// the difference between restoring tables concurrently and restoring tables one by one.
 
-			worker := rc.tableWorkers.Apply()
+			restoreWorker := rc.tableWorkers.Apply()
 			wg.Add(1)
-			go func(w *RestoreWorker, t *TableRestore, cp *TableCheckpoint) {
+			go func(w *worker.RestoreWorker, t *TableRestore, cp *TableCheckpoint) {
 				defer wg.Done()
 
 				closedEngine, err := t.restore(ctx, rc, cp)
@@ -464,7 +468,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				}
 
 				err = t.postProcess(ctx, closedEngine, rc, cp)
-			}(worker, tr, cp)
+			}(restoreWorker, tr, cp)
 		}
 	}
 
@@ -547,15 +551,15 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunkIndex, chunk)
+		cr, err := newChunkRestore(chunkIndex, chunk, rc.cfg.Mydumper.ReadBlockSize, rc.ioWorkers)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Inc()
 
-		worker := rc.regionWorkers.Apply()
+		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
-		go func(w *RestoreWorker, cr *chunkRestore) {
+		go func(w *worker.RestoreWorker, cr *chunkRestore) {
 			// Restore a chunk.
 			defer func() {
 				cr.close()
@@ -580,7 +584,7 @@ func (t *TableRestore) restore(ctx context.Context, rc *RestoreController, cp *T
 
 			handled := int(atomic.AddInt32(handledChunksCount, 1))
 			common.AppLogger.Infof("[%s] handled region count = %d (%s)", t.tableName, handled, common.Percent(handled, len(cp.Chunks)))
-		}(worker, cr)
+		}(restoreWorker, cr)
 	}
 
 	wg.Wait()
@@ -859,56 +863,18 @@ func (rc *RestoreController) getTables() []string {
 	return tables
 }
 
-////////////////////////////////////////////////////////////////
-
-type RestoreWorkerPool struct {
-	limit   int
-	workers chan *RestoreWorker
-	name    string
-}
-
-type RestoreWorker struct {
-	ID int64
-}
-
-func NewRestoreWorkerPool(ctx context.Context, limit int, name string) *RestoreWorkerPool {
-	workers := make(chan *RestoreWorker, limit)
-	for i := 0; i < limit; i++ {
-		workers <- &RestoreWorker{ID: int64(i + 1)}
-	}
-
-	metric.IdleWorkersGauge.WithLabelValues(name).Set(float64(limit))
-	return &RestoreWorkerPool{
-		limit:   limit,
-		workers: workers,
-		name:    name,
-	}
-}
-
-func (pool *RestoreWorkerPool) Apply() *RestoreWorker {
-	worker := <-pool.workers
-	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
-	return worker
-}
-func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {
-	pool.workers <- worker
-	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
-}
-
-////////////////////////////////////////////////////////////////
-
 type chunkRestore struct {
 	parser *mydump.ChunkParser
 	index  int
 	chunk  *ChunkCheckpoint
 }
 
-func newChunkRestore(index int, chunk *ChunkCheckpoint) (*chunkRestore, error) {
+func newChunkRestore(index int, chunk *ChunkCheckpoint, blockBufSize int64, ioWorkers *worker.RestoreWorkerPool) (*chunkRestore, error) {
 	reader, err := os.Open(chunk.Key.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	parser := mydump.NewChunkParser(reader)
+	parser := mydump.NewChunkParser(reader, blockBufSize, ioWorkers)
 
 	reader.Seek(chunk.Chunk.Offset, io.SeekStart)
 	parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax)
@@ -1354,6 +1320,7 @@ func (cr *chunkRestore) restore(
 		var sep byte = ' '
 	readLoop:
 		for cr.parser.Pos() < endOffset {
+			readRowStartTime := time.Now()
 			err := cr.parser.ReadRow()
 			switch errors.Cause(err) {
 			case nil:
@@ -1368,6 +1335,7 @@ func (cr *chunkRestore) restore(
 					buffer.WriteString(" VALUES ")
 					sep = ','
 				}
+				metric.ChunkParserReadRowSecondsHistogram.Observe(time.Since(readRowStartTime).Seconds())
 				lastRow := cr.parser.LastRow()
 				if cr.chunk.ShouldIncludeRowID {
 					buffer.Write(lastRow.Row[:len(lastRow.Row)-1])

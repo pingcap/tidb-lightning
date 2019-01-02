@@ -71,6 +71,7 @@ type Lightning struct {
 	common.LogConfig
 	TableConcurrency  int  `toml:"table-concurrency" json:"table-concurrency"`
 	RegionConcurrency int  `toml:"region-concurrency" json:"region-concurrency"`
+	IOConcurrency     int  `toml:"io-concurrency" json:"io-concurrency"`
 	ProfilePort       int  `toml:"pprof-port" json:"pprof-port"`
 	CheckRequirements bool `toml:"check-requirements" json:"check-requirements"`
 }
@@ -129,6 +130,7 @@ func NewConfig() *Config {
 		App: Lightning{
 			RegionConcurrency: runtime.NumCPU(),
 			TableConcurrency:  8,
+			IOConcurrency:     5,
 			CheckRequirements: true,
 		},
 		TiDB: DBStore{
