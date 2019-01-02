@@ -62,10 +62,9 @@ func MakeTableRegions(meta *MDTableMeta, columns int, batchSize int64) ([]*Table
 		rowIDMax := prevRowIDMax + dataFileSize/(int64(columns)+2)
 		filesRegions = append(filesRegions, &TableRegion{
 			EngineID: curEngineID,
-
-			DB:    meta.DB,
-			Table: meta.Name,
-			File:  dataFile,
+			DB:       meta.DB,
+			Table:    meta.Name,
+			File:     dataFile,
 			Chunk: Chunk{
 				Offset:       0,
 				EndOffset:    dataFileSize,

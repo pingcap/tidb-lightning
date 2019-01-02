@@ -6,7 +6,7 @@ level = "info"
 
 [checkpoint]
 enable = true
-driver = "file"
+driver = "mysql"
 
 [tikv-importer]
 addr = "127.0.0.1:8808"

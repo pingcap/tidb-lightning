@@ -46,3 +46,26 @@ check_contains 'sum(c): 10'
 run_sql 'SELECT count(*), sum(c) FROM cpeng.b'
 check_contains 'count(*): 4'
 check_contains 'sum(c): 46'
+
+# Now, try again with MySQL checkpoints
+
+run_sql 'DROP DATABASE cpeng;'
+
+set +e
+for i in $(seq 4); do
+    echo "******** Importing Table Now (step $i/4) ********"
+    run_lightning mysql 2> /dev/null
+    [ $? -ne 0 ] || exit 1
+done
+set -e
+
+echo "******** Verify checkpoint no-op ********"
+run_lightning mysql
+
+run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
+check_contains 'count(*): 4'
+check_contains 'sum(c): 10'
+
+run_sql 'SELECT count(*), sum(c) FROM cpeng.b'
+check_contains 'count(*): 4'
+check_contains 'sum(c): 46'

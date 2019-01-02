@@ -31,19 +31,23 @@ Usual workflow:
 
 2. For each table,
 
-	a. Create an `OpenedEngine` via `importer.OpenEngine()`
+	i. Split into multiple "batches" consisting of data files with roughly equal total size.
 
-	b. For each chunk,
+	ii. For each batch,
 
-		i. Create a `WriteStream` via `engine.NewWriteStream()`
-		ii. Deliver data into the stream via `stream.Put()`
-		iii. Close the stream via `stream.Close()`
+		a. Create an `OpenedEngine` via `importer.OpenEngine()`
 
-	c. When all chunks are written, obtain a `ClosedEngine` via `engine.CloseEngine()`
+		b. For each chunk,
 
-	d. Import data via `engine.Import()`
+			i. Create a `WriteStream` via `engine.NewWriteStream()`
+			ii. Deliver data into the stream via `stream.Put()`
+			iii. Close the stream via `stream.Close()`
 
-	e. Cleanup via `engine.Cleanup()`
+		c. When all chunks are written, obtain a `ClosedEngine` via `engine.CloseEngine()`
+
+		d. Import data via `engine.Import()`
+
+		e. Cleanup via `engine.Cleanup()`
 
 3. Close the connection via `importer.Close()`
 
