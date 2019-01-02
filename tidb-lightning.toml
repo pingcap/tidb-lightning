@@ -18,6 +18,7 @@ table-concurrency = 8
 # internal buffer is frequently refreshed causing a cache miss. For different
 # disk media, concurrency has different effects on IO latency, which can be
 # adjusted according to monitoring.
+# Ref: https://en.wikipedia.org/wiki/Disk_buffer#Read-ahead/read-behind
 # io-concurrency = 5
 
 # logging

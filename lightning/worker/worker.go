@@ -38,7 +38,12 @@ func (pool *RestoreWorkerPool) Apply() *RestoreWorker {
 	metric.ApplyWorkerSecondsHistogram.WithLabelValues(pool.name).Observe(time.Since(start).Seconds())
 	return worker
 }
+
 func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {
 	pool.workers <- worker
 	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
+}
+
+func (pool *RestoreWorkerPool) HasWorker() bool {
+	return len(pool.workers) > 0
 }
