@@ -13,7 +13,7 @@ addr = "127.0.0.1:8808"
 
 [mydumper]
 data-source-dir = "tests/checkpoint_engines/data"
-batch-size = 1 # force creating a new batch for every file.
+batch-size = 50 # force splitting the data into 4 batches
 
 [tidb]
 host = "127.0.0.1"

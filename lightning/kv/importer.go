@@ -148,8 +148,8 @@ func makeTag(tableName string, engineID int) string {
 
 var engineNamespace = uuid.Must(uuid.FromString("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf"))
 
-// OpenEngine opens an engine with the given UUID. This type is goroutine safe:
-// you can share this instance and execute any method anywhere.
+// OpenEngine opens an engine with the given table name and engine ID. This type
+// is goroutine safe: you can share this instance and execute any method anywhere.
 func (importer *Importer) OpenEngine(
 	ctx context.Context,
 	tableName string,

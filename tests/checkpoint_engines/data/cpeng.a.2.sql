@@ -1,1 +1,1 @@
-insert into a values (3),(4);
+insert into a values (2);
