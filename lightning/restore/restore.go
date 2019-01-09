@@ -461,7 +461,7 @@ func (t *TableRestore) restoreTable(
 	if len(cp.Engines) > 0 {
 		common.AppLogger.Infof("[%s] reusing %d engines and %d chunks from checkpoint", t.tableName, len(cp.Engines), cp.CountChunks())
 	} else if cp.Status < CheckpointStatusAllWritten {
-		if err := t.populateChunks(rc.cfg.Mydumper.BatchSize, rc.cfg.Mydumper.BatchSizeScale, cp); err != nil {
+		if err := t.populateChunks(rc.cfg, cp); err != nil {
 			return errors.Trace(err)
 		}
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, t.tableName, cp.Engines); err != nil {
@@ -972,11 +972,11 @@ func (tr *TableRestore) Close() {
 
 var tidbRowIDColumnRegex = regexp.MustCompile(fmt.Sprintf("`%[1]s`|(?i:\\b%[1]s\\b)", model.ExtraHandleName))
 
-func (t *TableRestore) populateChunks(batchSize, batchSizeScale int64, cp *TableCheckpoint) error {
+func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) error {
 	common.AppLogger.Infof("[%s] load chunks", t.tableName)
 	timer := time.Now()
 
-	chunks, err := mydump.MakeTableRegions(t.tableMeta, t.tableInfo.Columns, batchSize, batchSizeScale)
+	chunks, err := mydump.MakeTableRegions(t.tableMeta, t.tableInfo.Columns, cfg.Mydumper.BatchSize, cfg.Mydumper.BatchImportRatio, cfg.App.TableConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}

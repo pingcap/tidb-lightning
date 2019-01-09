@@ -38,7 +38,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	dbMeta := loader.GetDatabases()[0]
 
 	for _, meta := range dbMeta.Tables {
-		regions, err := MakeTableRegions(meta, 1, 1, 1)
+		regions, err := MakeTableRegions(meta, 1, 1, 0, 1)
 		c.Assert(err, IsNil)
 
 		table := meta.Name
@@ -98,7 +98,7 @@ func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
 	dbMeta := loader.GetDatabases()[0]
 
 	for _, meta := range dbMeta.Tables {
-		regions, err := MakeTableRegions(meta, 1, 1, 1)
+		regions, err := MakeTableRegions(meta, 1, 1, 0, 1)
 		c.Assert(err, IsNil)
 
 		tolValTuples := 0
@@ -115,4 +115,69 @@ func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
 	}
 
 	return
+}
+
+func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
+	dataFileSizes := make([]float64, 700)
+	for i := range dataFileSizes {
+		dataFileSizes[i] = 1.0
+	}
+	filesRegions := make([]*TableRegion, 0, len(dataFileSizes))
+	for range dataFileSizes {
+		filesRegions = append(filesRegions, new(TableRegion))
+	}
+
+	checkEngineSizes := func(what string, expected map[int]int) {
+		actual := make(map[int]int)
+		for _, region := range filesRegions {
+			actual[region.EngineID]++
+		}
+		c.Assert(actual, DeepEquals, expected, Commentf("%s", what))
+	}
+
+	// Batch size > Total size => Everything in the zero batch.
+	AllocateEngineIDs(filesRegions, dataFileSizes, 1000, 0.5, 1000)
+	checkEngineSizes("no batching", map[int]int{
+		0: 700,
+	})
+
+	// Allocate 5 engines.
+	AllocateEngineIDs(filesRegions, dataFileSizes, 100, 0.5, 1000)
+	checkEngineSizes("batch size = 100", map[int]int{
+		0: 100,
+		1: 113,
+		2: 132,
+		3: 165,
+		4: 190,
+	})
+
+	// Number of engines > table concurrency
+	AllocateEngineIDs(filesRegions, dataFileSizes, 50, 0.5, 4)
+	checkEngineSizes("batch size = 50, limit table conc = 4", map[int]int{
+		0:  50,
+		1:  59,
+		2:  73,
+		3:  110,
+		4:  50,
+		5:  50,
+		6:  50,
+		7:  50,
+		8:  50,
+		9:  50,
+		10: 50,
+		11: 50,
+		12: 8,
+	})
+
+	// Zero ratio = Uniform
+	AllocateEngineIDs(filesRegions, dataFileSizes, 100, 0.0, 1000)
+	checkEngineSizes("batch size = 100, ratio = 0", map[int]int{
+		0: 100,
+		1: 100,
+		2: 100,
+		3: 100,
+		4: 100,
+		5: 100,
+		6: 100,
+	})
 }
