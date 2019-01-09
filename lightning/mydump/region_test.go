@@ -38,7 +38,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	dbMeta := loader.GetDatabases()[0]
 
 	for _, meta := range dbMeta.Tables {
-		regions, err := MakeTableRegions(meta, 1, 1)
+		regions, err := MakeTableRegions(meta, 1, 1, 1)
 		c.Assert(err, IsNil)
 
 		table := meta.Name
@@ -98,7 +98,7 @@ func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
 	dbMeta := loader.GetDatabases()[0]
 
 	for _, meta := range dbMeta.Tables {
-		regions, err := MakeTableRegions(meta, 1, 1)
+		regions, err := MakeTableRegions(meta, 1, 1, 1)
 		c.Assert(err, IsNil)
 
 		tolValTuples := 0

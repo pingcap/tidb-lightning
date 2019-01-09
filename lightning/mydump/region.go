@@ -46,16 +46,9 @@ func (rs regionSlice) Less(i, j int) bool {
 
 ////////////////////////////////////////////////////////////////
 
-func MakeTableRegions(meta *MDTableMeta, columns int, batchSize int64) ([]*TableRegion, error) {
+func MakeTableRegions(meta *MDTableMeta, columns int, batchSize, batchSizeScale int64) ([]*TableRegion, error) {
 	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
-
-	// import() step will not be concurrent.
-	// If multiple Batch end times are close, it will result in multiple
-	// Batch import serials. `batchSizeScale` used to implement non-uniform
-	// batch size: curBatchSize = batchSize / int64(batchSizeScale-curEngineID)
-	// TODO: make it configurable
-	const batchSizeScale = 20
 
 	prevRowIDMax := int64(0)
 	curEngineID := 0
@@ -86,8 +79,13 @@ func MakeTableRegions(meta *MDTableMeta, columns int, batchSize int64) ([]*Table
 		if curEngineSize > curBatchSize {
 			curEngineSize = 0
 			curEngineID++
-			if curEngineID < batchSizeScale {
-				curBatchSize = batchSize / int64(batchSizeScale-curEngineID)
+
+			// import() step will not be concurrent.
+			// If multiple Batch end times are close, it will result in multiple
+			// Batch import serials. `batchSizeScale` used to implement non-uniform
+			// batch size: curBatchSize = batchSize / int64(batchSizeScale-curEngineID)
+			if int64(curEngineID) < batchSizeScale {
+				curBatchSize = batchSize / (batchSizeScale - int64(curEngineID))
 			} else {
 				curBatchSize = batchSize
 			}

@@ -57,6 +57,11 @@ read-block-size = 65536 # Byte (default = 64 KB)
 # minimum size (in terms of source data file) of each batch of import.
 # Lightning will split a large table into multiple engine files according to this size.
 batch-size = 10_737_418_240 # Byte (default = 10 GB)
+# The step import to tikv will execute serially if all batches have the same size
+# and some of them complete in close time. `batch-size-scale` makes the batch
+# size between `batch-size / batch-size-scale` and `batch-size` to avoid this situation.
+# `batch-size-scale = 1` means all batch have the same size (`batch-size`)
+batch-size-scale = 5
 # mydumper local source data directory
 data-source-dir = "/tmp/export-20180328-200751"
 # if no-schema is set true, lightning will get schema information from tidb-server directly without creating them.
