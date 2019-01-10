@@ -64,34 +64,40 @@ func AllocateEngineIDs(
 		return
 	}
 
+	curEngineID := 0
+	curEngineSize := 0.0
+	curBatchSize := batchSize
+
 	// import() step will not be concurrent.
 	// If multiple Batch end times are close, it will result in multiple
 	// Batch import serials. We need use a non-uniform batch size to create a pipeline effect.
 	// Here we calculate the total number of engines, which is needed to compute the scale up
 	//
 	//     Total/B1 = 1/(1-R) * (N - 1/beta(N, R))
-	//              ≈ 1/(1-R) * (N - N^R/gamma(R))
 	//              ≲ N/(1-R)
 	//
 	// We use a simple brute force search since the search space is extremely small.
 	ratio := totalDataFileSize * (1 - batchImportRatio) / batchSize
-	invGammaR := 1.0 / math.Gamma(batchImportRatio)
 	n := math.Ceil(ratio)
+	logGammaNPlusR, _ := math.Lgamma(n + batchImportRatio)
+	logGammaN, _ := math.Lgamma(n)
+	logGammaR, _ := math.Lgamma(batchImportRatio)
+	invBetaNR := math.Exp(logGammaNPlusR - logGammaN - logGammaR) // 1/B(N, R) = Γ(N+R)/Γ(N)Γ(R)
 	for {
 		if n <= 0 || n > tableConcurrency {
 			n = tableConcurrency
 			break
 		}
-		realRatio := n - math.Pow(n, batchImportRatio)*invGammaR
-		if realRatio > ratio {
+		realRatio := n - invBetaNR
+		if realRatio >= ratio {
+			// we don't have enough engines. reduce the batch size to keep the pipeline smooth.
+			curBatchSize = totalDataFileSize * (1 - batchImportRatio) / realRatio
 			break
 		}
+		invBetaNR *= 1 + batchImportRatio/n // Γ(X+1) = X * Γ(X)
 		n += 1.0
 	}
 
-	curEngineID := 0
-	curEngineSize := 0.0
-	curBatchSize := batchSize
 	for i, dataFileSize := range dataFileSizes {
 		filesRegions[i].EngineID = curEngineID
 		curEngineSize += dataFileSize

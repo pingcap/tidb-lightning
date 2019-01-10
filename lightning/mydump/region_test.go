@@ -141,14 +141,30 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 		0: 700,
 	})
 
+	// Allocate 3 engines.
+	AllocateEngineIDs(filesRegions, dataFileSizes, 200, 0.5, 1000)
+	checkEngineSizes("batch size = 200", map[int]int{
+		0: 170,
+		1: 213,
+		2: 317,
+	})
+
+	// Allocate 3 engines with an alternative ratio
+	AllocateEngineIDs(filesRegions, dataFileSizes, 200, 0.6, 1000)
+	checkEngineSizes("batch size = 200, ratio = 0.6", map[int]int{
+		0: 160,
+		1: 208,
+		2: 332,
+	})
+
 	// Allocate 5 engines.
 	AllocateEngineIDs(filesRegions, dataFileSizes, 100, 0.5, 1000)
 	checkEngineSizes("batch size = 100", map[int]int{
-		0: 100,
-		1: 113,
-		2: 132,
-		3: 165,
-		4: 190,
+		0: 93,
+		1: 105,
+		2: 122,
+		3: 153,
+		4: 227,
 	})
 
 	// Number of engines > table concurrency
