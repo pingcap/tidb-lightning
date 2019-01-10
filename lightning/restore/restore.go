@@ -611,7 +611,17 @@ func (t *TableRestore) restoreEngine(
 	}
 
 	wg.Wait()
-	common.AppLogger.Infof("[%s:%d] encode kv data and write takes %v", t.tableName, engineID, time.Since(timer))
+	dur := time.Since(timer)
+
+	// Report some statistics into the log for debugging.
+	totalKVSize := uint64(0)
+	totalSQLSize := int64(0)
+	for _, chunk := range cp.Chunks {
+		totalKVSize += chunk.Checksum.SumSize()
+		totalSQLSize += chunk.Chunk.EndOffset
+	}
+
+	common.AppLogger.Infof("[%s:%d] encode kv data and write takes %v (read %d, written %d)", t.tableName, engineID, dur, totalSQLSize, totalKVSize)
 	err = chunkErr.Get()
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusAllWritten)
 	if err != nil {
