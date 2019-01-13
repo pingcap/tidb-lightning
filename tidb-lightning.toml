@@ -61,8 +61,10 @@ batch-size = 107_374_182_400 # Byte (default = 100 GiB)
 # Engine file needs to be imported sequentially. Due to table-concurrency, multiple engines will be
 # imported nearly the same time, and this will create a queue and this wastes resources. Therefore,
 # Lightning will slightly increase the size of the first few batches to properly distribute
-# resources. The scale up is controlled by this parameter, which expresses the speed ratio between
-# the "import" and "write" steps. If "import" is faster, the batch size anomaly is smaller, and
+# resources. The scale up is controlled by this parameter, which expresses the ratio of duration
+# between the "import" and "write" steps with full concurrency. This can be calculated as the ratio
+# (import duration / write duration) of a single table of size around 1 GB. The exact timing can be
+# found in the log. If "import" is faster, the batch size anomaly is smaller, and a ratio of
 # zero means uniform batch size. This value should be in the range (0 <= batch-import-ratio < 1).
 batch-import-ratio = 0.75
 
