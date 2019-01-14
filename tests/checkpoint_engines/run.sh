@@ -29,7 +29,7 @@ run_sql 'DROP DATABASE cpeng;'
 
 export GOFAIL_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/SlowDownImport=sleep(500);github.com/pingcap/tidb-lightning/lightning/restore/FailIfStatusBecomes=return(120)'
 set +e
-for i in $(seq 4); do
+for i in $(seq "$OPEN_ENGINES_COUNT"); do
     echo "******** Importing Table Now (step $i/4) ********"
     run_lightning 2> /dev/null
     [ $? -ne 0 ] || exit 1
@@ -52,7 +52,7 @@ check_contains 'sum(c): 46'
 run_sql 'DROP DATABASE cpeng;'
 
 set +e
-for i in $(seq 4); do
+for i in $(seq "$OPEN_ENGINES_COUNT"); do
     echo "******** Importing Table Now (step $i/4) ********"
     run_lightning mysql 2> /dev/null
     [ $? -ne 0 ] || exit 1

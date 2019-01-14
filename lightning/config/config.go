@@ -84,11 +84,12 @@ type PostRestore struct {
 }
 
 type MydumperRuntime struct {
-	ReadBlockSize int64  `toml:"read-block-size" json:"read-block-size"`
-	BatchSize     int64  `toml:"batch-size" json:"batch-size"`
-	SourceDir     string `toml:"data-source-dir" json:"data-source-dir"`
-	NoSchema      bool   `toml:"no-schema" json:"no-schema"`
-	CharacterSet  string `toml:"character-set" json:"character-set"`
+	ReadBlockSize    int64   `toml:"read-block-size" json:"read-block-size"`
+	BatchSize        int64   `toml:"batch-size" json:"batch-size"`
+	BatchImportRatio float64 `toml:"batch-import-ratio" json:"batch-import-ratio"`
+	SourceDir        string  `toml:"data-source-dir" json:"data-source-dir"`
+	NoSchema         bool    `toml:"no-schema" json:"no-schema"`
+	CharacterSet     string  `toml:"character-set" json:"character-set"`
 }
 
 type TikvImporter struct {
@@ -187,7 +188,10 @@ func (cfg *Config) Load() error {
 
 	// handle mydumper
 	if cfg.Mydumper.BatchSize <= 0 {
-		cfg.Mydumper.BatchSize = 10 * _G
+		cfg.Mydumper.BatchSize = 100 * _G
+	}
+	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
+		cfg.Mydumper.BatchImportRatio = 0.75
 	}
 	if cfg.Mydumper.ReadBlockSize <= 0 {
 		cfg.Mydumper.ReadBlockSize = ReadBlockSize

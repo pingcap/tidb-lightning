@@ -1,6 +1,7 @@
 package mydump
 
 import (
+	"math"
 	"os"
 
 	"github.com/pkg/errors"
@@ -46,13 +47,89 @@ func (rs regionSlice) Less(i, j int) bool {
 
 ////////////////////////////////////////////////////////////////
 
-func MakeTableRegions(meta *MDTableMeta, columns int, batchSize int64) ([]*TableRegion, error) {
+func AllocateEngineIDs(
+	filesRegions []*TableRegion,
+	dataFileSizes []float64,
+	batchSize float64,
+	batchImportRatio float64,
+	tableConcurrency float64,
+) {
+	totalDataFileSize := 0.0
+	for _, dataFileSize := range dataFileSizes {
+		totalDataFileSize += dataFileSize
+	}
+
+	// No need to batch if the size is too small :)
+	if totalDataFileSize <= batchSize {
+		return
+	}
+
+	curEngineID := 0
+	curEngineSize := 0.0
+	curBatchSize := batchSize
+
+	// import() step will not be concurrent.
+	// If multiple Batch end times are close, it will result in multiple
+	// Batch import serials. We need use a non-uniform batch size to create a pipeline effect.
+	// Here we calculate the total number of engines, which is needed to compute the scale up
+	//
+	//     Total/B1 = 1/(1-R) * (N - 1/beta(N, R))
+	//              ≲ N/(1-R)
+	//
+	// We use a simple brute force search since the search space is extremely small.
+	ratio := totalDataFileSize * (1 - batchImportRatio) / batchSize
+	n := math.Ceil(ratio)
+	logGammaNPlusR, _ := math.Lgamma(n + batchImportRatio)
+	logGammaN, _ := math.Lgamma(n)
+	logGammaR, _ := math.Lgamma(batchImportRatio)
+	invBetaNR := math.Exp(logGammaNPlusR - logGammaN - logGammaR) // 1/B(N, R) = Γ(N+R)/Γ(N)Γ(R)
+	for {
+		if n <= 0 || n > tableConcurrency {
+			n = tableConcurrency
+			break
+		}
+		realRatio := n - invBetaNR
+		if realRatio >= ratio {
+			// we don't have enough engines. reduce the batch size to keep the pipeline smooth.
+			curBatchSize = totalDataFileSize * (1 - batchImportRatio) / realRatio
+			break
+		}
+		invBetaNR *= 1 + batchImportRatio/n // Γ(X+1) = X * Γ(X)
+		n += 1.0
+	}
+
+	for i, dataFileSize := range dataFileSizes {
+		filesRegions[i].EngineID = curEngineID
+		curEngineSize += dataFileSize
+
+		if curEngineSize >= curBatchSize {
+			curEngineSize = 0
+			curEngineID++
+
+			i := float64(curEngineID)
+			// calculate the non-uniform batch size
+			if i >= n {
+				curBatchSize = batchSize
+			} else {
+				// B_(i+1) = B_i * (I/W/(N-i) + 1)
+				curBatchSize *= batchImportRatio/(n-i) + 1.0
+			}
+		}
+	}
+}
+
+func MakeTableRegions(
+	meta *MDTableMeta,
+	columns int,
+	batchSize int64,
+	batchImportRatio float64,
+	tableConcurrency int,
+) ([]*TableRegion, error) {
 	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
+	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
 
 	prevRowIDMax := int64(0)
-	curEngineID := 0
-	curEngineSize := int64(0)
 	for _, dataFile := range meta.DataFiles {
 		dataFileInfo, err := os.Stat(dataFile)
 		if err != nil {
@@ -61,10 +138,9 @@ func MakeTableRegions(meta *MDTableMeta, columns int, batchSize int64) ([]*Table
 		dataFileSize := dataFileInfo.Size()
 		rowIDMax := prevRowIDMax + dataFileSize/(int64(columns)+2)
 		filesRegions = append(filesRegions, &TableRegion{
-			EngineID: curEngineID,
-			DB:       meta.DB,
-			Table:    meta.Name,
-			File:     dataFile,
+			DB:    meta.DB,
+			Table: meta.Name,
+			File:  dataFile,
 			Chunk: Chunk{
 				Offset:       0,
 				EndOffset:    dataFileSize,
@@ -73,13 +149,9 @@ func MakeTableRegions(meta *MDTableMeta, columns int, batchSize int64) ([]*Table
 			},
 		})
 		prevRowIDMax = rowIDMax
-
-		curEngineSize += dataFileSize
-		if curEngineSize > batchSize {
-			curEngineSize = 0
-			curEngineID++
-		}
+		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
 	}
 
+	AllocateEngineIDs(filesRegions, dataFileSizes, float64(batchSize), batchImportRatio, float64(tableConcurrency))
 	return filesRegions, nil
 }
