@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/kv"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
 	"github.com/pkg/errors"
-	"github.com/satori/go.uuid"
 )
 
 func main() {
@@ -163,12 +162,15 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tableName s
 	}
 
 	for _, table := range targetTables {
-		if table.Engine == uuid.Nil {
-			continue
-		}
-		if closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, table.Engine); err == nil {
-			fmt.Fprintln(os.Stderr, "Cleaning up engine:", table.TableName, table.Engine)
-			closedEngine.Cleanup(ctx)
+		for engineID := 0; engineID < table.EnginesCount; engineID++ {
+			fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
+			closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, engineID)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "* Encountered error while closing engine:", err)
+				lastErr = err
+			} else {
+				closedEngine.Cleanup(ctx)
+			}
 		}
 	}
 
@@ -193,6 +195,13 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	}
 	defer tablesFile.Close()
 
+	enginesFileName := path.Join(dumpFolder, "engines.csv")
+	enginesFile, err := os.Create(tablesFileName)
+	if err != nil {
+		return errors.Annotatef(err, "failed to create %s", enginesFileName)
+	}
+	defer enginesFile.Close()
+
 	chunksFileName := path.Join(dumpFolder, "chunks.csv")
 	chunksFile, err := os.Create(chunksFileName)
 	if err != nil {
@@ -201,6 +210,9 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	defer chunksFile.Close()
 
 	if err := cpdb.DumpTables(ctx, tablesFile); err != nil {
+		return errors.Trace(err)
+	}
+	if err := cpdb.DumpEngines(ctx, enginesFile); err != nil {
 		return errors.Trace(err)
 	}
 	if err := cpdb.DumpChunks(ctx, chunksFile); err != nil {

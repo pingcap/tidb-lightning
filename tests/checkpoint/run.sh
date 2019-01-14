@@ -64,7 +64,7 @@ echo "******** Verify checkpoint no-op ********"
 run_lightning
 run_sql "$PARTIAL_IMPORT_QUERY"
 check_contains "s: $(( (1000 * $CHUNK_COUNT + 1001) * $CHUNK_COUNT * $TABLE_COUNT ))"
-run_sql "SELECT count(*) FROM tidb_lightning_checkpoint_test_cppk.table_v1 WHERE status >= 200"
+run_sql "SELECT count(*) FROM tidb_lightning_checkpoint_test_cppk.table_v4 WHERE status >= 200"
 check_contains "count(*): $TABLE_COUNT"
 
 # Ensure there is no dangling open engines

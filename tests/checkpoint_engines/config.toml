@@ -1,0 +1,29 @@
+[lightning]
+table-concurrency = 1
+check-requirements = false
+file = "/tmp/lightning_test_result/lightning-checkpoint-engines.log"
+level = "info"
+
+[checkpoint]
+enable = true
+driver = "file"
+
+[tikv-importer]
+addr = "127.0.0.1:8808"
+
+[mydumper]
+data-source-dir = "tests/checkpoint_engines/data"
+batch-size = 50 # force splitting the data into 4 batches
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+log-level = "error"
+
+[post-restore]
+checksum = true
+compact = false
+analyze = false
