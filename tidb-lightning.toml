@@ -2,7 +2,7 @@
 [lightning]
 
 # background profile for debuging ( 0 to disable )
-pprof-port = 10089
+pprof-port = 8289
 
 # check if the cluster satisfies the minimum requirement before starting
 # check-requirements = true
@@ -49,7 +49,7 @@ driver = "file"
 #keep-after-success = false
 
 [tikv-importer]
-addr = "127.0.0.1:8808"
+addr = "127.0.0.1:8287"
 
 [mydumper]
 # block size of file reading
