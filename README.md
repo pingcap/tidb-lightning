@@ -7,3 +7,6 @@ Currently, we support reading SQL dump exported via mydumper.
 
 * [Detailed documentation](docs/en_US/README.md)
 * [简体中文文档](docs/zh_CN/README.md)
+
+## License
+TiDB-Lightning is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
