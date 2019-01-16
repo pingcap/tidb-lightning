@@ -64,3 +64,6 @@ https://download.pingcap.org/tidb-lightning-latest-linux-amd64.tar.gz
 ### Deploy
 
 See [TiDB Lightning User Guide](docs/tidb-lightning-user-guide.md#deploy)
+
+## License
+TiDB-Lightning is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
