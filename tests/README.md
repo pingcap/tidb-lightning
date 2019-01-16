@@ -12,7 +12,7 @@ programs.
     * `bin/tidb-server`
     * `bin/tikv-importer`
 
-    The versions must be ≥2.0.4 as usual.
+    The versions must be ≥2.1.0 as usual.
 
 2. The following programs must be installed:
 
@@ -33,7 +33,7 @@ Run `make integration_test` to execute the integration tests. This command will
 2. Build a `tidb-lightning` executable for collecting code coverage with failpoint support
 3. Execute `tests/run.sh`
 
-If the first three steps are done before, you could also run `tests/run.sh` directly.
+If the first two steps are done before, you could also run `tests/run.sh` directly.
 This script will
 
 1. Start PD, TiKV, TiDB and TiKV-Importer in background with local storage
