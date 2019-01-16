@@ -666,6 +666,9 @@ func (t *TableRestore) importEngine(
 	closedEngineWorker *worker.Worker,
 ) error {
 	if cp.Status >= CheckpointStatusImported {
+		if closedEngineWorker != nil {
+			rc.closedEngineLimit.Recycle(closedEngineWorker)
+		}
 		return nil
 	}
 
@@ -675,16 +678,10 @@ func (t *TableRestore) importEngine(
 	// the lock ensures the import() step will not be concurrent.
 	rc.postProcessLock.Lock()
 	err := t.importKV(ctx, closedEngine)
-	rc.closedEngineLimit.Recycle(closedEngineWorker)
-
-	// gofail: var SlowDownImport struct{}
-
-	// 2. perform a level-1 compact if idling.
-	if err := rc.doCompact(ctx, Level1Compact); err != nil {
-		// log it and continue
-		common.AppLogger.Warnf("compact %d failed %v", Level1Compact, err)
+	if closedEngineWorker != nil {
+		rc.closedEngineLimit.Recycle(closedEngineWorker)
 	}
-
+	// gofail: var SlowDownImport struct{}
 	rc.postProcessLock.Unlock()
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
