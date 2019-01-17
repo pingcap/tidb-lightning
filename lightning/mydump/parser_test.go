@@ -28,7 +28,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			"insert another_table values (10, 11, 12, '(13)', '(', 14, ')');",
 	)
 
-	ioWorkers := worker.NewRestoreWorkerPool(context.Background(), 5, "test")
+	ioWorkers := worker.NewPool(context.Background(), 5, "test")
 	parser := mydump.NewChunkParser(reader, config.ReadBlockSize, ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
@@ -77,7 +77,7 @@ func (s *testMydumpParserSuite) TestReadChunks(c *C) {
 		INSERT foo VALUES (29,30,31,32),(33,34,35,36);
 	`)
 
-	ioWorkers := worker.NewRestoreWorkerPool(context.Background(), 5, "test")
+	ioWorkers := worker.NewPool(context.Background(), 5, "test")
 	parser := mydump.NewChunkParser(reader, config.ReadBlockSize, ioWorkers)
 
 	chunks, err := parser.ReadChunks(32)
@@ -124,7 +124,7 @@ func (s *testMydumpParserSuite) TestNestedRow(c *C) {
 		("789",CONVERT("[]" USING UTF8MB4));
 	`)
 
-	ioWorkers := worker.NewRestoreWorkerPool(context.Background(), 5, "test")
+	ioWorkers := worker.NewPool(context.Background(), 5, "test")
 	parser := mydump.NewChunkParser(reader, config.ReadBlockSize, ioWorkers)
 	chunks, err := parser.ReadChunks(96)
 

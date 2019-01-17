@@ -7,31 +7,31 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 )
 
-type RestoreWorkerPool struct {
+type Pool struct {
 	limit   int
-	workers chan *RestoreWorker
+	workers chan *Worker
 	name    string
 }
 
-type RestoreWorker struct {
+type Worker struct {
 	ID int64
 }
 
-func NewRestoreWorkerPool(ctx context.Context, limit int, name string) *RestoreWorkerPool {
-	workers := make(chan *RestoreWorker, limit)
+func NewPool(ctx context.Context, limit int, name string) *Pool {
+	workers := make(chan *Worker, limit)
 	for i := 0; i < limit; i++ {
-		workers <- &RestoreWorker{ID: int64(i + 1)}
+		workers <- &Worker{ID: int64(i + 1)}
 	}
 
 	metric.IdleWorkersGauge.WithLabelValues(name).Set(float64(limit))
-	return &RestoreWorkerPool{
+	return &Pool{
 		limit:   limit,
 		workers: workers,
 		name:    name,
 	}
 }
 
-func (pool *RestoreWorkerPool) Apply() *RestoreWorker {
+func (pool *Pool) Apply() *Worker {
 	start := time.Now()
 	worker := <-pool.workers
 	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
@@ -39,11 +39,11 @@ func (pool *RestoreWorkerPool) Apply() *RestoreWorker {
 	return worker
 }
 
-func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {
+func (pool *Pool) Recycle(worker *Worker) {
 	pool.workers <- worker
 	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
 }
 
-func (pool *RestoreWorkerPool) HasWorker() bool {
+func (pool *Pool) HasWorker() bool {
 	return len(pool.workers) > 0
 }
