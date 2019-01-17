@@ -20,7 +20,7 @@ func TestNewRestoreWorkerPool(t *testing.T) {
 }
 
 func (s *testWorkerPool) TestApplyRecycle(c *C) {
-	pool := worker.NewRestoreWorkerPool(context.Background(), 3, "test")
+	pool := worker.NewPool(context.Background(), 3, "test")
 
 	w1, w2, w3 := pool.Apply(), pool.Apply(), pool.Apply()
 	c.Assert(w1.ID, Equals, int64(1))

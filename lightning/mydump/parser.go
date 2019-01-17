@@ -34,7 +34,7 @@ type ChunkParser struct {
 	// cache
 	remainBuf *bytes.Buffer
 	appendBuf *bytes.Buffer
-	ioWorkers *worker.RestoreWorkerPool
+	ioWorkers *worker.Pool
 }
 
 // Chunk represents a portion of the data file.
@@ -52,7 +52,7 @@ type Row struct {
 }
 
 // NewChunkParser creates a new parser which can read chunks out of a file.
-func NewChunkParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.RestoreWorkerPool) *ChunkParser {
+func NewChunkParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.Pool) *ChunkParser {
 	return &ChunkParser{
 		reader:    reader,
 		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),

@@ -96,9 +96,9 @@ type RestoreController struct {
 	cfg             *config.Config
 	dbMetas         []*mydump.MDDatabaseMeta
 	dbInfos         map[string]*TidbDBInfo
-	tableWorkers    *worker.RestoreWorkerPool
-	regionWorkers   *worker.RestoreWorkerPool
-	ioWorkers       *worker.RestoreWorkerPool
+	tableWorkers    *worker.Pool
+	regionWorkers   *worker.Pool
+	ioWorkers       *worker.Pool
 	importer        *kv.Importer
 	tidbMgr         *TiDBManager
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
@@ -131,9 +131,9 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 	rc := &RestoreController{
 		cfg:           cfg,
 		dbMetas:       dbMetas,
-		tableWorkers:  worker.NewRestoreWorkerPool(ctx, cfg.App.TableConcurrency, "table"),
-		regionWorkers: worker.NewRestoreWorkerPool(ctx, cfg.App.RegionConcurrency, "region"),
-		ioWorkers:     worker.NewRestoreWorkerPool(ctx, cfg.App.IOConcurrency, "io"),
+		tableWorkers:  worker.NewPool(ctx, cfg.App.TableConcurrency, "table"),
+		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
+		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
 		importer:      importer,
 		tidbMgr:       tidbMgr,
 
@@ -509,7 +509,7 @@ func (t *TableRestore) restoreTable(
 			// the difference between restoring tables concurrently and restoring tables one by one.
 			restoreWorker := rc.tableWorkers.Apply()
 
-			go func(w *worker.RestoreWorker, eid int, ecp *EngineCheckpoint) {
+			go func(w *worker.Worker, eid int, ecp *EngineCheckpoint) {
 				defer wg.Done()
 				tag := fmt.Sprintf("%s:%d", t.tableName, eid)
 
@@ -591,7 +591,7 @@ func (t *TableRestore) restoreEngine(
 
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
-		go func(w *worker.RestoreWorker, cr *chunkRestore) {
+		go func(w *worker.Worker, cr *chunkRestore) {
 			// Restore a chunk.
 			defer func() {
 				cr.close()
@@ -897,7 +897,7 @@ type chunkRestore struct {
 	chunk  *ChunkCheckpoint
 }
 
-func newChunkRestore(index int, chunk *ChunkCheckpoint, blockBufSize int64, ioWorkers *worker.RestoreWorkerPool) (*chunkRestore, error) {
+func newChunkRestore(index int, chunk *ChunkCheckpoint, blockBufSize int64, ioWorkers *worker.Pool) (*chunkRestore, error) {
 	reader, err := os.Open(chunk.Key.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
