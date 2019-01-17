@@ -10,10 +10,6 @@ import (
 	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
-const (
-	defMinRegionSize int64 = 1024 * 4
-)
-
 var _ = Suite(&testMydumpRegionSuite{})
 
 type testMydumpRegionSuite struct{}
@@ -21,12 +17,12 @@ type testMydumpRegionSuite struct{}
 func (s *testMydumpRegionSuite) SetUpSuite(c *C)    {}
 func (s *testMydumpRegionSuite) TearDownSuite(c *C) {}
 
-var expectedTuplesCount = map[string]int64{
-	"i":                     1,
-	"report_case_high_risk": 1,
-	"tbl_autoid":            10000,
-	"tbl_multi_index":       10000,
-}
+// var expectedTuplesCount = map[string]int64{
+// 	"i":                     1,
+// 	"report_case_high_risk": 1,
+// 	"tbl_autoid":            10000,
+// 	"tbl_multi_index":       10000,
+// }
 
 func getFileSize(file string) (int64, error) {
 	fd, err := os.Open(file)
@@ -102,8 +98,6 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 			preReg = reg
 		}
 	}
-
-	return
 }
 
 func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {

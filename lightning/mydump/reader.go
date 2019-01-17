@@ -5,29 +5,17 @@ import (
 	"bytes"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pkg/errors"
-	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
-)
-
-var (
-	insStmtRegex = regexp.MustCompile(`(?i)INSERT INTO .* VALUES`)
 )
 
 var (
 	ErrInsertStatementNotFound = errors.New("insert statement not found")
 	errInvalidSchemaEncoding   = errors.New("invalid schema encoding")
-)
-
-var (
-	supportedSchemaEncodings = []encoding.Encoding{
-		simplifiedchinese.GB18030,
-	}
 )
 
 func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {

@@ -9,10 +9,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-const (
-	encodeBatchRows = 1024
-)
-
 func InitMembufCap(batchSQLLength int64) {
 	kv.ImportingTxnMembufCap = int(batchSQLLength) * 4
 	// TODO : calculate predicted ratio, bwtween sql and kvs' size, base on specified DDL
