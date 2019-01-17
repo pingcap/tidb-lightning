@@ -56,7 +56,7 @@ data_parsers:
 	PATH="$(GOPATH)/bin":$(PATH) protoc -I. -I"$(GOPATH)/src" lightning/restore/file_checkpoints.proto --gogofaster_out=.
 
 lightning:
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/main.go
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/tidb-lightning/main.go
 
 lightning-ctl:
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_CTL_BIN) cmd/tidb-lightning-ctl/main.go
@@ -76,8 +76,12 @@ lightning_for_integration_test:
 	$(GOFAIL_ENABLE)
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
-		-o bin/tidb-lightning.test \
-		github.com/pingcap/tidb-lightning/cmd
+		-o $(LIGHTNING_BIN).test \
+		github.com/pingcap/tidb-lightning/cmd/tidb-lightning
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb-lightning/... \
+		-o $(LIGHTNING_CTL_BIN).test \
+		github.com/pingcap/tidb-lightning/cmd/tidb-lightning-ctl
 	$(GOFAIL_DISABLE)
 
 integration_test: lightning_for_integration_test

@@ -7,12 +7,6 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
-var (
-	lastInspectUnixNano int64
-	lastCPUUsageTime    int64
-	cpuUsage            float64
-)
-
 const (
 	// states used for the TableCounter labels
 	TableStatePending        = "pending"

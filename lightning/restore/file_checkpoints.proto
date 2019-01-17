@@ -1,5 +1,9 @@
 syntax = "proto3";
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
 option go_package = "restore";
+option (gogoproto.goproto_getters_all) = false;
 
 message CheckpointsModel {
     // key is table_name

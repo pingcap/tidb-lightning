@@ -35,8 +35,6 @@ const (
 	CheckpointStatusAnalyzed        CheckpointStatus = 210
 )
 
-const insertCheckpointRetry = 3
-
 const nodeID = 0
 
 const (
@@ -116,8 +114,6 @@ func (cp *TableCheckpoint) CountChunks() int {
 }
 
 type chunkCheckpointDiff struct {
-	path     string
-	offset   int64
 	pos      int64
 	rowID    int64
 	checksum verify.KVChecksum

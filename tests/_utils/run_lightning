@@ -4,4 +4,4 @@ set -eu
 TEST_DIR=/tmp/lightning_test_result
 
 echo "[$(date)] <<<<<< RUNNING TEST FOR: tests/$TEST_NAME/${1-config}.toml >>>>>>" >> "$TEST_DIR/lightning.log"
-bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.${1-config}.out" DEVEL -config "tests/$TEST_NAME/${1-config}.toml"
+bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out" DEVEL -config "tests/$TEST_NAME/${1-config}.toml"

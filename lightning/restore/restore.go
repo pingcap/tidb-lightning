@@ -891,22 +891,6 @@ func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-func (rc *RestoreController) getTables() []string {
-	var numOfTables int
-	for _, dbMeta := range rc.dbMetas {
-		numOfTables += len(dbMeta.Tables)
-	}
-	tables := make([]string, 0, numOfTables)
-
-	for _, dbMeta := range rc.dbMetas {
-		for _, tableMeta := range dbMeta.Tables {
-			tables = append(tables, common.UniqueTable(dbMeta.Name, tableMeta.Name))
-		}
-	}
-
-	return tables
-}
-
 type chunkRestore struct {
 	parser *mydump.ChunkParser
 	index  int
@@ -942,9 +926,6 @@ type TableRestore struct {
 	tableMeta *mydump.MDTableMeta
 	encoder   kvenc.KvEncoder
 	alloc     autoid.Allocator
-
-	checkpointStatus CheckpointStatus
-	engine           *kv.OpenedEngine
 }
 
 func NewTableRestore(
@@ -1240,7 +1221,6 @@ func (cr *chunkRestore) restore(
 		t.dbInfo.Name,
 		t.tableInfo.Name,
 		t.tableInfo.ID,
-		t.tableInfo.Columns,
 		rc.cfg.TiDB.SQLMode,
 		t.alloc,
 	)

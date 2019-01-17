@@ -1,18 +1,13 @@
 package mydump_test
 
 import (
-	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	. "github.com/pingcap/tidb-lightning/lightning/mydump"
-)
-
-const (
-	defMinRegionSize int64 = 1024 * 4
 )
 
 var _ = Suite(&testMydumpRegionSuite{})
@@ -22,11 +17,26 @@ type testMydumpRegionSuite struct{}
 func (s *testMydumpRegionSuite) SetUpSuite(c *C)    {}
 func (s *testMydumpRegionSuite) TearDownSuite(c *C) {}
 
-var expectedTuplesCount = map[string]int64{
-	"i":                     1,
-	"report_case_high_risk": 1,
-	"tbl_autoid":            10000,
-	"tbl_multi_index":       10000,
+// var expectedTuplesCount = map[string]int64{
+// 	"i":                     1,
+// 	"report_case_high_risk": 1,
+// 	"tbl_autoid":            10000,
+// 	"tbl_multi_index":       10000,
+// }
+
+func getFileSize(file string) (int64, error) {
+	fd, err := os.Open(file)
+	if err != nil {
+		return -1, err
+	}
+	defer fd.Close()
+
+	fstat, err := fd.Stat()
+	if err != nil {
+		return -1, err
+	}
+
+	return fstat.Size(), nil
 }
 
 /*
@@ -56,7 +66,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		// check - region-size vs file-size
 		var tolFileSize int64 = 0
 		for _, file := range meta.DataFiles {
-			fileSize, err := common.GetFileSize(file)
+			fileSize, err := getFileSize(file)
 			c.Assert(err, IsNil)
 			tolFileSize += fileSize
 		}
@@ -88,33 +98,6 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 			preReg = reg
 		}
 	}
-
-	return
-}
-
-func (s *testMydumpRegionSuite) TestRegionReader(c *C) {
-	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
-	loader, _ := NewMyDumpLoader(cfg)
-	dbMeta := loader.GetDatabases()[0]
-
-	for _, meta := range dbMeta.Tables {
-		regions, err := MakeTableRegions(meta, 1, 1, 0, 1)
-		c.Assert(err, IsNil)
-
-		tolValTuples := 0
-		for _, reg := range regions {
-			regReader, _ := NewRegionReader(reg.File, reg.Offset(), reg.Size())
-			stmts, _ := regReader.Read(reg.Size())
-			for _, stmt := range stmts {
-				parts := bytes.Split(stmt, []byte("),"))
-				tolValTuples += len(parts)
-			}
-		}
-
-		c.Assert(int64(tolValTuples), Equals, expectedTuplesCount[meta.Name])
-	}
-
-	return
 }
 
 func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {

@@ -30,11 +30,11 @@ func (s *testMydumpLoaderSuite) SetUpTest(c *C) {
 
 func (s *testMydumpLoaderSuite) TestLoader(c *C) {
 	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./not-exists"}}
-	mdl, err := md.NewMyDumpLoader(cfg)
+	_, err := md.NewMyDumpLoader(cfg)
 	c.Assert(err, NotNil)
 
 	cfg = &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
-	mdl, err = md.NewMyDumpLoader(cfg)
+	mdl, err := md.NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)
 
 	dbMetas := mdl.GetDatabases()
