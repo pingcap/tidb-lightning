@@ -1,5 +1,5 @@
 <!--
-Thank you for contributing to TiDB-Lightning! Please read TiDB's [CONTRIBUTING](https://github.com/pingcap/tidb/blob/master/CONTRIBUTING.md) document **BEFORE** filing this PR.
+Thank you for contributing to TiDB-Lightning! Please read the [CONTRIBUTING](https://github.com/pingcap/tidb-lightning/blob/master/CONTRIBUTING.md) document **BEFORE** filing this PR.
 -->
 
 ### What problem does this PR solve? <!--add issue link with summary if exists-->
