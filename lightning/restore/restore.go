@@ -566,8 +566,9 @@ func (t *TableRestore) restoreEngine(
 	cp *EngineCheckpoint,
 ) (*kv.ClosedEngine, *worker.Worker, error) {
 	if cp.Status >= CheckpointStatusClosed {
+		w := rc.closedEngineLimit.Apply()
 		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, engineID)
-		return closedEngine, nil, errors.Trace(err)
+		return closedEngine, w, errors.Trace(err)
 	}
 
 	timer := time.Now()
