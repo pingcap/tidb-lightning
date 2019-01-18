@@ -52,14 +52,10 @@ func (pool *Pool) Apply() *Worker {
 	return worker
 }
 
-<<<<<<< HEAD
 func (pool *Pool) Recycle(worker *Worker) {
-=======
-func (pool *RestoreWorkerPool) Recycle(worker *RestoreWorker) {
 	if worker == nil {
 		panic("invalid restore worker")
 	}
->>>>>>> worker: panic if recycle a nil worker
 	pool.workers <- worker
 	metric.IdleWorkersGauge.WithLabelValues(pool.name).Set(float64(len(pool.workers)))
 }
