@@ -11,13 +11,12 @@ LIGHTNING_CTL_BIN := bin/tidb-lightning-ctl
 TEST_DIR := /tmp/lightning_test_result
 # this is hard-coded unless we want to generate *.toml on fly.
 
-TIDBDIR := vendor/github.com/pingcap/tidb
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := GO111MODULE=on CGO_ENABLED=0 $(GO) build -mod vendor
-GOTEST    := GO111MODULE=on CGO_ENABLED=1 $(GO) test -mod vendor -p 3
+GOBUILD   := GO111MODULE=on CGO_ENABLED=0 $(GO) build
+GOTEST    := GO111MODULE=on CGO_ENABLED=1 $(GO) test -p 3
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -97,11 +96,7 @@ coverage:
 	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
 	grep -F '<option' "$(TEST_DIR)/all_cov.html"
 
-update: update_vendor clean_vendor
-update_vendor:
-	rm -rf vendor/
+update:
 	GO111MODULE=on go mod verify
-	GO111MODULE=on go mod vendor
+	GO111MODULE=on go mod tidy
 
-clean_vendor:
-	hack/clean_vendor.sh

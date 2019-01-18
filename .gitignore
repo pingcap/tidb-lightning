@@ -4,6 +4,6 @@ test_*/
 *.tar.gz
 .idea
 *.local
-go.sum
 *.pyc
 *.ezdraw
+vendor/
