@@ -41,12 +41,11 @@ Run `make data_parsers` to regenerate these source code.
 
 ### Updating dependencies
 
-TiDB-Lightning stores dependencies in `vendor/` and manages them using
-[Go 1.11 module](https://github.com/golang/go/wiki/Modules).
-To add or update a dependency,
+TiDB-Lightning manages dependencies using [Go 1.11 module](https://github.com/golang/go/wiki/Modules).
+To add or update a dependency, either
 
-1. Edit `go.mod` or use the `go mod edit` command to change the dependency.
-2. Run `make update` to update the vendor directory.
+* Use the `go mod edit` command to change the dependency, or
+* Edit `go.mod` and then run `make update` to update the checksum.
 
 ## Contribution flow
 
