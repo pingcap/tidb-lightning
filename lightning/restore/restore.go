@@ -156,8 +156,9 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 			summary: make(map[string]errorSummary),
 		},
 
-		checkpointsDB: cpdb,
-		saveCpCh:      make(chan saveCp),
+		checkpointsDB:     cpdb,
+		saveCpCh:          make(chan saveCp),
+		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
 	}
 
 	return rc, nil
@@ -530,15 +531,15 @@ func (t *TableRestore) restoreTable(
 
 				closedEngine, closedEngineWorker, err := t.restoreEngine(ctx, rc, eid, ecp)
 				rc.tableWorkers.Recycle(w)
+				if closedEngineWorker != nil {
+					defer rc.closedEngineLimit.Recycle(closedEngineWorker)
+				}
 				if err != nil {
-					if closedEngineWorker != nil {
-						rc.closedEngineLimit.Recycle(closedEngineWorker)
-					}
 					engineErr.Set(tag, err)
 					return
 				}
 
-				if err := t.importEngine(ctx, closedEngine, rc, eid, ecp, closedEngineWorker); err != nil {
+				if err := t.importEngine(ctx, closedEngine, rc, eid, ecp); err != nil {
 					engineErr.Set(tag, err)
 				}
 			}(restoreWorker, engineID, engine)
@@ -664,12 +665,8 @@ func (t *TableRestore) importEngine(
 	rc *RestoreController,
 	engineID int,
 	cp *EngineCheckpoint,
-	closedEngineWorker *worker.Worker,
 ) error {
 	if cp.Status >= CheckpointStatusImported {
-		if closedEngineWorker != nil {
-			rc.closedEngineLimit.Recycle(closedEngineWorker)
-		}
 		return nil
 	}
 
@@ -679,9 +676,6 @@ func (t *TableRestore) importEngine(
 	// the lock ensures the import() step will not be concurrent.
 	rc.postProcessLock.Lock()
 	err := t.importKV(ctx, closedEngine)
-	if closedEngineWorker != nil {
-		rc.closedEngineLimit.Recycle(closedEngineWorker)
-	}
 	// gofail: var SlowDownImport struct{}
 	rc.postProcessLock.Unlock()
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
