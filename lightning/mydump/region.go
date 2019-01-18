@@ -17,7 +17,7 @@ import (
 	"math"
 	"os"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 type TableRegion struct {

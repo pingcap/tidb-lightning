@@ -20,8 +20,8 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/pingcap/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"

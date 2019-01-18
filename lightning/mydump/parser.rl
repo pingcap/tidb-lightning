@@ -11,7 +11,7 @@ import (
 	"io"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 %%{

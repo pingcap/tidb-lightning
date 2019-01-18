@@ -14,12 +14,12 @@
 package kv
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
-	"github.com/pkg/errors"
 )
 
 func InitMembufCap(batchSQLLength int64) {

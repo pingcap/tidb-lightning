@@ -21,8 +21,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pkg/errors"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 

@@ -31,12 +31,12 @@ require (
 	github.com/onsi/ginkgo v1.7.0 // indirect
 	github.com/onsi/gomega v1.4.3 // indirect
 	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
+	github.com/pingcap/errors v0.11.0
 	github.com/pingcap/gofail v0.0.0-20181121072748-c3f835e5a7d8
 	github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26
 	github.com/pingcap/parser v0.0.0-20181113072426-4a9a1b13b591
 	github.com/pingcap/tidb v0.0.0-20181120082053-012cb6da9443
 	github.com/pingcap/tidb-tools v2.1.3-0.20190115072802-b674be072353+incompatible
-	github.com/pkg/errors v0.8.0
 	github.com/prometheus/client_golang v0.9.2
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/satori/go.uuid v1.2.0
@@ -58,5 +58,3 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.2.2 // indirect
 )
-
-replace github.com/pkg/errors v0.8.0 => github.com/pingcap/errors v0.11.0

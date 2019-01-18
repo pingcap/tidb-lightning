@@ -20,11 +20,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	plan "github.com/pingcap/tidb/planner/core"
-	"github.com/pkg/errors"
 )
 
 func setGlobalVars() {

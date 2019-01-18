@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 var _ = Suite(&testMydumpParserSuite{})
