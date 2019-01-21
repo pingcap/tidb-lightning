@@ -39,10 +39,10 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 
+	"github.com/pingcap/errors"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/util/kvencoder"
-	"github.com/pkg/errors"
 )
 
 const (

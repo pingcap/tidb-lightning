@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/parser/mysql"
-	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

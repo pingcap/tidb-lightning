@@ -18,7 +18,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/metric"

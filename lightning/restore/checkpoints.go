@@ -26,7 +26,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/joho/sqltocsv"
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"

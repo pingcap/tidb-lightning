@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-tools/pkg/filter"
-	"github.com/pkg/errors"
 )
 
 const (

@@ -19,10 +19,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-tools/pkg/filter"
-	"github.com/pkg/errors"
 )
 
 var (

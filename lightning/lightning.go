@@ -20,9 +20,9 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/pingcap/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pkg/errors"
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -46,7 +46,7 @@ func initEnv(cfg *config.Config) error {
 
 	if cfg.App.ProfilePort > 0 {
 		go func() {
-			http.Handle("/metrics", prometheus.Handler())
+			http.Handle("/metrics", promhttp.Handler())
 			common.AppLogger.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.App.ProfilePort), nil))
 		}()
 	}

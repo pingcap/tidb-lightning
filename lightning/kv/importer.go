@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 	"github.com/satori/go.uuid"
 	"google.golang.org/grpc"
 
