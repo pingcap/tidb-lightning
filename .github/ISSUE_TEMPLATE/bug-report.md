@@ -16,18 +16,18 @@ Please answer these questions before submitting your issue. Thanks!
 
 4. Versions of the cluster
 
-    - TiKV-Importer version (run `tikv-importer -V`)
-
-        ```
-        (paste TiKV-Importer version here)
-        ```
-
     - TiDB-Lightning version (run `tidb-lightning -V`):
 
         ```
         (paste TiDB-Lightning version here)
         ```
+        
+    - TiKV-Importer version (run `tikv-importer -V`)
 
+        ```
+        (paste TiKV-Importer version here)
+        ```
+        
     - TiKV version (run `tikv-server -V`):
 
         ```
@@ -47,7 +47,7 @@ Please answer these questions before submitting your issue. Thanks!
 
 5. Operation logs
    - Please upload `tidb-lightning.log` for TiDB-Lightning if possible
-   - Please upload `tikv-importer.log` if possible
+   - Please upload `tikv-importer.log` from TiKV-Importer if possible
    - Other interesting logs
    
 6. Configuration of the cluster and the task
