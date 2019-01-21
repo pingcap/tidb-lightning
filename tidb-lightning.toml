@@ -104,7 +104,9 @@ checksum-table-concurrency = 16
 [post-restore]
 # if set true, checksum will do ADMIN CHECKSUM TABLE <table> for each table.
 checksum = true
-# if set true, compact will do compaction to tikv data.
+# if set to true, compact will do level 1 compaction to tikv data.
+level-1-compact = true
+# if set true, compact will do full compaction to tikv data.
 compact = true
 # if set true, analyze will do ANALYZE TABLE <table> for each table.
 analyze = true

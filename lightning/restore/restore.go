@@ -531,14 +531,12 @@ func (t *TableRestore) restoreTable(
 
 				closedEngine, closedEngineWorker, err := t.restoreEngine(ctx, rc, eid, ecp)
 				rc.tableWorkers.Recycle(w)
-				if closedEngineWorker != nil {
-					defer rc.closedEngineLimit.Recycle(closedEngineWorker)
-				}
 				if err != nil {
 					engineErr.Set(tag, err)
 					return
 				}
 
+				defer rc.closedEngineLimit.Recycle(closedEngineWorker)
 				if err := t.importEngine(ctx, closedEngine, rc, eid, ecp); err != nil {
 					engineErr.Set(tag, err)
 				}
@@ -569,7 +567,12 @@ func (t *TableRestore) restoreEngine(
 	if cp.Status >= CheckpointStatusClosed {
 		w := rc.closedEngineLimit.Apply()
 		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, engineID)
-		return closedEngine, w, errors.Trace(err)
+		// If any error occurred, recycle worker immediately
+		if err != nil {
+			rc.closedEngineLimit.Recycle(w)
+			return closedEngine, nil, errors.Trace(err)
+		}
+		return closedEngine, w, nil
 	}
 
 	timer := time.Now()
@@ -654,7 +657,9 @@ func (t *TableRestore) restoreEngine(
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
 	if err != nil {
 		common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %s", errors.ErrorStack(err))
-		return nil, w, errors.Trace(err)
+		// If any error occurred, recycle worker immediately
+		rc.closedEngineLimit.Recycle(w)
+		return nil, nil, errors.Trace(err)
 	}
 	return closedEngine, w, nil
 }
@@ -681,6 +686,19 @@ func (t *TableRestore) importEngine(
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// 2. perform a level-1 compact if idling.
+	if *rc.cfg.PostRestore.Level1Compact &&
+		atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateDoing) {
+		go func() {
+			err := rc.doCompact(ctx, Level1Compact)
+			if err != nil {
+				// log it and continue
+				common.AppLogger.Warnf("compact %d failed %v", Level1Compact, err)
+			}
+			atomic.StoreInt32(&rc.compactState, compactStateIdle)
+		}()
 	}
 
 	return nil
