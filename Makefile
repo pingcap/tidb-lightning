@@ -93,8 +93,13 @@ integration_test: lightning_for_integration_test
 coverage:
 	GO111MODULE=off go get github.com/wadey/gocovmerge
 	gocovmerge "$(TEST_DIR)"/cov.* > "$(TEST_DIR)/all_cov.out"
-	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
-	grep -F '<option' "$(TEST_DIR)/all_cov.html"
+	ifeq ("$(JenkinsCI)", "1")
+		GO111MODULE=off go get github.com/mattn/goveralls
+		goveralls -coverprofile=$(TEST_DIR)/all_cov.out -service=jenkins-ci -repotoken $(COVERALLS_TOKEN)
+	else
+		go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
+		grep -F '<option' "$(TEST_DIR)/all_cov.html"
+	endif
 
 update:
 	GO111MODULE=on go mod verify
