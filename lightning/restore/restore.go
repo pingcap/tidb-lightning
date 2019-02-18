@@ -531,16 +531,16 @@ func (t *TableRestore) restoreTable(
 				defer wg.Done()
 				tag := fmt.Sprintf("%s:%d", t.tableName, eid)
 
-				info, err := t.restoreEngine(ctx, rc, eid, ecp)
+				result, err := t.restoreEngine(ctx, rc, eid, ecp)
 				rc.tableWorkers.Recycle(w)
 				if err != nil {
 					engineErr.Set(tag, err)
 					return
 				}
 
-				defer rc.closedEngineLimit.Recycle(info.dataWorker)
-				defer rc.closedEngineLimit.Recycle(info.indexWorker)
-				if err := t.importEngine(ctx, info.dataEngine, info.indexEngine, rc, eid, ecp); err != nil {
+				defer rc.closedEngineLimit.Recycle(result.dataWorker)
+				defer rc.closedEngineLimit.Recycle(result.indexWorker)
+				if err := t.importEngine(ctx, result.dataEngine, result.indexEngine, rc, eid, ecp); err != nil {
 					engineErr.Set(tag, err)
 				}
 			}(restoreWorker, engineID, engine)
@@ -561,7 +561,7 @@ func (t *TableRestore) restoreTable(
 	return errors.Trace(t.postProcess(ctx, rc, cp))
 }
 
-type closedEngineInfo struct {
+type restoreResult struct {
 	dataEngine  *kv.ClosedEngine
 	dataWorker  *worker.Worker
 	indexEngine *kv.ClosedEngine
@@ -573,30 +573,30 @@ func (t *TableRestore) restoreEngine(
 	rc *RestoreController,
 	engineID int,
 	cp *EngineCheckpoint,
-) (*closedEngineInfo, error) {
+) (*restoreResult, error) {
 	if cp.Status >= CheckpointStatusClosed {
 		dataWorker := rc.closedEngineLimit.Apply()
 		dataEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
 			rc.closedEngineLimit.Recycle(dataWorker)
-			info := &closedEngineInfo{
+			result := &restoreResult{
 				dataEngine: dataEngine,
 			}
-			return info, errors.Trace(err)
+			return result, errors.Trace(err)
 		}
 		indexWorker := rc.closedEngineLimit.Apply()
 		indexEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, 1<<32+engineID)
 		if err != nil {
 			rc.closedEngineLimit.Recycle(dataWorker)
 			rc.closedEngineLimit.Recycle(indexWorker)
-			info := &closedEngineInfo{
+			info := &restoreResult{
 				dataEngine:  dataEngine,
 				indexEngine: indexEngine,
 			}
 			return info, errors.Trace(err)
 		}
-		info := &closedEngineInfo{
+		info := &restoreResult{
 			dataEngine:  dataEngine,
 			dataWorker:  dataWorker,
 			indexEngine: indexEngine,
@@ -705,13 +705,13 @@ func (t *TableRestore) restoreEngine(
 		return nil, errors.Trace(err)
 	}
 
-	info := &closedEngineInfo{
+	result := &restoreResult{
 		dataEngine:  closedDataEngine,
 		dataWorker:  dataWorker,
 		indexEngine: closedIndexEngine,
 		indexWorker: indexWorker,
 	}
-	return info, nil
+	return result, nil
 }
 
 func (t *TableRestore) importEngine(
