@@ -503,6 +503,10 @@ func (t *TableRestore) restoreTable(
 	}
 
 	// 2. Restore engines (if still needed)
+	indexEngine, err := rc.importer.OpenEngine(ctx, t.tableName, -1)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	if cp.Status < CheckpointStatusImported {
 		timer := time.Now()
@@ -531,7 +535,7 @@ func (t *TableRestore) restoreTable(
 				defer wg.Done()
 				tag := fmt.Sprintf("%s:%d", t.tableName, eid)
 
-				result, err := t.restoreEngine(ctx, rc, eid, ecp)
+				result, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
 				rc.tableWorkers.Recycle(w)
 				if err != nil {
 					engineErr.Set(tag, err)
@@ -539,8 +543,7 @@ func (t *TableRestore) restoreTable(
 				}
 
 				defer rc.closedEngineLimit.Recycle(result.dataWorker)
-				defer rc.closedEngineLimit.Recycle(result.indexWorker)
-				if err := t.importEngine(ctx, result.dataEngine, result.indexEngine, rc, eid, ecp); err != nil {
+				if err := t.importEngine(ctx, result.closedEngine, rc, eid, ecp); err != nil {
 					engineErr.Set(tag, err)
 				}
 			}(restoreWorker, engineID, engine)
@@ -557,50 +560,40 @@ func (t *TableRestore) restoreTable(
 	}
 
 	// 3. Post-process
-
-	return errors.Trace(t.postProcess(ctx, rc, cp))
+	closedIndexEngine, err := indexEngine.Close(ctx)
+	if err != nil {
+		common.AppLogger.Errorf("[kv-deliver] index engine closed error: %s", errors.ErrorStack(err))
+		return errors.Trace(err)
+	}
+	return errors.Trace(t.postProcess(ctx, rc, cp, closedIndexEngine))
 }
 
 type restoreResult struct {
-	dataEngine  *kv.ClosedEngine
-	dataWorker  *worker.Worker
-	indexEngine *kv.ClosedEngine
-	indexWorker *worker.Worker
+	closedEngine *kv.ClosedEngine
+	dataWorker   *worker.Worker
 }
 
 func (t *TableRestore) restoreEngine(
 	ctx context.Context,
 	rc *RestoreController,
+	indexEngine *kv.OpenedEngine,
 	engineID int,
 	cp *EngineCheckpoint,
 ) (*restoreResult, error) {
 	if cp.Status >= CheckpointStatusClosed {
 		dataWorker := rc.closedEngineLimit.Apply()
-		dataEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, engineID)
+		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
 			rc.closedEngineLimit.Recycle(dataWorker)
 			result := &restoreResult{
-				dataEngine: dataEngine,
+				closedEngine: closedEngine,
 			}
 			return result, errors.Trace(err)
 		}
-		indexWorker := rc.closedEngineLimit.Apply()
-		indexEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, 1<<32+engineID)
-		if err != nil {
-			rc.closedEngineLimit.Recycle(dataWorker)
-			rc.closedEngineLimit.Recycle(indexWorker)
-			info := &restoreResult{
-				dataEngine:  dataEngine,
-				indexEngine: indexEngine,
-			}
-			return info, errors.Trace(err)
-		}
 		info := &restoreResult{
-			dataEngine:  dataEngine,
-			dataWorker:  dataWorker,
-			indexEngine: indexEngine,
-			indexWorker: indexWorker,
+			closedEngine: closedEngine,
+			dataWorker:   dataWorker,
 		}
 		return info, nil
 	}
@@ -608,11 +601,6 @@ func (t *TableRestore) restoreEngine(
 	timer := time.Now()
 
 	dataEngine, err := rc.importer.OpenEngine(ctx, t.tableName, engineID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	indexEngine, err := rc.importer.OpenEngine(ctx, t.tableName, 1<<32+engineID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -696,28 +684,16 @@ func (t *TableRestore) restoreEngine(
 		rc.closedEngineLimit.Recycle(dataWorker)
 		return nil, errors.Trace(err)
 	}
-	indexWorker := rc.closedEngineLimit.Apply()
-	closedIndexEngine, err := indexEngine.Close(ctx)
-	if err != nil {
-		common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %s", errors.ErrorStack(err))
-		rc.closedEngineLimit.Recycle(dataWorker)
-		rc.closedEngineLimit.Recycle(indexWorker)
-		return nil, errors.Trace(err)
-	}
-
 	result := &restoreResult{
-		dataEngine:  closedDataEngine,
-		dataWorker:  dataWorker,
-		indexEngine: closedIndexEngine,
-		indexWorker: indexWorker,
+		closedEngine: closedDataEngine,
+		dataWorker:   dataWorker,
 	}
 	return result, nil
 }
 
 func (t *TableRestore) importEngine(
 	ctx context.Context,
-	dataEngine *kv.ClosedEngine,
-	indexEngine *kv.ClosedEngine,
+	closedEngine *kv.ClosedEngine,
 	rc *RestoreController,
 	engineID int,
 	cp *EngineCheckpoint,
@@ -731,7 +707,7 @@ func (t *TableRestore) importEngine(
 
 	// the lock ensures the import() step will not be concurrent.
 	rc.postProcessLock.Lock()
-	err := t.importKV(ctx, dataEngine, indexEngine)
+	err := t.importKV(ctx, closedEngine)
 	// gofail: var SlowDownImport struct{}
 	rc.postProcessLock.Unlock()
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
@@ -755,7 +731,16 @@ func (t *TableRestore) importEngine(
 	return nil
 }
 
-func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
+func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, indexEngine *kv.ClosedEngine) error {
+	// the lock ensures the import() step will not be concurrent.
+	rc.postProcessLock.Lock()
+	err := t.importKV(ctx, indexEngine)
+	rc.postProcessLock.Unlock()
+	if err != nil {
+		common.AppLogger.Errorf("[%[1]s] failed to import index engine: %v", t.tableName, err.Error())
+		return errors.Trace(err)
+	}
+
 	setSessionConcurrencyVars(ctx, rc.tidbMgr.db, rc.cfg.TiDB)
 
 	// 3. alter table set auto_increment
@@ -1106,25 +1091,17 @@ func (tr *TableRestore) restoreTableMeta(ctx context.Context, db *sql.DB) error 
 	return nil
 }
 
-func (tr *TableRestore) importKV(ctx context.Context, dataEngine, indexEngine *kv.ClosedEngine) error {
+func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
 	common.AppLogger.Infof("[%s] flush kv deliver ...", tr.tableName)
 	start := time.Now()
 
-	if err := dataEngine.Import(ctx); err != nil {
+	if err := closedEngine.Import(ctx); err != nil {
 		if !common.IsContextCanceledError(err) {
 			common.AppLogger.Errorf("[%s] failed to flush kvs : %s", tr.tableName, err.Error())
 		}
 		return errors.Trace(err)
 	}
-	dataEngine.Cleanup(ctx)
-
-	if err := indexEngine.Import(ctx); err != nil {
-		if !common.IsContextCanceledError(err) {
-			common.AppLogger.Errorf("[%s] failed to flush kvs : %s", tr.tableName, err.Error())
-		}
-		return errors.Trace(err)
-	}
-	indexEngine.Cleanup(ctx)
+	closedEngine.Cleanup(ctx)
 
 	dur := time.Since(start)
 	metric.ImportSecondsHistogram.Observe(dur.Seconds())
