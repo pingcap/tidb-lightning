@@ -503,6 +503,8 @@ func (t *TableRestore) restoreTable(
 	}
 
 	// 2. Restore engines (if still needed)
+	indexWorker := rc.tableWorkers.Apply()
+	defer rc.tableWorkers.Recycle(indexWorker)
 	indexEngine, err := rc.importer.OpenEngine(ctx, t.tableName, -1)
 	if err != nil {
 		return errors.Trace(err)
