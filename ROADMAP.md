@@ -9,5 +9,5 @@ This document defines the roadmap for Lightning development.
     - [ ] bench test: able to import a 1 TiB single table with 5 indices in 6 hours.
 + [ ] Improve usability
     - [ ] visual display of import
-+ [ ] distributed import
++ [ ] distributed import: easily deploy multiple Lightning and Importer instances to horizontally speed up restoration
 + [ ] online import
