@@ -39,8 +39,7 @@ message EngineCheckpointModel {
 message ChunkCheckpointModel {
     string path = 1;
     int64 offset = 2;
-    bytes columns = 3;
-    bool should_include_row_id = 4;
+    repeated int32 column_permutation = 12;
     int64 end_offset = 5;
     int64 pos = 6;
     int64 prev_rowid_max = 7;

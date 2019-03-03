@@ -37,6 +37,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20181113072426-4a9a1b13b591
 	github.com/pingcap/tidb v0.0.0-20181120082053-012cb6da9443
 	github.com/pingcap/tidb-tools v2.1.3-0.20190115072802-b674be072353+incompatible
+	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323
 	github.com/prometheus/client_golang v0.9.2
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/satori/go.uuid v1.2.0

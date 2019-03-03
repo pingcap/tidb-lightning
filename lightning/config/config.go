@@ -23,6 +23,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 )
@@ -41,8 +42,10 @@ type DBStore struct {
 	Psw        string `toml:"password" json:"-"`
 	StatusPort int    `toml:"status-port" json:"status-port"`
 	PdAddr     string `toml:"pd-addr" json:"pd-addr"`
-	SQLMode    string `toml:"sql-mode" json:"sql-mode"`
+	StrSQLMode string `toml:"sql-mode" json:"sql-mode"`
 	LogLevel   string `toml:"log-level" json:"log-level"`
+
+	SQLMode mysql.SQLMode `json:"-"`
 
 	DistSQLScanConcurrency     int `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
 	BuildStatsConcurrency      int `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
@@ -159,7 +162,8 @@ func NewConfig() *Config {
 			CheckRequirements: true,
 		},
 		TiDB: DBStore{
-			SQLMode:                    "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+			StrSQLMode:                 "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+			SQLMode:                    mysql.ModeStrictTransTables | mysql.ModeNoEngineSubstitution,
 			BuildStatsConcurrency:      20,
 			DistSQLScanConcurrency:     100,
 			IndexSerialScanConcurrency: 20,
@@ -222,6 +226,11 @@ func (cfg *Config) Load() error {
 
 	if len(cfg.Mydumper.CSV.Delimiter) > 1 {
 		return errors.New("invalid config: `mydumper.csv.delimiter` must be one byte long or empty")
+	}
+
+	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
+	if err != nil {
+		return errors.New("invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
 
 	// handle mydumper

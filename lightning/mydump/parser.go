@@ -16,13 +16,16 @@ package mydump
 import (
 	"bytes"
 	"io"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
-
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
+	"github.com/pingcap/tidb/types"
 )
 
 type blockParser struct {
@@ -32,9 +35,9 @@ type blockParser struct {
 	blockBuf    []byte
 	isLastChunk bool
 
-	// The list of columns in the form `(a, b, c)` in the last INSERT statement.
+	// The list of column names of the last INSERT statement.
 	// Assumed to be constant throughout the entire file.
-	columns []byte
+	columns []string
 
 	lastRow Row
 	// Current file offset.
@@ -61,9 +64,7 @@ func makeBlockParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.Poo
 type ChunkParser struct {
 	blockParser
 
-	// The (quoted) table name used in the last INSERT statement. Assumed to be
-	// constant throughout the entire file.
-	TableName []byte
+	BackslashEscape bool
 }
 
 // Chunk represents a portion of the data file.
@@ -77,7 +78,7 @@ type Chunk struct {
 // Row is the content of a row.
 type Row struct {
 	RowID int64
-	Row   []byte
+	Row   []types.Datum
 }
 
 type Parser interface {
@@ -86,13 +87,19 @@ type Parser interface {
 	Close() error
 	ReadRow() error
 	LastRow() Row
-	Columns() []byte
+	Columns() []string
 }
 
 // NewChunkParser creates a new parser which can read chunks out of a file.
-func NewChunkParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.Pool) *ChunkParser {
+func NewChunkParser(
+	sqlMode mysql.SQLMode,
+	reader io.Reader,
+	blockBufSize int64,
+	ioWorkers *worker.Pool,
+) *ChunkParser {
 	return &ChunkParser{
-		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers),
+		blockParser:     makeBlockParser(reader, blockBufSize, ioWorkers),
+		BackslashEscape: !sqlMode.HasNoBackslashEscapesMode(),
 	}
 }
 
@@ -119,7 +126,7 @@ func (parser *blockParser) Close() error {
 	return errors.New("this parser is not created with a reader that can be closed")
 }
 
-func (parser *blockParser) Columns() []byte {
+func (parser *blockParser) Columns() []string {
 	return parser.columns
 }
 
@@ -127,9 +134,18 @@ type token byte
 
 const (
 	tokNil token = iota
+	tokRowBegin
+	tokRowEnd
 	tokValues
-	tokRow
-	tokName
+	tokNull
+	tokTrue
+	tokFalse
+	tokHexString
+	tokBinString
+	tokSingleQuoted
+	tokDoubleQuoted
+	tokBackQuoted
+	tokUnquoted
 )
 
 func (parser *blockParser) readBlock() error {
@@ -160,6 +176,48 @@ func (parser *blockParser) readBlock() error {
 	}
 }
 
+var unescapeRegexp = regexp.MustCompile(`\\.`)
+
+func unescape(input string, delim string, backslashEscape bool) string {
+	delim2 := delim + delim
+	if strings.Index(input, delim2) != -1 {
+		input = strings.Replace(input, delim2, delim, -1)
+	}
+	if backslashEscape && strings.IndexByte(input, '\\') != -1 {
+		input = unescapeRegexp.ReplaceAllStringFunc(input, func(substr string) string {
+			switch substr[1] {
+			case '0':
+				return "\x00"
+			case 'b':
+				return "\b"
+			case 'n':
+				return "\n"
+			case 'r':
+				return "\r"
+			case 't':
+				return "\t"
+			case 'Z':
+				return "\x26"
+			default:
+				return substr[1:]
+			}
+		})
+	}
+	return input
+}
+
+func (parser *ChunkParser) unescapeString(input string) string {
+	if len(input) >= 2 {
+		switch input[0] {
+		case '\'', '"':
+			return unescape(input[1:len(input)-1], input[:1], parser.BackslashEscape)
+		case '`':
+			return unescape(input[1:len(input)-1], "`", parser.BackslashEscape)
+		}
+	}
+	return strings.ToLower(input)
+}
+
 // ReadRow reads a row from the datafile.
 func (parser *ChunkParser) ReadRow() error {
 	// This parser will recognize contents like:
@@ -175,44 +233,83 @@ func (parser *ChunkParser) ReadRow() error {
 	type state byte
 
 	const (
-		// the state after reading "VALUES"
-		stateRow state = iota
-		// the state after reading the table name, before "VALUES"
+		// the state after "INSERT INTO" before the column names or "VALUES"
+		stateTableName state = iota
+
+		// the state while reading the column names
 		stateColumns
+
+		// the state after reading "VALUES"
+		stateValues
+
+		// the state while reading row values
+		stateRow
 	)
 
 	row := &parser.lastRow
-	st := stateRow
+	st := stateValues
 
 	for {
 		tok, content, err := parser.lex()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		switch tok {
-		case tokRow:
-			switch st {
-			case stateRow:
-				row.RowID++
-				row.Row = content
-				return nil
-			case stateColumns:
-				parser.columns = content
-				continue
+
+		switch st {
+		case stateTableName:
+			switch tok {
+			case tokRowBegin:
+				st = stateColumns
+			case tokValues:
+				st = stateValues
 			}
-
-		case tokName:
-			st = stateColumns
-			parser.TableName = content
-			parser.columns = nil
-			continue
-
-		case tokValues:
-			st = stateRow
-			continue
-
-		default:
-			return errors.Errorf("Syntax error at position %d", parser.pos)
+		case stateColumns:
+			switch tok {
+			case tokRowEnd:
+				st = stateValues
+			case tokUnquoted, tokDoubleQuoted, tokBackQuoted:
+				columnName := parser.unescapeString(string(content))
+				parser.columns = append(parser.columns, columnName)
+			}
+		case stateValues:
+			switch tok {
+			case tokRowBegin:
+				row.RowID++
+				row.Row = make([]types.Datum, 0, len(row.Row))
+				st = stateRow
+			case tokUnquoted, tokDoubleQuoted, tokBackQuoted:
+				parser.columns = nil
+				st = stateTableName
+			}
+		case stateRow:
+			var value types.Datum
+			switch tok {
+			case tokRowEnd:
+				return nil
+			case tokNull:
+				value.SetNull()
+			case tokTrue:
+				value.SetInt64(1)
+			case tokFalse:
+				value.SetInt64(0)
+			case tokUnquoted, tokSingleQuoted, tokDoubleQuoted:
+				value.SetString(parser.unescapeString(string(content)))
+			case tokHexString:
+				hexLit, err := types.ParseHexStr(string(content))
+				if err != nil {
+					return err
+				}
+				value.SetBinaryLiteral(hexLit)
+			case tokBinString:
+				binLit, err := types.ParseBitStr(string(content))
+				if err != nil {
+					return err
+				}
+				value.SetBinaryLiteral(binLit)
+			default:
+				return errors.Errorf("Syntax error at position %d", parser.pos)
+			}
+			row.Row = append(row.Row, value)
 		}
 	}
 }

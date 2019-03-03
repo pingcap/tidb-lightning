@@ -15,79 +15,72 @@ package kv
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 
-func InitMembufCap(batchSQLLength int64) {
-	kv.ImportingTxnMembufCap = int(batchSQLLength) * 4
-	// TODO : calculate predicted ratio, bwtween sql and kvs' size, base on specified DDL
-}
+var extraHandleFieldType = types.NewFieldType(mysql.TypeLonglong)
 
 type TableKVEncoder struct {
-	table       string
-	tableID     int64
-	encoder     kvec.KvEncoder
-	idAllocator autoid.Allocator
+	tbl table.Table
+	se  *session
 }
 
 func NewTableKVEncoder(
-	dbName string,
-	table string, tableID int64,
-	sqlMode string, alloc autoid.Allocator) (*TableKVEncoder, error) {
-
-	encoder, err := kvec.New(dbName, alloc)
-	if err != nil {
-		common.AppLogger.Errorf("err %s", errors.ErrorStack(err))
-		return nil, errors.Trace(err)
-	}
-	err = encoder.SetSystemVariable("tidb_opt_write_row_id", "1")
-	if err != nil {
-		encoder.Close()
-		return nil, errors.Trace(err)
-	}
-
-	kvcodec := &TableKVEncoder{
-		table:       table,
-		tableID:     tableID,
-		encoder:     encoder,
-		idAllocator: alloc,
-	}
-
-	if err := kvcodec.init(sqlMode); err != nil {
-		kvcodec.Close()
-		return nil, errors.Trace(err)
-	}
-
+	tbl table.Table,
+	sqlMode mysql.SQLMode,
+) *TableKVEncoder {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
-
-	return kvcodec, nil
-}
-
-func (kvcodec *TableKVEncoder) init(sqlMode string) error {
-	err := kvcodec.encoder.SetSystemVariable("sql_mode", sqlMode)
-	if err != nil {
-		return errors.Trace(err)
+	return &TableKVEncoder{
+		tbl: tbl,
+		se:  newSession(sqlMode),
 	}
-	common.AppLogger.Debugf("set sql_mode=%s", sqlMode)
-	return nil
 }
 
-func (kvcodec *TableKVEncoder) Close() error {
+func (kvcodec *TableKVEncoder) Close() {
 	metric.KvEncoderCounter.WithLabelValues("closed").Inc()
-	return errors.Trace(kvcodec.encoder.Close())
 }
 
-func (kvcodec *TableKVEncoder) SQL2KV(sql string) ([]kvec.KvPair, uint64, error) {
-	// via sql execution
-	kvPairs, rowsAffected, err := kvcodec.encoder.Encode(sql, kvcodec.tableID)
-	if err != nil {
-		common.AppLogger.Errorf("[sql2kv] sql encode error = %v", err)
-		return nil, 0, errors.Trace(err)
+func (kvcodec *TableKVEncoder) Encode(
+	row []types.Datum,
+	rowID int64,
+	colPerm []int,
+) ([]kvec.KvPair, error) {
+	cols := kvcodec.tbl.Cols()
+
+	var value types.Datum
+	var err error
+
+	record := make([]types.Datum, 0, len(cols)+1)
+	for i, col := range cols {
+		if j := colPerm[i]; j >= 0 {
+			value, err = row[j].ConvertTo(kvcodec.se.vars.StmtCtx, &col.FieldType)
+		} else {
+			value, err = table.GetColOriginDefaultValue(kvcodec.se, col.ToInfo())
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		record = append(record, value)
 	}
 
-	return kvPairs, rowsAffected, nil
+	if !kvcodec.tbl.Meta().PKIsHandle {
+		if j := colPerm[len(cols)]; j >= 0 {
+			value, err = row[j].ConvertTo(kvcodec.se.vars.StmtCtx, extraHandleFieldType)
+		} else {
+			value, err = types.NewIntDatum(rowID), nil
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		record = append(record, value)
+	}
+
+	_, err = kvcodec.tbl.AddRecord(kvcodec.se, record, true)
+	pairs := kvcodec.se.takeKvPairs()
+
+	return pairs, errors.Trace(err)
 }
