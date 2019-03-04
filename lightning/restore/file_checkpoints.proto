@@ -35,6 +35,7 @@ message EngineCheckpointModel {
     uint32 status = 1;
     // key is "$path:$offset"
     map<string, ChunkCheckpointModel> chunks = 2;
+    int32 engine_id = 3;
 }
 
 message ChunkCheckpointModel {

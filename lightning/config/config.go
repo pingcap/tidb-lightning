@@ -83,6 +83,7 @@ func (c *Config) String() string {
 type Lightning struct {
 	common.LogConfig
 	TableConcurrency  int  `toml:"table-concurrency" json:"table-concurrency"`
+	IndexConcurrency  int  `toml:"index-concurrency" json:"index-concurrency"`
 	RegionConcurrency int  `toml:"region-concurrency" json:"region-concurrency"`
 	IOConcurrency     int  `toml:"io-concurrency" json:"io-concurrency"`
 	ProfilePort       int  `toml:"pprof-port" json:"pprof-port"`
@@ -229,11 +230,18 @@ func (cfg *Config) Load() error {
 		}
 	}
 
-	// If the level 1 compact configuration not found, default to true
+	// If the level 1 compact configuration not found, default to false
 	if cfg.PostRestore.Level1Compact == nil {
 		cfg.PostRestore.Level1Compact = new(bool)
-		*cfg.PostRestore.Level1Compact = true
+		*cfg.PostRestore.Level1Compact = false
 	}
 
+	if cfg.App.TableConcurrency < 2 {
+		common.AppLogger.Warnf("table-concurrency should greater or equal than 2, current %v", cfg.App.TableConcurrency)
+		cfg.App.TableConcurrency = 2
+	}
+	if cfg.App.IndexConcurrency < 2 {
+		cfg.App.IndexConcurrency = 2
+	}
 	return nil
 }
