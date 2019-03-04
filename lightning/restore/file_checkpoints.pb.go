@@ -3,14 +3,14 @@
 
 package restore
 
-import proto "github.com/gogo/protobuf/proto"
-import fmt "fmt"
-import math "math"
-import _ "github.com/gogo/protobuf/gogoproto"
-
-import encoding_binary "encoding/binary"
-
-import io "io"
+import (
+	encoding_binary "encoding/binary"
+	fmt "fmt"
+	_ "github.com/gogo/protobuf/gogoproto"
+	proto "github.com/gogo/protobuf/proto"
+	io "io"
+	math "math"
+)
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
@@ -25,16 +25,14 @@ const _ = proto.GoGoProtoPackageIsVersion2 // please upgrade the proto package
 
 type CheckpointsModel struct {
 	// key is table_name
-	Checkpoints          map[string]*TableCheckpointModel `protobuf:"bytes,1,rep,name=checkpoints" json:"checkpoints,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value"`
-	XXX_NoUnkeyedLiteral struct{}                         `json:"-"`
-	XXX_sizecache        int32                            `json:"-"`
+	Checkpoints map[string]*TableCheckpointModel `protobuf:"bytes,1,rep,name=checkpoints,proto3" json:"checkpoints,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
 }
 
 func (m *CheckpointsModel) Reset()         { *m = CheckpointsModel{} }
 func (m *CheckpointsModel) String() string { return proto.CompactTextString(m) }
 func (*CheckpointsModel) ProtoMessage()    {}
 func (*CheckpointsModel) Descriptor() ([]byte, []int) {
-	return fileDescriptor_file_checkpoints_168275cfec5db5bf, []int{0}
+	return fileDescriptor_c47ec4f2f281cd62, []int{0}
 }
 func (m *CheckpointsModel) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -51,8 +49,8 @@ func (m *CheckpointsModel) XXX_Marshal(b []byte, deterministic bool) ([]byte, er
 		return b[:n], nil
 	}
 }
-func (dst *CheckpointsModel) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_CheckpointsModel.Merge(dst, src)
+func (m *CheckpointsModel) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_CheckpointsModel.Merge(m, src)
 }
 func (m *CheckpointsModel) XXX_Size() int {
 	return m.Size()
@@ -64,19 +62,18 @@ func (m *CheckpointsModel) XXX_DiscardUnknown() {
 var xxx_messageInfo_CheckpointsModel proto.InternalMessageInfo
 
 type TableCheckpointModel struct {
-	Hash                 []byte                   `protobuf:"bytes,1,opt,name=hash,proto3" json:"hash,omitempty"`
-	Status               uint32                   `protobuf:"varint,3,opt,name=status,proto3" json:"status,omitempty"`
-	AllocBase            int64                    `protobuf:"varint,4,opt,name=alloc_base,json=allocBase,proto3" json:"alloc_base,omitempty"`
-	Engines              []*EngineCheckpointModel `protobuf:"bytes,6,rep,name=engines" json:"engines,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}                 `json:"-"`
-	XXX_sizecache        int32                    `json:"-"`
+	Hash                []byte                   `protobuf:"bytes,1,opt,name=hash,proto3" json:"hash,omitempty"`
+	Status              uint32                   `protobuf:"varint,3,opt,name=status,proto3" json:"status,omitempty"`
+	AllocBase           int64                    `protobuf:"varint,4,opt,name=alloc_base,json=allocBase,proto3" json:"alloc_base,omitempty"`
+	Engines             []*EngineCheckpointModel `protobuf:"bytes,6,rep,name=engines,proto3" json:"engines,omitempty"`
+	IndexEngineStatuses []uint32                 `protobuf:"varint,7,rep,packed,name=index_engine_statuses,json=indexEngineStatuses,proto3" json:"index_engine_statuses,omitempty"`
 }
 
 func (m *TableCheckpointModel) Reset()         { *m = TableCheckpointModel{} }
 func (m *TableCheckpointModel) String() string { return proto.CompactTextString(m) }
 func (*TableCheckpointModel) ProtoMessage()    {}
 func (*TableCheckpointModel) Descriptor() ([]byte, []int) {
-	return fileDescriptor_file_checkpoints_168275cfec5db5bf, []int{1}
+	return fileDescriptor_c47ec4f2f281cd62, []int{1}
 }
 func (m *TableCheckpointModel) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -93,8 +90,8 @@ func (m *TableCheckpointModel) XXX_Marshal(b []byte, deterministic bool) ([]byte
 		return b[:n], nil
 	}
 }
-func (dst *TableCheckpointModel) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TableCheckpointModel.Merge(dst, src)
+func (m *TableCheckpointModel) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_TableCheckpointModel.Merge(m, src)
 }
 func (m *TableCheckpointModel) XXX_Size() int {
 	return m.Size()
@@ -108,16 +105,14 @@ var xxx_messageInfo_TableCheckpointModel proto.InternalMessageInfo
 type EngineCheckpointModel struct {
 	Status uint32 `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
 	// key is "$path:$offset"
-	Chunks               map[string]*ChunkCheckpointModel `protobuf:"bytes,2,rep,name=chunks" json:"chunks,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value"`
-	XXX_NoUnkeyedLiteral struct{}                         `json:"-"`
-	XXX_sizecache        int32                            `json:"-"`
+	Chunks map[string]*ChunkCheckpointModel `protobuf:"bytes,2,rep,name=chunks,proto3" json:"chunks,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
 }
 
 func (m *EngineCheckpointModel) Reset()         { *m = EngineCheckpointModel{} }
 func (m *EngineCheckpointModel) String() string { return proto.CompactTextString(m) }
 func (*EngineCheckpointModel) ProtoMessage()    {}
 func (*EngineCheckpointModel) Descriptor() ([]byte, []int) {
-	return fileDescriptor_file_checkpoints_168275cfec5db5bf, []int{2}
+	return fileDescriptor_c47ec4f2f281cd62, []int{2}
 }
 func (m *EngineCheckpointModel) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -134,8 +129,8 @@ func (m *EngineCheckpointModel) XXX_Marshal(b []byte, deterministic bool) ([]byt
 		return b[:n], nil
 	}
 }
-func (dst *EngineCheckpointModel) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_EngineCheckpointModel.Merge(dst, src)
+func (m *EngineCheckpointModel) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_EngineCheckpointModel.Merge(m, src)
 }
 func (m *EngineCheckpointModel) XXX_Size() int {
 	return m.Size()
@@ -147,26 +142,24 @@ func (m *EngineCheckpointModel) XXX_DiscardUnknown() {
 var xxx_messageInfo_EngineCheckpointModel proto.InternalMessageInfo
 
 type ChunkCheckpointModel struct {
-	Path                 string   `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Offset               int64    `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
-	Columns              []byte   `protobuf:"bytes,3,opt,name=columns,proto3" json:"columns,omitempty"`
-	ShouldIncludeRowId   bool     `protobuf:"varint,4,opt,name=should_include_row_id,json=shouldIncludeRowId,proto3" json:"should_include_row_id,omitempty"`
-	EndOffset            int64    `protobuf:"varint,5,opt,name=end_offset,json=endOffset,proto3" json:"end_offset,omitempty"`
-	Pos                  int64    `protobuf:"varint,6,opt,name=pos,proto3" json:"pos,omitempty"`
-	PrevRowidMax         int64    `protobuf:"varint,7,opt,name=prev_rowid_max,json=prevRowidMax,proto3" json:"prev_rowid_max,omitempty"`
-	RowidMax             int64    `protobuf:"varint,8,opt,name=rowid_max,json=rowidMax,proto3" json:"rowid_max,omitempty"`
-	KvcBytes             uint64   `protobuf:"varint,9,opt,name=kvc_bytes,json=kvcBytes,proto3" json:"kvc_bytes,omitempty"`
-	KvcKvs               uint64   `protobuf:"varint,10,opt,name=kvc_kvs,json=kvcKvs,proto3" json:"kvc_kvs,omitempty"`
-	KvcChecksum          uint64   `protobuf:"fixed64,11,opt,name=kvc_checksum,json=kvcChecksum,proto3" json:"kvc_checksum,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
+	Path               string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Offset             int64  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	Columns            []byte `protobuf:"bytes,3,opt,name=columns,proto3" json:"columns,omitempty"`
+	ShouldIncludeRowId bool   `protobuf:"varint,4,opt,name=should_include_row_id,json=shouldIncludeRowId,proto3" json:"should_include_row_id,omitempty"`
+	EndOffset          int64  `protobuf:"varint,5,opt,name=end_offset,json=endOffset,proto3" json:"end_offset,omitempty"`
+	Pos                int64  `protobuf:"varint,6,opt,name=pos,proto3" json:"pos,omitempty"`
+	PrevRowidMax       int64  `protobuf:"varint,7,opt,name=prev_rowid_max,json=prevRowidMax,proto3" json:"prev_rowid_max,omitempty"`
+	RowidMax           int64  `protobuf:"varint,8,opt,name=rowid_max,json=rowidMax,proto3" json:"rowid_max,omitempty"`
+	KvcBytes           uint64 `protobuf:"varint,9,opt,name=kvc_bytes,json=kvcBytes,proto3" json:"kvc_bytes,omitempty"`
+	KvcKvs             uint64 `protobuf:"varint,10,opt,name=kvc_kvs,json=kvcKvs,proto3" json:"kvc_kvs,omitempty"`
+	KvcChecksum        uint64 `protobuf:"fixed64,11,opt,name=kvc_checksum,json=kvcChecksum,proto3" json:"kvc_checksum,omitempty"`
 }
 
 func (m *ChunkCheckpointModel) Reset()         { *m = ChunkCheckpointModel{} }
 func (m *ChunkCheckpointModel) String() string { return proto.CompactTextString(m) }
 func (*ChunkCheckpointModel) ProtoMessage()    {}
 func (*ChunkCheckpointModel) Descriptor() ([]byte, []int) {
-	return fileDescriptor_file_checkpoints_168275cfec5db5bf, []int{3}
+	return fileDescriptor_c47ec4f2f281cd62, []int{3}
 }
 func (m *ChunkCheckpointModel) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -183,8 +176,8 @@ func (m *ChunkCheckpointModel) XXX_Marshal(b []byte, deterministic bool) ([]byte
 		return b[:n], nil
 	}
 }
-func (dst *ChunkCheckpointModel) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_ChunkCheckpointModel.Merge(dst, src)
+func (m *ChunkCheckpointModel) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ChunkCheckpointModel.Merge(m, src)
 }
 func (m *ChunkCheckpointModel) XXX_Size() int {
 	return m.Size()
@@ -203,6 +196,52 @@ func init() {
 	proto.RegisterMapType((map[string]*ChunkCheckpointModel)(nil), "EngineCheckpointModel.ChunksEntry")
 	proto.RegisterType((*ChunkCheckpointModel)(nil), "ChunkCheckpointModel")
 }
+
+func init() {
+	proto.RegisterFile("lightning/restore/file_checkpoints.proto", fileDescriptor_c47ec4f2f281cd62)
+}
+
+var fileDescriptor_c47ec4f2f281cd62 = []byte{
+	// 583 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x54, 0xcb, 0x6e, 0xd3, 0x4c,
+	0x14, 0xce, 0xc4, 0x6d, 0x2e, 0x27, 0xe9, 0xaf, 0x6a, 0xfe, 0xa6, 0x8c, 0x8a, 0xb0, 0x4c, 0x04,
+	0x92, 0x25, 0x84, 0x03, 0x65, 0x83, 0xba, 0x6c, 0xe9, 0xa2, 0x42, 0x15, 0x68, 0x80, 0x0d, 0x1b,
+	0xcb, 0x97, 0x89, 0x6d, 0xd9, 0x99, 0x89, 0x3c, 0xb6, 0xdb, 0xbe, 0x05, 0x6f, 0xc2, 0x13, 0xb0,
+	0xa6, 0xcb, 0x2e, 0x59, 0xb0, 0x80, 0xf6, 0x45, 0xd0, 0x8c, 0x5d, 0xc5, 0xad, 0x22, 0xc4, 0xee,
+	0x7c, 0x97, 0xf9, 0xce, 0x58, 0x9f, 0xc6, 0x60, 0x67, 0x49, 0x14, 0x17, 0x3c, 0xe1, 0xd1, 0x2c,
+	0x67, 0xb2, 0x10, 0x39, 0x9b, 0xcd, 0x93, 0x8c, 0xb9, 0x41, 0xcc, 0x82, 0x74, 0x29, 0x12, 0x5e,
+	0x48, 0x67, 0x99, 0x8b, 0x42, 0xec, 0x3d, 0x8f, 0x92, 0x22, 0x2e, 0x7d, 0x27, 0x10, 0x8b, 0x59,
+	0x24, 0x22, 0x31, 0xd3, 0xb4, 0x5f, 0xce, 0x35, 0xd2, 0x40, 0x4f, 0xb5, 0x7d, 0xfa, 0x15, 0xc1,
+	0xf6, 0xd1, 0x2a, 0xe4, 0x54, 0x84, 0x2c, 0xc3, 0x6f, 0x60, 0xd4, 0x0a, 0x26, 0xc8, 0x32, 0xec,
+	0xd1, 0xfe, 0xd4, 0xb9, 0xef, 0x6b, 0x13, 0xc7, 0xbc, 0xc8, 0x2f, 0x68, 0xfb, 0xd8, 0xde, 0xa7,
+	0x3b, 0xc9, 0xda, 0x80, 0xb7, 0xc1, 0x48, 0xd9, 0x05, 0x41, 0x16, 0xb2, 0x87, 0x54, 0x8d, 0xf8,
+	0x19, 0x6c, 0x56, 0x5e, 0x56, 0x32, 0xd2, 0xb5, 0x90, 0x3d, 0xda, 0x9f, 0x38, 0x1f, 0x3d, 0x3f,
+	0x63, 0xab, 0x83, 0x7a, 0x13, 0xad, 0x3d, 0x07, 0xdd, 0xd7, 0x68, 0xfa, 0x1d, 0xc1, 0xce, 0x3a,
+	0x0f, 0xc6, 0xb0, 0x11, 0x7b, 0x32, 0xd6, 0xe1, 0x63, 0xaa, 0x67, 0xbc, 0x0b, 0x3d, 0x59, 0x78,
+	0x45, 0x29, 0x89, 0x61, 0x21, 0x7b, 0x8b, 0x36, 0x08, 0x3f, 0x02, 0xf0, 0xb2, 0x4c, 0x04, 0xae,
+	0xef, 0x49, 0x46, 0x36, 0x2c, 0x64, 0x1b, 0x74, 0xa8, 0x99, 0x43, 0x4f, 0x32, 0xfc, 0x02, 0xfa,
+	0x8c, 0x47, 0x09, 0x67, 0x92, 0xf4, 0xf4, 0xc7, 0xef, 0x3a, 0xc7, 0x1a, 0xdf, 0xbf, 0xd7, 0xad,
+	0x0d, 0xef, 0xc3, 0x24, 0xe1, 0x21, 0x3b, 0x77, 0x6b, 0xc2, 0xad, 0xf7, 0x30, 0x49, 0xfa, 0x96,
+	0x61, 0x6f, 0xd1, 0xff, 0xb5, 0x58, 0x67, 0x7c, 0x68, 0xa4, 0xe9, 0x37, 0x04, 0x93, 0xb5, 0xb1,
+	0xad, 0x6b, 0xa3, 0x3b, 0xd7, 0x3e, 0x80, 0x5e, 0x10, 0x97, 0x3c, 0x95, 0xa4, 0xdb, 0x74, 0xb2,
+	0xf6, 0xbc, 0x73, 0xa4, 0x4d, 0x75, 0x27, 0xcd, 0x89, 0xbd, 0xf7, 0x30, 0x6a, 0xd1, 0xff, 0xd2,
+	0x84, 0xb6, 0xff, 0xa5, 0x89, 0x9f, 0x5d, 0xd8, 0x59, 0xe7, 0x51, 0x4d, 0x2c, 0xbd, 0x22, 0x6e,
+	0xc2, 0xf5, 0xac, 0x3e, 0x49, 0xcc, 0xe7, 0x92, 0x15, 0x3a, 0xde, 0xa0, 0x0d, 0xc2, 0x04, 0xfa,
+	0x81, 0xc8, 0xca, 0x05, 0xaf, 0x2b, 0x1a, 0xd3, 0x5b, 0x88, 0x5f, 0xc2, 0x44, 0xc6, 0xa2, 0xcc,
+	0x42, 0x37, 0xe1, 0x41, 0x56, 0x86, 0xcc, 0xcd, 0xc5, 0x99, 0x9b, 0x84, 0xba, 0xae, 0x01, 0xc5,
+	0xb5, 0x78, 0x52, 0x6b, 0x54, 0x9c, 0x9d, 0x84, 0xaa, 0x56, 0xc6, 0x43, 0xb7, 0x59, 0xb4, 0x59,
+	0xd7, 0xca, 0x78, 0xf8, 0xae, 0xde, 0xb5, 0x0d, 0xc6, 0x52, 0xa8, 0x4a, 0x15, 0xaf, 0x46, 0xfc,
+	0x04, 0xfe, 0x5b, 0xe6, 0xac, 0x52, 0xc9, 0x49, 0xe8, 0x2e, 0xbc, 0x73, 0xd2, 0xd7, 0xe2, 0x58,
+	0xb1, 0x54, 0x91, 0xa7, 0xde, 0x39, 0x7e, 0x08, 0xc3, 0x95, 0x61, 0xa0, 0x0d, 0x83, 0xbc, 0x25,
+	0xa6, 0x55, 0xe0, 0xfa, 0x17, 0x05, 0x93, 0x64, 0x68, 0x21, 0x7b, 0x83, 0x0e, 0xd2, 0x2a, 0x38,
+	0x54, 0x18, 0x3f, 0x80, 0xbe, 0x12, 0xd3, 0x4a, 0x12, 0xd0, 0x52, 0x2f, 0xad, 0x82, 0xb7, 0x95,
+	0xc4, 0x8f, 0x61, 0xac, 0x04, 0xfd, 0x5e, 0x64, 0xb9, 0x20, 0x23, 0x0b, 0xd9, 0x3d, 0x3a, 0x4a,
+	0xab, 0xe0, 0xa8, 0xa1, 0x0e, 0x9f, 0x5e, 0xfe, 0x36, 0x3b, 0x97, 0xd7, 0x26, 0xba, 0xba, 0x36,
+	0xd1, 0xaf, 0x6b, 0x13, 0x7d, 0xb9, 0x31, 0x3b, 0x57, 0x37, 0x66, 0xe7, 0xc7, 0x8d, 0xd9, 0xf9,
+	0xdc, 0x6f, 0xfe, 0x03, 0x7e, 0x4f, 0x3f, 0xe4, 0x57, 0x7f, 0x02, 0x00, 0x00, 0xff, 0xff, 0x38,
+	0xf1, 0xe2, 0x3d, 0x23, 0x04, 0x00, 0x00,
+}
+
 func (m *CheckpointsModel) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -292,6 +331,23 @@ func (m *TableCheckpointModel) MarshalTo(dAtA []byte) (int, error) {
 			i += n
 		}
 	}
+	if len(m.IndexEngineStatuses) > 0 {
+		dAtA3 := make([]byte, len(m.IndexEngineStatuses)*10)
+		var j2 int
+		for _, num := range m.IndexEngineStatuses {
+			for num >= 1<<7 {
+				dAtA3[j2] = uint8(uint64(num)&0x7f | 0x80)
+				num >>= 7
+				j2++
+			}
+			dAtA3[j2] = uint8(num)
+			j2++
+		}
+		dAtA[i] = 0x3a
+		i++
+		i = encodeVarintFileCheckpoints(dAtA, i, uint64(j2))
+		i += copy(dAtA[i:], dAtA3[:j2])
+	}
 	return i, nil
 }
 
@@ -335,11 +391,11 @@ func (m *EngineCheckpointModel) MarshalTo(dAtA []byte) (int, error) {
 				dAtA[i] = 0x12
 				i++
 				i = encodeVarintFileCheckpoints(dAtA, i, uint64(v.Size()))
-				n2, err := v.MarshalTo(dAtA[i:])
+				n4, err := v.MarshalTo(dAtA[i:])
 				if err != nil {
 					return 0, err
 				}
-				i += n2
+				i += n4
 			}
 		}
 	}
@@ -437,6 +493,9 @@ func encodeVarintFileCheckpoints(dAtA []byte, offset int, v uint64) int {
 	return offset + 1
 }
 func (m *CheckpointsModel) Size() (n int) {
+	if m == nil {
+		return 0
+	}
 	var l int
 	_ = l
 	if len(m.Checkpoints) > 0 {
@@ -456,6 +515,9 @@ func (m *CheckpointsModel) Size() (n int) {
 }
 
 func (m *TableCheckpointModel) Size() (n int) {
+	if m == nil {
+		return 0
+	}
 	var l int
 	_ = l
 	l = len(m.Hash)
@@ -474,10 +536,20 @@ func (m *TableCheckpointModel) Size() (n int) {
 			n += 1 + l + sovFileCheckpoints(uint64(l))
 		}
 	}
+	if len(m.IndexEngineStatuses) > 0 {
+		l = 0
+		for _, e := range m.IndexEngineStatuses {
+			l += sovFileCheckpoints(uint64(e))
+		}
+		n += 1 + sovFileCheckpoints(uint64(l)) + l
+	}
 	return n
 }
 
 func (m *EngineCheckpointModel) Size() (n int) {
+	if m == nil {
+		return 0
+	}
 	var l int
 	_ = l
 	if m.Status != 0 {
@@ -500,6 +572,9 @@ func (m *EngineCheckpointModel) Size() (n int) {
 }
 
 func (m *ChunkCheckpointModel) Size() (n int) {
+	if m == nil {
+		return 0
+	}
 	var l int
 	_ = l
 	l = len(m.Path)
@@ -568,7 +643,7 @@ func (m *CheckpointsModel) Unmarshal(dAtA []byte) error {
 			}
 			b := dAtA[iNdEx]
 			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
+			wire |= uint64(b&0x7F) << shift
 			if b < 0x80 {
 				break
 			}
@@ -596,7 +671,7 @@ func (m *CheckpointsModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= (int(b) & 0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -605,6 +680,9 @@ func (m *CheckpointsModel) Unmarshal(dAtA []byte) error {
 				return ErrInvalidLengthFileCheckpoints
 			}
 			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthFileCheckpoints
+			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -625,7 +703,7 @@ func (m *CheckpointsModel) Unmarshal(dAtA []byte) error {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					wire |= (uint64(b) & 0x7F) << shift
+					wire |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -642,7 +720,7 @@ func (m *CheckpointsModel) Unmarshal(dAtA []byte) error {
 						}
 						b := dAtA[iNdEx]
 						iNdEx++
-						stringLenmapkey |= (uint64(b) & 0x7F) << shift
+						stringLenmapkey |= uint64(b&0x7F) << shift
 						if b < 0x80 {
 							break
 						}
@@ -652,6 +730,9 @@ func (m *CheckpointsModel) Unmarshal(dAtA []byte) error {
 						return ErrInvalidLengthFileCheckpoints
 					}
 					postStringIndexmapkey := iNdEx + intStringLenmapkey
+					if postStringIndexmapkey < 0 {
+						return ErrInvalidLengthFileCheckpoints
+					}
 					if postStringIndexmapkey > l {
 						return io.ErrUnexpectedEOF
 					}
@@ -668,7 +749,7 @@ func (m *CheckpointsModel) Unmarshal(dAtA []byte) error {
 						}
 						b := dAtA[iNdEx]
 						iNdEx++
-						mapmsglen |= (int(b) & 0x7F) << shift
+						mapmsglen |= int(b&0x7F) << shift
 						if b < 0x80 {
 							break
 						}
@@ -677,7 +758,7 @@ func (m *CheckpointsModel) Unmarshal(dAtA []byte) error {
 						return ErrInvalidLengthFileCheckpoints
 					}
 					postmsgIndex := iNdEx + mapmsglen
-					if mapmsglen < 0 {
+					if postmsgIndex < 0 {
 						return ErrInvalidLengthFileCheckpoints
 					}
 					if postmsgIndex > l {
@@ -714,6 +795,9 @@ func (m *CheckpointsModel) Unmarshal(dAtA []byte) error {
 			if skippy < 0 {
 				return ErrInvalidLengthFileCheckpoints
 			}
+			if (iNdEx + skippy) < 0 {
+				return ErrInvalidLengthFileCheckpoints
+			}
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -741,7 +825,7 @@ func (m *TableCheckpointModel) Unmarshal(dAtA []byte) error {
 			}
 			b := dAtA[iNdEx]
 			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
+			wire |= uint64(b&0x7F) << shift
 			if b < 0x80 {
 				break
 			}
@@ -769,7 +853,7 @@ func (m *TableCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				byteLen |= (int(b) & 0x7F) << shift
+				byteLen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -778,6 +862,9 @@ func (m *TableCheckpointModel) Unmarshal(dAtA []byte) error {
 				return ErrInvalidLengthFileCheckpoints
 			}
 			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthFileCheckpoints
+			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -800,7 +887,7 @@ func (m *TableCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Status |= (uint32(b) & 0x7F) << shift
+				m.Status |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -819,7 +906,7 @@ func (m *TableCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.AllocBase |= (int64(b) & 0x7F) << shift
+				m.AllocBase |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -838,7 +925,7 @@ func (m *TableCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= (int(b) & 0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -847,6 +934,9 @@ func (m *TableCheckpointModel) Unmarshal(dAtA []byte) error {
 				return ErrInvalidLengthFileCheckpoints
 			}
 			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthFileCheckpoints
+			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -855,6 +945,82 @@ func (m *TableCheckpointModel) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 7:
+			if wireType == 0 {
+				var v uint32
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowFileCheckpoints
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				m.IndexEngineStatuses = append(m.IndexEngineStatuses, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowFileCheckpoints
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return ErrInvalidLengthFileCheckpoints
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex < 0 {
+					return ErrInvalidLengthFileCheckpoints
+				}
+				if postIndex > l {
+					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				var count int
+				for _, integer := range dAtA[iNdEx:postIndex] {
+					if integer < 128 {
+						count++
+					}
+				}
+				elementCount = count
+				if elementCount != 0 && len(m.IndexEngineStatuses) == 0 {
+					m.IndexEngineStatuses = make([]uint32, 0, elementCount)
+				}
+				for iNdEx < postIndex {
+					var v uint32
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowFileCheckpoints
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= uint32(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.IndexEngineStatuses = append(m.IndexEngineStatuses, v)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field IndexEngineStatuses", wireType)
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipFileCheckpoints(dAtA[iNdEx:])
@@ -862,6 +1028,9 @@ func (m *TableCheckpointModel) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			if skippy < 0 {
+				return ErrInvalidLengthFileCheckpoints
+			}
+			if (iNdEx + skippy) < 0 {
 				return ErrInvalidLengthFileCheckpoints
 			}
 			if (iNdEx + skippy) > l {
@@ -891,7 +1060,7 @@ func (m *EngineCheckpointModel) Unmarshal(dAtA []byte) error {
 			}
 			b := dAtA[iNdEx]
 			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
+			wire |= uint64(b&0x7F) << shift
 			if b < 0x80 {
 				break
 			}
@@ -919,7 +1088,7 @@ func (m *EngineCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Status |= (uint32(b) & 0x7F) << shift
+				m.Status |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -938,7 +1107,7 @@ func (m *EngineCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= (int(b) & 0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -947,6 +1116,9 @@ func (m *EngineCheckpointModel) Unmarshal(dAtA []byte) error {
 				return ErrInvalidLengthFileCheckpoints
 			}
 			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthFileCheckpoints
+			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -967,7 +1139,7 @@ func (m *EngineCheckpointModel) Unmarshal(dAtA []byte) error {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					wire |= (uint64(b) & 0x7F) << shift
+					wire |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -984,7 +1156,7 @@ func (m *EngineCheckpointModel) Unmarshal(dAtA []byte) error {
 						}
 						b := dAtA[iNdEx]
 						iNdEx++
-						stringLenmapkey |= (uint64(b) & 0x7F) << shift
+						stringLenmapkey |= uint64(b&0x7F) << shift
 						if b < 0x80 {
 							break
 						}
@@ -994,6 +1166,9 @@ func (m *EngineCheckpointModel) Unmarshal(dAtA []byte) error {
 						return ErrInvalidLengthFileCheckpoints
 					}
 					postStringIndexmapkey := iNdEx + intStringLenmapkey
+					if postStringIndexmapkey < 0 {
+						return ErrInvalidLengthFileCheckpoints
+					}
 					if postStringIndexmapkey > l {
 						return io.ErrUnexpectedEOF
 					}
@@ -1010,7 +1185,7 @@ func (m *EngineCheckpointModel) Unmarshal(dAtA []byte) error {
 						}
 						b := dAtA[iNdEx]
 						iNdEx++
-						mapmsglen |= (int(b) & 0x7F) << shift
+						mapmsglen |= int(b&0x7F) << shift
 						if b < 0x80 {
 							break
 						}
@@ -1019,7 +1194,7 @@ func (m *EngineCheckpointModel) Unmarshal(dAtA []byte) error {
 						return ErrInvalidLengthFileCheckpoints
 					}
 					postmsgIndex := iNdEx + mapmsglen
-					if mapmsglen < 0 {
+					if postmsgIndex < 0 {
 						return ErrInvalidLengthFileCheckpoints
 					}
 					if postmsgIndex > l {
@@ -1056,6 +1231,9 @@ func (m *EngineCheckpointModel) Unmarshal(dAtA []byte) error {
 			if skippy < 0 {
 				return ErrInvalidLengthFileCheckpoints
 			}
+			if (iNdEx + skippy) < 0 {
+				return ErrInvalidLengthFileCheckpoints
+			}
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1083,7 +1261,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 			}
 			b := dAtA[iNdEx]
 			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
+			wire |= uint64(b&0x7F) << shift
 			if b < 0x80 {
 				break
 			}
@@ -1111,7 +1289,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= (uint64(b) & 0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1121,6 +1299,9 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				return ErrInvalidLengthFileCheckpoints
 			}
 			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthFileCheckpoints
+			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1140,7 +1321,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Offset |= (int64(b) & 0x7F) << shift
+				m.Offset |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1159,7 +1340,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				byteLen |= (int(b) & 0x7F) << shift
+				byteLen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1168,6 +1349,9 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				return ErrInvalidLengthFileCheckpoints
 			}
 			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthFileCheckpoints
+			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1190,7 +1374,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				v |= (int(b) & 0x7F) << shift
+				v |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1210,7 +1394,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.EndOffset |= (int64(b) & 0x7F) << shift
+				m.EndOffset |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1229,7 +1413,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Pos |= (int64(b) & 0x7F) << shift
+				m.Pos |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1248,7 +1432,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.PrevRowidMax |= (int64(b) & 0x7F) << shift
+				m.PrevRowidMax |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1267,7 +1451,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.RowidMax |= (int64(b) & 0x7F) << shift
+				m.RowidMax |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1286,7 +1470,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.KvcBytes |= (uint64(b) & 0x7F) << shift
+				m.KvcBytes |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1305,7 +1489,7 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.KvcKvs |= (uint64(b) & 0x7F) << shift
+				m.KvcKvs |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1327,6 +1511,9 @@ func (m *ChunkCheckpointModel) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			if skippy < 0 {
+				return ErrInvalidLengthFileCheckpoints
+			}
+			if (iNdEx + skippy) < 0 {
 				return ErrInvalidLengthFileCheckpoints
 			}
 			if (iNdEx + skippy) > l {
@@ -1395,8 +1582,11 @@ func skipFileCheckpoints(dAtA []byte) (n int, err error) {
 					break
 				}
 			}
-			iNdEx += length
 			if length < 0 {
+				return 0, ErrInvalidLengthFileCheckpoints
+			}
+			iNdEx += length
+			if iNdEx < 0 {
 				return 0, ErrInvalidLengthFileCheckpoints
 			}
 			return iNdEx, nil
@@ -1427,6 +1617,9 @@ func skipFileCheckpoints(dAtA []byte) (n int, err error) {
 					return 0, err
 				}
 				iNdEx = start + next
+				if iNdEx < 0 {
+					return 0, ErrInvalidLengthFileCheckpoints
+				}
 			}
 			return iNdEx, nil
 		case 4:
@@ -1445,46 +1638,3 @@ var (
 	ErrInvalidLengthFileCheckpoints = fmt.Errorf("proto: negative length found during unmarshaling")
 	ErrIntOverflowFileCheckpoints   = fmt.Errorf("proto: integer overflow")
 )
-
-func init() {
-	proto.RegisterFile("lightning/restore/file_checkpoints.proto", fileDescriptor_file_checkpoints_168275cfec5db5bf)
-}
-
-var fileDescriptor_file_checkpoints_168275cfec5db5bf = []byte{
-	// 550 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x53, 0xcf, 0x6e, 0xd3, 0x3e,
-	0x1c, 0x9f, 0x9b, 0x2d, 0x6d, 0xbf, 0xe9, 0xef, 0xa7, 0xca, 0x5a, 0x87, 0x55, 0xb4, 0x2a, 0x54,
-	0x1c, 0x22, 0x21, 0x52, 0x18, 0x17, 0xb4, 0x63, 0xcb, 0x0e, 0x13, 0x9a, 0x40, 0x16, 0x5c, 0xb8,
-	0x44, 0xf9, 0xe3, 0x26, 0x51, 0xd2, 0xb8, 0x8a, 0x93, 0x6c, 0x7d, 0x0b, 0x24, 0x1e, 0x84, 0x27,
-	0xe0, 0xbe, 0x23, 0x0f, 0xc0, 0x01, 0xca, 0x8b, 0x20, 0x3b, 0x99, 0x9a, 0x4d, 0x15, 0xe2, 0xf6,
-	0xfd, 0xfc, 0xf1, 0xc7, 0xce, 0xc7, 0x31, 0x58, 0x69, 0x1c, 0x46, 0x45, 0x16, 0x67, 0xe1, 0x2c,
-	0x67, 0xa2, 0xe0, 0x39, 0x9b, 0x2d, 0xe3, 0x94, 0x39, 0x7e, 0xc4, 0xfc, 0x64, 0xcd, 0xe3, 0xac,
-	0x10, 0xf6, 0x3a, 0xe7, 0x05, 0x1f, 0x3f, 0x0f, 0xe3, 0x22, 0x2a, 0x3d, 0xdb, 0xe7, 0xab, 0x59,
-	0xc8, 0x43, 0x3e, 0x53, 0xb4, 0x57, 0x2e, 0x15, 0x52, 0x40, 0x4d, 0xb5, 0x7d, 0xfa, 0x15, 0xc1,
-	0x70, 0xb1, 0x0b, 0xb9, 0xe2, 0x01, 0x4b, 0xf1, 0x1b, 0x30, 0x5a, 0xc1, 0x04, 0x99, 0x9a, 0x65,
-	0x9c, 0x4d, 0xed, 0x87, 0xbe, 0x36, 0x71, 0x91, 0x15, 0xf9, 0x86, 0xb6, 0x97, 0x8d, 0x3f, 0xde,
-	0x4b, 0x56, 0x06, 0x3c, 0x04, 0x2d, 0x61, 0x1b, 0x82, 0x4c, 0x64, 0xf5, 0xa9, 0x1c, 0xf1, 0x33,
-	0x38, 0xaa, 0xdc, 0xb4, 0x64, 0xa4, 0x63, 0x22, 0xcb, 0x38, 0x1b, 0xd9, 0x1f, 0x5c, 0x2f, 0x65,
-	0xbb, 0x85, 0x6a, 0x27, 0x5a, 0x7b, 0xce, 0x3b, 0xaf, 0xd1, 0xf4, 0x0b, 0x82, 0xe3, 0x7d, 0x1e,
-	0x8c, 0xe1, 0x30, 0x72, 0x45, 0xa4, 0xc2, 0x07, 0x54, 0xcd, 0xf8, 0x04, 0x74, 0x51, 0xb8, 0x45,
-	0x29, 0x88, 0x66, 0x22, 0xeb, 0x3f, 0xda, 0x20, 0x7c, 0x0a, 0xe0, 0xa6, 0x29, 0xf7, 0x1d, 0xcf,
-	0x15, 0x8c, 0x1c, 0x9a, 0xc8, 0xd2, 0x68, 0x5f, 0x31, 0x73, 0x57, 0x30, 0xfc, 0x02, 0xba, 0x2c,
-	0x0b, 0xe3, 0x8c, 0x09, 0xa2, 0xab, 0x8f, 0x3f, 0xb1, 0x2f, 0x14, 0x7e, 0x78, 0xae, 0x3b, 0xdb,
-	0xf4, 0x1b, 0x82, 0xd1, 0x5e, 0x4b, 0xeb, 0x08, 0xe8, 0xde, 0x11, 0xce, 0x41, 0xf7, 0xa3, 0x32,
-	0x4b, 0x04, 0xe9, 0x34, 0xfd, 0xee, 0x5d, 0x6f, 0x2f, 0x94, 0xa9, 0xee, 0xb7, 0x59, 0x31, 0x7e,
-	0x0f, 0x46, 0x8b, 0xfe, 0x97, 0x56, 0x95, 0xfd, 0x2f, 0xad, 0xfe, 0xe8, 0xc0, 0xf1, 0x3e, 0x8f,
-	0x6c, 0x75, 0xed, 0x16, 0x51, 0x13, 0xae, 0x66, 0xf9, 0x49, 0x7c, 0xb9, 0x14, 0xac, 0x50, 0xf1,
-	0x1a, 0x6d, 0x10, 0x26, 0xd0, 0xf5, 0x79, 0x5a, 0xae, 0xb2, 0xba, 0xee, 0x01, 0xbd, 0x83, 0xf8,
-	0x25, 0x8c, 0x44, 0xc4, 0xcb, 0x34, 0x70, 0xe2, 0xcc, 0x4f, 0xcb, 0x80, 0x39, 0x39, 0xbf, 0x76,
-	0xe2, 0x40, 0x55, 0xdf, 0xa3, 0xb8, 0x16, 0x2f, 0x6b, 0x8d, 0xf2, 0xeb, 0xcb, 0x40, 0x5e, 0x11,
-	0xcb, 0x02, 0xa7, 0xd9, 0xe8, 0xa8, 0xbe, 0x22, 0x96, 0x05, 0xef, 0xea, 0xbd, 0x86, 0xa0, 0xad,
-	0xb9, 0xbc, 0x1e, 0xc9, 0xcb, 0x11, 0x3f, 0x85, 0xff, 0xd7, 0x39, 0xab, 0x64, 0x72, 0x1c, 0x38,
-	0x2b, 0xf7, 0x86, 0x74, 0x95, 0x38, 0x90, 0x2c, 0x95, 0xe4, 0x95, 0x7b, 0x83, 0x1f, 0x43, 0x7f,
-	0x67, 0xe8, 0x29, 0x43, 0x2f, 0x6f, 0x89, 0x49, 0xe5, 0x3b, 0xde, 0xa6, 0x60, 0x82, 0xf4, 0x4d,
-	0x64, 0x1d, 0xd2, 0x5e, 0x52, 0xf9, 0x73, 0x89, 0xf1, 0x23, 0xe8, 0x4a, 0x31, 0xa9, 0x04, 0x01,
-	0x25, 0xe9, 0x49, 0xe5, 0xbf, 0xad, 0x04, 0x7e, 0x02, 0x03, 0x29, 0xa8, 0x7f, 0x5f, 0x94, 0x2b,
-	0x62, 0x98, 0xc8, 0xd2, 0xa9, 0x91, 0x54, 0xfe, 0xa2, 0xa1, 0xe6, 0xa7, 0xb7, 0xbf, 0x26, 0x07,
-	0xb7, 0xdb, 0x09, 0xfa, 0xbe, 0x9d, 0xa0, 0x9f, 0xdb, 0x09, 0xfa, 0xfc, 0x7b, 0x72, 0xf0, 0xa9,
-	0xdb, 0xbc, 0x65, 0x4f, 0x57, 0x8f, 0xf1, 0xd5, 0x9f, 0x00, 0x00, 0x00, 0xff, 0xff, 0x5b, 0x0d,
-	0x43, 0xc6, 0xe7, 0x03, 0x00, 0x00,
-}

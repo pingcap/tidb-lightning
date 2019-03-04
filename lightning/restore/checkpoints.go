@@ -54,7 +54,7 @@ const (
 	// the table names to store each kind of checkpoint in the checkpoint database
 	// remember to increase the version number in case of incompatible change.
 	checkpointTableNameTable  = "table_v4"
-	checkpointTableNameEngine = "engine_v4"
+	checkpointTableNameEngine = "engine_v5"
 	checkpointTableNameChunk  = "chunk_v4"
 )
 
@@ -318,7 +318,7 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 	err = common.ExecWithRetry(ctx, db, "(create engine checkpoints table)", fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.%s (
 			table_name varchar(261) NOT NULL,
-			engine_id int unsigned NOT NULL,
+			engine_id int NOT NULL,
 			status tinyint unsigned DEFAULT 30,
 			create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

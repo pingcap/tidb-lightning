@@ -28,6 +28,7 @@ message TableCheckpointModel {
     uint32 status = 3;
     int64 alloc_base = 4;
     repeated EngineCheckpointModel engines = 6;
+    repeated uint32 index_engine_statuses = 7;
 }
 
 message EngineCheckpointModel {
