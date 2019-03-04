@@ -537,15 +537,15 @@ func (t *TableRestore) restoreTable(
 				defer wg.Done()
 				tag := fmt.Sprintf("%s:%d", t.tableName, eid)
 
-				result, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
+				dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
 				rc.tableWorkers.Recycle(w)
 				if err != nil {
 					engineErr.Set(tag, err)
 					return
 				}
 
-				defer rc.closedEngineLimit.Recycle(result.dataWorker)
-				if err := t.importEngine(ctx, result.closedEngine, rc, eid, ecp); err != nil {
+				defer rc.closedEngineLimit.Recycle(dataWorker)
+				if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
 					engineErr.Set(tag, err)
 				}
 			}(restoreWorker, engineID, engine)
@@ -570,41 +570,29 @@ func (t *TableRestore) restoreTable(
 	return errors.Trace(t.postProcess(ctx, rc, cp, closedIndexEngine))
 }
 
-type restoreResult struct {
-	closedEngine *kv.ClosedEngine
-	dataWorker   *worker.Worker
-}
-
 func (t *TableRestore) restoreEngine(
 	ctx context.Context,
 	rc *RestoreController,
 	indexEngine *kv.OpenedEngine,
 	engineID int,
 	cp *EngineCheckpoint,
-) (*restoreResult, error) {
+) (*kv.ClosedEngine, *worker.Worker, error) {
 	if cp.Status >= CheckpointStatusClosed {
-		dataWorker := rc.closedEngineLimit.Apply()
+		w := rc.closedEngineLimit.Apply()
 		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
-			rc.closedEngineLimit.Recycle(dataWorker)
-			result := &restoreResult{
-				closedEngine: closedEngine,
-			}
-			return result, errors.Trace(err)
+			rc.closedEngineLimit.Recycle(w)
+			return closedEngine, nil, errors.Trace(err)
 		}
-		info := &restoreResult{
-			closedEngine: closedEngine,
-			dataWorker:   dataWorker,
-		}
-		return info, nil
+		return closedEngine, w, nil
 	}
 
 	timer := time.Now()
 
 	dataEngine, err := rc.importer.OpenEngine(ctx, t.tableName, engineID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	var wg sync.WaitGroup
@@ -618,7 +606,7 @@ func (t *TableRestore) restoreEngine(
 
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		default:
 		}
 
@@ -634,7 +622,7 @@ func (t *TableRestore) restoreEngine(
 
 		cr, err := newChunkRestore(chunkIndex, chunk, rc.cfg.Mydumper.ReadBlockSize, rc.ioWorkers)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Inc()
 
@@ -674,7 +662,7 @@ func (t *TableRestore) restoreEngine(
 	err = chunkErr.Get()
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusAllWritten)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	dataWorker := rc.closedEngineLimit.Apply()
@@ -684,13 +672,9 @@ func (t *TableRestore) restoreEngine(
 		common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %s", errors.ErrorStack(err))
 		// If any error occurred, recycle worker immediately
 		rc.closedEngineLimit.Recycle(dataWorker)
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
-	result := &restoreResult{
-		closedEngine: closedDataEngine,
-		dataWorker:   dataWorker,
-	}
-	return result, nil
+	return closedDataEngine, dataWorker, nil
 }
 
 func (t *TableRestore) importEngine(
