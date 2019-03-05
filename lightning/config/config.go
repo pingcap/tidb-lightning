@@ -237,7 +237,6 @@ func (cfg *Config) Load() error {
 	}
 
 	if cfg.App.TableConcurrency < 2 {
-		common.AppLogger.Warnf("table-concurrency should greater or equal than 2, current %v", cfg.App.TableConcurrency)
 		cfg.App.TableConcurrency = 2
 	}
 	if cfg.App.IndexConcurrency < 2 {

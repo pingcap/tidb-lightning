@@ -348,19 +348,42 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 
 		lock.Unlock()
 
+		// Note: about gofailLabel1, gofailLabel2, etc.., just a hack way
+		// for avoiding generated error message e.g:
+		// `failpoint: "github.com/pingcap/tidb-lightning/lightning/restore/FailIfIndexEngineImported" got value 140 of type "int" but expected type "int"`
+
 		// gofail: var FailIfImportedChunk struct{}
 		// if _, ok := scp.merger.(*ChunkCheckpointMerger); ok {
 		// 	wg.Wait()
 		// 	panic("forcing failure due to FailIfImportedChunk")
 		// }
-		// continue
+		// goto gofailLabel1
+	gofailLabel1:
+		if false {
+			goto gofailLabel1
+		}
 
 		// gofail: var FailIfStatusBecomes int
 		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID >= 0 && int(merger.Status) == FailIfStatusBecomes {
 		// 	wg.Wait()
 		// 	panic("forcing failure due to FailIfStatusBecomes")
 		// }
-		// continue
+		// goto gofailLabel2
+	gofailLabel2:
+		if false {
+			goto gofailLabel2
+		}
+
+		// gofail: var FailIfIndexEngineImported int
+		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID == invalidEngineID && merger.Status == CheckpointStatusIndexImported && FailIfIndexEngineImported > 0 {
+		// 	wg.Wait()
+		// 	panic("forcing failure due to FailIfIndexEngineImported")
+		// }
+		// goto gofailLabel3
+	gofailLabel3:
+		if false {
+			goto gofailLabel3
+		}
 	}
 }
 
@@ -520,21 +543,22 @@ func (t *TableRestore) restoreTable(
 	if indexEngineCp == nil {
 		return fmt.Errorf("table %v index engine checkpoint not found", t.tableName)
 	}
-	var indexEngine *kv.OpenedEngine
-	var closedIndexEngine *kv.ClosedEngine
-	if indexEngineCp.Status < CheckpointStatusImported {
-		indexWorker := rc.indexWorkers.Apply()
-		defer rc.indexWorkers.Recycle(indexWorker)
-		var err error
-		indexEngine, err = rc.importer.OpenEngine(ctx, t.tableName, indexEngineID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 
 	// The table checkpoint status set to `CheckpointStatusIndexImported` only if
 	// both all data engines and the index engine had been imported to TiKV.
+	var indexEngine *kv.OpenedEngine
+	var closedIndexEngine *kv.ClosedEngine
 	if cp.Status < CheckpointStatusIndexImported {
+		if indexEngineCp.Status < CheckpointStatusImported {
+			indexWorker := rc.indexWorkers.Apply()
+			defer rc.indexWorkers.Recycle(indexWorker)
+			var err error
+			indexEngine, err = rc.importer.OpenEngine(ctx, t.tableName, indexEngineID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+
 		// The table checkpoint status less than `CheckpointStatusIndexImported` implies
 		// that index engine checkpoint status less than `CheckpointStatusImported`.
 		// So the index engine must be found in above process

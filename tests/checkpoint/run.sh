@@ -57,7 +57,7 @@ PARTIAL_IMPORT_QUERY="$PARTIAL_IMPORT_QUERY AS s;"
 
 # Set the failpoint to kill the lightning instance as soon as one table is imported
 # If checkpoint does work, this should only kill 9 instances of lightnings.
-export GOFAIL_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/SlowDownImport=sleep(500);github.com/pingcap/tidb-lightning/lightning/restore/FailIfStatusBecomes=return(120)'
+export GOFAIL_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/SlowDownImport=sleep(500);github.com/pingcap/tidb-lightning/lightning/restore/FailIfIndexEngineImported=return(1)'
 
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS cppk_tsr'
