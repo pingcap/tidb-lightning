@@ -57,8 +57,8 @@ const (
 )
 
 const (
-	indexEngineID   = -1
-	invalidEngineID = math.MinInt64
+	indexEngineID      = -1
+	wholeTableEngineID = math.MinInt64
 )
 
 const (
@@ -348,42 +348,32 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 
 		lock.Unlock()
 
-		// Note: about gofailLabel1, gofailLabel2, etc.., just a hack way
-		// for avoiding generated error message e.g:
-		// `failpoint: "github.com/pingcap/tidb-lightning/lightning/restore/FailIfIndexEngineImported" got value 140 of type "int" but expected type "int"`
-
 		// gofail: var FailIfImportedChunk struct{}
 		// if _, ok := scp.merger.(*ChunkCheckpointMerger); ok {
 		// 	wg.Wait()
 		// 	panic("forcing failure due to FailIfImportedChunk")
 		// }
-		// goto gofailLabel1
-	gofailLabel1:
-		if false {
-			goto gofailLabel1
-		}
+		// goto RETURN1
+
+		// gofail: RETURN1:
 
 		// gofail: var FailIfStatusBecomes int
 		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID >= 0 && int(merger.Status) == FailIfStatusBecomes {
 		// 	wg.Wait()
 		// 	panic("forcing failure due to FailIfStatusBecomes")
 		// }
-		// goto gofailLabel2
-	gofailLabel2:
-		if false {
-			goto gofailLabel2
-		}
+		// goto RETURN2
+
+		// gofail: RETURN2:
 
 		// gofail: var FailIfIndexEngineImported int
-		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID == invalidEngineID && merger.Status == CheckpointStatusIndexImported && FailIfIndexEngineImported > 0 {
+		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID == wholeTableEngineID && merger.Status == CheckpointStatusIndexImported && FailIfIndexEngineImported > 0 {
 		// 	wg.Wait()
 		// 	panic("forcing failure due to FailIfIndexEngineImported")
 		// }
-		// goto gofailLabel3
-	gofailLabel3:
-		if false {
-			goto gofailLabel3
-		}
+		// goto RETURN3
+
+		// gofail: RETURN3:
 	}
 }
 
@@ -546,17 +536,20 @@ func (t *TableRestore) restoreTable(
 
 	// The table checkpoint status set to `CheckpointStatusIndexImported` only if
 	// both all data engines and the index engine had been imported to TiKV.
+	// But persist index engine checkpoint status and table checkpoint status are
+	// not an atomic operation, so `cp.Status < CheckpointStatusIndexImported`
+	// but `indexEngineCp.Status == CheckpointStatusImported` could happen
+	// when kill lightning after saving index engine checkpoint status before saving
+	// table checkpoint status.
 	var indexEngine *kv.OpenedEngine
 	var closedIndexEngine *kv.ClosedEngine
-	if cp.Status < CheckpointStatusIndexImported {
-		if indexEngineCp.Status < CheckpointStatusImported {
-			indexWorker := rc.indexWorkers.Apply()
-			defer rc.indexWorkers.Recycle(indexWorker)
-			var err error
-			indexEngine, err = rc.importer.OpenEngine(ctx, t.tableName, indexEngineID)
-			if err != nil {
-				return errors.Trace(err)
-			}
+	if indexEngineCp.Status < CheckpointStatusImported && cp.Status < CheckpointStatusIndexImported {
+		indexWorker := rc.indexWorkers.Apply()
+		defer rc.indexWorkers.Recycle(indexWorker)
+		var err error
+		indexEngine, err = rc.importer.OpenEngine(ctx, t.tableName, indexEngineID)
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		// The table checkpoint status less than `CheckpointStatusIndexImported` implies
@@ -614,7 +607,7 @@ func (t *TableRestore) restoreTable(
 		wg.Wait()
 
 		common.AppLogger.Infof("[%s] import whole table takes %v", t.tableName, time.Since(timer))
-		err := engineErr.Get()
+		err = engineErr.Get()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -634,7 +627,7 @@ func (t *TableRestore) restoreTable(
 	}
 
 	// 3. Post-process
-	return errors.Trace(t.postProcess(ctx, rc, cp, closedIndexEngine))
+	return errors.Trace(t.postProcess(ctx, rc, cp, indexEngineCp, closedIndexEngine))
 }
 
 func (t *TableRestore) restoreEngine(
@@ -784,14 +777,24 @@ func (t *TableRestore) importEngine(
 	return nil
 }
 
-func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, indexEngine *kv.ClosedEngine) error {
+func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint,
+	indexEngineCp *EngineCheckpoint, indexEngine *kv.ClosedEngine) error {
 	if cp.Status < CheckpointStatusIndexImported {
-		// the lock ensures the import() step will not be concurrent.
-		rc.postProcessLock.Lock()
-		err := t.importKV(ctx, indexEngine)
-		rc.postProcessLock.Unlock()
-		rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
-		rc.saveStatusCheckpoint(t.tableName, invalidEngineID, err, CheckpointStatusIndexImported)
+		var err error
+		if indexEngineCp.Status < CheckpointStatusImported {
+			// the lock ensures the import() step will not be concurrent.
+			rc.postProcessLock.Lock()
+			err = t.importKV(ctx, indexEngine)
+			rc.postProcessLock.Unlock()
+			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
+		}
+
+		// gofail: var FailBeforeIndexEngineImported int
+		// if FailBeforeIndexEngineImported > 0 {
+		//  panic("forcing failure due to FailBeforeIndexEngineImported")
+		// }
+
+		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusIndexImported)
 		if err != nil {
 			common.AppLogger.Errorf("[%[1]s] failed to import index engine: %v", t.tableName, err.Error())
 			return errors.Trace(err)
@@ -805,7 +808,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		rc.alterTableLock.Lock()
 		err := t.restoreTableMeta(ctx, rc.tidbMgr.db)
 		rc.alterTableLock.Unlock()
-		rc.saveStatusCheckpoint(t.tableName, invalidEngineID, err, CheckpointStatusAlteredAutoInc)
+		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
 			common.AppLogger.Errorf(
 				"[%[1]s] failed to AUTO TABLE %[1]s SET AUTO_INCREMENT=%[2]d : %[3]v",
@@ -819,10 +822,10 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	if cp.Status < CheckpointStatusChecksummed {
 		if !rc.cfg.PostRestore.Checksum {
 			common.AppLogger.Infof("[%s] Skip checksum.", t.tableName)
-			rc.saveStatusCheckpoint(t.tableName, invalidEngineID, nil, CheckpointStatusChecksumSkipped)
+			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
 			err := t.compareChecksum(ctx, rc.tidbMgr.db, cp)
-			rc.saveStatusCheckpoint(t.tableName, invalidEngineID, err, CheckpointStatusChecksummed)
+			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusChecksummed)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
 				return errors.Trace(err)
@@ -834,10 +837,10 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	if cp.Status < CheckpointStatusAnalyzed {
 		if !rc.cfg.PostRestore.Analyze {
 			common.AppLogger.Infof("[%s] Skip analyze.", t.tableName)
-			rc.saveStatusCheckpoint(t.tableName, invalidEngineID, nil, CheckpointStatusAnalyzeSkipped)
+			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 		} else {
 			err := t.analyzeTable(ctx, rc.tidbMgr.db)
-			rc.saveStatusCheckpoint(t.tableName, invalidEngineID, err, CheckpointStatusAnalyzed)
+			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusAnalyzed)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] analyze failed: %v", t.tableName, err.Error())
 				return errors.Trace(err)
@@ -1094,11 +1097,14 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 	}
 
 	for _, chunk := range chunks {
-		for chunk.EngineID >= len(cp.Engines) {
-			cp.Engines = append(cp.Engines, &EngineCheckpoint{Status: CheckpointStatusLoaded})
+		engine, found := cp.Engines[chunk.EngineID]
+		if !found {
+			engine = &EngineCheckpoint{
+				EngineID: chunk.EngineID,
+			}
+			cp.Engines[chunk.EngineID] = engine
 		}
-		cp.Engines[chunk.EngineID].EngineID = chunk.EngineID
-		cp.Engines[chunk.EngineID].Chunks = append(cp.Engines[chunk.EngineID].Chunks, &ChunkCheckpoint{
+		engine.Chunks = append(engine.Chunks, &ChunkCheckpoint{
 			Key: ChunkCheckpointKey{
 				Path:   chunk.File,
 				Offset: chunk.Chunk.Offset,
@@ -1109,7 +1115,7 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 	}
 
 	// Add index engine checkpoint
-	cp.Engines = append(cp.Engines, &EngineCheckpoint{EngineID: indexEngineID, Status: CheckpointStatusLoaded})
+	cp.Engines[indexEngineID] = &EngineCheckpoint{EngineID: indexEngineID, Status: CheckpointStatusLoaded}
 
 	common.AppLogger.Infof("[%s] load %d engines and %d chunks takes %v", t.tableName, len(cp.Engines), len(chunks), time.Since(timer))
 	return nil

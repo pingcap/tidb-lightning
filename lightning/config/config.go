@@ -145,6 +145,7 @@ func NewConfig() *Config {
 		App: Lightning{
 			RegionConcurrency: runtime.NumCPU(),
 			TableConcurrency:  8,
+			IndexConcurrency:  2,
 			IOConcurrency:     5,
 			CheckRequirements: true,
 		},
@@ -234,13 +235,6 @@ func (cfg *Config) Load() error {
 	if cfg.PostRestore.Level1Compact == nil {
 		cfg.PostRestore.Level1Compact = new(bool)
 		*cfg.PostRestore.Level1Compact = false
-	}
-
-	if cfg.App.TableConcurrency < 2 {
-		cfg.App.TableConcurrency = 2
-	}
-	if cfg.App.IndexConcurrency < 2 {
-		cfg.App.IndexConcurrency = 2
 	}
 	return nil
 }
