@@ -89,7 +89,7 @@ export GOFAIL_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/Sl
 set +e
 for i in $(seq "$TABLE_COUNT"); do
     echo "******** Importing Table Now (step $i/$TABLE_COUNT) ********"
-    run_lightning #2> /dev/null
+    run_lightning 2> /dev/null
     [ $? -ne 0 ] || exit 1
 done
 set -e

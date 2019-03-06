@@ -58,7 +58,7 @@ const (
 
 const (
 	indexEngineID      = -1
-	wholeTableEngineID = math.MinInt64
+	wholeTableEngineID = math.MaxInt64
 )
 
 const (
@@ -523,13 +523,7 @@ func (t *TableRestore) restoreTable(
 	}
 
 	// 2. Restore engines (if still needed)
-	var indexEngineCp *EngineCheckpoint
-	for _, checkpoint := range cp.Engines {
-		if checkpoint.EngineID == indexEngineID {
-			indexEngineCp = checkpoint
-			break
-		}
-	}
+	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
 		return fmt.Errorf("table %v index engine checkpoint not found", t.tableName)
 	}
@@ -564,7 +558,7 @@ func (t *TableRestore) restoreTable(
 		var wg sync.WaitGroup
 		var engineErr common.OnceError
 
-		for _, engine := range cp.Engines {
+		for engineID, engine := range cp.Engines {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -575,7 +569,7 @@ func (t *TableRestore) restoreTable(
 			}
 
 			// Should skip index engine
-			if engine.EngineID < 0 {
+			if engineID < 0 {
 				continue
 			}
 
@@ -601,7 +595,7 @@ func (t *TableRestore) restoreTable(
 				if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
 					engineErr.Set(tag, err)
 				}
-			}(restoreWorker, engine.EngineID, engine)
+			}(restoreWorker, engineID, engine)
 		}
 
 		wg.Wait()
@@ -762,7 +756,7 @@ func (t *TableRestore) importEngine(
 	}
 
 	// 2. perform a level-1 compact if idling.
-	if *rc.cfg.PostRestore.Level1Compact &&
+	if rc.cfg.PostRestore.Level1Compact &&
 		atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateDoing) {
 		go func() {
 			err := rc.doCompact(ctx, Level1Compact)
@@ -1099,9 +1093,7 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 	for _, chunk := range chunks {
 		engine, found := cp.Engines[chunk.EngineID]
 		if !found {
-			engine = &EngineCheckpoint{
-				EngineID: chunk.EngineID,
-			}
+			engine = &EngineCheckpoint{}
 			cp.Engines[chunk.EngineID] = engine
 		}
 		engine.Chunks = append(engine.Chunks, &ChunkCheckpoint{
@@ -1115,7 +1107,7 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 	}
 
 	// Add index engine checkpoint
-	cp.Engines[indexEngineID] = &EngineCheckpoint{EngineID: indexEngineID, Status: CheckpointStatusLoaded}
+	cp.Engines[indexEngineID] = &EngineCheckpoint{Status: CheckpointStatusLoaded}
 
 	common.AppLogger.Infof("[%s] load %d engines and %d chunks takes %v", t.tableName, len(cp.Engines), len(chunks), time.Since(timer))
 	return nil

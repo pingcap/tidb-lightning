@@ -92,10 +92,10 @@ type Lightning struct {
 
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
-	Level1Compact *bool `toml:"level-1-compact" json:"level-1-compact"`
-	Compact       bool  `toml:"compact" json:"compact"`
-	Checksum      bool  `toml:"checksum" json:"checksum"`
-	Analyze       bool  `toml:"analyze" json:"analyze"`
+	Level1Compact bool `toml:"level-1-compact" json:"level-1-compact"`
+	Compact       bool `toml:"compact" json:"compact"`
+	Checksum      bool `toml:"checksum" json:"checksum"`
+	Analyze       bool `toml:"analyze" json:"analyze"`
 }
 
 type MydumperRuntime struct {
@@ -229,12 +229,6 @@ func (cfg *Config) Load() error {
 		case "file":
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
-	}
-
-	// If the level 1 compact configuration not found, default to false
-	if cfg.PostRestore.Level1Compact == nil {
-		cfg.PostRestore.Level1Compact = new(bool)
-		*cfg.PostRestore.Level1Compact = false
 	}
 	return nil
 }
