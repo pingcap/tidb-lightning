@@ -21,7 +21,7 @@ import (
 )
 
 type TableRegion struct {
-	EngineID int
+	EngineID int32
 
 	DB    string
 	Table string
@@ -77,7 +77,7 @@ func AllocateEngineIDs(
 		return
 	}
 
-	curEngineID := 0
+	curEngineID := int32(0)
 	curEngineSize := 0.0
 	curBatchSize := batchSize
 
