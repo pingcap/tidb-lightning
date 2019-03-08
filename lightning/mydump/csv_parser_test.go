@@ -261,3 +261,23 @@ func (s *testMydumpCSVParserSuite) TestTSV(c *C) {
 
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 }
+
+func (s *testMydumpCSVParserSuite) TestEmpty(c *C) {
+	cfg := config.CSVConfig{
+		Separator: ",",
+		Delimiter: `"`,
+	}
+
+	parser := mydump.NewCSVParser(&cfg, strings.NewReader(""), config.ReadBlockSize, s.ioWorkers)
+	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
+
+	// Try again with headers.
+
+	cfg.Header = true
+
+	parser = mydump.NewCSVParser(&cfg, strings.NewReader(""), config.ReadBlockSize, s.ioWorkers)
+	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
+
+	parser = mydump.NewCSVParser(&cfg, strings.NewReader("h\n"), config.ReadBlockSize, s.ioWorkers)
+	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
+}
