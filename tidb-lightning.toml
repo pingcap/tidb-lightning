@@ -90,9 +90,9 @@ separator = ','
 delimiter = '"'
 # whether the CSV files contain a header. If true, the first line will be skipped
 header = true
-# whether the CSV contains any NULL value
+# whether the CSV contains any NULL value. If true, all columns from CSV cannot be NULL.
 not-null = false
-# if non-null = true, fields containing this value will be treated as NULL
+# if non-null = false (i.e. CSV can contain NULL), fields equal to this value will be treated as NULL
 null = '\N'
 # whether to interpret backslash-escape inside strings.
 backslash-escape = true
