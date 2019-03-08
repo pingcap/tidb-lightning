@@ -58,7 +58,7 @@ const (
 
 const (
 	indexEngineID      = -1
-	wholeTableEngineID = math.MaxInt64
+	wholeTableEngineID = math.MaxInt32
 )
 
 const (
@@ -294,7 +294,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(float64(estimatedChunkCount))
 }
 
-func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int, err error, statusIfSucceed CheckpointStatus) {
+func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int32, err error, statusIfSucceed CheckpointStatus) {
 	merger := &StatusCheckpointMerger{Status: statusIfSucceed, EngineID: engineID}
 
 	switch {
@@ -525,7 +525,7 @@ func (t *TableRestore) restoreTable(
 	// 2. Restore engines (if still needed)
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
-		return fmt.Errorf("table %v index engine checkpoint not found", t.tableName)
+		return errors.Errorf("table %v index engine checkpoint not found", t.tableName)
 	}
 
 	// The table checkpoint status set to `CheckpointStatusIndexImported` only if
@@ -550,7 +550,7 @@ func (t *TableRestore) restoreTable(
 		// that index engine checkpoint status less than `CheckpointStatusImported`.
 		// So the index engine must be found in above process
 		if indexEngine == nil {
-			return fmt.Errorf("table checkpoint status %v incompitable with index engine checkpoint status %v",
+			return errors.Errorf("table checkpoint status %v incompitable with index engine checkpoint status %v",
 				cp.Status, indexEngineCp.Status)
 		}
 
@@ -580,7 +580,7 @@ func (t *TableRestore) restoreTable(
 			// the difference between restoring tables concurrently and restoring tables one by one.
 			restoreWorker := rc.tableWorkers.Apply()
 
-			go func(w *worker.Worker, eid int, ecp *EngineCheckpoint) {
+			go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
 				defer wg.Done()
 				tag := fmt.Sprintf("%s:%d", t.tableName, eid)
 
@@ -615,7 +615,7 @@ func (t *TableRestore) restoreTable(
 			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusClosed)
 		}
 		if err != nil {
-			common.AppLogger.Errorf("[kv-deliver] index engine closed error: %s", errors.ErrorStack(err))
+			common.AppLogger.Errorf("[%s] [kv-deliver] index engine closed error: %s", t.tableName, errors.ErrorStack(err))
 			return errors.Trace(err)
 		}
 	}
@@ -628,7 +628,7 @@ func (t *TableRestore) restoreEngine(
 	ctx context.Context,
 	rc *RestoreController,
 	indexEngine *kv.OpenedEngine,
-	engineID int,
+	engineID int32,
 	cp *EngineCheckpoint,
 ) (*kv.ClosedEngine, *worker.Worker, error) {
 	if cp.Status >= CheckpointStatusClosed {
@@ -735,7 +735,7 @@ func (t *TableRestore) importEngine(
 	ctx context.Context,
 	closedEngine *kv.ClosedEngine,
 	rc *RestoreController,
-	engineID int,
+	engineID int32,
 	cp *EngineCheckpoint,
 ) error {
 	if cp.Status >= CheckpointStatusImported {
@@ -783,10 +783,8 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
 		}
 
-		// gofail: var FailBeforeIndexEngineImported int
-		// if FailBeforeIndexEngineImported > 0 {
+		// gofail: var FailBeforeIndexEngineImported struct{}
 		//  panic("forcing failure due to FailBeforeIndexEngineImported")
-		// }
 
 		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusIndexImported)
 		if err != nil {
@@ -1093,7 +1091,9 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 	for _, chunk := range chunks {
 		engine, found := cp.Engines[chunk.EngineID]
 		if !found {
-			engine = &EngineCheckpoint{}
+			engine = &EngineCheckpoint{
+				Status: CheckpointStatusLoaded,
+			}
 			cp.Engines[chunk.EngineID] = engine
 		}
 		engine.Chunks = append(engine.Chunks, &ChunkCheckpoint{
@@ -1333,7 +1333,7 @@ func splitIntoDeliveryStreams(totalKVs []kvenc.KvPair, splitSize int) [][]kvenc.
 func (cr *chunkRestore) restore(
 	ctx context.Context,
 	t *TableRestore,
-	engineID int,
+	engineID int32,
 	dataEngine, indexEngine *kv.OpenedEngine,
 	rc *RestoreController,
 ) error {

@@ -27,14 +27,13 @@ message TableCheckpointModel {
     bytes hash = 1;
     uint32 status = 3;
     int64 alloc_base = 4;
-    map<int32, EngineCheckpointModel> engines = 8;
+    map<sint32, EngineCheckpointModel> engines = 8;
 }
 
 message EngineCheckpointModel {
     uint32 status = 1;
     // key is "$path:$offset"
     map<string, ChunkCheckpointModel> chunks = 2;
-    int32 engine_id = 3;
 }
 
 message ChunkCheckpointModel {

@@ -116,7 +116,7 @@ type EngineCheckpoint struct {
 type TableCheckpoint struct {
 	Status    CheckpointStatus
 	AllocBase int64
-	Engines   map[int]*EngineCheckpoint
+	Engines   map[int32]*EngineCheckpoint
 }
 
 func (cp *TableCheckpoint) CountChunks() int {
@@ -144,16 +144,16 @@ type TableCheckpointDiff struct {
 	hasRebase bool
 	status    CheckpointStatus
 	allocBase int64
-	engines   map[int]engineCheckpointDiff
+	engines   map[int32]engineCheckpointDiff
 }
 
 func NewTableCheckpointDiff() *TableCheckpointDiff {
 	return &TableCheckpointDiff{
-		engines: make(map[int]engineCheckpointDiff),
+		engines: make(map[int32]engineCheckpointDiff),
 	}
 }
 
-func (cpd *TableCheckpointDiff) insertEngineCheckpointDiff(engineID int, newDiff engineCheckpointDiff) {
+func (cpd *TableCheckpointDiff) insertEngineCheckpointDiff(engineID int32, newDiff engineCheckpointDiff) {
 	if oldDiff, ok := cpd.engines[engineID]; ok {
 		if newDiff.hasStatus {
 			oldDiff.hasStatus = true
@@ -184,7 +184,7 @@ type TableCheckpointMerger interface {
 }
 
 type StatusCheckpointMerger struct {
-	EngineID int // wholeTableEngineID == apply to whole table.
+	EngineID int32 // wholeTableEngineID == apply to whole table.
 	Status   CheckpointStatus
 }
 
@@ -197,7 +197,7 @@ func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 		cpd.status = merger.Status
 		cpd.hasStatus = true
 	}
-	if merger.EngineID >= 0 {
+	if merger.EngineID >= 0 && merger.EngineID != wholeTableEngineID {
 		cpd.insertEngineCheckpointDiff(merger.EngineID, engineCheckpointDiff{
 			hasStatus: true,
 			status:    merger.Status,
@@ -207,7 +207,7 @@ func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 }
 
 type ChunkCheckpointMerger struct {
-	EngineID int
+	EngineID int32
 	Key      ChunkCheckpointKey
 	Checksum verify.KVChecksum
 	Pos      int64
@@ -244,7 +244,7 @@ type CheckpointsDB interface {
 	Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	Close() error
-	InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints map[int]*EngineCheckpoint) error
+	InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints map[int32]*EngineCheckpoint) error
 	Update(checkpointDiffs map[string]*TableCheckpointDiff)
 
 	RemoveCheckpoint(ctx context.Context, tableName string) error
@@ -272,11 +272,11 @@ func (*NullCheckpointsDB) Close() error {
 func (*NullCheckpointsDB) Get(_ context.Context, _ string) (*TableCheckpoint, error) {
 	return &TableCheckpoint{
 		Status:  CheckpointStatusLoaded,
-		Engines: map[int]*EngineCheckpoint{},
+		Engines: map[int32]*EngineCheckpoint{},
 	}, nil
 }
 
-func (*NullCheckpointsDB) InsertEngineCheckpoints(_ context.Context, _ string, _ map[int]*EngineCheckpoint) error {
+func (*NullCheckpointsDB) InsertEngineCheckpoints(_ context.Context, _ string, _ map[int32]*EngineCheckpoint) error {
 	return nil
 }
 
@@ -413,7 +413,7 @@ func (cpdb *MySQLCheckpointsDB) Close() error {
 
 func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*TableCheckpoint, error) {
 	cp := &TableCheckpoint{
-		Engines: map[int]*EngineCheckpoint{},
+		Engines: map[int32]*EngineCheckpoint{},
 	}
 
 	purpose := "(read checkpoint " + tableName + ")"
@@ -430,7 +430,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		defer engineRows.Close()
 		for engineRows.Next() {
 			var (
-				engineID int
+				engineID int32
 				status   uint8
 			)
 			if err := engineRows.Scan(&engineID, &status); err != nil {
@@ -462,7 +462,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		for chunkRows.Next() {
 			var (
 				value       = new(ChunkCheckpoint)
-				engineID    int
+				engineID    int32
 				kvcBytes    uint64
 				kvcKVs      uint64
 				kvcChecksum uint64
@@ -502,7 +502,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 	return cp, nil
 }
 
-func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints map[int]*EngineCheckpoint) error {
+func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints map[int32]*EngineCheckpoint) error {
 	err := common.TransactWithRetry(ctx, cpdb.db, "(update engine checkpoints for "+tableName+")", func(c context.Context, tx *sql.Tx) error {
 		engineStmt, err := tx.PrepareContext(c, fmt.Sprintf(`
 			REPLACE INTO %s.%s (table_name, engine_id, status) VALUES (?, ?, ?);
@@ -704,7 +704,7 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 	cp := &TableCheckpoint{
 		Status:    CheckpointStatus(tableModel.Status),
 		AllocBase: tableModel.AllocBase,
-		Engines:   make(map[int]*EngineCheckpoint, len(tableModel.Engines)),
+		Engines:   make(map[int32]*EngineCheckpoint, len(tableModel.Engines)),
 	}
 
 	for engineID, engineModel := range tableModel.Engines {
@@ -735,22 +735,21 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 			return engine.Chunks[i].Key.less(&engine.Chunks[j].Key)
 		})
 
-		cp.Engines[int(engineID)] = engine
+		cp.Engines[engineID] = engine
 	}
 
 	return cp, nil
 }
 
-func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableName string, checkpoints map[int]*EngineCheckpoint) error {
+func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableName string, checkpoints map[int32]*EngineCheckpoint) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
 	tableModel := cpdb.checkpoints.Checkpoints[tableName]
 	for engineID, engine := range checkpoints {
 		engineModel := &EngineCheckpointModel{
-			EngineId: int32(engineID),
-			Status:   uint32(CheckpointStatusLoaded),
-			Chunks:   make(map[string]*ChunkCheckpointModel),
+			Status: uint32(CheckpointStatusLoaded),
+			Chunks: make(map[string]*ChunkCheckpointModel),
 		}
 		for _, value := range engine.Chunks {
 			key := value.Key.String()
@@ -772,7 +771,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			chunk.KvcKvs = value.Checksum.SumKVS()
 			chunk.KvcChecksum = value.Checksum.Sum()
 		}
-		tableModel.Engines[int32(engineID)] = engineModel
+		tableModel.Engines[engineID] = engineModel
 	}
 
 	return errors.Trace(cpdb.save())
@@ -791,7 +790,7 @@ func (cpdb *FileCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoin
 			tableModel.AllocBase = cpd.allocBase
 		}
 		for engineID, engineDiff := range cpd.engines {
-			engineModel := tableModel.Engines[int32(engineID)]
+			engineModel := tableModel.Engines[engineID]
 			if engineDiff.hasStatus {
 				engineModel.Status = uint32(engineDiff.status)
 			}
