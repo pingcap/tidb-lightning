@@ -30,6 +30,7 @@ require (
 	github.com/sirupsen/logrus v1.3.0
 	github.com/unrolled/render v0.0.0-20190117215946-449f39850074 // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
+	golang.org/x/text v0.3.0
 	golang.org/x/time v0.0.0-20181108054448-85acf8d2951c // indirect
 	google.golang.org/appengine v1.1.1-0.20180731164958-4216e58b9158 // indirect
 	google.golang.org/grpc v1.18.0
