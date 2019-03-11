@@ -30,6 +30,7 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 	}{
 		{"t1", "CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", ""},
 		{"t2", "CREATE TABLE `t2` (`c1` varchar(30000) NOT NULL)", "failed to ExecDDLSQL `mockdb`.`t2`:.*"},
+		{"t3", "CREATE TABLE `t3-a` (`c1-a` varchar(5) NOT NULL)", ""},
 	}
 
 	dbInfo := &TidbDBInfo{Name: "mockdb", Tables: map[string]*TidbTableInfo{}}
