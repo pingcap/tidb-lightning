@@ -1,0 +1,35 @@
+[lightning]
+check-requirements = false
+file = "/tmp/lightning_test_result/lightning.log"
+level = "info"
+
+[checkpoint]
+enable = false
+
+[tikv-importer]
+addr = "127.0.0.1:8808"
+
+[mydumper]
+data-source-dir = "tests/csv/data"
+
+[mydumper.csv]
+separator = ','
+delimiter = '"'
+header = false
+not-null = false
+null = '\N'
+backslash-escape = true
+trim-last-separator = false
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+log-level = "error"
+
+[post-restore]
+checksum = true
+compact = false
+analyze = false
