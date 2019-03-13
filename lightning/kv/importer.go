@@ -298,7 +298,7 @@ type ClosedEngine struct {
 func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 	common.AppLogger.Infof("[%s] [%s] engine close", engine.tag, engine.uuid)
 	timer := time.Now()
-	closedEngine, err := engine.importer.unsafeCloseEngine(ctx, engine.tag, engine.uuid)
+	closedEngine, err := engine.importer.UnsafeCloseEngineWithUUID(ctx, engine.tag, engine.uuid)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -315,10 +315,11 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 func (importer *Importer) UnsafeCloseEngine(ctx context.Context, tableName string, engineID int32) (*ClosedEngine, error) {
 	tag := makeTag(tableName, engineID)
 	engineUUID := uuid.NewV5(engineNamespace, tag)
-	return importer.unsafeCloseEngine(ctx, tag, engineUUID)
+	return importer.UnsafeCloseEngineWithUUID(ctx, tag, engineUUID)
 }
 
-func (importer *Importer) unsafeCloseEngine(ctx context.Context, tag string, engineUUID uuid.UUID) (*ClosedEngine, error) {
+// UnsafeCloseEngineWithUUID closes the engine using the UUID alone.
+func (importer *Importer) UnsafeCloseEngineWithUUID(ctx context.Context, tag string, engineUUID uuid.UUID) (*ClosedEngine, error) {
 	req := &kv.CloseEngineRequest{
 		Uuid: engineUUID.Bytes(),
 	}
