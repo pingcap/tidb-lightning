@@ -357,8 +357,8 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 
 		lock.Unlock()
 
-		// gofail: var FailIfImportedChunk struct{}
-		// if _, ok := scp.merger.(*ChunkCheckpointMerger); ok {
+		// gofail: var FailIfImportedChunk int
+		// if merger, ok := scp.merger.(*ChunkCheckpointMerger); ok && merger.Checksum.SumKVS() >= uint64(FailIfImportedChunk) {
 		// 	rc.checkpointsWg.Done()
 		// 	rc.checkpointsWg.Wait()
 		// 	panic("forcing failure due to FailIfImportedChunk")
