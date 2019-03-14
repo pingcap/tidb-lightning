@@ -32,7 +32,7 @@ machine csv_parser;
 #
 
 q = ^'\n' when { fc == delim };
-bs = '\\' when { parser.cfg.BackslashEscape };
+bs = '\\' when { parser.escFlavor != backslashEscapeFlavorNone };
 sep = ^'\n' when { fc == sep };
 
 c = (^'\n' - q - bs - sep) | bs any;
@@ -43,12 +43,7 @@ main := |*
 		fbreak;
 	};
 
-	q (c | '\n' | sep | q q)* q => {
-		consumedToken = csvTokQuotedField
-		fbreak;
-	};
-
-	c+ => {
+	q (c | '\n' | sep | q q)* q | c+ => {
 		consumedToken = csvTokField
 		fbreak;
 	};

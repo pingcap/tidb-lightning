@@ -14,7 +14,6 @@
 package restore
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -23,7 +22,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +34,8 @@ import (
 	"github.com/pingcap/parser/model"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/kvencoder"
 
@@ -76,8 +76,6 @@ var (
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
-
-	kv.InitMembufCap(defReadBlockSize)
 }
 
 type saveCp struct {
@@ -253,6 +251,8 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	defer tidbMgr.Close()
 
 	if !rc.cfg.Mydumper.NoSchema {
+		tidbMgr.db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
+
 		for _, dbMeta := range rc.dbMetas {
 			timer := time.Now()
 			common.AppLogger.Infof("restore table schema for `%s`", dbMeta.Name)
@@ -309,7 +309,12 @@ func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int
 		return
 	}
 
-	metric.RecordTableCount(statusIfSucceed.MetricName(), err)
+	if engineID == wholeTableEngineID {
+		metric.RecordTableCount(statusIfSucceed.MetricName(), err)
+	} else {
+		metric.RecordEngineCount(statusIfSucceed.MetricName(), err)
+	}
+
 	rc.saveCpCh <- saveCp{tableName: tableName, merger: merger}
 }
 
@@ -417,7 +422,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			finished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
 			totalTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 			completedTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStateCompleted, metric.TableResultSuccess))
-			bytesRead := metric.ReadHistogramSum(metric.BlockReadBytesHistogram)
+			bytesRead := metric.ReadHistogramSum(metric.RowReadBytesHistogram)
 
 			var remaining string
 			if finished >= estimated {
@@ -708,7 +713,7 @@ func (t *TableRestore) restoreEngine(
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunkIndex, &rc.cfg.Mydumper, chunk, rc.cfg.Mydumper.ReadBlockSize, rc.ioWorkers)
+		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1030,11 +1035,12 @@ type chunkRestore struct {
 
 func newChunkRestore(
 	index int,
-	cfg *config.MydumperRuntime,
+	cfg *config.Config,
 	chunk *ChunkCheckpoint,
-	blockBufSize int64,
 	ioWorkers *worker.Pool,
 ) (*chunkRestore, error) {
+	blockBufSize := cfg.Mydumper.ReadBlockSize
+
 	reader, err := os.Open(chunk.Key.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1043,9 +1049,9 @@ func newChunkRestore(
 	var parser mydump.Parser
 	switch path.Ext(strings.ToLower(chunk.Key.Path)) {
 	case ".csv":
-		parser = mydump.NewCSVParser(&cfg.CSV, reader, blockBufSize, ioWorkers)
+		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers)
 	default:
-		parser = mydump.NewChunkParser(reader, blockBufSize, ioWorkers)
+		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	}
 
 	reader.Seek(chunk.Chunk.Offset, io.SeekStart)
@@ -1068,7 +1074,7 @@ type TableRestore struct {
 	dbInfo    *TidbDBInfo
 	tableInfo *TidbTableInfo
 	tableMeta *mydump.MDTableMeta
-	encoder   kvenc.KvEncoder
+	encTable  table.Table
 	alloc     autoid.Allocator
 }
 
@@ -1080,14 +1086,9 @@ func NewTableRestore(
 	cp *TableCheckpoint,
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocator(cp.AllocBase)
-	encoder, err := kvenc.New(dbInfo.Name, idAlloc)
+	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.core)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to kvenc.New %s", tableName)
-	}
-	// create table in encoder.
-	err = encoder.ExecDDLSQL(tableInfo.CreateTableStmt)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to ExecDDLSQL %s", tableName)
+		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
 
 	return &TableRestore{
@@ -1095,17 +1096,15 @@ func NewTableRestore(
 		dbInfo:    dbInfo,
 		tableInfo: tableInfo,
 		tableMeta: tableMeta,
-		encoder:   encoder,
+		encTable:  tbl,
 		alloc:     idAlloc,
 	}, nil
 }
 
 func (tr *TableRestore) Close() {
-	tr.encoder.Close()
+	tr.encTable = nil
 	common.AppLogger.Infof("[%s] restore done", tr.tableName)
 }
-
-var tidbRowIDColumnRegex = regexp.MustCompile(fmt.Sprintf("`%[1]s`|(?i:\\b%[1]s\\b)", model.ExtraHandleName))
 
 func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) error {
 	common.AppLogger.Infof("[%s] load chunks", t.tableName)
@@ -1129,8 +1128,8 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 				Path:   chunk.File,
 				Offset: chunk.Chunk.Offset,
 			},
-			Columns: nil,
-			Chunk:   chunk.Chunk,
+			ColumnPermutation: nil,
+			Chunk:             chunk.Chunk,
 		})
 	}
 
@@ -1141,30 +1140,49 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 	return nil
 }
 
-func (t *TableRestore) initializeColumns(columns []byte, ccp *ChunkCheckpoint) {
-	shouldIncludeRowID := !t.tableInfo.core.PKIsHandle && !tidbRowIDColumnRegex.Match(columns)
-	if shouldIncludeRowID {
-		// we need to inject the _tidb_rowid column
-		if len(columns) != 0 {
-			// column listing already exists, just append the new column.
-			columns = append(columns[:len(columns)-1], (",`" + model.ExtraHandleName.String() + "`)")...)
-		} else {
-			// we need to recreate the columns
-			var buf bytes.Buffer
-			buf.WriteString("(`")
-			for _, columnInfo := range t.tableInfo.core.Columns {
-				buf.WriteString(columnInfo.Name.String())
-				buf.WriteString("`,`")
-			}
-			buf.WriteString(model.ExtraHandleName.String())
-			buf.WriteString("`)")
-			columns = buf.Bytes()
+// initializeColumns computes the "column permutation" for an INSERT INTO
+// statement. Suppose a table has columns (a, b, c, d) in canonical order, and
+// we execute `INSERT INTO (d, b, a) VALUES ...`, we will need to remap the
+// columns as:
+//
+// - column `a` is at position 2
+// - column `b` is at position 1
+// - column `c` is missing
+// - column `d` is at position 0
+//
+// The column permutation of (d, b, a) is set to be [2, 1, -1, 0].
+func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
+	colPerm := make([]int, 0, len(t.tableInfo.core.Columns)+1)
+	shouldIncludeRowID := !t.tableInfo.core.PKIsHandle
+
+	if len(columns) == 0 {
+		// no provided columns, so use identity permutation.
+		for i := range t.tableInfo.core.Columns {
+			colPerm = append(colPerm, i)
 		}
-	} else if columns == nil {
-		columns = []byte{}
+		if shouldIncludeRowID {
+			colPerm = append(colPerm, -1)
+		}
+	} else {
+		columnMap := make(map[string]int)
+		for i, column := range columns {
+			columnMap[column] = i
+		}
+		for _, colInfo := range t.tableInfo.core.Columns {
+			if i, ok := columnMap[colInfo.Name.L]; ok {
+				colPerm = append(colPerm, i)
+			} else {
+				colPerm = append(colPerm, -1)
+			}
+		}
+		if i, ok := columnMap[model.ExtraHandleName.L]; ok {
+			colPerm = append(colPerm, i)
+		} else if shouldIncludeRowID {
+			colPerm = append(colPerm, -1)
+		}
 	}
-	ccp.Columns = columns
-	ccp.ShouldIncludeRowID = shouldIncludeRowID
+
+	ccp.ColumnPermutation = colPerm
 }
 
 func (tr *TableRestore) restoreTableMeta(ctx context.Context, db *sql.DB) error {
@@ -1336,8 +1354,9 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 ////////////////////////////////////////////////////////////////
 
 const (
-	maxKVQueueSize  = 128
+	maxKVQueueSize  = 128      // Cache at most this number of rows before blocking the encode loop
 	maxDeliverBytes = 31 << 20 // 31 MB. hardcoded by importer, so do we
+	minDeliverBytes = 65536    // 64 KB. batch at least this amount of bytes to reduce number of messages
 )
 
 func splitIntoDeliveryStreams(totalKVs []kvenc.KvPair, splitSize int) [][]kvenc.KvPair {
@@ -1358,6 +1377,134 @@ func splitIntoDeliveryStreams(totalKVs []kvenc.KvPair, splitSize int) [][]kvenc.
 	return append(res, totalKVs[i:])
 }
 
+func writeToEngine(ctx context.Context, engine *kv.OpenedEngine, totalKVs []kvenc.KvPair) error {
+	stream, err := engine.NewWriteStream(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, kvs := range splitIntoDeliveryStreams(totalKVs, maxDeliverBytes) {
+		if err := stream.Put(kvs); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if err := stream.Close(); err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+type deliveredKVs struct {
+	kvs    []kvenc.KvPair // if kvs is empty, this indicated we've got the last message.
+	offset int64
+	rowID  int64
+}
+
+type deliverResult struct {
+	totalDur time.Duration
+	err      error
+}
+
+func (cr *chunkRestore) deliverLoop(
+	ctx context.Context,
+	kvsCh <-chan deliveredKVs,
+	t *TableRestore,
+	engineID int32,
+	dataEngine, indexEngine *kv.OpenedEngine,
+	rc *RestoreController,
+) (deliverTotalDur time.Duration, err error) {
+	var channelClosed bool
+	var dataKVs, indexKVs []kvenc.KvPair
+
+	for !channelClosed {
+		var dataChecksum, indexChecksum verify.KVChecksum
+		var offset, rowID int64
+
+		// Fetch enough KV pairs from the source.
+	populate:
+		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
+			select {
+			case d := <-kvsCh:
+				if len(d.kvs) == 0 {
+					channelClosed = true
+					break populate
+				}
+
+				for _, kv := range d.kvs {
+					if kv.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
+						dataKVs = append(dataKVs, kv)
+						dataChecksum.UpdateOne(kv)
+					} else {
+						indexKVs = append(indexKVs, kv)
+						indexChecksum.UpdateOne(kv)
+					}
+				}
+				offset = d.offset
+				rowID = d.rowID
+			case <-ctx.Done():
+				err = ctx.Err()
+				return
+			}
+		}
+
+		// Write KVs into the engine
+		start := time.Now()
+
+		if err = writeToEngine(ctx, dataEngine, dataKVs); err != nil {
+			return
+		}
+		if err = writeToEngine(ctx, indexEngine, indexKVs); err != nil {
+			return
+		}
+
+		deliverDur := time.Since(start)
+		deliverTotalDur += deliverDur
+		metric.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
+		metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumSize()))
+		metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumSize()))
+		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
+		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
+
+		dataKVs = dataKVs[:0]
+		indexKVs = indexKVs[:0]
+
+		// Update the table, and save a checkpoint.
+		// (the write to the importer is effective immediately, thus update these here)
+		// No need to apply a lock since this is the only thread updating these variables.
+		cr.chunk.Checksum.Add(&dataChecksum)
+		cr.chunk.Checksum.Add(&indexChecksum)
+		cr.chunk.Chunk.Offset = offset
+		cr.chunk.Chunk.PrevRowIDMax = rowID
+		if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
+			// No need to save checkpoint if nothing was delivered.
+			cr.saveCheckpoint(t, engineID, rc)
+		}
+	}
+
+	return
+}
+
+func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *RestoreController) {
+	rc.saveCpCh <- saveCp{
+		tableName: t.tableName,
+		merger: &RebaseCheckpointMerger{
+			AllocBase: t.alloc.Base() + 1,
+		},
+	}
+	rc.saveCpCh <- saveCp{
+		tableName: t.tableName,
+		merger: &ChunkCheckpointMerger{
+			EngineID: engineID,
+			Key:      cr.chunk.Key,
+			Checksum: cr.chunk.Checksum,
+			Pos:      cr.chunk.Chunk.Offset,
+			RowID:    cr.chunk.Chunk.PrevRowIDMax,
+		},
+	}
+}
+
 func (cr *chunkRestore) restore(
 	ctx context.Context,
 	t *TableRestore,
@@ -1366,277 +1513,102 @@ func (cr *chunkRestore) restore(
 	rc *RestoreController,
 ) error {
 	// Create the encoder.
-	kvEncoder, err := kv.NewTableKVEncoder(
-		t.dbInfo.Name,
-		t.tableInfo.Name,
-		t.tableInfo.ID,
+	kvEncoder := kv.NewTableKVEncoder(
+		t.encTable,
 		rc.cfg.TiDB.SQLMode,
-		t.alloc,
 	)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	defer func() {
-		closeErr := kvEncoder.Close()
+		kvEncoder.Close()
 		kvEncoder = nil
-		if closeErr != nil {
-			common.AppLogger.Errorf("restore chunk task err %v", errors.ErrorStack(closeErr))
-		}
 	}()
 
 	timer := time.Now()
 	readTotalDur := time.Duration(0)
 	encodeTotalDur := time.Duration(0)
-	deliverTotalDur := time.Duration(0)
 
-	var block struct {
-		cond            *sync.Cond
-		encodeCompleted bool
-		totalKVs        []kvenc.KvPair
-		localChecksum   verify.KVChecksum
-		chunkOffset     int64
-		chunkRowID      int64
-	}
-	block.cond = sync.NewCond(new(sync.Mutex))
-	deliverCompleteCh := make(chan error, 1)
-	deliveryClosedCh, deliveryCancel := context.WithCancel(ctx)
-
-	deliveryExitFn := func() {
-		deliveryCancel()
-		block.cond.Signal()
-	}
-
-	encodeExitFn := func() {
-		block.cond.L.Lock()
-		block.encodeCompleted = true
-		block.cond.Signal()
-		block.cond.L.Unlock()
-	}
-
-	defer encodeExitFn()
+	kvsCh := make(chan deliveredKVs, maxKVQueueSize)
+	deliverCompleteCh := make(chan deliverResult)
 
 	go func() {
-		defer deliveryExitFn()
-
-		var dataKVs, indexKVs []kvenc.KvPair
-		for {
-			block.cond.L.Lock()
-			for !block.encodeCompleted && len(block.totalKVs) == 0 {
-				block.cond.Wait()
-			}
-			b := block
-			block.totalKVs = nil
-			block.localChecksum = verify.MakeKVChecksum(0, 0, 0)
-			block.cond.L.Unlock()
-
-			if b.encodeCompleted && len(b.totalKVs) == 0 {
-				deliverCompleteCh <- nil
-				return
-			}
-
-			// kv -> deliver ( -> tikv )
-			start := time.Now()
-			dataStream, err := dataEngine.NewWriteStream(ctx)
-			if err != nil {
-				deliverCompleteCh <- errors.Trace(err)
-				return
-			}
-			indexStream, err := indexEngine.NewWriteStream(ctx)
-			if err != nil {
-				deliverCompleteCh <- errors.Trace(err)
-				return
-			}
-			// class kvs
-			for _, k := range b.totalKVs {
-				if k.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
-					dataKVs = append(dataKVs, k)
-				} else {
-					indexKVs = append(indexKVs, k)
-				}
-			}
-			b.totalKVs = nil
-
-			for _, kvs := range splitIntoDeliveryStreams(dataKVs, maxDeliverBytes) {
-				if e := dataStream.Put(kvs); e != nil {
-					if err != nil {
-						common.AppLogger.Warnf("failed to put write stream: %s", e.Error())
-					} else {
-						err = e
-					}
-				}
-			}
-			for _, kvs := range splitIntoDeliveryStreams(indexKVs, maxDeliverBytes) {
-				if e := indexStream.Put(kvs); e != nil {
-					if err != nil {
-						common.AppLogger.Warnf("failed to put write stream: %s", e.Error())
-					} else {
-						err = e
-					}
-				}
-			}
-			dataKVs = dataKVs[:0]
-			indexKVs = indexKVs[:0]
-
-			block.cond.Signal()
-			if e := dataStream.Close(); e != nil {
-				if err != nil {
-					common.AppLogger.Warnf("[%s:%d] failed to close write stream: %s", t.tableName, engineID, e.Error())
-				} else {
-					err = e
-				}
-			}
-			if e := indexStream.Close(); e != nil {
-				if err != nil {
-					common.AppLogger.Warnf("[%s:%d] failed to close write stream: %s", t.tableName, engineID, e.Error())
-				} else {
-					err = e
-				}
-			}
-			deliverDur := time.Since(start)
-			deliverTotalDur += deliverDur
-			metric.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
-			metric.BlockDeliverBytesHistogram.Observe(float64(b.localChecksum.SumSize()))
-
-			if err != nil {
-				if !common.IsContextCanceledError(err) {
-					common.AppLogger.Errorf("[%s:%d] kv deliver failed = %v", t.tableName, engineID, err)
-				}
-				// TODO : retry ~
-				deliverCompleteCh <- errors.Trace(err)
-				return
-			}
-
-			// Update the table, and save a checkpoint.
-			// (the write to the importer is effective immediately, thus update these here)
-			cr.chunk.Checksum.Add(&b.localChecksum)
-			cr.chunk.Chunk.Offset = b.chunkOffset
-			cr.chunk.Chunk.PrevRowIDMax = b.chunkRowID
-			rc.saveCpCh <- saveCp{
-				tableName: t.tableName,
-				merger: &RebaseCheckpointMerger{
-					AllocBase: t.alloc.Base() + 1,
-				},
-			}
-			rc.saveCpCh <- saveCp{
-				tableName: t.tableName,
-				merger: &ChunkCheckpointMerger{
-					EngineID: engineID,
-					Key:      cr.chunk.Key,
-					Checksum: cr.chunk.Checksum,
-					Pos:      cr.chunk.Chunk.Offset,
-					RowID:    cr.chunk.Chunk.PrevRowIDMax,
-				},
-			}
-		}
+		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
+		deliverCompleteCh <- deliverResult{dur, err}
 	}()
 
-	var buffer bytes.Buffer
-encodeLoop:
+	defer close(kvsCh)
+
+	initializedColumns := false
+outside:
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deliveryClosedCh.Done():
-			break encodeLoop
 		default:
 		}
 
 		offset, _ := cr.parser.Pos()
-		endOffset := mathutil.MinInt64(cr.chunk.Chunk.EndOffset, offset+rc.cfg.Mydumper.ReadBlockSize)
-		if offset >= endOffset {
+		if offset >= cr.chunk.Chunk.EndOffset {
 			break
 		}
 
-		buffer.Reset()
 		start := time.Now()
-
-		var sep byte = ' '
-	readLoop:
-		for {
-			offset, _ := cr.parser.Pos()
-			if offset >= endOffset {
-				break
-			}
-			readRowStartTime := time.Now()
-			err := cr.parser.ReadRow()
-			switch errors.Cause(err) {
-			case nil:
-				buffer.WriteByte(sep)
-				if sep == ' ' {
-					buffer.WriteString("INSERT INTO ")
-					buffer.WriteString(t.tableName)
-					if cr.chunk.Columns == nil {
-						t.initializeColumns(cr.parser.Columns(), cr.chunk)
-					}
-					buffer.Write(cr.chunk.Columns)
-					buffer.WriteString(" VALUES ")
-					sep = ','
+		err := cr.parser.ReadRow()
+		newOffset, rowID := cr.parser.Pos()
+		switch errors.Cause(err) {
+		case nil:
+			if !initializedColumns {
+				if len(cr.chunk.ColumnPermutation) == 0 {
+					t.initializeColumns(cr.parser.Columns(), cr.chunk)
 				}
-				metric.ChunkParserReadRowSecondsHistogram.Observe(time.Since(readRowStartTime).Seconds())
-				lastRow := cr.parser.LastRow()
-				if cr.chunk.ShouldIncludeRowID {
-					buffer.Write(lastRow.Row[:len(lastRow.Row)-1])
-					fmt.Fprintf(&buffer, ",%d)", lastRow.RowID)
-				} else {
-					buffer.Write(lastRow.Row)
-				}
-			case io.EOF:
-				cr.chunk.Chunk.EndOffset, cr.chunk.Chunk.RowIDMax = cr.parser.Pos()
-				break readLoop
-			default:
-				return errors.Trace(err)
+				initializedColumns = true
 			}
+		case io.EOF:
+			break outside
+		default:
+			return errors.Trace(err)
 		}
-		if sep != ',' { // quick and dirty way to check if `buffer` actually contained any values
-			continue
-		}
-		buffer.WriteByte(';')
 
 		readDur := time.Since(start)
 		readTotalDur += readDur
-		metric.BlockReadSecondsHistogram.Observe(readDur.Seconds())
-		metric.BlockReadBytesHistogram.Observe(float64(buffer.Len()))
+		metric.RowReadSecondsHistogram.Observe(readDur.Seconds())
+		metric.RowReadBytesHistogram.Observe(float64(newOffset - offset))
 
 		// sql -> kv
 		start = time.Now()
-		kvs, _, err := kvEncoder.SQL2KV(buffer.String())
+		lastRow := cr.parser.LastRow()
+		kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
 		encodeDur := time.Since(start)
 		encodeTotalDur += encodeDur
-		metric.BlockEncodeSecondsHistogram.Observe(encodeDur.Seconds())
+		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 
-		common.AppLogger.Debugf("len(kvs) %d, len(sql) %d", len(kvs), buffer.Len())
 		if err != nil {
 			common.AppLogger.Errorf("kv encode failed = %s\n", err.Error())
 			return errors.Trace(err)
 		}
 
-		block.cond.L.Lock()
-		for len(block.totalKVs) > len(kvs)*maxKVQueueSize {
-			// ^ hack to create a back-pressure preventing sending too many KV pairs at once
-			// this happens when delivery is slower than encoding.
-			// note that the KV pairs will retain the memory buffer backing the KV encoder
-			// and thus blow up the memory usage and will easily cause lightning to go OOM.
-			block.cond.Wait()
+		kvsCh <- deliveredKVs{
+			kvs:    kvs,
+			offset: newOffset,
+			rowID:  rowID,
 		}
-		block.totalKVs = append(block.totalKVs, kvs...)
-		block.localChecksum.Update(kvs)
-		block.chunkOffset, block.chunkRowID = cr.parser.Pos()
-		block.cond.Signal()
-		block.cond.L.Unlock()
 	}
 
-	encodeExitFn()
+	lastOffset, lastRowID := cr.parser.Pos()
+	kvsCh <- deliveredKVs{
+		kvs:    nil,
+		offset: lastOffset,
+		rowID:  lastRowID,
+	}
 
 	select {
-	case err := <-deliverCompleteCh:
-		if err == nil {
+	case deliverResult := <-deliverCompleteCh:
+		if deliverResult.err == nil {
 			common.AppLogger.Infof(
 				"[%s:%d] restore chunk #%d (%s) takes %v (read: %v, encode: %v, deliver: %v)",
 				t.tableName, engineID, cr.index, &cr.chunk.Key, time.Since(timer),
-				readTotalDur, encodeTotalDur, deliverTotalDur,
+				readTotalDur, encodeTotalDur, deliverResult.totalDur,
 			)
 		}
-		return errors.Trace(err)
+		return errors.Trace(deliverResult.err)
 	case <-ctx.Done():
 		return ctx.Err()
 	}

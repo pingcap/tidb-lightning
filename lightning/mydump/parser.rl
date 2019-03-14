@@ -40,50 +40,91 @@ machine chunk_parser;
 #  - Real SQL comments `/* ... */` and `-- ...`
 #  - Whitespace
 #  - Separators `,` and `;`
-#  - The keywords `INSERT` and `INTO` (suffix `i` means case-insensitive).
+#  - The keyword `INTO` (suffix `i` means case-insensitive).
+#  - The parts of the function `CONVERT(` and `USING UTF8MB4)`
+#    (to strip the unnecessary detail from mydumper JSON output)
 block_comment = '/*' any* :>> '*/';
 line_comment = /--[^\n]*\n/;
-comment = block_comment | line_comment | space | [,;] | 'insert'i | 'into'i;
+comment =
+	block_comment |
+	line_comment |
+	space |
+	[,;] |
+	'into'i |
+	'convert('i |
+	'using utf8mb4)'i;
 
 # The patterns parse quoted strings.
-# They do NOT handle the escape-by-doubling syntax like `'ten o''clock'`, this
-# will be handled as two tokens: `'ten o'` and `'clock'`. See the `name` rule
-# below for why this doesn't matter.
-single_quoted = "'" (^"'" | "\\" any)** "'";
-double_quoted = '"' (^'"' | '\\' any)** '"';
-back_quoted = '`' ^'`'* '`';
+bs = '\\' when { parser.escFlavor != backslashEscapeFlavorNone };
+
+single_quoted = "'" (^"'" | bs any | "''")** "'";
+double_quoted = '"' (^'"' | bs any | '""')** '"';
+back_quoted = '`' (^'`' | '``')* '`';
 unquoted = ^([,;()'"`] | space)+;
 
-content = ^[()'"`] | single_quoted | double_quoted | back_quoted;
+hex_string = /0x[0-9a-fA-F]+/ | "x'"i [0-9a-f]* "'";
+bin_string = /0b[01]+/ | "b'"i [01]* "'";
 
-# Matches a "row" of the form `( ... )`, where the content doesn't matter.
-# Parenthesis can nest for one level.
-row = '(' (content | '(' content* ')')* ')';
-
-# Matches a table name, which consists of one or more identifiers. This allows
-# us to match a qualified name like `foo.bar`, and also double-backquote like
-# ``` `foo``bar` ```.
-name = (back_quoted | double_quoted | unquoted)+;
-
-# The actual parser only produces 3 kinds of tokens:
-#  - The keyword VALUES, as a separator between column names and data rows
-#  - A row (which can be a list of columns or values depending on context)
-#  - A table name
 main := |*
 	comment;
+
+	'(' => {
+		consumedToken = tokRowBegin
+		fbreak;
+	};
+
+	')' => {
+		consumedToken = tokRowEnd
+		fbreak;
+	};
 
 	'values'i => {
 		consumedToken = tokValues
 		fbreak;
 	};
 
-	row => {
-		consumedToken = tokRow
+	'null'i => {
+		consumedToken = tokNull
 		fbreak;
 	};
 
-	name => {
-		consumedToken = tokName
+	'true'i => {
+		consumedToken = tokTrue
+		fbreak;
+	};
+
+	'false'i => {
+		consumedToken = tokFalse
+		fbreak;
+	};
+
+	hex_string => {
+		consumedToken = tokHexString
+		fbreak;
+	};
+
+	bin_string => {
+		consumedToken = tokBinString
+		fbreak;
+	};
+
+	single_quoted => {
+		consumedToken = tokSingleQuoted
+		fbreak;
+	};
+
+	double_quoted => {
+		consumedToken = tokDoubleQuoted
+		fbreak;
+	};
+
+	back_quoted => {
+		consumedToken = tokBackQuoted
+		fbreak;
+	};
+
+	unquoted => {
+		consumedToken = tokUnquoted
 		fbreak;
 	};
 *|;

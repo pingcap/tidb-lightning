@@ -178,13 +178,13 @@ func (importer *Importer) OpenEngine(
 		return nil, errors.Trace(err)
 	}
 
-	openCounter := metric.EngineCounter.WithLabelValues("open")
+	openCounter := metric.ImporterEngineCounter.WithLabelValues("open")
 	openCounter.Inc()
 	common.AppLogger.Infof("[%s] open engine %s", tag, engineUUID)
 
 	// gofail: var FailIfEngineCountExceeds int
 	// {
-	// 	closedCounter := metric.EngineCounter.WithLabelValues("closed")
+	// 	closedCounter := metric.ImporterEngineCounter.WithLabelValues("closed")
 	// 	openCount := metric.ReadCounter(openCounter)
 	// 	closedCount := metric.ReadCounter(closedCounter)
 	// 	if openCount - closedCount > float64(FailIfEngineCountExceeds) {
@@ -303,7 +303,7 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 		return nil, errors.Trace(err)
 	}
 	common.AppLogger.Infof("[%s] [%s] engine close takes %v", engine.tag, engine.uuid, time.Since(timer))
-	metric.EngineCounter.WithLabelValues("closed").Inc()
+	metric.ImporterEngineCounter.WithLabelValues("closed").Inc()
 	return closedEngine, nil
 }
 

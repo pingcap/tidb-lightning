@@ -16,6 +16,7 @@ package restore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -69,6 +70,8 @@ func (status CheckpointStatus) MetricName() string {
 		return "closed"
 	case CheckpointStatusImported:
 		return "imported"
+	case CheckpointStatusIndexImported:
+		return "index_imported"
 	case CheckpointStatusAlteredAutoInc:
 		return "altered_auto_inc"
 	case CheckpointStatusChecksummed, CheckpointStatusChecksumSkipped:
@@ -101,11 +104,10 @@ func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) bool {
 }
 
 type ChunkCheckpoint struct {
-	Key                ChunkCheckpointKey
-	Columns            []byte
-	ShouldIncludeRowID bool
-	Chunk              mydump.Chunk
-	Checksum           verify.KVChecksum
+	Key               ChunkCheckpointKey
+	ColumnPermutation []int
+	Chunk             mydump.Chunk
+	Checksum          verify.KVChecksum
 }
 
 type EngineCheckpoint struct {
@@ -448,7 +450,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 
 		chunkQuery := fmt.Sprintf(`
 			SELECT
-				engine_id, path, offset, columns, should_include_row_id,
+				engine_id, path, offset, columns,
 				pos, end_offset, prev_rowid_max, rowid_max,
 				kvc_bytes, kvc_kvs, kvc_checksum
 			FROM %s.%s WHERE table_name = ?
@@ -462,19 +464,23 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		for chunkRows.Next() {
 			var (
 				value       = new(ChunkCheckpoint)
+				colPerm     []byte
 				engineID    int32
 				kvcBytes    uint64
 				kvcKVs      uint64
 				kvcChecksum uint64
 			)
 			if err := chunkRows.Scan(
-				&engineID, &value.Key.Path, &value.Key.Offset, &value.Columns, &value.ShouldIncludeRowID,
+				&engineID, &value.Key.Path, &value.Key.Offset, &colPerm,
 				&value.Chunk.Offset, &value.Chunk.EndOffset, &value.Chunk.PrevRowIDMax, &value.Chunk.RowIDMax,
 				&kvcBytes, &kvcKVs, &kvcChecksum,
 			); err != nil {
 				return errors.Trace(err)
 			}
 			value.Checksum = verify.MakeKVChecksum(kvcBytes, kvcKVs, kvcChecksum)
+			if err := json.Unmarshal(colPerm, &value.ColumnPermutation); err != nil {
+				return errors.Trace(err)
+			}
 			cp.Engines[engineID].Chunks = append(cp.Engines[engineID].Chunks, value)
 		}
 		if err := chunkRows.Err(); err != nil {
@@ -520,7 +526,7 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 				kvc_bytes, kvc_kvs, kvc_checksum
 			) VALUES (
 				?, ?,
-				?, ?, ?, ?,
+				?, ?, ?, FALSE,
 				?, ?, ?, ?,
 				?, ?, ?
 			);
@@ -536,9 +542,10 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 				return errors.Trace(err)
 			}
 			for _, value := range engine.Chunks {
+				colPerm, _ := json.Marshal(value.ColumnPermutation)
 				_, err = chunkStmt.ExecContext(
 					c, tableName, engineID,
-					value.Key.Path, value.Key.Offset, value.Columns, value.ShouldIncludeRowID,
+					value.Key.Path, value.Key.Offset, colPerm,
 					value.Chunk.Offset, value.Chunk.EndOffset, value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax,
 					value.Checksum.SumSize(), value.Checksum.SumKVS(), value.Checksum.Sum(),
 				)
@@ -714,13 +721,16 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 		}
 
 		for _, chunkModel := range engineModel.Chunks {
+			colPerm := make([]int, 0, len(chunkModel.ColumnPermutation))
+			for _, c := range chunkModel.ColumnPermutation {
+				colPerm = append(colPerm, int(c))
+			}
 			engine.Chunks = append(engine.Chunks, &ChunkCheckpoint{
 				Key: ChunkCheckpointKey{
 					Path:   chunkModel.Path,
 					Offset: chunkModel.Offset,
 				},
-				Columns:            chunkModel.Columns,
-				ShouldIncludeRowID: chunkModel.ShouldIncludeRowId,
+				ColumnPermutation: colPerm,
 				Chunk: mydump.Chunk{
 					Offset:       chunkModel.Pos,
 					EndOffset:    chunkModel.EndOffset,
@@ -755,11 +765,14 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			key := value.Key.String()
 			chunk, ok := engineModel.Chunks[key]
 			if !ok {
+				colPerm := make([]int32, 0, len(value.ColumnPermutation))
+				for _, c := range value.ColumnPermutation {
+					colPerm = append(colPerm, int32(c))
+				}
 				chunk = &ChunkCheckpointModel{
-					Path:               value.Key.Path,
-					Offset:             value.Key.Offset,
-					Columns:            value.Columns,
-					ShouldIncludeRowId: value.ShouldIncludeRowID,
+					Path:              value.Key.Path,
+					Offset:            value.Key.Offset,
+					ColumnPermutation: colPerm,
 				}
 				engineModel.Chunks[key] = chunk
 			}
