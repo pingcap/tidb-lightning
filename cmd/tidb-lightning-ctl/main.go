@@ -254,7 +254,7 @@ func unsafeCloseEngine(ctx context.Context, importer *kv.Importer, engine string
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ce, err := importer.UnsafeCloseEngine(ctx, tableName, engineID)
+		ce, err := importer.UnsafeCloseEngine(ctx, tableName, int32(engineID))
 		return ce, errors.Trace(err)
 	}
 
