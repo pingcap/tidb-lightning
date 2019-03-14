@@ -145,9 +145,9 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.
 		}
 
 		for _, tbl := range tables {
-			tableName := tbl.Name.String()
+			tableName := tbl.Name.L
 			if tbl.State != model.StatePublic {
-				err := errors.Errorf("table [%s.%s] state is not public", schema.Name, tableName)
+				err := errors.Errorf("table [%s.%s] state is not public", schema, tableName)
 				metric.RecordTableCount(metric.TableStatePending, err)
 				return nil, err
 			}
