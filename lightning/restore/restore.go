@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/parser/model"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/kvencoder"
 
@@ -1069,6 +1070,10 @@ func NewTableRestore(
 	encoder, err := kvenc.New(dbInfo.Name, idAlloc)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to kvenc.New %s", tableName)
+	}
+	err = encoder.SetSystemVariable(variable.SQLModeVar, "")
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to set sql_mode %s", tableName)
 	}
 	// create table in encoder.
 	err = encoder.ExecDDLSQL(tableInfo.CreateTableStmt)
