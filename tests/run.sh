@@ -23,7 +23,7 @@ stop_services() {
     killall -9 tidb-server || true
     killall -9 tikv-importer || true
 
-    find "$TEST_DIR" -d -mindepth 1 -not -name 'cov.*' -not \( -depth 1 -name '*.log' \) -delete || true
+    find "$TEST_DIR" -maxdepth 1 -not -path "$TEST_DIR" -not -name "cov.*" -not -name "*.log" | xargs rm -r || true
 }
 
 start_services() {
