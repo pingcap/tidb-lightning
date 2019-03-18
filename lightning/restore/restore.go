@@ -1278,8 +1278,25 @@ func (cr *chunkRestore) restore(
 	}
 	block.cond = sync.NewCond(new(sync.Mutex))
 	deliverCompleteCh := make(chan error, 1)
+	deliveryClosedCh, deliveryCancel := context.WithCancel(ctx)
+
+	deliveryExitFn := func() {
+		deliveryCancel()
+		block.cond.Signal()
+	}
+
+	encodeExitFn := func() {
+		block.cond.L.Lock()
+		block.encodeCompleted = true
+		block.cond.Signal()
+		block.cond.L.Unlock()
+	}
+
+	defer encodeExitFn()
 
 	go func() {
+		defer deliveryExitFn()
+
 		for {
 			block.cond.L.Lock()
 			for !block.encodeCompleted && len(block.totalKVs) == 0 {
@@ -1361,10 +1378,13 @@ func (cr *chunkRestore) restore(
 	}()
 
 	var buffer bytes.Buffer
+encodeLoop:
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-deliverClosedCh.Done():
+			break encodeLoop
 		default:
 		}
 
@@ -1448,10 +1468,7 @@ func (cr *chunkRestore) restore(
 		block.cond.L.Unlock()
 	}
 
-	block.cond.L.Lock()
-	block.encodeCompleted = true
-	block.cond.Signal()
-	block.cond.L.Unlock()
+	encodeExitFn()
 
 	select {
 	case err := <-deliverCompleteCh:
