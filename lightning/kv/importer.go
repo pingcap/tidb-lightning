@@ -155,7 +155,7 @@ func isIgnorableOpenCloseEngineError(err error) bool {
 	return err == nil || strings.Contains(err.Error(), "FileExists")
 }
 
-func makeTag(tableName string, engineID int) string {
+func makeTag(tableName string, engineID int32) string {
 	return fmt.Sprintf("%s:%d", tableName, engineID)
 }
 
@@ -166,7 +166,7 @@ var engineNamespace = uuid.Must(uuid.FromString("d68d6abe-c59e-45d6-ade8-e2b0ceb
 func (importer *Importer) OpenEngine(
 	ctx context.Context,
 	tableName string,
-	engineID int,
+	engineID int32,
 ) (*OpenedEngine, error) {
 	tag := makeTag(tableName, engineID)
 	engineUUID := uuid.NewV5(engineNamespace, tag)
@@ -298,7 +298,7 @@ type ClosedEngine struct {
 func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 	common.AppLogger.Infof("[%s] [%s] engine close", engine.tag, engine.uuid)
 	timer := time.Now()
-	closedEngine, err := engine.importer.unsafeCloseEngine(ctx, engine.tag, engine.uuid)
+	closedEngine, err := engine.importer.UnsafeCloseEngineWithUUID(ctx, engine.tag, engine.uuid)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -312,13 +312,14 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 // (Open -> Write -> Close -> Import). This method should only be used when one
 // knows via other ways that the engine has already been opened, e.g. when
 // resuming from a checkpoint.
-func (importer *Importer) UnsafeCloseEngine(ctx context.Context, tableName string, engineID int) (*ClosedEngine, error) {
+func (importer *Importer) UnsafeCloseEngine(ctx context.Context, tableName string, engineID int32) (*ClosedEngine, error) {
 	tag := makeTag(tableName, engineID)
 	engineUUID := uuid.NewV5(engineNamespace, tag)
-	return importer.unsafeCloseEngine(ctx, tag, engineUUID)
+	return importer.UnsafeCloseEngineWithUUID(ctx, tag, engineUUID)
 }
 
-func (importer *Importer) unsafeCloseEngine(ctx context.Context, tag string, engineUUID uuid.UUID) (*ClosedEngine, error) {
+// UnsafeCloseEngineWithUUID closes the engine using the UUID alone.
+func (importer *Importer) UnsafeCloseEngineWithUUID(ctx context.Context, tag string, engineUUID uuid.UUID) (*ClosedEngine, error) {
 	req := &kv.CloseEngineRequest{
 		Uuid: engineUUID.Bytes(),
 	}

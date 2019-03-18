@@ -123,8 +123,8 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 		filesRegions = append(filesRegions, new(TableRegion))
 	}
 
-	checkEngineSizes := func(what string, expected map[int]int) {
-		actual := make(map[int]int)
+	checkEngineSizes := func(what string, expected map[int32]int) {
+		actual := make(map[int32]int)
 		for _, region := range filesRegions {
 			actual[region.EngineID]++
 		}
@@ -133,13 +133,13 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 	// Batch size > Total size => Everything in the zero batch.
 	AllocateEngineIDs(filesRegions, dataFileSizes, 1000, 0.5, 1000)
-	checkEngineSizes("no batching", map[int]int{
+	checkEngineSizes("no batching", map[int32]int{
 		0: 700,
 	})
 
 	// Allocate 3 engines.
 	AllocateEngineIDs(filesRegions, dataFileSizes, 200, 0.5, 1000)
-	checkEngineSizes("batch size = 200", map[int]int{
+	checkEngineSizes("batch size = 200", map[int32]int{
 		0: 170,
 		1: 213,
 		2: 317,
@@ -147,7 +147,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 	// Allocate 3 engines with an alternative ratio
 	AllocateEngineIDs(filesRegions, dataFileSizes, 200, 0.6, 1000)
-	checkEngineSizes("batch size = 200, ratio = 0.6", map[int]int{
+	checkEngineSizes("batch size = 200, ratio = 0.6", map[int32]int{
 		0: 160,
 		1: 208,
 		2: 332,
@@ -155,7 +155,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 	// Allocate 5 engines.
 	AllocateEngineIDs(filesRegions, dataFileSizes, 100, 0.5, 1000)
-	checkEngineSizes("batch size = 100", map[int]int{
+	checkEngineSizes("batch size = 100", map[int32]int{
 		0: 93,
 		1: 105,
 		2: 122,
@@ -165,7 +165,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 	// Number of engines > table concurrency
 	AllocateEngineIDs(filesRegions, dataFileSizes, 50, 0.5, 4)
-	checkEngineSizes("batch size = 50, limit table conc = 4", map[int]int{
+	checkEngineSizes("batch size = 50, limit table conc = 4", map[int32]int{
 		0:  50,
 		1:  59,
 		2:  73,
@@ -183,7 +183,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 	// Zero ratio = Uniform
 	AllocateEngineIDs(filesRegions, dataFileSizes, 100, 0.0, 1000)
-	checkEngineSizes("batch size = 100, ratio = 0", map[int]int{
+	checkEngineSizes("batch size = 100, ratio = 0", map[int32]int{
 		0: 100,
 		1: 100,
 		2: 100,

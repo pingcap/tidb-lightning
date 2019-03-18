@@ -25,29 +25,45 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
-// ChunkParser is a parser of the data files (the file containing only INSERT
-// statements).
-type ChunkParser struct {
+type blockParser struct {
 	// states for the lexer
 	reader      io.Reader
 	buf         []byte
 	blockBuf    []byte
 	isLastChunk bool
 
+	// The list of columns in the form `(a, b, c)` in the last INSERT statement.
+	// Assumed to be constant throughout the entire file.
+	columns []byte
+
 	lastRow Row
 	// Current file offset.
 	pos int64
-	// The (quoted) table name used in the last INSERT statement. Assumed to be
-	// constant throughout the entire file.
-	TableName []byte
-	// The list of columns in the form `(a, b, c)` in the last INSERT statement.
-	// Assumed to be constant throughout the entire file.
-	Columns []byte
 
 	// cache
 	remainBuf *bytes.Buffer
 	appendBuf *bytes.Buffer
 	ioWorkers *worker.Pool
+}
+
+func makeBlockParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.Pool) blockParser {
+	return blockParser{
+		reader:    reader,
+		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),
+		remainBuf: &bytes.Buffer{},
+		appendBuf: &bytes.Buffer{},
+		ioWorkers: ioWorkers,
+	}
+}
+
+// ChunkParser is a parser of the data files (the file containing only INSERT
+// statements).
+type ChunkParser struct {
+	blockParser
+
+	// The (quoted) table name used in the last INSERT statement. Assumed to be
+	// constant throughout the entire file.
+	TableName []byte
 }
 
 // Chunk represents a portion of the data file.
@@ -64,31 +80,47 @@ type Row struct {
 	Row   []byte
 }
 
+type Parser interface {
+	Pos() (pos int64, rowID int64)
+	SetPos(pos int64, rowID int64)
+	Close() error
+	ReadRow() error
+	LastRow() Row
+	Columns() []byte
+}
+
 // NewChunkParser creates a new parser which can read chunks out of a file.
 func NewChunkParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.Pool) *ChunkParser {
 	return &ChunkParser{
-		reader:    reader,
-		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),
-		remainBuf: &bytes.Buffer{},
-		appendBuf: &bytes.Buffer{},
-		ioWorkers: ioWorkers,
+		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers),
 	}
 }
 
 // Reader returns the underlying reader of this parser.
-func (parser *ChunkParser) Reader() io.Reader {
+func (parser *blockParser) Reader() io.Reader {
 	return parser.reader
 }
 
 // SetPos changes the reported position and row ID.
-func (parser *ChunkParser) SetPos(pos int64, rowID int64) {
+func (parser *blockParser) SetPos(pos int64, rowID int64) {
 	parser.pos = pos
 	parser.lastRow.RowID = rowID
 }
 
 // Pos returns the current file offset.
-func (parser *ChunkParser) Pos() int64 {
-	return parser.pos
+func (parser *blockParser) Pos() (int64, int64) {
+	return parser.pos, parser.lastRow.RowID
+}
+
+func (parser *blockParser) Close() error {
+	if closer, ok := parser.reader.(io.Closer); ok {
+		return closer.Close()
+	}
+	return errors.New("this parser is not created with a reader that can be closed")
+}
+
+func (parser *blockParser) Columns() []byte {
+	return parser.columns
 }
 
 type token byte
@@ -100,12 +132,12 @@ const (
 	tokName
 )
 
-func (parser *ChunkParser) readBlock() error {
+func (parser *blockParser) readBlock() error {
 	startTime := time.Now()
 
 	// limit IO concurrency
 	w := parser.ioWorkers.Apply()
-	n, err := parser.reader.Read(parser.blockBuf)
+	n, err := io.ReadFull(parser.reader, parser.blockBuf)
 	parser.ioWorkers.Recycle(w)
 
 	switch err {
@@ -165,14 +197,14 @@ func (parser *ChunkParser) ReadRow() error {
 				row.Row = content
 				return nil
 			case stateColumns:
-				parser.Columns = content
+				parser.columns = content
 				continue
 			}
 
 		case tokName:
 			st = stateColumns
 			parser.TableName = content
-			parser.Columns = nil
+			parser.columns = nil
 			continue
 
 		case tokValues:
@@ -186,27 +218,27 @@ func (parser *ChunkParser) ReadRow() error {
 }
 
 // LastRow is the copy of the row parsed by the last call to ReadRow().
-func (parser *ChunkParser) LastRow() Row {
+func (parser *blockParser) LastRow() Row {
 	return parser.lastRow
 }
 
 // ReadChunks parses the entire file and splits it into continuous chunks of
 // size >= minSize.
-func (parser *ChunkParser) ReadChunks(minSize int64) ([]Chunk, error) {
+func ReadChunks(parser Parser, minSize int64) ([]Chunk, error) {
 	var chunks []Chunk
 
+	pos, lastRowID := parser.Pos()
 	cur := Chunk{
-		Offset:       parser.pos,
-		EndOffset:    parser.pos,
-		PrevRowIDMax: parser.lastRow.RowID,
-		RowIDMax:     parser.lastRow.RowID,
+		Offset:       pos,
+		EndOffset:    pos,
+		PrevRowIDMax: lastRowID,
+		RowIDMax:     lastRowID,
 	}
 
 	for {
 		switch err := parser.ReadRow(); errors.Cause(err) {
 		case nil:
-			cur.EndOffset = parser.pos
-			cur.RowIDMax = parser.lastRow.RowID
+			cur.EndOffset, cur.RowIDMax = parser.Pos()
 			if cur.EndOffset-cur.Offset >= minSize {
 				chunks = append(chunks, cur)
 				cur.Offset = cur.EndOffset

@@ -39,6 +39,22 @@ func (s *checkReqSuite) TestExtractTiDBVersion(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(*vers, Equals, *semver.New("3.0.5-beta.12"))
 
+	vers, err = extractTiDBVersion("5.7.25-TiDB-v3.0.0-beta-211-g09beefbe0-dirty")
+	c.Assert(err, IsNil)
+	c.Assert(*vers, Equals, *semver.New("3.0.0-beta"))
+
+	vers, err = extractTiDBVersion("8.0.12-TiDB-v3.0.5-dirty")
+	c.Assert(err, IsNil)
+	c.Assert(*vers, Equals, *semver.New("3.0.5"))
+
+	vers, err = extractTiDBVersion("8.0.12-TiDB-v3.0.5-beta.12-dirty")
+	c.Assert(err, IsNil)
+	c.Assert(*vers, Equals, *semver.New("3.0.5-beta.12"))
+
+	vers, err = extractTiDBVersion("5.7.10-TiDB-v2.1.0-rc.1-7-g38c939f-dirty")
+	c.Assert(err, IsNil)
+	c.Assert(*vers, Equals, *semver.New("2.1.0-rc.1"))
+
 	_, err = extractTiDBVersion("")
 	c.Assert(err, NotNil)
 

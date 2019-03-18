@@ -83,6 +83,7 @@ func (c *Config) String() string {
 type Lightning struct {
 	common.LogConfig
 	TableConcurrency  int  `toml:"table-concurrency" json:"table-concurrency"`
+	IndexConcurrency  int  `toml:"index-concurrency" json:"index-concurrency"`
 	RegionConcurrency int  `toml:"region-concurrency" json:"region-concurrency"`
 	IOConcurrency     int  `toml:"io-concurrency" json:"io-concurrency"`
 	ProfilePort       int  `toml:"pprof-port" json:"pprof-port"`
@@ -91,19 +92,30 @@ type Lightning struct {
 
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
-	Level1Compact *bool `toml:"level-1-compact" json:"level-1-compact"`
-	Compact       bool  `toml:"compact" json:"compact"`
-	Checksum      bool  `toml:"checksum" json:"checksum"`
-	Analyze       bool  `toml:"analyze" json:"analyze"`
+	Level1Compact bool `toml:"level-1-compact" json:"level-1-compact"`
+	Compact       bool `toml:"compact" json:"compact"`
+	Checksum      bool `toml:"checksum" json:"checksum"`
+	Analyze       bool `toml:"analyze" json:"analyze"`
+}
+
+type CSVConfig struct {
+	Separator       string `toml:"separator" json:"separator"`
+	Delimiter       string `toml:"delimiter" json:"delimiter"`
+	Header          bool   `toml:"header" json:"header"`
+	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
+	NotNull         bool   `toml:"not-null" json:"not-null"`
+	Null            string `toml:"null" json:"null"`
+	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
 }
 
 type MydumperRuntime struct {
-	ReadBlockSize    int64   `toml:"read-block-size" json:"read-block-size"`
-	BatchSize        int64   `toml:"batch-size" json:"batch-size"`
-	BatchImportRatio float64 `toml:"batch-import-ratio" json:"batch-import-ratio"`
-	SourceDir        string  `toml:"data-source-dir" json:"data-source-dir"`
-	NoSchema         bool    `toml:"no-schema" json:"no-schema"`
-	CharacterSet     string  `toml:"character-set" json:"character-set"`
+	ReadBlockSize    int64     `toml:"read-block-size" json:"read-block-size"`
+	BatchSize        int64     `toml:"batch-size" json:"batch-size"`
+	BatchImportRatio float64   `toml:"batch-import-ratio" json:"batch-import-ratio"`
+	SourceDir        string    `toml:"data-source-dir" json:"data-source-dir"`
+	NoSchema         bool      `toml:"no-schema" json:"no-schema"`
+	CharacterSet     string    `toml:"character-set" json:"character-set"`
+	CSV              CSVConfig `toml:"csv" json:"csv"`
 }
 
 type TikvImporter struct {
@@ -144,6 +156,7 @@ func NewConfig() *Config {
 		App: Lightning{
 			RegionConcurrency: runtime.NumCPU(),
 			TableConcurrency:  8,
+			IndexConcurrency:  2,
 			IOConcurrency:     5,
 			CheckRequirements: true,
 		},
@@ -157,6 +170,11 @@ func NewConfig() *Config {
 		Cron: Cron{
 			SwitchMode:  Duration{Duration: 5 * time.Minute},
 			LogProgress: Duration{Duration: 5 * time.Minute},
+		},
+		Mydumper: MydumperRuntime{
+			CSV: CSVConfig{
+				Separator: ",",
+			},
 		},
 	}
 }
@@ -200,6 +218,14 @@ func (cfg *Config) Load() error {
 		return errors.Trace(err)
 	}
 
+	if len(cfg.Mydumper.CSV.Separator) != 1 {
+		return errors.New("invalid config: `mydumper.csv.separator` must be exactly one byte long")
+	}
+
+	if len(cfg.Mydumper.CSV.Delimiter) > 1 {
+		return errors.New("invalid config: `mydumper.csv.delimiter` must be one byte long or empty")
+	}
+
 	// handle mydumper
 	if cfg.Mydumper.BatchSize <= 0 {
 		cfg.Mydumper.BatchSize = 100 * _G
@@ -228,12 +254,5 @@ func (cfg *Config) Load() error {
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
 	}
-
-	// If the level 1 compact configuration not found, default to true
-	if cfg.PostRestore.Level1Compact == nil {
-		cfg.PostRestore.Level1Compact = new(bool)
-		*cfg.PostRestore.Level1Compact = true
-	}
-
 	return nil
 }

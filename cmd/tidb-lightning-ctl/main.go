@@ -19,12 +19,15 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
+	"github.com/satori/go.uuid"
 )
 
 func main() {
@@ -43,6 +46,9 @@ func run() error {
 
 	compact := fs.Bool("compact", false, "do manual compaction on the target cluster")
 	mode := fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
+
+	flagImportEngine := fs.String("import-engine", "", "manually import a closed engine (value can be '`db`.`table`:123' or a UUID")
+	flagCleanupEngine := fs.String("cleanup-engine", "", "manually delete a closed engine")
 
 	cpRemove := fs.String("checkpoint-remove", "", "remove the checkpoint associated with the given table (value can be 'all' or '`db`.`table`')")
 	cpErrIgnore := fs.String("checkpoint-error-ignore", "", "ignore errors encoutered previously on the given table (value can be 'all' or '`db`.`table`'); may corrupt this table if used incorrectly")
@@ -65,6 +71,13 @@ func run() error {
 	if len(*mode) != 0 {
 		return errors.Trace(switchMode(ctx, cfg, *mode))
 	}
+	if len(*flagImportEngine) != 0 {
+		return errors.Trace(importEngine(ctx, cfg, *flagImportEngine))
+	}
+	if len(*flagCleanupEngine) != 0 {
+		return errors.Trace(cleanupEngine(ctx, cfg, *flagCleanupEngine))
+	}
+
 	if len(*cpRemove) != 0 {
 		return errors.Trace(checkpointRemove(ctx, cfg, *cpRemove))
 	}
@@ -176,8 +189,8 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tableName s
 
 	for _, table := range targetTables {
 		for engineID := 0; engineID < table.EnginesCount; engineID++ {
-			fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
-			closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, engineID)
+			fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, int32(engineID))
+			closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, int32(engineID))
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "* Encountered error while closing engine:", err)
 				lastErr = err
@@ -232,4 +245,52 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func unsafeCloseEngine(ctx context.Context, importer *kv.Importer, engine string) (*kv.ClosedEngine, error) {
+	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
+		tableName := engine[:index]
+		engineID, err := strconv.Atoi(engine[index+1:])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ce, err := importer.UnsafeCloseEngine(ctx, tableName, int32(engineID))
+		return ce, errors.Trace(err)
+	}
+
+	engineUUID, err := uuid.FromString(engine)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, "<tidb-lightning-ctl>", engineUUID)
+	return ce, errors.Trace(err)
+}
+
+func importEngine(ctx context.Context, cfg *config.Config, engine string) error {
+	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ce, err := unsafeCloseEngine(ctx, importer, engine)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(ce.Import(ctx))
+}
+
+func cleanupEngine(ctx context.Context, cfg *config.Config, engine string) error {
+	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ce, err := unsafeCloseEngine(ctx, importer, engine)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(ce.Cleanup(ctx))
 }

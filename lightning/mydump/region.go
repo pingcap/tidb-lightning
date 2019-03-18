@@ -16,12 +16,13 @@ package mydump
 import (
 	"math"
 	"os"
+	"strings"
 
 	"github.com/pingcap/errors"
 )
 
 type TableRegion struct {
-	EngineID int
+	EngineID int32
 
 	DB    string
 	Table string
@@ -77,7 +78,7 @@ func AllocateEngineIDs(
 		return
 	}
 
-	curEngineID := 0
+	curEngineID := int32(0)
 	curEngineSize := 0.0
 	curBatchSize := batchSize
 
@@ -149,7 +150,12 @@ func MakeTableRegions(
 			return nil, errors.Annotatef(err, "cannot stat %s", dataFile)
 		}
 		dataFileSize := dataFileInfo.Size()
-		rowIDMax := prevRowIDMax + dataFileSize/(int64(columns)+2)
+
+		divisor := int64(columns)
+		if strings.HasSuffix(strings.ToLower(dataFile), ".sql") {
+			divisor += 2
+		}
+		rowIDMax := prevRowIDMax + dataFileSize/divisor
 		filesRegions = append(filesRegions, &TableRegion{
 			DB:    meta.DB,
 			Table: meta.Name,

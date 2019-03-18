@@ -19,8 +19,10 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -29,8 +31,14 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/parser/model"
+	tidbcfg "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/kvencoder"
+
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
@@ -38,11 +46,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-
-	"github.com/pingcap/errors"
-	tidbcfg "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/util/kvencoder"
 )
 
 const (
@@ -52,6 +55,11 @@ const (
 
 const (
 	defaultGCLifeTime = 100 * time.Hour
+)
+
+const (
+	indexEngineID      = -1
+	wholeTableEngineID = math.MaxInt32
 )
 
 const (
@@ -110,6 +118,7 @@ type RestoreController struct {
 	dbMetas         []*mydump.MDDatabaseMeta
 	dbInfos         map[string]*TidbDBInfo
 	tableWorkers    *worker.Pool
+	indexWorkers    *worker.Pool
 	regionWorkers   *worker.Pool
 	ioWorkers       *worker.Pool
 	importer        *kv.Importer
@@ -147,6 +156,7 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 		cfg:           cfg,
 		dbMetas:       dbMetas,
 		tableWorkers:  worker.NewPool(ctx, cfg.App.TableConcurrency, "table"),
+		indexWorkers:  worker.NewPool(ctx, cfg.App.IndexConcurrency, "index"),
 		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
 		importer:      importer,
@@ -285,7 +295,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(float64(estimatedChunkCount))
 }
 
-func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int, err error, statusIfSucceed CheckpointStatus) {
+func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int32, err error, statusIfSucceed CheckpointStatus) {
 	merger := &StatusCheckpointMerger{Status: statusIfSucceed, EngineID: engineID}
 
 	switch {
@@ -344,14 +354,27 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 		// 	wg.Wait()
 		// 	panic("forcing failure due to FailIfImportedChunk")
 		// }
-		// continue
+		// goto RETURN1
+
+		// gofail: RETURN1:
 
 		// gofail: var FailIfStatusBecomes int
 		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID >= 0 && int(merger.Status) == FailIfStatusBecomes {
 		// 	wg.Wait()
 		// 	panic("forcing failure due to FailIfStatusBecomes")
 		// }
-		// continue
+		// goto RETURN2
+
+		// gofail: RETURN2:
+
+		// gofail: var FailIfIndexEngineImported int
+		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID == wholeTableEngineID && merger.Status == CheckpointStatusIndexImported && FailIfIndexEngineImported > 0 {
+		// 	wg.Wait()
+		// 	panic("forcing failure due to FailIfIndexEngineImported")
+		// }
+		// goto RETURN3
+
+		// gofail: RETURN3:
 	}
 }
 
@@ -501,10 +524,38 @@ func (t *TableRestore) restoreTable(
 	}
 
 	// 2. Restore engines (if still needed)
+	indexEngineCp := cp.Engines[indexEngineID]
+	if indexEngineCp == nil {
+		return errors.Errorf("table %v index engine checkpoint not found", t.tableName)
+	}
 
-	if cp.Status < CheckpointStatusImported {
+	// The table checkpoint status set to `CheckpointStatusIndexImported` only if
+	// both all data engines and the index engine had been imported to TiKV.
+	// But persist index engine checkpoint status and table checkpoint status are
+	// not an atomic operation, so `cp.Status < CheckpointStatusIndexImported`
+	// but `indexEngineCp.Status == CheckpointStatusImported` could happen
+	// when kill lightning after saving index engine checkpoint status before saving
+	// table checkpoint status.
+	var indexEngine *kv.OpenedEngine
+	var closedIndexEngine *kv.ClosedEngine
+	if indexEngineCp.Status < CheckpointStatusImported && cp.Status < CheckpointStatusIndexImported {
+		indexWorker := rc.indexWorkers.Apply()
+		defer rc.indexWorkers.Recycle(indexWorker)
+		var err error
+		indexEngine, err = rc.importer.OpenEngine(ctx, t.tableName, indexEngineID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// The table checkpoint status less than `CheckpointStatusIndexImported` implies
+		// that index engine checkpoint status less than `CheckpointStatusImported`.
+		// So the index engine must be found in above process
+		if indexEngine == nil {
+			return errors.Errorf("table checkpoint status %v incompitable with index engine checkpoint status %v",
+				cp.Status, indexEngineCp.Status)
+		}
+
 		timer := time.Now()
-
 		var wg sync.WaitGroup
 		var engineErr common.OnceError
 
@@ -518,6 +569,11 @@ func (t *TableRestore) restoreTable(
 				break
 			}
 
+			// Should skip index engine
+			if engineID < 0 {
+				continue
+			}
+
 			wg.Add(1)
 
 			// Note: We still need tableWorkers to control the concurrency of tables.
@@ -525,19 +581,19 @@ func (t *TableRestore) restoreTable(
 			// the difference between restoring tables concurrently and restoring tables one by one.
 			restoreWorker := rc.tableWorkers.Apply()
 
-			go func(w *worker.Worker, eid int, ecp *EngineCheckpoint) {
+			go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
 				defer wg.Done()
 				tag := fmt.Sprintf("%s:%d", t.tableName, eid)
 
-				closedEngine, closedEngineWorker, err := t.restoreEngine(ctx, rc, eid, ecp)
+				dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
 				rc.tableWorkers.Recycle(w)
 				if err != nil {
 					engineErr.Set(tag, err)
 					return
 				}
 
-				defer rc.closedEngineLimit.Recycle(closedEngineWorker)
-				if err := t.importEngine(ctx, closedEngine, rc, eid, ecp); err != nil {
+				defer rc.closedEngineLimit.Recycle(dataWorker)
+				if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
 					engineErr.Set(tag, err)
 				}
 			}(restoreWorker, engineID, engine)
@@ -546,22 +602,34 @@ func (t *TableRestore) restoreTable(
 		wg.Wait()
 
 		common.AppLogger.Infof("[%s] import whole table takes %v", t.tableName, time.Since(timer))
-		err := engineErr.Get()
-		rc.saveStatusCheckpoint(t.tableName, -1, err, CheckpointStatusImported)
+		err = engineErr.Get()
 		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// If index engine file has been closed but not imported only if context cancel occurred
+		// when `importKV()` execution, so `UnsafeCloseEngine` and continue import it.
+		if indexEngineCp.Status == CheckpointStatusClosed {
+			closedIndexEngine, err = rc.importer.UnsafeCloseEngine(ctx, t.tableName, indexEngineID)
+		} else {
+			closedIndexEngine, err = indexEngine.Close(ctx)
+			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusClosed)
+		}
+		if err != nil {
+			common.AppLogger.Errorf("[%s] [kv-deliver] index engine closed error: %s", t.tableName, errors.ErrorStack(err))
 			return errors.Trace(err)
 		}
 	}
 
 	// 3. Post-process
-
-	return errors.Trace(t.postProcess(ctx, rc, cp))
+	return errors.Trace(t.postProcess(ctx, rc, cp, indexEngineCp, closedIndexEngine))
 }
 
 func (t *TableRestore) restoreEngine(
 	ctx context.Context,
 	rc *RestoreController,
-	engineID int,
+	indexEngine *kv.OpenedEngine,
+	engineID int32,
 	cp *EngineCheckpoint,
 ) (*kv.ClosedEngine, *worker.Worker, error) {
 	if cp.Status >= CheckpointStatusClosed {
@@ -577,7 +645,7 @@ func (t *TableRestore) restoreEngine(
 
 	timer := time.Now()
 
-	engine, err := rc.importer.OpenEngine(ctx, t.tableName, engineID)
+	dataEngine, err := rc.importer.OpenEngine(ctx, t.tableName, engineID)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -607,7 +675,7 @@ func (t *TableRestore) restoreEngine(
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunkIndex, chunk, rc.cfg.Mydumper.ReadBlockSize, rc.ioWorkers)
+		cr, err := newChunkRestore(chunkIndex, &rc.cfg.Mydumper, chunk, rc.cfg.Mydumper.ReadBlockSize, rc.ioWorkers)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -623,7 +691,7 @@ func (t *TableRestore) restoreEngine(
 				rc.regionWorkers.Recycle(w)
 			}()
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
-			err := cr.restore(ctx, t, engineID, engine, rc)
+			err := cr.restore(ctx, t, engineID, dataEngine, indexEngine, rc)
 			if err == nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
 				return
@@ -652,23 +720,23 @@ func (t *TableRestore) restoreEngine(
 		return nil, nil, errors.Trace(err)
 	}
 
-	w := rc.closedEngineLimit.Apply()
-	closedEngine, err := engine.Close(ctx)
+	dataWorker := rc.closedEngineLimit.Apply()
+	closedDataEngine, err := dataEngine.Close(ctx)
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
 	if err != nil {
 		common.AppLogger.Errorf("[kv-deliver] flush stage with error (step = close) : %s", errors.ErrorStack(err))
 		// If any error occurred, recycle worker immediately
-		rc.closedEngineLimit.Recycle(w)
+		rc.closedEngineLimit.Recycle(dataWorker)
 		return nil, nil, errors.Trace(err)
 	}
-	return closedEngine, w, nil
+	return closedDataEngine, dataWorker, nil
 }
 
 func (t *TableRestore) importEngine(
 	ctx context.Context,
 	closedEngine *kv.ClosedEngine,
 	rc *RestoreController,
-	engineID int,
+	engineID int32,
 	cp *EngineCheckpoint,
 ) error {
 	if cp.Status >= CheckpointStatusImported {
@@ -689,7 +757,7 @@ func (t *TableRestore) importEngine(
 	}
 
 	// 2. perform a level-1 compact if idling.
-	if *rc.cfg.PostRestore.Level1Compact &&
+	if rc.cfg.PostRestore.Level1Compact &&
 		atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateDoing) {
 		go func() {
 			err := rc.doCompact(ctx, Level1Compact)
@@ -704,7 +772,28 @@ func (t *TableRestore) importEngine(
 	return nil
 }
 
-func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
+func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint,
+	indexEngineCp *EngineCheckpoint, indexEngine *kv.ClosedEngine) error {
+	if cp.Status < CheckpointStatusIndexImported {
+		var err error
+		if indexEngineCp.Status < CheckpointStatusImported {
+			// the lock ensures the import() step will not be concurrent.
+			rc.postProcessLock.Lock()
+			err = t.importKV(ctx, indexEngine)
+			rc.postProcessLock.Unlock()
+			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
+		}
+
+		// gofail: var FailBeforeIndexEngineImported struct{}
+		//  panic("forcing failure due to FailBeforeIndexEngineImported")
+
+		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusIndexImported)
+		if err != nil {
+			common.AppLogger.Errorf("[%[1]s] failed to import index engine: %v", t.tableName, err.Error())
+			return errors.Trace(err)
+		}
+	}
+
 	setSessionConcurrencyVars(ctx, rc.tidbMgr.db, rc.cfg.TiDB)
 
 	// 3. alter table set auto_increment
@@ -712,7 +801,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		rc.alterTableLock.Lock()
 		err := t.restoreTableMeta(ctx, rc.tidbMgr.db)
 		rc.alterTableLock.Unlock()
-		rc.saveStatusCheckpoint(t.tableName, -1, err, CheckpointStatusAlteredAutoInc)
+		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
 			common.AppLogger.Errorf(
 				"[%[1]s] failed to AUTO TABLE %[1]s SET AUTO_INCREMENT=%[2]d : %[3]v",
@@ -726,10 +815,10 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	if cp.Status < CheckpointStatusChecksummed {
 		if !rc.cfg.PostRestore.Checksum {
 			common.AppLogger.Infof("[%s] Skip checksum.", t.tableName)
-			rc.saveStatusCheckpoint(t.tableName, -1, nil, CheckpointStatusChecksumSkipped)
+			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
 			err := t.compareChecksum(ctx, rc.tidbMgr.db, cp)
-			rc.saveStatusCheckpoint(t.tableName, -1, err, CheckpointStatusChecksummed)
+			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusChecksummed)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
 				return errors.Trace(err)
@@ -741,10 +830,10 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	if cp.Status < CheckpointStatusAnalyzed {
 		if !rc.cfg.PostRestore.Analyze {
 			common.AppLogger.Infof("[%s] Skip analyze.", t.tableName)
-			rc.saveStatusCheckpoint(t.tableName, -1, nil, CheckpointStatusAnalyzeSkipped)
+			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 		} else {
 			err := t.analyzeTable(ctx, rc.tidbMgr.db)
-			rc.saveStatusCheckpoint(t.tableName, -1, err, CheckpointStatusAnalyzed)
+			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusAnalyzed)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] analyze failed: %v", t.tableName, err.Error())
 				return errors.Trace(err)
@@ -819,8 +908,10 @@ func extractTiDBVersion(version string) (*semver.Version, error) {
 	//                               ^~~~^
 	// version format: "5.7.10-TiDB-v2.0.7"
 	//                               ^~~~^
+	// version format: "5.7.25-TiDB-v3.0.0-beta-211-g09beefbe0-dirty"
+	//                               ^~~~~~~~~^
 	// The version is generated by `git describe --tags` on the TiDB repository.
-	versions := strings.Split(version, "-")
+	versions := strings.Split(strings.TrimSuffix(version, "-dirty"), "-")
 	end := len(versions)
 	switch end {
 	case 3, 4:
@@ -920,17 +1011,30 @@ func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
 }
 
 type chunkRestore struct {
-	parser *mydump.ChunkParser
+	parser mydump.Parser
 	index  int
 	chunk  *ChunkCheckpoint
 }
 
-func newChunkRestore(index int, chunk *ChunkCheckpoint, blockBufSize int64, ioWorkers *worker.Pool) (*chunkRestore, error) {
+func newChunkRestore(
+	index int,
+	cfg *config.MydumperRuntime,
+	chunk *ChunkCheckpoint,
+	blockBufSize int64,
+	ioWorkers *worker.Pool,
+) (*chunkRestore, error) {
 	reader, err := os.Open(chunk.Key.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	parser := mydump.NewChunkParser(reader, blockBufSize, ioWorkers)
+
+	var parser mydump.Parser
+	switch path.Ext(strings.ToLower(chunk.Key.Path)) {
+	case ".csv":
+		parser = mydump.NewCSVParser(&cfg.CSV, reader, blockBufSize, ioWorkers)
+	default:
+		parser = mydump.NewChunkParser(reader, blockBufSize, ioWorkers)
+	}
 
 	reader.Seek(chunk.Chunk.Offset, io.SeekStart)
 	parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax)
@@ -943,7 +1047,7 @@ func newChunkRestore(index int, chunk *ChunkCheckpoint, blockBufSize int64, ioWo
 }
 
 func (cr *chunkRestore) close() {
-	cr.parser.Reader().(*os.File).Close()
+	cr.parser.Close()
 }
 
 type TableRestore struct {
@@ -1001,10 +1105,14 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 	}
 
 	for _, chunk := range chunks {
-		for chunk.EngineID >= len(cp.Engines) {
-			cp.Engines = append(cp.Engines, &EngineCheckpoint{Status: CheckpointStatusLoaded})
+		engine, found := cp.Engines[chunk.EngineID]
+		if !found {
+			engine = &EngineCheckpoint{
+				Status: CheckpointStatusLoaded,
+			}
+			cp.Engines[chunk.EngineID] = engine
 		}
-		cp.Engines[chunk.EngineID].Chunks = append(cp.Engines[chunk.EngineID].Chunks, &ChunkCheckpoint{
+		engine.Chunks = append(engine.Chunks, &ChunkCheckpoint{
 			Key: ChunkCheckpointKey{
 				Path:   chunk.File,
 				Offset: chunk.Chunk.Offset,
@@ -1013,6 +1121,9 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 			Chunk:   chunk.Chunk,
 		})
 	}
+
+	// Add index engine checkpoint
+	cp.Engines[indexEngineID] = &EngineCheckpoint{Status: CheckpointStatusLoaded}
 
 	common.AppLogger.Infof("[%s] load %d engines and %d chunks takes %v", t.tableName, len(cp.Engines), len(chunks), time.Since(timer))
 	return nil
@@ -1057,11 +1168,9 @@ func (tr *TableRestore) restoreTableMeta(ctx context.Context, db *sql.DB) error 
 
 func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
 	common.AppLogger.Infof("[%s] flush kv deliver ...", tr.tableName)
-
 	start := time.Now()
 
-	err := closedEngine.Import(ctx)
-	if err != nil {
+	if err := closedEngine.Import(ctx); err != nil {
 		if !common.IsContextCanceledError(err) {
 			common.AppLogger.Errorf("[%s] failed to flush kvs : %s", tr.tableName, err.Error())
 		}
@@ -1240,8 +1349,8 @@ func splitIntoDeliveryStreams(totalKVs []kvenc.KvPair, splitSize int) [][]kvenc.
 func (cr *chunkRestore) restore(
 	ctx context.Context,
 	t *TableRestore,
-	engineID int,
-	engine *kv.OpenedEngine,
+	engineID int32,
+	dataEngine, indexEngine *kv.OpenedEngine,
 	rc *RestoreController,
 ) error {
 	// Create the encoder.
@@ -1297,6 +1406,7 @@ func (cr *chunkRestore) restore(
 	go func() {
 		defer deliveryExitFn()
 
+		var dataKVs, indexKVs []kvenc.KvPair
 		for {
 			block.cond.L.Lock()
 			for !block.encodeCompleted && len(block.totalKVs) == 0 {
@@ -1314,14 +1424,28 @@ func (cr *chunkRestore) restore(
 
 			// kv -> deliver ( -> tikv )
 			start := time.Now()
-			stream, err := engine.NewWriteStream(ctx)
+			dataStream, err := dataEngine.NewWriteStream(ctx)
 			if err != nil {
 				deliverCompleteCh <- errors.Trace(err)
 				return
 			}
+			indexStream, err := indexEngine.NewWriteStream(ctx)
+			if err != nil {
+				deliverCompleteCh <- errors.Trace(err)
+				return
+			}
+			// class kvs
+			for _, k := range b.totalKVs {
+				if k.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
+					dataKVs = append(dataKVs, k)
+				} else {
+					indexKVs = append(indexKVs, k)
+				}
+			}
+			b.totalKVs = nil
 
-			for _, kvs := range splitIntoDeliveryStreams(b.totalKVs, maxDeliverBytes) {
-				if e := stream.Put(kvs); e != nil {
+			for _, kvs := range splitIntoDeliveryStreams(dataKVs, maxDeliverBytes) {
+				if e := dataStream.Put(kvs); e != nil {
 					if err != nil {
 						common.AppLogger.Warnf("failed to put write stream: %s", e.Error())
 					} else {
@@ -1329,10 +1453,27 @@ func (cr *chunkRestore) restore(
 					}
 				}
 			}
-			b.totalKVs = nil
+			for _, kvs := range splitIntoDeliveryStreams(indexKVs, maxDeliverBytes) {
+				if e := indexStream.Put(kvs); e != nil {
+					if err != nil {
+						common.AppLogger.Warnf("failed to put write stream: %s", e.Error())
+					} else {
+						err = e
+					}
+				}
+			}
+			dataKVs = dataKVs[:0]
+			indexKVs = indexKVs[:0]
 
 			block.cond.Signal()
-			if e := stream.Close(); e != nil {
+			if e := dataStream.Close(); e != nil {
+				if err != nil {
+					common.AppLogger.Warnf("[%s:%d] failed to close write stream: %s", t.tableName, engineID, e.Error())
+				} else {
+					err = e
+				}
+			}
+			if e := indexStream.Close(); e != nil {
 				if err != nil {
 					common.AppLogger.Warnf("[%s:%d] failed to close write stream: %s", t.tableName, engineID, e.Error())
 				} else {
@@ -1388,8 +1529,9 @@ encodeLoop:
 		default:
 		}
 
-		endOffset := mathutil.MinInt64(cr.chunk.Chunk.EndOffset, cr.parser.Pos()+rc.cfg.Mydumper.ReadBlockSize)
-		if cr.parser.Pos() >= endOffset {
+		offset, _ := cr.parser.Pos()
+		endOffset := mathutil.MinInt64(cr.chunk.Chunk.EndOffset, offset+rc.cfg.Mydumper.ReadBlockSize)
+		if offset >= endOffset {
 			break
 		}
 
@@ -1398,7 +1540,11 @@ encodeLoop:
 
 		var sep byte = ' '
 	readLoop:
-		for cr.parser.Pos() < endOffset {
+		for {
+			offset, _ := cr.parser.Pos()
+			if offset >= endOffset {
+				break
+			}
 			readRowStartTime := time.Now()
 			err := cr.parser.ReadRow()
 			switch errors.Cause(err) {
@@ -1408,7 +1554,7 @@ encodeLoop:
 					buffer.WriteString("INSERT INTO ")
 					buffer.WriteString(t.tableName)
 					if cr.chunk.Columns == nil {
-						t.initializeColumns(cr.parser.Columns, cr.chunk)
+						t.initializeColumns(cr.parser.Columns(), cr.chunk)
 					}
 					buffer.Write(cr.chunk.Columns)
 					buffer.WriteString(" VALUES ")
@@ -1423,7 +1569,7 @@ encodeLoop:
 					buffer.Write(lastRow.Row)
 				}
 			case io.EOF:
-				cr.chunk.Chunk.EndOffset = cr.parser.Pos()
+				cr.chunk.Chunk.EndOffset, cr.chunk.Chunk.RowIDMax = cr.parser.Pos()
 				break readLoop
 			default:
 				return errors.Trace(err)
@@ -1462,8 +1608,7 @@ encodeLoop:
 		}
 		block.totalKVs = append(block.totalKVs, kvs...)
 		block.localChecksum.Update(kvs)
-		block.chunkOffset = cr.parser.Pos()
-		block.chunkRowID = cr.parser.LastRow().RowID
+		block.chunkOffset, block.chunkRowID = cr.parser.Pos()
 		block.cond.Signal()
 		block.cond.L.Unlock()
 	}
