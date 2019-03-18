@@ -1524,7 +1524,7 @@ encodeLoop:
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deliverClosedCh.Done():
+		case <-deliveryClosedCh.Done():
 			break encodeLoop
 		default:
 		}
