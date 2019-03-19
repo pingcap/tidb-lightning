@@ -15,6 +15,7 @@ package kv
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb/table"
@@ -22,7 +23,7 @@ import (
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 
-var extraHandleFieldType = types.NewFieldType(mysql.TypeLonglong)
+var extraHandleColumnInfo = model.NewExtraHandleColInfo()
 
 type TableKVEncoder struct {
 	tbl table.Table
@@ -58,7 +59,10 @@ func (kvcodec *TableKVEncoder) Encode(
 	record := make([]types.Datum, 0, len(cols)+1)
 	for i, col := range cols {
 		if j := colPerm[i]; j >= 0 {
-			value, err = row[j].ConvertTo(kvcodec.se.vars.StmtCtx, &col.FieldType)
+			value, err = table.CastValue(kvcodec.se, row[j], col.ToInfo())
+			if err == nil {
+				value, err = col.HandleBadNull(value, kvcodec.se.vars.StmtCtx)
+			}
 		} else {
 			value, err = table.GetColOriginDefaultValue(kvcodec.se, col.ToInfo())
 		}
@@ -70,7 +74,7 @@ func (kvcodec *TableKVEncoder) Encode(
 
 	if !kvcodec.tbl.Meta().PKIsHandle {
 		if j := colPerm[len(cols)]; j >= 0 {
-			value, err = row[j].ConvertTo(kvcodec.se.vars.StmtCtx, extraHandleFieldType)
+			value, err = table.CastValue(kvcodec.se, row[j], extraHandleColumnInfo)
 		} else {
 			value, err = types.NewIntDatum(rowID), nil
 		}

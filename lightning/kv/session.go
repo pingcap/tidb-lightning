@@ -58,7 +58,9 @@ func newSession(sqlMode mysql.SQLMode) *session {
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
-	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode()
+	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
+	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
+	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.TimeZone = vars.Location()
 	return &session{
 		txn:  transaction{},

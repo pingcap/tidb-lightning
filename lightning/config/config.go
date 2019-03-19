@@ -45,7 +45,7 @@ type DBStore struct {
 	StrSQLMode string `toml:"sql-mode" json:"sql-mode"`
 	LogLevel   string `toml:"log-level" json:"log-level"`
 
-	SQLMode mysql.SQLMode `json:"-"`
+	SQLMode mysql.SQLMode `toml:"-" json:"-"`
 
 	DistSQLScanConcurrency     int `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
 	BuildStatsConcurrency      int `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
