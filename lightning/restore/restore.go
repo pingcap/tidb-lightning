@@ -524,6 +524,16 @@ func (t *TableRestore) restoreTable(
 	}
 
 	// 2. Restore engines (if still needed)
+	err := t.restoreEngines(ctx, rc, cp)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// 3. Post-process
+	return errors.Trace(t.postProcess(ctx, rc, cp))
+}
+
+func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
 		return errors.Errorf("table %v index engine checkpoint not found", t.tableName)
@@ -536,13 +546,11 @@ func (t *TableRestore) restoreTable(
 	// but `indexEngineCp.Status == CheckpointStatusImported` could happen
 	// when kill lightning after saving index engine checkpoint status before saving
 	// table checkpoint status.
-	var indexEngine *kv.OpenedEngine
 	var closedIndexEngine *kv.ClosedEngine
 	if indexEngineCp.Status < CheckpointStatusImported && cp.Status < CheckpointStatusIndexImported {
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
-		var err error
-		indexEngine, err = rc.importer.OpenEngine(ctx, t.tableName, indexEngineID)
+		indexEngine, err := rc.importer.OpenEngine(ctx, t.tableName, indexEngineID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -621,8 +629,26 @@ func (t *TableRestore) restoreTable(
 		}
 	}
 
-	// 3. Post-process
-	return errors.Trace(t.postProcess(ctx, rc, cp, indexEngineCp, closedIndexEngine))
+	if cp.Status < CheckpointStatusIndexImported {
+		var err error
+		if indexEngineCp.Status < CheckpointStatusImported {
+			// the lock ensures the import() step will not be concurrent.
+			rc.postProcessLock.Lock()
+			err = t.importKV(ctx, closedIndexEngine)
+			rc.postProcessLock.Unlock()
+			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
+		}
+
+		// gofail: var FailBeforeIndexEngineImported struct{}
+		//  panic("forcing failure due to FailBeforeIndexEngineImported")
+
+		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusIndexImported)
+		if err != nil {
+			common.AppLogger.Errorf("[%[1]s] failed to import index engine: %v", t.tableName, err.Error())
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (t *TableRestore) restoreEngine(
@@ -772,28 +798,7 @@ func (t *TableRestore) importEngine(
 	return nil
 }
 
-func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint,
-	indexEngineCp *EngineCheckpoint, indexEngine *kv.ClosedEngine) error {
-	if cp.Status < CheckpointStatusIndexImported {
-		var err error
-		if indexEngineCp.Status < CheckpointStatusImported {
-			// the lock ensures the import() step will not be concurrent.
-			rc.postProcessLock.Lock()
-			err = t.importKV(ctx, indexEngine)
-			rc.postProcessLock.Unlock()
-			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
-		}
-
-		// gofail: var FailBeforeIndexEngineImported struct{}
-		//  panic("forcing failure due to FailBeforeIndexEngineImported")
-
-		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusIndexImported)
-		if err != nil {
-			common.AppLogger.Errorf("[%[1]s] failed to import index engine: %v", t.tableName, err.Error())
-			return errors.Trace(err)
-		}
-	}
-
+func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
 	setSessionConcurrencyVars(ctx, rc.tidbMgr.db, rc.cfg.TiDB)
 
 	// 3. alter table set auto_increment
