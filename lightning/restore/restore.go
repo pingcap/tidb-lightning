@@ -279,7 +279,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	go rc.listenCheckpointUpdates(&rc.checkpointsWg)
+	go rc.listenCheckpointUpdates()
 
 	// Estimate the number of chunks for progress reporting
 	rc.estimateChunkCountIntoMetrics()
@@ -314,7 +314,7 @@ func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int
 }
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
-func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
+func (rc *RestoreController) listenCheckpointUpdates() {
 	rc.checkpointsWg.Add(1)
 
 	var lock sync.Mutex
@@ -332,7 +332,7 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 			if len(cpd) > 0 {
 				rc.checkpointsDB.Update(cpd)
 			}
-			wg.Done()
+			rc.checkpointsWg.Done()
 		}
 	}()
 
@@ -346,7 +346,7 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 		scp.merger.MergeInto(cpd)
 
 		if len(hasCheckpoint) == 0 {
-			wg.Add(1)
+			rc.checkpointsWg.Add(1)
 			hasCheckpoint <- struct{}{}
 		}
 
@@ -354,7 +354,8 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 
 		// gofail: var FailIfImportedChunk struct{}
 		// if _, ok := scp.merger.(*ChunkCheckpointMerger); ok {
-		// 	wg.Wait()
+		// 	rc.checkpointsWg.Done()
+		// 	rc.checkpointsWg.Wait()
 		// 	panic("forcing failure due to FailIfImportedChunk")
 		// }
 		// goto RETURN1
@@ -363,7 +364,8 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 
 		// gofail: var FailIfStatusBecomes int
 		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID >= 0 && int(merger.Status) == FailIfStatusBecomes {
-		// 	wg.Wait()
+		// 	rc.checkpointsWg.Done()
+		// 	rc.checkpointsWg.Wait()
 		// 	panic("forcing failure due to FailIfStatusBecomes")
 		// }
 		// goto RETURN2
@@ -372,7 +374,8 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 
 		// gofail: var FailIfIndexEngineImported int
 		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID == wholeTableEngineID && merger.Status == CheckpointStatusIndexImported && FailIfIndexEngineImported > 0 {
-		// 	wg.Wait()
+		// 	rc.checkpointsWg.Done()
+		// 	rc.checkpointsWg.Wait()
 		// 	panic("forcing failure due to FailIfIndexEngineImported")
 		// }
 		// goto RETURN3
