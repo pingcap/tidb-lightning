@@ -201,6 +201,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 }
 
 func (rc *RestoreController) Wait() {
+	close(rc.saveCpCh)
 	rc.checkpointsWg.Wait()
 }
 
@@ -314,6 +315,8 @@ func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
 func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
+	rc.checkpointsWg.Add(1)
+
 	var lock sync.Mutex
 	coalesed := make(map[string]*TableCheckpointDiff)
 
@@ -376,6 +379,7 @@ func (rc *RestoreController) listenCheckpointUpdates(wg *sync.WaitGroup) {
 
 		// gofail: RETURN3:
 	}
+	rc.checkpointsWg.Done()
 }
 
 func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}) {
