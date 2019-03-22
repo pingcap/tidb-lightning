@@ -39,10 +39,6 @@ const (
 	defaultMaxRetry = 3
 )
 
-func Percent(a int, b int) string {
-	return fmt.Sprintf("%.2f %%", float64(a)/float64(b)*100)
-}
-
 func ToDSN(host string, port int, user string, psw string) string {
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8", user, psw, host, port)
 }

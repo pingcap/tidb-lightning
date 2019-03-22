@@ -109,7 +109,6 @@ func (parser *CSVParser) ReadRow() error {
 		tok, content, err := parser.lex()
 		switch errors.Cause(err) {
 		case nil:
-			break
 		case io.EOF:
 			if hasField {
 				tok = csvTokNewLine
