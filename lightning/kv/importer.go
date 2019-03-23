@@ -203,6 +203,11 @@ func (importer *Importer) OpenEngine(
 	}, nil
 }
 
+// Tag gets an identification stirng of this engine for logging.
+func (engine *OpenedEngine) Tag() string {
+	return engine.tag
+}
+
 // WriteStream is a single write stream into an opened engine. This type is
 // **NOT** goroutine safe, all operations must be executed in the same
 // goroutine.
@@ -372,4 +377,9 @@ func (engine *ClosedEngine) Cleanup(ctx context.Context) error {
 	_, err := engine.importer.cli.CleanupEngine(ctx, req)
 	common.AppLogger.Infof("[%s] [%s] cleanup takes %v", engine.tag, engine.uuid, time.Since(timer))
 	return errors.Trace(err)
+}
+
+// Tag gets an identification stirng of this engine for logging.
+func (engine *ClosedEngine) Tag() string {
+	return engine.tag
 }

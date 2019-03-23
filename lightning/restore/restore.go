@@ -221,16 +221,16 @@ func (rc *RestoreController) Run(ctx context.Context) error {
 
 	var err error
 outside:
-	for _, process := range opts {
+	for i, process := range opts {
 		err = process(ctx)
 		switch {
 		case err == nil:
 		case common.IsContextCanceledError(err):
-			common.AppLogger.Infof("user terminated : %v", err)
-			err = nil
+			common.AppLogger.Infof("[step %d] user terminated : %v", i, err)
+			// err = nil
 			break outside
 		default:
-			common.AppLogger.Errorf("run cause error : %v", err)
+			common.AppLogger.Errorf("[step %d] run cause error : %v", i, err)
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			break outside // ps : not continue
 		}
@@ -1197,12 +1197,12 @@ func (tr *TableRestore) restoreTableMeta(ctx context.Context, db *sql.DB) error 
 }
 
 func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
-	common.AppLogger.Infof("[%s] flush kv deliver ...", tr.tableName)
+	common.AppLogger.Infof("[%s] flush kv deliver ...", closedEngine.Tag())
 	start := time.Now()
 
 	if err := closedEngine.Import(ctx); err != nil {
 		if !common.IsContextCanceledError(err) {
-			common.AppLogger.Errorf("[%s] failed to flush kvs : %s", tr.tableName, err.Error())
+			common.AppLogger.Errorf("[%s] failed to flush kvs : %s", closedEngine.Tag(), err.Error())
 		}
 		return errors.Trace(err)
 	}
@@ -1210,7 +1210,7 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 
 	dur := time.Since(start)
 	metric.ImportSecondsHistogram.Observe(dur.Seconds())
-	common.AppLogger.Infof("[%s] kv deliver all flushed, takes %v", tr.tableName, dur)
+	common.AppLogger.Infof("[%s] kv deliver all flushed, takes %v", closedEngine.Tag(), dur)
 
 	return nil
 }
@@ -1603,9 +1603,10 @@ outside:
 	case deliverResult := <-deliverCompleteCh:
 		if deliverResult.err == nil {
 			common.AppLogger.Infof(
-				"[%s:%d] restore chunk #%d (%s) takes %v (read: %v, encode: %v, deliver: %v)",
+				"[%s:%d] restore chunk #%d (%s) takes %v (read: %v, encode: %v, deliver: %v, size: %d, kvs: %d)",
 				t.tableName, engineID, cr.index, &cr.chunk.Key, time.Since(timer),
 				readTotalDur, encodeTotalDur, deliverResult.totalDur,
+				cr.chunk.Checksum.SumSize(), cr.chunk.Checksum.SumKVS(),
 			)
 		}
 		return errors.Trace(deliverResult.err)
