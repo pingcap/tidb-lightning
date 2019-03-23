@@ -29,6 +29,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -181,9 +182,27 @@ func IsRetryableError(err error) bool {
 }
 
 // IsContextCanceledError returns whether the error is caused by context
-// cancellation. This function returns `false` (not a context-canceled error) if
-// `err == nil`.
+// cancellation. This function should only be used for inhabiting logs related
+// to canceling, where the log is usually just noise.
+//
+// This function returns `false` when the current logging level is set to
+// "debug".
+//
+// This function returns `false` (not a context-canceled error) if `err == nil`.
 func IsContextCanceledError(err error) bool {
+	if AppLogger.IsLevelEnabled(logrus.DebugLevel) {
+		return false
+	}
+	return IsReallyContextCanceledError(err)
+}
+
+// IsReallyContextCanceledError returns whether the error is caused by context
+// cancellation. This function should only be used when the code logic is
+// affected by whether the error is canceling or not. Normally, you should
+// simply use IsContextCanceledError.
+//
+// This function returns `false` (not a context-canceled error) if `err == nil`.
+func IsReallyContextCanceledError(err error) bool {
 	err = errors.Cause(err)
 	return err == context.Canceled || status.Code(err) == codes.Canceled
 }

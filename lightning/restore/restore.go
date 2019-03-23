@@ -302,7 +302,7 @@ func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int
 	switch {
 	case err == nil:
 		break
-	case !common.IsContextCanceledError(err):
+	case !common.IsReallyContextCanceledError(err):
 		merger.SetInvalid()
 		rc.errorSummaries.record(tableName, err, statusIfSucceed)
 	default:
