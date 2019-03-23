@@ -1379,6 +1379,10 @@ func splitIntoDeliveryStreams(totalKVs []kvenc.KvPair, splitSize int) [][]kvenc.
 }
 
 func writeToEngine(ctx context.Context, engine *kv.OpenedEngine, totalKVs []kvenc.KvPair) error {
+	if len(totalKVs) == 0 {
+		return nil
+	}
+
 	stream, err := engine.NewWriteStream(ctx)
 	if err != nil {
 		return errors.Trace(err)
