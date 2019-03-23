@@ -227,7 +227,7 @@ outside:
 		case err == nil:
 		case common.IsContextCanceledError(err):
 			common.AppLogger.Infof("[step %d] user terminated : %v", i, err)
-			// err = nil
+			err = nil
 			break outside
 		default:
 			common.AppLogger.Errorf("[step %d] run cause error : %v", i, err)
@@ -787,7 +787,6 @@ func (t *TableRestore) importEngine(
 	// the lock ensures the import() step will not be concurrent.
 	rc.postProcessLock.Lock()
 	err := t.importKV(ctx, closedEngine)
-	// gofail: var SlowDownImport struct{}
 	rc.postProcessLock.Unlock()
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
@@ -1211,6 +1210,8 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 	dur := time.Since(start)
 	metric.ImportSecondsHistogram.Observe(dur.Seconds())
 	common.AppLogger.Infof("[%s] kv deliver all flushed, takes %v", closedEngine.Tag(), dur)
+
+	// gofail: var SlowDownImport struct{}
 
 	return nil
 }
