@@ -830,7 +830,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			localChecksum.Add(&chunk.Checksum)
 		}
 	}
-	common.AppLogger.Errorf("[%s] local checksum [sum:%d, kvs:%d, size:%v]",
+	common.AppLogger.Infof("[%s] local checksum [sum:%d, kvs:%d, size:%v]",
 		t.tableName, localChecksum.Sum(), localChecksum.SumKVS(), localChecksum.SumSize())
 	if cp.Status < CheckpointStatusChecksummed {
 		if !rc.cfg.PostRestore.Checksum {
