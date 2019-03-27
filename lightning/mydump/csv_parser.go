@@ -54,7 +54,7 @@ func (parser *CSVParser) appendEmptyValues(sepCount int) {
 	} else {
 		datum.SetString("")
 	}
-	for i := 1; i < sepCount; i++ {
+	for i := 0; i < sepCount; i++ {
 		parser.lastRow.Row = append(parser.lastRow.Row, datum)
 	}
 }
@@ -80,7 +80,7 @@ func (parser *CSVParser) appendField(content string) {
 
 func (parser *CSVParser) unescapeString(input string) string {
 	delim := parser.cfg.Delimiter
-	if len(delim) > 0 && len(input) > 2 && input[0] == delim[0] {
+	if len(delim) > 0 && len(input) >= 2 && input[0] == delim[0] {
 		return unescape(input[1:len(input)-1], delim, parser.escFlavor)
 	}
 	return unescape(input, "", parser.escFlavor)
@@ -88,7 +88,7 @@ func (parser *CSVParser) unescapeString(input string) string {
 
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
-	emptySepCount := 0
+	emptySepCount := 1
 	hasField := false
 
 	row := &parser.lastRow
@@ -136,7 +136,7 @@ func (parser *CSVParser) ReadRow() error {
 			emptySepCount++
 
 		case csvTokField:
-			parser.appendEmptyValues(emptySepCount)
+			parser.appendEmptyValues(emptySepCount - 1)
 			emptySepCount = 0
 			parser.appendField(string(content))
 

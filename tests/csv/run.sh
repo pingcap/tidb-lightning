@@ -26,3 +26,8 @@ run_sql 'SELECT hex(t), j, hex(b) FROM csv.escapes WHERE i = 3'
 check_contains 'hex(t): 0A'
 check_contains 'j: [",,,"]'
 check_contains 'hex(b): 5C2C5C2C'
+
+run_sql 'SELECT id FROM csv.empty_strings WHERE a = """"'
+check_contains 'id: 3'
+run_sql 'SELECT id FROM csv.empty_strings WHERE b <> ""'
+check_not_contains 'id:'
