@@ -824,12 +824,20 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	}
 
 	// 4. do table checksum
+	var localChecksum verify.KVChecksum
+	for _, engine := range cp.Engines {
+		for _, chunk := range engine.Chunks {
+			localChecksum.Add(&chunk.Checksum)
+		}
+	}
+	common.AppLogger.Errorf("[%s] local checksum [sum:%d, kvs:%d, size:%v]",
+		t.tableName, localChecksum.Sum(), localChecksum.SumKVS(), localChecksum.SumSize())
 	if cp.Status < CheckpointStatusChecksummed {
 		if !rc.cfg.PostRestore.Checksum {
 			common.AppLogger.Infof("[%s] Skip checksum.", t.tableName)
 			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
-			err := t.compareChecksum(ctx, rc.tidbMgr.db, cp)
+			err := t.compareChecksum(ctx, rc.tidbMgr.db, localChecksum)
 			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusChecksummed)
 			if err != nil {
 				common.AppLogger.Errorf("[%s] checksum failed: %v", t.tableName, err.Error())
@@ -1198,14 +1206,7 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 }
 
 // do checksum for each table.
-func (tr *TableRestore) compareChecksum(ctx context.Context, db *sql.DB, cp *TableCheckpoint) error {
-	var localChecksum verify.KVChecksum
-	for _, engine := range cp.Engines {
-		for _, chunk := range engine.Chunks {
-			localChecksum.Add(&chunk.Checksum)
-		}
-	}
-
+func (tr *TableRestore) compareChecksum(ctx context.Context, db *sql.DB, localChecksum verify.KVChecksum) error {
 	start := time.Now()
 	remoteChecksum, err := DoChecksum(ctx, db, tr.tableName)
 	dur := time.Since(start)
