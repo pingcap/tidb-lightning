@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"runtime"
 	"time"
 
@@ -33,6 +34,8 @@ const (
 	// NormalMode defines mode of normal for tikv.
 	NormalMode = "normal"
 )
+
+var defaultConfigPaths = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
 
 type DBStore struct {
 	Host       string `toml:"host" json:"host"`
@@ -156,6 +159,12 @@ func NewConfig() *Config {
 			CheckRequirements: true,
 		},
 		TiDB: DBStore{
+			Host:                       "127.0.0.1",
+			Port:                       4000,
+			User:                       "root",
+			StatusPort:                 10080,
+			PdAddr:                     "127.0.0.1:2379",
+			LogLevel:                   "error",
 			SQLMode:                    "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
 			BuildStatsConcurrency:      20,
 			DistSQLScanConcurrency:     100,
@@ -171,6 +180,9 @@ func NewConfig() *Config {
 				Separator: ",",
 			},
 		},
+		PostRestore: PostRestore{
+			Checksum: true,
+		},
 	}
 }
 
@@ -183,7 +195,7 @@ func LoadConfig(args []string) (*Config, error) {
 	// the default value is assigned immediately after the StringVar() call,
 	// so it is fine to not give any default value for `-c`, to keep the `-h` page clean.
 	fs.StringVar(&cfg.ConfigFile, "c", "", "(deprecated alias of -config)")
-	fs.StringVar(&cfg.ConfigFile, "config", "tidb-lightning.toml", "tidb-lightning configuration file")
+	fs.StringVar(&cfg.ConfigFile, "config", "", "tidb-lightning configuration file")
 	printVersion := fs.Bool("V", false, "print version of lightning")
 
 	if err := fs.Parse(args); err != nil {
@@ -201,6 +213,20 @@ func LoadConfig(args []string) (*Config, error) {
 }
 
 func (cfg *Config) Load() error {
+	// search the default config path if none is specified.
+	if cfg.ConfigFile == "" {
+		for _, path := range defaultConfigPaths {
+			if _, err := os.Stat(path); err == nil {
+				cfg.ConfigFile = path
+				break
+			}
+		}
+		// use standard config if unspecified.
+		if cfg.ConfigFile == "" {
+			return nil
+		}
+	}
+
 	data, err := ioutil.ReadFile(cfg.ConfigFile)
 	if err != nil {
 		return errors.Trace(err)

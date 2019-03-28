@@ -41,7 +41,7 @@ func run() error {
 	cfg := config.NewConfig()
 	fs := flag.NewFlagSet("lightning-ctl", flag.ExitOnError)
 
-	fs.StringVar(&cfg.ConfigFile, "config", "tidb-lightning.toml", "tidb-lightning configuration file")
+	fs.StringVar(&cfg.ConfigFile, "config", "", "tidb-lightning configuration file")
 
 	compact := fs.Bool("compact", false, "do manual compaction on the target cluster")
 	mode := fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
