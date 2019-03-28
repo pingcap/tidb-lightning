@@ -39,8 +39,7 @@ func main() {
 
 func run() error {
 	cfg := config.NewConfig()
-	cfg.FlagSet = flag.NewFlagSet("lightning-ctl", flag.ExitOnError)
-	fs := cfg.FlagSet
+	fs := flag.NewFlagSet("lightning-ctl", flag.ExitOnError)
 
 	fs.StringVar(&cfg.ConfigFile, "config", "tidb-lightning.toml", "tidb-lightning configuration file")
 

@@ -51,8 +51,6 @@ type DBStore struct {
 }
 
 type Config struct {
-	*flag.FlagSet `json:"-"`
-
 	App  Lightning `toml:"lightning" json:"lightning"`
 	TiDB DBStore   `toml:"tidb" json:"tidb"`
 
@@ -66,10 +64,7 @@ type Config struct {
 	Cron         Cron            `toml:"cron" json:"cron"`
 
 	// command line flags
-	ConfigFile   string `json:"config-file"`
-	DoCompact    bool   `json:"-"`
-	SwitchMode   string `json:"-"`
-	printVersion bool
+	ConfigFile string `json:"config-file"`
 }
 
 func (c *Config) String() string {
@@ -182,20 +177,21 @@ func NewConfig() *Config {
 func LoadConfig(args []string) (*Config, error) {
 	cfg := NewConfig()
 
-	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
-	fs := cfg.FlagSet
+	fs := flag.NewFlagSet("lightning", flag.ContinueOnError)
 
 	// if both `-c` and `-config` are specified, the last one in the command line will take effect.
 	// the default value is assigned immediately after the StringVar() call,
 	// so it is fine to not give any default value for `-c`, to keep the `-h` page clean.
 	fs.StringVar(&cfg.ConfigFile, "c", "", "(deprecated alias of -config)")
 	fs.StringVar(&cfg.ConfigFile, "config", "tidb-lightning.toml", "tidb-lightning configuration file")
-	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compaction on the target cluster, run then exit")
-	fs.StringVar(&cfg.SwitchMode, "switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal'], run then exit")
-	fs.BoolVar(&cfg.printVersion, "V", false, "print version of lightning")
+	printVersion := fs.Bool("V", false, "print version of lightning")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, errors.Trace(err)
+	}
+	if *printVersion {
+		fmt.Println(common.GetRawInfo())
+		return nil, flag.ErrHelp
 	}
 
 	if err := cfg.Load(); err != nil {
@@ -205,11 +201,6 @@ func LoadConfig(args []string) (*Config, error) {
 }
 
 func (cfg *Config) Load() error {
-	if cfg.printVersion {
-		fmt.Println(common.GetRawInfo())
-		return flag.ErrHelp
-	}
-
 	data, err := ioutil.ReadFile(cfg.ConfigFile)
 	if err != nil {
 		return errors.Trace(err)
