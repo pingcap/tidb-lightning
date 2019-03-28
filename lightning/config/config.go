@@ -198,6 +198,16 @@ func LoadConfig(args []string) (*Config, error) {
 	fs.StringVar(&cfg.ConfigFile, "config", "", "tidb-lightning configuration file")
 	printVersion := fs.Bool("V", false, "print version of lightning")
 
+	logLevel := fs.String("L", "", `log level: info, debug, warn, error, fatal (default "info")`)
+	logFilePath := fs.String("log-file", "", "log file path")
+	tidbHost := fs.String("tidb-host", "", "TiDB server host")
+	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
+	tidbUser := fs.String("tidb-user", "", "TiDB user name to connect")
+	tidbStatusPort := fs.Int("tidb-status", 0, "TiDB server status port (default 10080)")
+	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
+	dataSrcPath := fs.String("d", "", "Directory of the dump to import")
+	importerAddr := fs.String("importer", "", "address (host:port) to connect to tikv-importer")
+
 	if err := fs.Parse(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -209,6 +219,37 @@ func LoadConfig(args []string) (*Config, error) {
 	if err := cfg.Load(); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if *logLevel != "" {
+		cfg.App.LogConfig.Level = *logLevel
+	}
+	if *logFilePath != "" {
+		cfg.App.LogConfig.File = *logFilePath
+	}
+	if *tidbHost != "" {
+		cfg.TiDB.Host = *tidbHost
+	}
+	if *tidbPort != 0 {
+		cfg.TiDB.Port = *tidbPort
+	}
+	if *tidbStatusPort != 0 {
+		cfg.TiDB.StatusPort = *tidbStatusPort
+	}
+	if *tidbUser != "" {
+		cfg.TiDB.User = *tidbUser
+	}
+	if *pdAddr != "" {
+		cfg.TiDB.PdAddr = *pdAddr
+	}
+	if *dataSrcPath != "" {
+		cfg.Mydumper.SourceDir = *dataSrcPath
+	}
+	if *importerAddr != "" {
+		cfg.TikvImporter.Addr = *importerAddr
+	}
+
+	cfg.Adjust()
+
 	return cfg, nil
 }
 
@@ -243,6 +284,10 @@ func (cfg *Config) Load() error {
 		return errors.New("invalid config: `mydumper.csv.delimiter` must be one byte long or empty")
 	}
 
+	return nil
+}
+
+func (cfg *Config) Adjust() {
 	// handle mydumper
 	if cfg.Mydumper.BatchSize <= 0 {
 		cfg.Mydumper.BatchSize = 100 * _G
@@ -271,5 +316,4 @@ func (cfg *Config) Load() error {
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
 	}
-	return nil
 }
