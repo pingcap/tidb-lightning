@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -461,12 +462,34 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	stopPeriodicActions := make(chan struct{}, 1)
 	go rc.runPeriodicActions(ctx, stopPeriodicActions)
 
+	type task struct {
+		tr *TableRestore
+		cp *TableCheckpoint
+	}
+	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
+	defer close(taskCh)
+	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
+		go func() {
+			for task := range taskCh {
+				err := task.tr.restoreTable(ctx, rc, task.cp)
+				metric.RecordTableCount("completed", err)
+				restoreErr.Set(task.tr.tableName, err)
+				wg.Done()
+			}
+		}()
+	}
+
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo, ok := rc.dbInfos[dbMeta.Name]
 		if !ok {
 			common.AppLogger.Errorf("database %s not found in rc.dbInfos", dbMeta.Name)
 			continue
 		}
+		// Put the small table in the front of the slice which can avoid large table
+		// take a long time to import and block small table to release index worker.
+		sort.Slice(dbMeta.Tables, func(i, j int) bool {
+			return dbMeta.Tables[i].TotalSize < dbMeta.Tables[j].TotalSize
+		})
 		for _, tableMeta := range dbMeta.Tables {
 			tableInfo, ok := dbInfo.Tables[tableMeta.Name]
 			if !ok {
@@ -493,12 +516,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			}
 
 			wg.Add(1)
-			go func(t *TableRestore, cp *TableCheckpoint) {
-				defer wg.Done()
-				err := t.restoreTable(ctx, rc, cp)
-				metric.RecordTableCount("completed", err)
-				restoreErr.Set(t.tableName, err)
-			}(tr, cp)
+			taskCh <- task{tr: tr, cp: cp}
 		}
 	}
 

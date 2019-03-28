@@ -44,6 +44,7 @@ type MDTableMeta struct {
 	SchemaFile string
 	DataFiles  []string
 	charSet    string
+	TotalSize  int64
 }
 
 func (m *MDTableMeta) GetSchema() string {
@@ -121,6 +122,7 @@ func (ftype fileType) String() string {
 type fileInfo struct {
 	tableName filter.Table
 	path      string
+	size      int64
 }
 
 var tableNameRegexp = regexp.MustCompile(`^([^.]+)\.(.*?)(?:\.[0-9]+)?$`)
@@ -184,6 +186,7 @@ func (s *mdLoaderSetup) setup(dir string) error {
 			}
 		}
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.path)
+		tableMeta.TotalSize += fileInfo.size
 	}
 
 	return nil
@@ -205,7 +208,7 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 		fname := strings.TrimSpace(f.Name())
 		lowerFName := strings.ToLower(fname)
 
-		info := fileInfo{path: path}
+		info := fileInfo{path: path, size: f.Size()}
 
 		var (
 			ftype         fileType
