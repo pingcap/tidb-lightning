@@ -102,7 +102,7 @@ func TransactWithRetry(ctx context.Context, db *sql.DB, purpose string, action f
 			if IsRetryableError(err) {
 				continue
 			}
-			if !IsContextCanceledError(err) {
+			if ShouldLogError(err) {
 				AppLogger.Errorf("transaction %s [error] %v", purpose, err)
 			}
 			return errors.Trace(err)
@@ -125,7 +125,7 @@ func transactImpl(ctx context.Context, db *sql.DB, purpose string, action func(c
 		AppLogger.Warnf("transaction %s [error]%v", purpose, err)
 		rerr := txn.Rollback()
 		if rerr != nil {
-			if !IsContextCanceledError(rerr) {
+			if ShouldLogError(rerr) {
 				AppLogger.Errorf("transaction %s [error] %v", purpose, rerr)
 			}
 		}
@@ -181,28 +181,33 @@ func IsRetryableError(err error) bool {
 	}
 }
 
-// IsContextCanceledError returns whether the error is caused by context
-// cancellation. This function should only be used for inhabiting logs related
-// to canceling, where the log is usually just noise.
+// ShouldLogError returns whether the error should be logged.
+// This function should only be used for inhabiting logs related to canceling,
+// where the log is usually just noise.
 //
-// This function returns `false` when the current logging level is set to
-// "debug".
+// This function returns `false` when:
+//
+//  - the error `IsContextCanceledError`
+//  - the log level is above "debug"
+//
+// This function also returns `false` when `err == nil`.
+func ShouldLogError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if AppLogger.IsLevelEnabled(logrus.DebugLevel) {
+		return true
+	}
+	return !IsContextCanceledError(err)
+}
+
+// IsContextCanceledError returns whether the error is caused by context
+// cancellation. This function should only be used when the code logic is
+// affected by whether the error is canceling or not. Normally, you should
+// simply use ShouldLogError.
 //
 // This function returns `false` (not a context-canceled error) if `err == nil`.
 func IsContextCanceledError(err error) bool {
-	if AppLogger.IsLevelEnabled(logrus.DebugLevel) {
-		return false
-	}
-	return IsReallyContextCanceledError(err)
-}
-
-// IsReallyContextCanceledError returns whether the error is caused by context
-// cancellation. This function should only be used when the code logic is
-// affected by whether the error is canceling or not. Normally, you should
-// simply use IsContextCanceledError.
-//
-// This function returns `false` (not a context-canceled error) if `err == nil`.
-func IsReallyContextCanceledError(err error) bool {
 	err = errors.Cause(err)
 	return err == context.Canceled || status.Code(err) == codes.Canceled
 }

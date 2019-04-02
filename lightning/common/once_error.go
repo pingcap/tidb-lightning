@@ -35,7 +35,7 @@ func (oe *OnceError) Set(tag string, e error) {
 			oe.err = e
 		}
 		oe.lock.Unlock()
-		if !IsContextCanceledError(e) {
+		if ShouldLogError(e) {
 			AppLogger.Errorf("[%s] error %v", tag, e)
 		}
 	}

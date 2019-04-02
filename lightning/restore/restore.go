@@ -225,7 +225,7 @@ outside:
 		err = process(ctx)
 		switch {
 		case err == nil:
-		case common.IsContextCanceledError(err):
+		case !common.ShouldLogError(err):
 			common.AppLogger.Infof("[step %d] user terminated : %v", i, err)
 			err = nil
 			break outside
@@ -302,7 +302,7 @@ func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int
 	switch {
 	case err == nil:
 		break
-	case !common.IsReallyContextCanceledError(err):
+	case !common.IsContextCanceledError(err):
 		merger.SetInvalid()
 		rc.errorSummaries.record(tableName, err, statusIfSucceed)
 	default:
@@ -1208,7 +1208,7 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 	start := time.Now()
 
 	if err := closedEngine.Import(ctx); err != nil {
-		if !common.IsContextCanceledError(err) {
+		if common.ShouldLogError(err) {
 			common.AppLogger.Errorf("[%s] failed to flush kvs : %s", closedEngine.Tag(), err.Error())
 		}
 		return errors.Trace(err)
@@ -1297,7 +1297,7 @@ func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum,
 	// set it back finally
 	defer func() {
 		err = UpdateGCLifeTime(ctx, db, ori)
-		if err != nil && !common.IsContextCanceledError(err) {
+		if err != nil && common.ShouldLogError(err) {
 			common.AppLogger.Errorf("[%s] update tikv_gc_life_time error %v", table, errors.ErrorStack(err))
 		}
 	}()
