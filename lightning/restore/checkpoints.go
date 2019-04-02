@@ -246,6 +246,9 @@ type CheckpointsDB interface {
 	Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	Close() error
+	// InsertEngineCheckpoints initializes the checkpoints related to a table.
+	// It assumes the entire table has not been imported before and will fill in
+	// default values for the column permutations and checksums.
 	InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints map[int32]*EngineCheckpoint) error
 	Update(checkpointDiffs map[string]*TableCheckpointDiff)
 
@@ -526,9 +529,9 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 				kvc_bytes, kvc_kvs, kvc_checksum
 			) VALUES (
 				?, ?,
-				?, ?, ?, FALSE,
+				?, ?, NULL, FALSE,
 				?, ?, ?, ?,
-				?, ?, ?
+				0, 0, 0
 			);
 		`, cpdb.schema, checkpointTableNameChunk))
 		if err != nil {
@@ -542,12 +545,10 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 				return errors.Trace(err)
 			}
 			for _, value := range engine.Chunks {
-				colPerm, _ := json.Marshal(value.ColumnPermutation)
 				_, err = chunkStmt.ExecContext(
 					c, tableName, engineID,
-					value.Key.Path, value.Key.Offset, colPerm,
+					value.Key.Path, value.Key.Offset,
 					value.Chunk.Offset, value.Chunk.EndOffset, value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax,
-					value.Checksum.SumSize(), value.Checksum.SumKVS(), value.Checksum.Sum(),
 				)
 				if err != nil {
 					return errors.Trace(err)
@@ -765,14 +766,9 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			key := value.Key.String()
 			chunk, ok := engineModel.Chunks[key]
 			if !ok {
-				colPerm := make([]int32, 0, len(value.ColumnPermutation))
-				for _, c := range value.ColumnPermutation {
-					colPerm = append(colPerm, int32(c))
-				}
 				chunk = &ChunkCheckpointModel{
-					Path:              value.Key.Path,
-					Offset:            value.Key.Offset,
-					ColumnPermutation: colPerm,
+					Path:   value.Key.Path,
+					Offset: value.Key.Offset,
 				}
 				engineModel.Chunks[key] = chunk
 			}
@@ -780,9 +776,6 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			chunk.EndOffset = value.Chunk.EndOffset
 			chunk.PrevRowidMax = value.Chunk.PrevRowIDMax
 			chunk.RowidMax = value.Chunk.RowIDMax
-			chunk.KvcBytes = value.Checksum.SumSize()
-			chunk.KvcKvs = value.Checksum.SumKVS()
-			chunk.KvcChecksum = value.Checksum.Sum()
 		}
 		tableModel.Engines[engineID] = engineModel
 	}
