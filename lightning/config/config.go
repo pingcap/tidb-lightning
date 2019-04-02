@@ -164,8 +164,7 @@ func NewConfig() *Config {
 			CheckRequirements: true,
 		},
 		TiDB: DBStore{
-			StrSQLMode:                 "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
-			SQLMode:                    mysql.ModeStrictTransTables | mysql.ModeNoEngineSubstitution,
+			StrSQLMode:                 mysql.DefaultSQLMode,
 			BuildStatsConcurrency:      20,
 			DistSQLScanConcurrency:     100,
 			IndexSerialScanConcurrency: 20,
@@ -232,7 +231,7 @@ func (cfg *Config) Load() error {
 
 	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
 	if err != nil {
-		return errors.New("invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
+		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
 
 	// handle mydumper

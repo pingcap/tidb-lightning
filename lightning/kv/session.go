@@ -43,8 +43,9 @@ func (t *transaction) SetOption(opt kv.Option, val interface{}) {}
 // DelOption implements the kv.Transaction interface
 func (t *transaction) DelOption(kv.Option) {}
 
-// transaction is a trimmed down Transaction type which only supports adding a
-// new KV pair.
+// session is a trimmed down Session type which only wraps our own trimmed-down
+// transaction type and provides the session variables to the TiDB library
+// optimized for Lightning.
 type session struct {
 	sessionctx.Context
 	txn  transaction

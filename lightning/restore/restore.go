@@ -1389,17 +1389,18 @@ func writeToEngine(ctx context.Context, engine *kv.OpenedEngine, totalKVs []kven
 		return errors.Trace(err)
 	}
 
+	var putError error
 	for _, kvs := range splitIntoDeliveryStreams(totalKVs, maxDeliverBytes) {
-		if err := stream.Put(kvs); err != nil {
-			return errors.Trace(err)
+		putError = stream.Put(kvs)
+		if putError != nil {
+			break
 		}
 	}
 
 	if err := stream.Close(); err != nil {
 		return errors.Trace(err)
 	}
-
-	return nil
+	return errors.Trace(putError)
 }
 
 type deliveredKVs struct {
@@ -1545,12 +1546,6 @@ func (cr *chunkRestore) restore(
 	initializedColumns := false
 outside:
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		offset, _ := cr.parser.Pos()
 		if offset >= cr.chunk.Chunk.EndOffset {
 			break
@@ -1591,10 +1586,16 @@ outside:
 			return errors.Trace(err)
 		}
 
-		kvsCh <- deliveredKVs{
-			kvs:    kvs,
-			offset: newOffset,
-			rowID:  rowID,
+		select {
+		case kvsCh <- deliveredKVs{kvs: kvs, offset: newOffset, rowID: rowID}:
+			continue
+		case <-ctx.Done():
+			return ctx.Err()
+		case deliverResult := <-deliverCompleteCh:
+			if deliverResult.err == nil {
+				panic("unexpected: deliverCompleteCh prematurely fulfilled with no error")
+			}
+			return errors.Trace(deliverResult.err)
 		}
 	}
 

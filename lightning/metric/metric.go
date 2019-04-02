@@ -74,7 +74,7 @@ var (
 			Name:      "tables",
 			Help:      "count number of tables processed",
 		}, []string{"state", "result"})
-	EngineCounter = prometheus.NewCounterVec(
+	ProcessedEngineCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "lightning",
 			Name:      "engines",
@@ -180,6 +180,7 @@ func init() {
 	prometheus.MustRegister(ImporterEngineCounter)
 	prometheus.MustRegister(KvEncoderCounter)
 	prometheus.MustRegister(TableCounter)
+	prometheus.MustRegister(ProcessedEngineCounter)
 	prometheus.MustRegister(ChunkCounter)
 	prometheus.MustRegister(ImportSecondsHistogram)
 	prometheus.MustRegister(RowReadSecondsHistogram)
@@ -210,7 +211,7 @@ func RecordEngineCount(status string, err error) {
 	} else {
 		result = TableResultSuccess
 	}
-	EngineCounter.WithLabelValues(status, result).Inc()
+	ProcessedEngineCounter.WithLabelValues(status, result).Inc()
 }
 
 // ReadCounter reports the current value of the counter.

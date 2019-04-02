@@ -203,11 +203,6 @@ func (importer *Importer) OpenEngine(
 	}, nil
 }
 
-// Tag gets an identification stirng of this engine for logging.
-func (engine *OpenedEngine) Tag() string {
-	return engine.tag
-}
-
 // WriteStream is a single write stream into an opened engine. This type is
 // **NOT** goroutine safe, all operations must be executed in the same
 // goroutine.

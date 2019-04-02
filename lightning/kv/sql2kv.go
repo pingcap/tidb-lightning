@@ -26,8 +26,9 @@ import (
 var extraHandleColumnInfo = model.NewExtraHandleColInfo()
 
 type TableKVEncoder struct {
-	tbl table.Table
-	se  *session
+	tbl         table.Table
+	se          *session
+	recordCache []types.Datum
 }
 
 func NewTableKVEncoder(
@@ -46,19 +47,29 @@ func (kvcodec *TableKVEncoder) Close() {
 	metric.KvEncoderCounter.WithLabelValues("closed").Inc()
 }
 
+// Encode a row of data into KV pairs.
+//
+// See comments in `(*TableRestore).initializeColumns` for the meaning of the
+// `columnPermutation` parameter.
 func (kvcodec *TableKVEncoder) Encode(
 	row []types.Datum,
 	rowID int64,
-	colPerm []int,
+	columnPermutation []int,
 ) ([]kvec.KvPair, error) {
 	cols := kvcodec.tbl.Cols()
 
 	var value types.Datum
 	var err error
+	var record []types.Datum
 
-	record := make([]types.Datum, 0, len(cols)+1)
+	if kvcodec.recordCache != nil {
+		record = kvcodec.recordCache
+	} else {
+		record = make([]types.Datum, 0, len(cols)+1)
+	}
+
 	for i, col := range cols {
-		if j := colPerm[i]; j >= 0 {
+		if j := columnPermutation[i]; j >= 0 {
 			value, err = table.CastValue(kvcodec.se, row[j], col.ToInfo())
 			if err == nil {
 				value, err = col.HandleBadNull(value, kvcodec.se.vars.StmtCtx)
@@ -73,7 +84,7 @@ func (kvcodec *TableKVEncoder) Encode(
 	}
 
 	if !kvcodec.tbl.Meta().PKIsHandle {
-		if j := colPerm[len(cols)]; j >= 0 {
+		if j := columnPermutation[len(cols)]; j >= 0 {
 			value, err = table.CastValue(kvcodec.se, row[j], extraHandleColumnInfo)
 		} else {
 			value, err = types.NewIntDatum(rowID), nil
@@ -86,6 +97,7 @@ func (kvcodec *TableKVEncoder) Encode(
 
 	_, err = kvcodec.tbl.AddRecord(kvcodec.se, record)
 	pairs := kvcodec.se.takeKvPairs()
+	kvcodec.recordCache = record[:0]
 
 	return pairs, errors.Trace(err)
 }
