@@ -529,7 +529,7 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 				kvc_bytes, kvc_kvs, kvc_checksum
 			) VALUES (
 				?, ?,
-				?, ?, NULL, FALSE,
+				?, ?, '[]', FALSE,
 				?, ?, ?, ?,
 				0, 0, 0
 			);

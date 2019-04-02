@@ -86,11 +86,6 @@ const (
 	backslashEscapeFlavorNone backslashEscapeFlavor = iota
 	backslashEscapeFlavorMySQL
 	backslashEscapeFlavorMySQLWithNull
-
-	// LegacyNullSequence is a backward-compatibility internal representation
-	// of the escape sequence "\N". It is generated randomly to minimize chance
-	// of collision with user data. Used for CSV parsing only.
-	legacyNullSequence = "\xeaGs\xf5\x15\xb0\xa2%\x16\xf7z\x9d\xbe\xd8\xb3\x85"
 )
 
 type Parser interface {
@@ -206,9 +201,6 @@ func unescape(
 			input = strings.Replace(input, delim2, delim, -1)
 		}
 	}
-	if escFlavor == backslashEscapeFlavorMySQLWithNull && input == `\N` {
-		return legacyNullSequence
-	}
 	if escFlavor != backslashEscapeFlavorNone && strings.IndexByte(input, '\\') != -1 {
 		input = unescapeRegexp.ReplaceAllStringFunc(input, func(substr string) string {
 			switch substr[1] {
@@ -271,6 +263,74 @@ func (parser *ChunkParser) ReadRow() error {
 		// the state while reading row values
 		stateRow
 	)
+
+	// Dry-run sample of the state machine, first row:
+	//
+	//              Input         Token             State
+	//              ~~~~~         ~~~~~             ~~~~~
+	//
+	//                                              stateValues
+	//              INSERT
+	//              INTO
+	//              `tableName`   tokBackQuoted
+	//                                              stateTableName (reset columns)
+	//              (             tokRowBegin
+	//                                              stateColumns
+	//              `a`           tokBackQuoted
+	//                                              stateColumns (append column)
+	//              ,
+	//              `b`           tokBackQuoted
+	//                                              stateColumns (append column)
+	//              )             tokRowEnd
+	//                                              stateValues
+	//              VALUES
+	//                                              stateValues (no-op)
+	//              (             tokRowBegin
+	//                                              stateRow (reset row)
+	//              1             tokUnquoted
+	//                                              stateRow (append value)
+	//              ,
+	//              2             tokUnquoted
+	//                                              stateRow (append value)
+	//              )             tokRowEnd
+	//                                              return
+	//
+	//
+	// Second row:
+	//
+	//              Input         Token             State
+	//              ~~~~~         ~~~~~             ~~~~~
+	//
+	//                                              stateValues
+	//              ,
+	//              (             tokRowBegin
+	//                                              stateRow (reset row)
+	//              3             tokUnquoted
+	//                                              stateRow (append value)
+	//              )             tokRowEnd
+	//                                              return
+	//
+	// Third row:
+	//
+	//              Input         Token             State
+	//              ~~~~~         ~~~~~             ~~~~~
+	//
+	//              ;
+	//              INSERT
+	//              INTO
+	//              `database`    tokBackQuoted
+	//                                              stateTableName (reset columns)
+	//              .
+	//              `tableName`   tokBackQuoted
+	//                                              stateTableName (no-op)
+	//              VALUES
+	//                                              stateValues
+	//              (             tokRowBegin
+	//                                              stateRow (reset row)
+	//              4             tokUnquoted
+	//                                              stateRow (append value)
+	//              )             tokRowEnd
+	//                                              return
 
 	row := &parser.lastRow
 	st := stateValues

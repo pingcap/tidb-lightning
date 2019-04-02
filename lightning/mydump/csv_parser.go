@@ -60,12 +60,9 @@ func (parser *CSVParser) appendEmptyValues(sepCount int) {
 }
 
 func (parser *CSVParser) appendField(content string) {
-	input := parser.unescapeString(content)
+	input, isNull := parser.unescapeString(content)
 
-	var isNull bool
-	if parser.escFlavor == backslashEscapeFlavorMySQLWithNull {
-		isNull = input == legacyNullSequence
-	} else {
+	if parser.escFlavor != backslashEscapeFlavorMySQLWithNull {
 		isNull = !parser.cfg.NotNull && parser.cfg.Null == input
 	}
 
@@ -78,12 +75,17 @@ func (parser *CSVParser) appendField(content string) {
 	parser.lastRow.Row = append(parser.lastRow.Row, datum)
 }
 
-func (parser *CSVParser) unescapeString(input string) string {
+func (parser *CSVParser) unescapeString(input string) (unescaped string, isNull bool) {
 	delim := parser.cfg.Delimiter
 	if len(delim) > 0 && len(input) >= 2 && input[0] == delim[0] {
-		return unescape(input[1:len(input)-1], delim, parser.escFlavor)
+		input = input[1 : len(input)-1]
+	} else {
+		delim = ""
 	}
-	return unescape(input, "", parser.escFlavor)
+	if parser.escFlavor == backslashEscapeFlavorMySQLWithNull && input == `\N` {
+		return input, true
+	}
+	return unescape(input, delim, parser.escFlavor), false
 }
 
 // ReadRow reads a row from the datafile.
@@ -107,7 +109,7 @@ func (parser *CSVParser) ReadRow() error {
 			switch tok {
 			case csvTokSep:
 			case csvTokField:
-				colName := parser.unescapeString(string(content))
+				colName, _ := parser.unescapeString(string(content))
 				parser.columns = append(parser.columns, strings.ToLower(colName))
 			case csvTokNewLine:
 				break outside

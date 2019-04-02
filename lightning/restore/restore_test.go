@@ -63,3 +63,18 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 		c.Assert(err, IsNil)
 	}
 }
+
+func (s *restoreSuite) TestNewTableRestoreFailure(c *C) {
+	tableInfo := &TidbTableInfo{
+		Name:            "failure",
+		CreateTableStmt: "N/A",
+		core:            &model.TableInfo{},
+	}
+	dbInfo := &TidbDBInfo{Name: "mockdb", Tables: map[string]*TidbTableInfo{
+		"failure": tableInfo,
+	}}
+	tableName := common.UniqueTable("mockdb", "failure")
+
+	_, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &TableCheckpoint{})
+	c.Assert(err, ErrorMatches, `failed to tables\.TableFromMeta.*`)
+}

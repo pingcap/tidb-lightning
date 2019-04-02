@@ -1494,6 +1494,9 @@ func (cr *chunkRestore) deliverLoop(
 }
 
 func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *RestoreController) {
+	// We need to update the AllocBase every time we've finished a file.
+	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
+	// or integer primary key), which can only be obtained by reading all data.
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &RebaseCheckpointMerger{
@@ -1600,10 +1603,16 @@ outside:
 	}
 
 	lastOffset, lastRowID := cr.parser.Pos()
-	kvsCh <- deliveredKVs{
-		kvs:    nil,
-		offset: lastOffset,
-		rowID:  lastRowID,
+	select {
+	case kvsCh <- deliveredKVs{kvs: nil, offset: lastOffset, rowID: lastRowID}:
+		break
+	case <-ctx.Done():
+		return ctx.Err()
+	case deliverResult := <-deliverCompleteCh:
+		if deliverResult.err == nil {
+			panic("unexpected: deliverCompleteCh prematurely fulfilled with no error")
+		}
+		return errors.Trace(deliverResult.err)
 	}
 
 	select {
