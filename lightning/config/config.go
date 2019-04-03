@@ -18,7 +18,6 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"os"
 	"runtime"
 	"time"
 
@@ -257,18 +256,9 @@ func LoadConfig(args []string) (*Config, error) {
 }
 
 func (cfg *Config) Load() error {
-	// search the default config path if none is specified.
+	// use standard config if unspecified.
 	if cfg.ConfigFile == "" {
-		for _, path := range defaultConfigPaths {
-			if _, err := os.Stat(path); err == nil {
-				cfg.ConfigFile = path
-				break
-			}
-		}
-		// use standard config if unspecified.
-		if cfg.ConfigFile == "" {
-			return nil
-		}
+		return nil
 	}
 
 	data, err := ioutil.ReadFile(cfg.ConfigFile)
