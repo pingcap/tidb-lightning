@@ -75,7 +75,9 @@ for i in $(seq "$CHUNK_COUNT"); do
 done
 
 set +e
-while true; do
+i=0
+wait_max_time=20
+while [ $i -lt $wait_max_time ]; do
     lightning_proc=$(ps -ef|grep '[b]in/tidb-lightning.test')
     ret="$?"
     if [ "$ret" -eq 0 ]; then
@@ -84,6 +86,10 @@ while true; do
         break
     fi
 done
+if [ $i -ge $wait_max_time ]; then
+    echo "wait lightning exit failed"
+    exit 1
+fi
 set -e
 
 verify_checkpoint_noop
