@@ -102,7 +102,7 @@ rm -f "$TEST_DIR/cpch.pb"
 
 # Set the failpoint to kill the lightning instance as soon as one chunk is imported
 # If checkpoint does work, this should only kill $CHUNK_COUNT instances of lightnings.
-export GOFAIL_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/FailIfImportedChunk=return'
+export GOFAIL_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/FailIfImportedChunk=return($ROW_COUNT)"
 set +e
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk using File checkpoint Now (step $i/$CHUNK_COUNT) ********"
