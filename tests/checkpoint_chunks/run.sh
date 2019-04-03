@@ -68,7 +68,7 @@ run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test_cpch'
 
 # Set the failpoint to kill the lightning instance as soon as one chunk is imported, via signal mechanism
 # If checkpoint does work, this should only kill $CHUNK_COUNT instances of lightnings.
-export GOFAIL_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/KillIfImportedChunk=return'
+export GOFAIL_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/KillIfImportedChunk=return($ROW_COUNT)"
 
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk Now (step $i/$CHUNK_COUNT) ********"
