@@ -178,13 +178,13 @@ func (importer *Importer) OpenEngine(
 		return nil, errors.Trace(err)
 	}
 
-	openCounter := metric.EngineCounter.WithLabelValues("open")
+	openCounter := metric.ImporterEngineCounter.WithLabelValues("open")
 	openCounter.Inc()
 	common.AppLogger.Infof("[%s] open engine %s", tag, engineUUID)
 
 	// gofail: var FailIfEngineCountExceeds int
 	// {
-	// 	closedCounter := metric.EngineCounter.WithLabelValues("closed")
+	// 	closedCounter := metric.ImporterEngineCounter.WithLabelValues("closed")
 	// 	openCount := metric.ReadCounter(openCounter)
 	// 	closedCount := metric.ReadCounter(closedCounter)
 	// 	if openCount - closedCount > float64(FailIfEngineCountExceeds) {
@@ -276,7 +276,7 @@ func (stream *WriteStream) Put(kvs []kvec.KvPair) error {
 // Close the write stream.
 func (stream *WriteStream) Close() error {
 	if _, err := stream.wstream.CloseAndRecv(); err != nil {
-		if !common.IsContextCanceledError(err) {
+		if common.ShouldLogError(err) {
 			common.AppLogger.Errorf("[%s] close write stream cause failed : %v", stream.engine.tag, err)
 		}
 		return errors.Trace(err)
@@ -303,7 +303,7 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 		return nil, errors.Trace(err)
 	}
 	common.AppLogger.Infof("[%s] [%s] engine close takes %v", engine.tag, engine.uuid, time.Since(timer))
-	metric.EngineCounter.WithLabelValues("closed").Inc()
+	metric.ImporterEngineCounter.WithLabelValues("closed").Inc()
 	return closedEngine, nil
 }
 
@@ -350,7 +350,7 @@ func (engine *ClosedEngine) Import(ctx context.Context) error {
 		if !common.IsRetryableError(err) {
 			if err == nil {
 				common.AppLogger.Infof("[%s] [%s] import takes %v", engine.tag, engine.uuid, time.Since(timer))
-			} else if !common.IsContextCanceledError(err) {
+			} else if common.ShouldLogError(err) {
 				common.AppLogger.Errorf("[%s] [%s] import failed and cannot retry, err %v", engine.tag, engine.uuid, err)
 			}
 			return errors.Trace(err)
@@ -372,4 +372,9 @@ func (engine *ClosedEngine) Cleanup(ctx context.Context) error {
 	_, err := engine.importer.cli.CleanupEngine(ctx, req)
 	common.AppLogger.Infof("[%s] [%s] cleanup takes %v", engine.tag, engine.uuid, time.Since(timer))
 	return errors.Trace(err)
+}
+
+// Tag gets an identification stirng of this engine for logging.
+func (engine *ClosedEngine) Tag() string {
+	return engine.tag
 }

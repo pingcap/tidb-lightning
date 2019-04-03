@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eu
+set -eux
 
 # First, verify that a normal operation is fine.
 
@@ -69,6 +69,7 @@ check_contains 'sum(c): 46'
 # Now, try again with MySQL checkpoints
 
 run_sql 'DROP DATABASE cpeng;'
+run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint;'
 
 set +e
 for i in $(seq "$ENGINE_COUNT"); do
