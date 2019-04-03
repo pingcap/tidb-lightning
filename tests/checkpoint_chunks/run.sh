@@ -20,7 +20,7 @@ DBPATH="$TEST_DIR/cpch.mydump"
 CHUNK_COUNT=5
 ROW_COUNT=1000
 
-verify_checkpoint_op() {
+verify_checkpoint_noop() {
     # After everything is done, there should be no longer new calls to WriteEngine/CloseAndRecv
     # (and thus `kill_lightning_after_one_chunk` will spare this final check)
     echo "******** Verify checkpoint no-op ********"
@@ -59,7 +59,7 @@ for i in $(seq "$CHUNK_COUNT"); do
 done
 set -e
 
-verify_checkpoint_op
+verify_checkpoint_noop
 
 # Next, test kill lightning via signal mechanism
 run_sql 'DROP DATABASE IF EXISTS cpch_tsr'
@@ -86,7 +86,7 @@ while true; do
 done
 set -e
 
-verify_checkpoint_op
+verify_checkpoint_noop
 
 # Repeat, but using the file checkpoint
 run_sql 'DROP DATABASE IF EXISTS cpch_tsr'
