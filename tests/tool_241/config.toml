@@ -17,6 +17,7 @@ user = "root"
 status-port = 10080
 pd-addr = "127.0.0.1:2379"
 log-level = "error"
+sql-mode = ''
 
 [post-restore]
 checksum = true

@@ -40,10 +40,13 @@ const (
 	ChunkStateRunning   = "running"
 	ChunkStateFinished  = "finished"
 	ChunkStateFailed    = "failed"
+
+	BlockDeliverKindIndex = "index"
+	BlockDeliverKindData  = "data"
 )
 
 var (
-	EngineCounter = prometheus.NewCounterVec(
+	ImporterEngineCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "lightning",
 			Name:      "importer_engine",
@@ -71,7 +74,12 @@ var (
 			Name:      "tables",
 			Help:      "count number of tables processed",
 		}, []string{"state", "result"})
-
+	ProcessedEngineCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "lightning",
+			Name:      "engines",
+			Help:      "count number of engines processed",
+		}, []string{"state", "result"})
 	ChunkCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "lightning",
@@ -93,35 +101,11 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.125, 2, 6),
 		},
 	)
-	BlockReadSecondsHistogram = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "lightning",
-			Name:      "block_read_seconds",
-			Help:      "time needed to read a block",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 7),
-		},
-	)
-	BlockReadBytesHistogram = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "lightning",
-			Name:      "block_read_bytes",
-			Help:      "number of bytes being read out from data source",
-			Buckets:   prometheus.ExponentialBuckets(1024, 2, 8),
-		},
-	)
 	ChunkParserReadBlockSecondsHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "lightning",
 			Name:      "chunk_parser_read_block_seconds",
 			Help:      "time needed for chunk parser read a block",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
-		},
-	)
-	ChunkParserReadRowSecondsHistogram = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "lightning",
-			Name:      "chunk_parser_read_row_seconds",
-			Help:      "time needed for chunk parser read a row",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 		},
 	)
@@ -133,11 +117,27 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 		}, []string{"name"},
 	)
-	BlockEncodeSecondsHistogram = prometheus.NewHistogram(
+	RowReadSecondsHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "lightning",
-			Name:      "block_encode_seconds",
-			Help:      "time needed to encode a block",
+			Name:      "row_read_seconds",
+			Help:      "time needed to parse a row",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 7),
+		},
+	)
+	RowReadBytesHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "row_read_bytes",
+			Help:      "number of bytes being read out from data source",
+			Buckets:   prometheus.ExponentialBuckets(1024, 2, 8),
+		},
+	)
+	RowEncodeSecondsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "row_encode_seconds",
+			Help:      "time needed to encode a row",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 		},
 	)
@@ -149,13 +149,21 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 		},
 	)
-	BlockDeliverBytesHistogram = prometheus.NewHistogram(
+	BlockDeliverBytesHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "lightning",
 			Name:      "block_deliver_bytes",
 			Help:      "number of bytes being sent out to importer",
 			Buckets:   prometheus.ExponentialBuckets(512, 2, 10),
-		},
+		}, []string{"kind"},
+	)
+	BlockDeliverKVPairsHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "block_deliver_kv_pairs",
+			Help:      "number of KV pairs being sent out to importer",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 10),
+		}, []string{"kind"},
 	)
 	ChecksumSecondsHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -169,18 +177,19 @@ var (
 
 func init() {
 	prometheus.MustRegister(IdleWorkersGauge)
-	prometheus.MustRegister(EngineCounter)
+	prometheus.MustRegister(ImporterEngineCounter)
 	prometheus.MustRegister(KvEncoderCounter)
 	prometheus.MustRegister(TableCounter)
+	prometheus.MustRegister(ProcessedEngineCounter)
 	prometheus.MustRegister(ChunkCounter)
 	prometheus.MustRegister(ImportSecondsHistogram)
-	prometheus.MustRegister(BlockReadSecondsHistogram)
-	prometheus.MustRegister(BlockReadBytesHistogram)
-	prometheus.MustRegister(BlockEncodeSecondsHistogram)
+	prometheus.MustRegister(RowReadSecondsHistogram)
+	prometheus.MustRegister(RowReadBytesHistogram)
+	prometheus.MustRegister(RowEncodeSecondsHistogram)
 	prometheus.MustRegister(BlockDeliverSecondsHistogram)
 	prometheus.MustRegister(BlockDeliverBytesHistogram)
+	prometheus.MustRegister(BlockDeliverKVPairsHistogram)
 	prometheus.MustRegister(ChecksumSecondsHistogram)
-	prometheus.MustRegister(ChunkParserReadRowSecondsHistogram)
 	prometheus.MustRegister(ChunkParserReadBlockSecondsHistogram)
 	prometheus.MustRegister(ApplyWorkerSecondsHistogram)
 }
@@ -193,6 +202,16 @@ func RecordTableCount(status string, err error) {
 		result = TableResultSuccess
 	}
 	TableCounter.WithLabelValues(status, result).Inc()
+}
+
+func RecordEngineCount(status string, err error) {
+	var result string
+	if err != nil {
+		result = TableResultFailure
+	} else {
+		result = TableResultSuccess
+	}
+	ProcessedEngineCounter.WithLabelValues(status, result).Inc()
 }
 
 // ReadCounter reports the current value of the counter.

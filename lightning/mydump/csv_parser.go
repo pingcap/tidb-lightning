@@ -1,22 +1,19 @@
 package mydump
 
 import (
-	"bytes"
 	"io"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
+	"github.com/pingcap/tidb/types"
 )
 
 type CSVParser struct {
 	blockParser
-
-	rowBuf bytes.Buffer
-	cfg    *config.CSVConfig
-
-	delim1 []byte
-	delim2 []byte
+	cfg       *config.CSVConfig
+	escFlavor backslashEscapeFlavor
 }
 
 func NewCSVParser(
@@ -25,12 +22,19 @@ func NewCSVParser(
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 ) *CSVParser {
+	escFlavor := backslashEscapeFlavorNone
+	if cfg.BackslashEscape {
+		escFlavor = backslashEscapeFlavorMySQL
+		// we need special treatment of the NULL value \N, used by MySQL.
+		if !cfg.NotNull && cfg.Null == `\N` {
+			escFlavor = backslashEscapeFlavorMySQLWithNull
+		}
+	}
+
 	return &CSVParser{
 		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers),
 		cfg:         cfg,
-
-		delim1: []byte(cfg.Delimiter),
-		delim2: []byte(cfg.Delimiter + cfg.Delimiter),
+		escFlavor:   escFlavor,
 	}
 }
 
@@ -41,46 +45,61 @@ const (
 	csvTokSep
 	csvTokNewLine
 	csvTokField
-	csvTokQuotedField
 )
 
 func (parser *CSVParser) appendEmptyValues(sepCount int) {
-	var content string
+	var datum types.Datum
 	if !parser.cfg.NotNull && parser.cfg.Null == "" {
-		content = ",NULL"
+		datum.SetNull()
 	} else {
-		content = ",''"
+		datum.SetString("")
 	}
-	for i := 1; i < sepCount; i++ {
-		parser.rowBuf.WriteString(content)
+	for i := 0; i < sepCount; i++ {
+		parser.lastRow.Row = append(parser.lastRow.Row, datum)
 	}
 }
 
-func (parser *CSVParser) appendField(content []byte, shouldUnquote bool, quote byte) {
-	if !parser.cfg.BackslashEscape {
-		content = bytes.Replace(content, []byte(`\`), []byte(`\\`), -1)
-	}
-	if shouldUnquote {
-		content = bytes.Replace(content[1:len(content)-1], parser.delim2, parser.delim1, -1)
-	}
-	if !parser.cfg.NotNull && parser.cfg.Null == string(content) {
-		parser.rowBuf.WriteString(",NULL")
-		return
+func (parser *CSVParser) appendField(content string) {
+	input, isNull := parser.unescapeString(content)
+
+	if parser.escFlavor != backslashEscapeFlavorMySQLWithNull {
+		isNull = !parser.cfg.NotNull && parser.cfg.Null == input
 	}
 
-	parser.rowBuf.WriteByte(',')
-	parser.rowBuf.WriteByte(quote)
-	parser.rowBuf.Write(bytes.Replace(content, []byte{quote}, []byte{quote, quote}, -1))
-	parser.rowBuf.WriteByte(quote)
+	var datum types.Datum
+	if isNull {
+		datum.SetNull()
+	} else {
+		datum.SetString(input)
+	}
+	parser.lastRow.Row = append(parser.lastRow.Row, datum)
+}
+
+func (parser *CSVParser) unescapeString(input string) (unescaped string, isNull bool) {
+	delim := parser.cfg.Delimiter
+	if len(delim) > 0 && len(input) >= 2 && input[0] == delim[0] {
+		input = input[1 : len(input)-1]
+	} else {
+		delim = ""
+	}
+	if parser.escFlavor == backslashEscapeFlavorMySQLWithNull && input == `\N` {
+		return input, true
+	}
+	return unescape(input, delim, parser.escFlavor), false
 }
 
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
-	emptySepCount := 0
+	emptySepCount := 1
 	hasField := false
+
+	row := &parser.lastRow
+	row.RowID++
+	row.Row = make([]types.Datum, 0, len(row.Row))
 
 	// skip the header first
 	if parser.pos == 0 && parser.cfg.Header {
+		parser.columns = make([]string, 0, len(row.Row))
 	outside:
 		for {
 			tok, content, err := parser.lex()
@@ -90,16 +109,9 @@ func (parser *CSVParser) ReadRow() error {
 			switch tok {
 			case csvTokSep:
 			case csvTokField:
-				parser.appendField(content, false, '`')
-			case csvTokQuotedField:
-				parser.appendField(content, true, '`')
+				colName, _ := parser.unescapeString(string(content))
+				parser.columns = append(parser.columns, strings.ToLower(colName))
 			case csvTokNewLine:
-				len := parser.rowBuf.Len()
-				parser.columns = make([]byte, len+1)
-				copy(parser.columns[:len], parser.rowBuf.Bytes())
-				parser.columns[0] = '('
-				parser.columns[len] = ')'
-				parser.rowBuf.Reset()
 				break outside
 			}
 		}
@@ -126,24 +138,14 @@ func (parser *CSVParser) ReadRow() error {
 			emptySepCount++
 
 		case csvTokField:
-			parser.appendEmptyValues(emptySepCount)
+			parser.appendEmptyValues(emptySepCount - 1)
 			emptySepCount = 0
-			parser.appendField(content, false, '\'')
-
-		case csvTokQuotedField:
-			parser.appendEmptyValues(emptySepCount)
-			emptySepCount = 0
-			parser.appendField(content, true, '\'')
+			parser.appendField(string(content))
 
 		case csvTokNewLine:
 			if !parser.cfg.TrimLastSep {
 				parser.appendEmptyValues(emptySepCount)
 			}
-			parser.rowBuf.WriteByte(')')
-			parser.lastRow.Row = parser.rowBuf.Bytes()
-			parser.lastRow.Row[0] = '('
-			parser.lastRow.RowID++
-			parser.rowBuf.Reset()
 			return nil
 		}
 	}

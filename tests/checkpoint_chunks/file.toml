@@ -2,7 +2,7 @@
 region-concurrency = 1
 check-requirements = false
 file = "/tmp/lightning_test_result/lightning.log"
-level = "error"
+level = "info"
 
 [checkpoint]
 enable = true

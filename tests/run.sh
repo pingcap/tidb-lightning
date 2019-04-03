@@ -93,7 +93,7 @@ if [ "${1-}" = '--debug' ]; then
 fi
 
 for script in tests/*/run.sh; do
-    echo "Running test $script..."
+    echo "\x1b[32;1m@@@@@@@ Running test $script...\x1b[0m"
     TEST_DIR="$TEST_DIR" \
     PATH="tests/_utils:$PATH" \
     TEST_NAME="$(basename "$(dirname "$script")")" \

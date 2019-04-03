@@ -19,11 +19,12 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-
-	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
 )
 
 var _ = Suite(&testMydumpParserSuite{})
@@ -42,15 +43,18 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	)
 
 	ioWorkers := worker.NewPool(context.Background(), 5, "test")
-	parser := mydump.NewChunkParser(reader, config.ReadBlockSize, ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 1,
-		Row:   []byte("(1, 2, 3)"),
+		Row: []types.Datum{
+			types.NewStringDatum("1"),
+			types.NewStringDatum("2"),
+			types.NewStringDatum("3"),
+		},
 	})
-	c.Assert(parser.TableName, DeepEquals, []byte("`namespaced`.`table`"))
-	c.Assert(parser.Columns(), DeepEquals, []byte("(columns, more, columns)"))
+	c.Assert(parser.Columns(), DeepEquals, []string{"columns", "more", "columns"})
 	offset, rowID := parser.Pos()
 	c.Assert(offset, Equals, int64(97))
 	c.Assert(rowID, Equals, int64(1))
@@ -58,10 +62,12 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 2,
-		Row:   []byte("(4, 5, 6)"),
-	})
-	c.Assert(parser.TableName, DeepEquals, []byte("`namespaced`.`table`"))
-	c.Assert(parser.Columns(), DeepEquals, []byte("(columns, more, columns)"))
+		Row: []types.Datum{
+			types.NewStringDatum("4"),
+			types.NewStringDatum("5"),
+			types.NewStringDatum("6"),
+		}})
+	c.Assert(parser.Columns(), DeepEquals, []string{"columns", "more", "columns"})
 	offset, rowID = parser.Pos()
 	c.Assert(offset, Equals, int64(108))
 	c.Assert(rowID, Equals, int64(2))
@@ -69,10 +75,13 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 3,
-		Row:   []byte("(7,8,9)"),
+		Row: []types.Datum{
+			types.NewStringDatum("7"),
+			types.NewStringDatum("8"),
+			types.NewStringDatum("9"),
+		},
 	})
-	c.Assert(parser.TableName, DeepEquals, []byte("`namespaced`.`table`"))
-	c.Assert(parser.Columns(), DeepEquals, []byte("(x,y,z)"))
+	c.Assert(parser.Columns(), DeepEquals, []string{"x", "y", "z"})
 	offset, rowID = parser.Pos()
 	c.Assert(offset, Equals, int64(159))
 	c.Assert(rowID, Equals, int64(3))
@@ -80,9 +89,15 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 4,
-		Row:   []byte("(10, 11, 12, '(13)', '(', 14, ')')"),
-	})
-	c.Assert(parser.TableName, DeepEquals, []byte("another_table"))
+		Row: []types.Datum{
+			types.NewStringDatum("10"),
+			types.NewStringDatum("11"),
+			types.NewStringDatum("12"),
+			types.NewStringDatum("(13)"),
+			types.NewStringDatum("("),
+			types.NewStringDatum("14"),
+			types.NewStringDatum(")"),
+		}})
 	c.Assert(parser.Columns(), IsNil)
 	offset, rowID = parser.Pos()
 	c.Assert(offset, Equals, int64(222))
@@ -99,7 +114,7 @@ func (s *testMydumpParserSuite) TestReadChunks(c *C) {
 	`)
 
 	ioWorkers := worker.NewPool(context.Background(), 5, "test")
-	parser := mydump.NewChunkParser(reader, config.ReadBlockSize, ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, ioWorkers)
 
 	chunks, err := mydump.ReadChunks(parser, 32)
 	c.Assert(err, IsNil)
@@ -146,7 +161,7 @@ func (s *testMydumpParserSuite) TestNestedRow(c *C) {
 	`)
 
 	ioWorkers := worker.NewPool(context.Background(), 5, "test")
-	parser := mydump.NewChunkParser(reader, config.ReadBlockSize, ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, ioWorkers)
 	chunks, err := mydump.ReadChunks(parser, 96)
 
 	c.Assert(err, IsNil)
