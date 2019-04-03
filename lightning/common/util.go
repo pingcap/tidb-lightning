@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -244,4 +245,9 @@ func GetJSON(client *http.Client, url string, v interface{}) error {
 	}
 
 	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
+}
+
+// KillMySelf sends sigint to current process, used in integration test only
+func KillMySelf() error {
+	return errors.Trace(syscall.Kill(syscall.Getpid(), syscall.SIGINT))
 }

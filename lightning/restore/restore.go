@@ -381,6 +381,14 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 		// goto RETURN3
 
 		// gofail: RETURN3:
+
+		// gofail: var KillIfImportedChunk struct{}
+		// if _, ok := scp.merger.(*ChunkCheckpointMerger); ok {
+		// 	common.KillMySelf()
+		// }
+		// goto RETURN4
+
+		// gofail: RETURN4:
 	}
 	rc.checkpointsWg.Done()
 }
