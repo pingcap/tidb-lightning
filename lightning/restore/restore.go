@@ -1615,9 +1615,10 @@ outside:
 			return errors.Trace(err)
 		}
 
+		deliverKvStart := time.Now()
 		select {
 		case kvsCh <- deliveredKVs{kvs: kvs, offset: newOffset, rowID: rowID}:
-			continue
+			break
 		case <-ctx.Done():
 			return ctx.Err()
 		case deliverResult := <-deliverCompleteCh:
@@ -1626,6 +1627,7 @@ outside:
 			}
 			return errors.Trace(deliverResult.err)
 		}
+		metric.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
 	}
 
 	lastOffset, lastRowID := cr.parser.Pos()
