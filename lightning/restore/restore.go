@@ -387,8 +387,8 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 
 		// gofail: RETURN3:
 
-		// gofail: var KillIfImportedChunk struct{}
-		// if _, ok := scp.merger.(*ChunkCheckpointMerger); ok {
+		// gofail: var KillIfImportedChunk int
+		// if merger, ok := scp.merger.(*ChunkCheckpointMerger); ok && merger.Checksum.SumKVS() >= uint64(KillIfImportedChunk) {
 		// 	common.KillMySelf()
 		// }
 		// goto RETURN4
