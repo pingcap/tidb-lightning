@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -137,6 +138,10 @@ var tableNameRegexp = regexp.MustCompile(`^([^.]+)\.(.*?)(?:\.[0-9]+)?$`)
 // files are visited in lexicographical order (note that this does not mean the
 // databases and tables in the end are ordered lexicographically since they may
 // be stored in different subdirectories).
+//
+// Will sort tables by table size, this means that the big table is imported
+// at the latest, which to avoid large table take a long time to import and block
+// small table to release index worker.
 func (s *mdLoaderSetup) setup(dir string) error {
 	/*
 		Mydumper file names format
@@ -187,6 +192,14 @@ func (s *mdLoaderSetup) setup(dir string) error {
 		}
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.path)
 		tableMeta.TotalSize += fileInfo.size
+	}
+
+	// Put the small table in the front of the slice which can avoid large table
+	// take a long time to import and block small table to release index worker.
+	for _, dbMeta := range s.loader.dbs {
+		sort.SliceStable(dbMeta.Tables, func(i, j int) bool {
+			return dbMeta.Tables[i].TotalSize < dbMeta.Tables[j].TotalSize
+		})
 	}
 
 	return nil

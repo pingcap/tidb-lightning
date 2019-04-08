@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -485,11 +484,6 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			common.AppLogger.Errorf("database %s not found in rc.dbInfos", dbMeta.Name)
 			continue
 		}
-		// Put the small table in the front of the slice which can avoid large table
-		// take a long time to import and block small table to release index worker.
-		sort.SliceStable(dbMeta.Tables, func(i, j int) bool {
-			return dbMeta.Tables[i].TotalSize < dbMeta.Tables[j].TotalSize
-		})
 		for _, tableMeta := range dbMeta.Tables {
 			tableInfo, ok := dbInfo.Tables[tableMeta.Name]
 			if !ok {
