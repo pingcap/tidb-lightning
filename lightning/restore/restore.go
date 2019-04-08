@@ -487,7 +487,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		}
 		// Put the small table in the front of the slice which can avoid large table
 		// take a long time to import and block small table to release index worker.
-		sort.Slice(dbMeta.Tables, func(i, j int) bool {
+		sort.SliceStable(dbMeta.Tables, func(i, j int) bool {
 			return dbMeta.Tables[i].TotalSize < dbMeta.Tables[j].TotalSize
 		})
 		for _, tableMeta := range dbMeta.Tables {
