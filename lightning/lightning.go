@@ -21,12 +21,10 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	"github.com/pingcap/tidb-lightning/lightning/kv"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
 )
@@ -72,10 +70,6 @@ func (l *Lightning) Run() error {
 		common.AppLogger.Infof("cfg %s", l.cfg)
 	})
 
-	if l.handleCommandFlagsAndExits() {
-		return nil
-	}
-
 	l.wg.Add(1)
 	var err error
 	go func() {
@@ -84,34 +78,6 @@ func (l *Lightning) Run() error {
 	}()
 	l.wg.Wait()
 	return errors.Trace(err)
-}
-
-func (l *Lightning) handleCommandFlagsAndExits() (exits bool) {
-	if l.cfg.DoCompact {
-		err := l.doCompact()
-		if err != nil {
-			common.AppLogger.Fatalf("compact error %s", errors.ErrorStack(err))
-		}
-		return true
-	}
-
-	if mode := l.cfg.SwitchMode; mode != "" {
-		var err error
-		switch mode {
-		case config.ImportMode:
-			err = l.switchMode(sstpb.SwitchMode_Import)
-		case config.NormalMode:
-			err = l.switchMode(sstpb.SwitchMode_Normal)
-		default:
-			common.AppLogger.Fatalf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
-		}
-		if err != nil {
-			common.AppLogger.Fatalf("switch mode error %v", errors.ErrorStack(err))
-		}
-		common.AppLogger.Infof("switch mode to %s", mode)
-		return true
-	}
-	return false
 }
 
 func (l *Lightning) run() error {
@@ -132,38 +98,6 @@ func (l *Lightning) run() error {
 	err = procedure.Run(l.ctx)
 	procedure.Wait()
 	return errors.Trace(err)
-}
-
-func (l *Lightning) doCompact() error {
-	ctx := context.Background()
-
-	importer, err := kv.NewImporter(ctx, l.cfg.TikvImporter.Addr, l.cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer importer.Close()
-
-	if err := importer.Compact(ctx, restore.FullLevelCompact); err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
-}
-
-func (l *Lightning) switchMode(mode sstpb.SwitchMode) error {
-	ctx := context.Background()
-
-	importer, err := kv.NewImporter(ctx, l.cfg.TikvImporter.Addr, l.cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer importer.Close()
-
-	if err := importer.SwitchMode(ctx, mode); err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
 }
 
 func (l *Lightning) Stop() {

@@ -35,6 +35,8 @@ const (
 	NormalMode = "normal"
 )
 
+var defaultConfigPaths = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
+
 type DBStore struct {
 	Host       string `toml:"host" json:"host"`
 	Port       int    `toml:"port" json:"port"`
@@ -54,8 +56,6 @@ type DBStore struct {
 }
 
 type Config struct {
-	*flag.FlagSet `json:"-"`
-
 	App  Lightning `toml:"lightning" json:"lightning"`
 	TiDB DBStore   `toml:"tidb" json:"tidb"`
 
@@ -69,10 +69,7 @@ type Config struct {
 	Cron         Cron            `toml:"cron" json:"cron"`
 
 	// command line flags
-	ConfigFile   string `json:"config-file"`
-	DoCompact    bool   `json:"-"`
-	SwitchMode   string `json:"-"`
-	printVersion bool
+	ConfigFile string `json:"config-file"`
 }
 
 func (c *Config) String() string {
@@ -164,6 +161,12 @@ func NewConfig() *Config {
 			CheckRequirements: true,
 		},
 		TiDB: DBStore{
+			Host:                       "127.0.0.1",
+			Port:                       4000,
+			User:                       "root",
+			StatusPort:                 10080,
+			PdAddr:                     "127.0.0.1:2379",
+			LogLevel:                   "error",
 			StrSQLMode:                 mysql.DefaultSQLMode,
 			BuildStatsConcurrency:      20,
 			DistSQLScanConcurrency:     100,
@@ -179,38 +182,83 @@ func NewConfig() *Config {
 				Separator: ",",
 			},
 		},
+		PostRestore: PostRestore{
+			Checksum: true,
+		},
 	}
 }
 
 func LoadConfig(args []string) (*Config, error) {
 	cfg := NewConfig()
 
-	cfg.FlagSet = flag.NewFlagSet("lightning", flag.ContinueOnError)
-	fs := cfg.FlagSet
+	fs := flag.NewFlagSet("lightning", flag.ContinueOnError)
 
 	// if both `-c` and `-config` are specified, the last one in the command line will take effect.
 	// the default value is assigned immediately after the StringVar() call,
 	// so it is fine to not give any default value for `-c`, to keep the `-h` page clean.
 	fs.StringVar(&cfg.ConfigFile, "c", "", "(deprecated alias of -config)")
-	fs.StringVar(&cfg.ConfigFile, "config", "tidb-lightning.toml", "tidb-lightning configuration file")
-	fs.BoolVar(&cfg.DoCompact, "compact", false, "do manual compaction on the target cluster, run then exit")
-	fs.StringVar(&cfg.SwitchMode, "switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal'], run then exit")
-	fs.BoolVar(&cfg.printVersion, "V", false, "print version of lightning")
+	fs.StringVar(&cfg.ConfigFile, "config", "", "tidb-lightning configuration file")
+	printVersion := fs.Bool("V", false, "print version of lightning")
+
+	logLevel := fs.String("L", "", `log level: info, debug, warn, error, fatal (default "info")`)
+	logFilePath := fs.String("log-file", "", "log file path")
+	tidbHost := fs.String("tidb-host", "", "TiDB server host")
+	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
+	tidbUser := fs.String("tidb-user", "", "TiDB user name to connect")
+	tidbStatusPort := fs.Int("tidb-status", 0, "TiDB server status port (default 10080)")
+	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
+	dataSrcPath := fs.String("d", "", "Directory of the dump to import")
+	importerAddr := fs.String("importer", "", "address (host:port) to connect to tikv-importer")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, errors.Trace(err)
+	}
+	if *printVersion {
+		fmt.Println(common.GetRawInfo())
+		return nil, flag.ErrHelp
 	}
 
 	if err := cfg.Load(); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if *logLevel != "" {
+		cfg.App.LogConfig.Level = *logLevel
+	}
+	if *logFilePath != "" {
+		cfg.App.LogConfig.File = *logFilePath
+	}
+	if *tidbHost != "" {
+		cfg.TiDB.Host = *tidbHost
+	}
+	if *tidbPort != 0 {
+		cfg.TiDB.Port = *tidbPort
+	}
+	if *tidbStatusPort != 0 {
+		cfg.TiDB.StatusPort = *tidbStatusPort
+	}
+	if *tidbUser != "" {
+		cfg.TiDB.User = *tidbUser
+	}
+	if *pdAddr != "" {
+		cfg.TiDB.PdAddr = *pdAddr
+	}
+	if *dataSrcPath != "" {
+		cfg.Mydumper.SourceDir = *dataSrcPath
+	}
+	if *importerAddr != "" {
+		cfg.TikvImporter.Addr = *importerAddr
+	}
+
+	cfg.Adjust()
+
 	return cfg, nil
 }
 
 func (cfg *Config) Load() error {
-	if cfg.printVersion {
-		fmt.Println(common.GetRawInfo())
-		return flag.ErrHelp
+	// use standard config if unspecified.
+	if cfg.ConfigFile == "" {
+		return nil
 	}
 
 	data, err := ioutil.ReadFile(cfg.ConfigFile)
@@ -234,6 +282,10 @@ func (cfg *Config) Load() error {
 		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
 
+	return nil
+}
+
+func (cfg *Config) Adjust() {
 	// handle mydumper
 	if cfg.Mydumper.BatchSize <= 0 {
 		cfg.Mydumper.BatchSize = 100 * _G
@@ -262,5 +314,4 @@ func (cfg *Config) Load() error {
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
 	}
-	return nil
 }

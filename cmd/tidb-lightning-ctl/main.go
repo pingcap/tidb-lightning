@@ -39,10 +39,17 @@ func main() {
 
 func run() error {
 	cfg := config.NewConfig()
-	cfg.FlagSet = flag.NewFlagSet("lightning-ctl", flag.ExitOnError)
-	fs := cfg.FlagSet
+	fs := flag.NewFlagSet("lightning-ctl", flag.ExitOnError)
 
-	fs.StringVar(&cfg.ConfigFile, "config", "tidb-lightning.toml", "tidb-lightning configuration file")
+	fs.StringVar(&cfg.ConfigFile, "config", "", "tidb-lightning configuration file")
+
+	logLevel := fs.String("L", "", `log level: info, debug, warn, error, fatal (default "info")`)
+	logFilePath := fs.String("log-file", "", "log file path")
+	tidbHost := fs.String("tidb-host", "", "TiDB server host")
+	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
+	tidbUser := fs.String("tidb-user", "", "TiDB user name to connect")
+	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
+	importerAddr := fs.String("importer", "", "address (host:port) to connect to tikv-importer")
 
 	compact := fs.Bool("compact", false, "do manual compaction on the target cluster")
 	mode := fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
@@ -62,6 +69,30 @@ func run() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	if *logLevel != "" {
+		cfg.App.LogConfig.Level = *logLevel
+	}
+	if *logFilePath != "" {
+		cfg.App.LogConfig.File = *logFilePath
+	}
+	if *tidbHost != "" {
+		cfg.TiDB.Host = *tidbHost
+	}
+	if *tidbPort != 0 {
+		cfg.TiDB.Port = *tidbPort
+	}
+	if *tidbUser != "" {
+		cfg.TiDB.User = *tidbUser
+	}
+	if *pdAddr != "" {
+		cfg.TiDB.PdAddr = *pdAddr
+	}
+	if *importerAddr != "" {
+		cfg.TikvImporter.Addr = *importerAddr
+	}
+
+	cfg.Adjust()
 
 	ctx := context.Background()
 
