@@ -461,6 +461,23 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	stopPeriodicActions := make(chan struct{}, 1)
 	go rc.runPeriodicActions(ctx, stopPeriodicActions)
 
+	type task struct {
+		tr *TableRestore
+		cp *TableCheckpoint
+	}
+	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
+	defer close(taskCh)
+	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
+		go func() {
+			for task := range taskCh {
+				err := task.tr.restoreTable(ctx, rc, task.cp)
+				metric.RecordTableCount("completed", err)
+				restoreErr.Set(task.tr.tableName, err)
+				wg.Done()
+			}
+		}()
+	}
+
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo, ok := rc.dbInfos[dbMeta.Name]
 		if !ok {
@@ -493,12 +510,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			}
 
 			wg.Add(1)
-			go func(t *TableRestore, cp *TableCheckpoint) {
-				defer wg.Done()
-				err := t.restoreTable(ctx, rc, cp)
-				metric.RecordTableCount("completed", err)
-				restoreErr.Set(t.tableName, err)
-			}(tr, cp)
+			taskCh <- task{tr: tr, cp: cp}
 		}
 	}
 
@@ -1597,9 +1609,10 @@ outside:
 			return errors.Trace(err)
 		}
 
+		deliverKvStart := time.Now()
 		select {
 		case kvsCh <- deliveredKVs{kvs: kvs, offset: newOffset, rowID: rowID}:
-			continue
+			break
 		case <-ctx.Done():
 			return ctx.Err()
 		case deliverResult := <-deliverCompleteCh:
@@ -1608,6 +1621,7 @@ outside:
 			}
 			return errors.Trace(deliverResult.err)
 		}
+		metric.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
 	}
 
 	lastOffset, lastRowID := cr.parser.Pos()

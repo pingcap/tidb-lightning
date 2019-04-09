@@ -141,6 +141,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
 		},
 	)
+	RowKVDeliverSecondsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "lightning",
+			Name:      "row_kv_deliver_seconds",
+			Help:      "time needed to deliver kvs of a single row",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+		},
+	)
 	BlockDeliverSecondsHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "lightning",
@@ -186,6 +194,7 @@ func init() {
 	prometheus.MustRegister(RowReadSecondsHistogram)
 	prometheus.MustRegister(RowReadBytesHistogram)
 	prometheus.MustRegister(RowEncodeSecondsHistogram)
+	prometheus.MustRegister(RowKVDeliverSecondsHistogram)
 	prometheus.MustRegister(BlockDeliverSecondsHistogram)
 	prometheus.MustRegister(BlockDeliverBytesHistogram)
 	prometheus.MustRegister(BlockDeliverKVPairsHistogram)
