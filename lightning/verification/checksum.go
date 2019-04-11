@@ -17,6 +17,7 @@ import (
 	"hash/crc64"
 
 	kvec "github.com/pingcap/tidb/util/kvencoder"
+	"go.uber.org/zap/zapcore"
 )
 
 var ecmaTable = crc64.MakeTable(crc64.ECMA)
@@ -87,4 +88,11 @@ func (c *KVChecksum) SumSize() uint64 {
 
 func (c *KVChecksum) SumKVS() uint64 {
 	return c.kvs
+}
+
+func (c *KVChecksum) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
+	encoder.AddUint64("cksum", c.checksum)
+	encoder.AddUint64("size", c.bytes)
+	encoder.AddUint64("kvs", c.kvs)
+	return nil
 }

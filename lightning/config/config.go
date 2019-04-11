@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 )
 
@@ -73,15 +74,12 @@ type Config struct {
 }
 
 func (c *Config) String() string {
-	bytes, err := json.Marshal(c)
-	if err != nil {
-		common.AppLogger.Errorf("marshal config to json error %v", err)
-	}
+	bytes, _ := json.Marshal(c)
 	return string(bytes)
 }
 
 type Lightning struct {
-	common.LogConfig
+	log.Config
 	TableConcurrency  int  `toml:"table-concurrency" json:"table-concurrency"`
 	IndexConcurrency  int  `toml:"index-concurrency" json:"index-concurrency"`
 	RegionConcurrency int  `toml:"region-concurrency" json:"region-concurrency"`
@@ -223,10 +221,10 @@ func LoadConfig(args []string) (*Config, error) {
 	}
 
 	if *logLevel != "" {
-		cfg.App.LogConfig.Level = *logLevel
+		cfg.App.Config.Level = *logLevel
 	}
 	if *logFilePath != "" {
-		cfg.App.LogConfig.File = *logFilePath
+		cfg.App.Config.File = *logFilePath
 	}
 	if *tidbHost != "" {
 		cfg.TiDB.Host = *tidbHost
@@ -286,6 +284,8 @@ func (cfg *Config) Load() error {
 }
 
 func (cfg *Config) Adjust() {
+	cfg.App.Config.Adjust()
+
 	// handle mydumper
 	if cfg.Mydumper.BatchSize <= 0 {
 		cfg.Mydumper.BatchSize = 100 * _G

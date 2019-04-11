@@ -71,10 +71,10 @@ func run() error {
 	}
 
 	if *logLevel != "" {
-		cfg.App.LogConfig.Level = *logLevel
+		cfg.App.Config.Level = *logLevel
 	}
 	if *logFilePath != "" {
-		cfg.App.LogConfig.File = *logFilePath
+		cfg.App.Config.File = *logFilePath
 	}
 	if *tidbHost != "" {
 		cfg.TiDB.Host = *tidbHost

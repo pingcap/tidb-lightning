@@ -34,23 +34,23 @@ func (s *onceErrorSuite) TestOnceError(c *C) {
 
 	c.Assert(err.Get(), IsNil)
 
-	err.Set("tag", nil)
+	err.Set(nil)
 	c.Assert(err.Get(), IsNil)
 
 	e := errors.New("1")
-	err.Set("tag", e)
+	err.Set(e)
 	c.Assert(err.Get(), Equals, e)
 
 	e2 := errors.New("2")
-	err.Set("tag", e2)
+	err.Set(e2)
 	c.Assert(err.Get(), Equals, e) // e, not e2.
 
-	err.Set("tag", nil)
+	err.Set(nil)
 	c.Assert(err.Get(), Equals, e)
 
 	ch := make(chan struct{})
 	go func() {
-		err.Set("tag", nil)
+		err.Set(nil)
 		ch <- struct{}{}
 	}()
 	<-ch

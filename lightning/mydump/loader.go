@@ -21,15 +21,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb-tools/pkg/filter"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	"github.com/pingcap/tidb-tools/pkg/filter"
-)
-
-var (
-	// errors
-	errDirNotExists = errors.New("mydumper dir not exists")
-	errMissingFile  = errors.New("missing file")
+	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
 type MDDatabaseMeta struct {
@@ -51,7 +48,10 @@ type MDTableMeta struct {
 func (m *MDTableMeta) GetSchema() string {
 	schema, err := ExportStatement(m.SchemaFile, m.charSet)
 	if err != nil {
-		common.AppLogger.Errorf("failed to extract table schema (%s) : %s", m.SchemaFile, err.Error())
+		log.L().Error("failed to extract table schema",
+			zap.String("path", m.SchemaFile),
+			log.ShortError(err),
+		)
 		return ""
 	}
 	return string(schema)
@@ -92,7 +92,6 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	}
 
 	if err := setup.setup(mdl.dir); err != nil {
-		// common.AppLogger.Errorf("init mydumper loader failed : %s\n", err.Error())
 		return nil, errors.Trace(err)
 	}
 
@@ -150,18 +149,17 @@ func (s *mdLoaderSetup) setup(dir string) error {
 			sql   —— {db}.{table}.{part}.sql / {db}.{table}.sql
 	*/
 	if !common.IsDirExists(dir) {
-		return errors.Annotatef(errDirNotExists, "dir %s", dir)
+		return errors.Errorf("%s: mydumper dir does not exist", dir)
 	}
 
 	if err := s.listFiles(dir); err != nil {
-		common.AppLogger.Errorf("list file failed : %s", err.Error())
-		return errors.Trace(err)
+		return errors.Annotate(err, "list file failed")
 	}
 
 	if !s.loader.noSchema {
 		// setup database schema
 		if len(s.dbSchemas) == 0 {
-			return errors.Annotatef(errMissingFile, "missing {schema}-schema-create.sql")
+			return errors.New("missing {schema}-schema-create.sql")
 		}
 		for _, fileInfo := range s.dbSchemas {
 			if _, dbExists := s.insertDB(fileInfo.tableName.Schema, fileInfo.path); dbExists {
@@ -222,6 +220,7 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 		lowerFName := strings.ToLower(fname)
 
 		info := fileInfo{path: path, size: f.Size()}
+		logger := log.With(zap.String("path", path))
 
 		var (
 			ftype         fileType
@@ -242,7 +241,7 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 		case strings.HasSuffix(lowerFName, "-schema-view.sql"),
 			strings.HasSuffix(lowerFName, "-schema-trigger.sql"),
 			strings.HasSuffix(lowerFName, "-schema-post.sql"):
-			common.AppLogger.Warn("[loader] ignore unsupport view/trigger:", path)
+			logger.Warn("[loader] ignore unsupport view/trigger")
 			return nil
 		case strings.HasSuffix(lowerFName, ".sql"), strings.HasSuffix(lowerFName, ".csv"):
 			ftype = fileTypeTableData
@@ -253,14 +252,14 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 
 		matchRes := tableNameRegexp.FindStringSubmatch(qualifiedName)
 		if len(matchRes) != 3 {
-			common.AppLogger.Debugf("[loader] ignore almost %s file: %s", ftype, path)
+			logger.Debug("[loader] ignore almost " + ftype.String() + " file")
 			return nil
 		}
 		info.tableName.Schema = matchRes[1]
 		info.tableName.Name = matchRes[2]
 
 		if s.loader.shouldSkip(&info.tableName) {
-			common.AppLogger.Infof("[filter] ignoring table file %s", path)
+			logger.Debug("[filter] ignoring table file")
 			return nil
 		}
 
