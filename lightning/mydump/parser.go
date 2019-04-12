@@ -15,6 +15,7 @@ package mydump
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"regexp"
 	"strconv"
@@ -162,42 +163,34 @@ const (
 	tokUnquoted
 )
 
+var tokenDescriptions = [...]string{
+	tokNil:          "<Nil>",
+	tokRowBegin:     "RowBegin",
+	tokRowEnd:       "RowEnd",
+	tokValues:       "Values",
+	tokNull:         "Null",
+	tokTrue:         "True",
+	tokFalse:        "False",
+	tokHexString:    "HexString",
+	tokBinString:    "BinString",
+	tokInteger:      "Integer",
+	tokSingleQuoted: "SingleQuoted",
+	tokDoubleQuoted: "DoubleQuoted",
+	tokBackQuoted:   "BackQuoted",
+	tokUnquoted:     "Unquoted",
+}
+
 // String implements the fmt.Stringer interface
 //
 // Mainly used for debugging a token.
-func (t token) String() string {
-	switch t {
-	case tokNil:
-		return "<Nil>"
-	case tokRowBegin:
-		return "RowBegin"
-	case tokRowEnd:
-		return "RowEnd"
-	case tokValues:
-		return "Values"
-	case tokNull:
-		return "Null"
-	case tokTrue:
-		return "True"
-	case tokFalse:
-		return "False"
-	case tokHexString:
-		return "HexString"
-	case tokBinString:
-		return "BinString"
-	case tokInteger:
-		return "Integer"
-	case tokSingleQuoted:
-		return "SingleQuoted"
-	case tokDoubleQuoted:
-		return "DoubleQuoted"
-	case tokBackQuoted:
-		return "BackQuoted"
-	case tokUnquoted:
-		return "Unquoted"
-	default:
-		return "?"
+func (tok token) String() string {
+	t := int(tok)
+	if t >= 0 && t < len(tokenDescriptions) {
+		if description := tokenDescriptions[t]; description != "" {
+			return description
+		}
 	}
+	return fmt.Sprintf("<Unknown(%d)>", t)
 }
 
 func (parser *blockParser) readBlock() error {
