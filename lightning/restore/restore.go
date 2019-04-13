@@ -466,13 +466,29 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		cp *TableCheckpoint
 	}
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
+	postCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
+	defer close(postCh)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
 				err := task.tr.restoreTable(ctx, rc, task.cp)
-				metric.RecordTableCount("completed", err)
+				metric.RecordTableCount(task.cp.Status.MetricName(), err)
 				restoreErr.Set(task.tr.tableName, err)
+				if err == nil {
+					wg.Add(1)
+					postCh <- task
+				}
+				wg.Done()
+			}
+		}()
+
+		go func() {
+			for post := range postCh {
+				// 3. Post-process
+				err := post.tr.postProcess(ctx, rc, post.cp)
+				metric.RecordTableCount("completed", err)
+				restoreErr.Set(post.tr.tableName, err)
 				wg.Done()
 			}
 		}()
@@ -556,13 +572,7 @@ func (t *TableRestore) restoreTable(
 	}
 
 	// 2. Restore engines (if still needed)
-	err := t.restoreEngines(ctx, rc, cp)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// 3. Post-process
-	return errors.Trace(t.postProcess(ctx, rc, cp))
+	return errors.Trace(t.restoreEngines(ctx, rc, cp))
 }
 
 func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
