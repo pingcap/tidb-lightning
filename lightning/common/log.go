@@ -22,10 +22,10 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
-
-	"github.com/pingcap/tidb/util/logutil"
 )
 
 const (
@@ -155,7 +155,7 @@ func InitLogger(cfg *LogConfig, tidbLoglevel string) error {
 	AppLogger.Hooks.Add(&contextHook{})
 	AppLogger.Formatter = &SimpleTextFormater{}
 
-	logutil.InitLogger(&logutil.LogConfig{Level: tidbLoglevel})
+	logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: tidbLoglevel}})
 
 	if len(cfg.File) > 0 {
 		if IsDirExists(cfg.File) {

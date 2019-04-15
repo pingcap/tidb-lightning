@@ -43,6 +43,9 @@ func (t *transaction) SetOption(opt kv.Option, val interface{}) {}
 // DelOption implements the kv.Transaction interface
 func (t *transaction) DelOption(kv.Option) {}
 
+// SetAssertion implements the kv.Transaction interface
+func (t *transaction) SetAssertion(kv.Key, kv.AssertionType) {}
+
 // session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.
