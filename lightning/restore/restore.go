@@ -30,6 +30,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/parser/model"
 	tidbcfg "github.com/pingcap/tidb/config"
@@ -357,43 +358,37 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 
 		lock.Unlock()
 
-		// gofail: var FailIfImportedChunk int
-		// if merger, ok := scp.merger.(*ChunkCheckpointMerger); ok && merger.Checksum.SumKVS() >= uint64(FailIfImportedChunk) {
-		// 	rc.checkpointsWg.Done()
-		// 	rc.checkpointsWg.Wait()
-		// 	panic("forcing failure due to FailIfImportedChunk")
-		// }
-		// goto RETURN1
+		failpoint.Inject("FailIfImportedChunk", func(val failpoint.Value) {
+			if merger, ok := scp.merger.(*ChunkCheckpointMerger); ok && merger.Checksum.SumKVS() >= uint64(val.(int)) {
+				rc.checkpointsWg.Done()
+				rc.checkpointsWg.Wait()
+				panic("forcing failure due to FailIfImportedChunk")
+			}
+		})
 
-		// gofail: RETURN1:
+		failpoint.Inject("FailIfStatusBecomes", func(val failpoint.Value) {
+			if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID >= 0 && int(merger.Status) == val.(int) {
+				rc.checkpointsWg.Done()
+				rc.checkpointsWg.Wait()
+				panic("forcing failure due to FailIfStatusBecomes")
+			}
+		})
 
-		// gofail: var FailIfStatusBecomes int
-		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID >= 0 && int(merger.Status) == FailIfStatusBecomes {
-		// 	rc.checkpointsWg.Done()
-		// 	rc.checkpointsWg.Wait()
-		// 	panic("forcing failure due to FailIfStatusBecomes")
-		// }
-		// goto RETURN2
+		failpoint.Inject("FailIfIndexEngineImported", func(val failpoint.Value) {
+			if merger, ok := scp.merger.(*StatusCheckpointMerger); ok &&
+				merger.EngineID == wholeTableEngineID &&
+				merger.Status == CheckpointStatusIndexImported && val.(int) > 0 {
+				rc.checkpointsWg.Done()
+				rc.checkpointsWg.Wait()
+				panic("forcing failure due to FailIfIndexEngineImported")
+			}
+		})
 
-		// gofail: RETURN2:
-
-		// gofail: var FailIfIndexEngineImported int
-		// if merger, ok := scp.merger.(*StatusCheckpointMerger); ok && merger.EngineID == wholeTableEngineID && merger.Status == CheckpointStatusIndexImported && FailIfIndexEngineImported > 0 {
-		// 	rc.checkpointsWg.Done()
-		// 	rc.checkpointsWg.Wait()
-		// 	panic("forcing failure due to FailIfIndexEngineImported")
-		// }
-		// goto RETURN3
-
-		// gofail: RETURN3:
-
-		// gofail: var KillIfImportedChunk int
-		// if merger, ok := scp.merger.(*ChunkCheckpointMerger); ok && merger.Checksum.SumKVS() >= uint64(KillIfImportedChunk) {
-		// 	common.KillMySelf()
-		// }
-		// goto RETURN4
-
-		// gofail: RETURN4:
+		failpoint.Inject("KillIfImportedChunk", func(val failpoint.Value) {
+			if merger, ok := scp.merger.(*ChunkCheckpointMerger); ok && merger.Checksum.SumKVS() >= uint64(val.(int)) {
+				common.KillMySelf()
+			}
+		})
 	}
 	rc.checkpointsWg.Done()
 }
@@ -671,8 +666,9 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
 		}
 
-		// gofail: var FailBeforeIndexEngineImported struct{}
-		//  panic("forcing failure due to FailBeforeIndexEngineImported")
+		failpoint.Inject("FailBeforeIndexEngineImported", func() {
+			panic("forcing failure due to FailBeforeIndexEngineImported")
+		})
 
 		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusIndexImported)
 		if err != nil {
@@ -1239,7 +1235,8 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 	metric.ImportSecondsHistogram.Observe(dur.Seconds())
 	common.AppLogger.Infof("[%s] kv deliver all flushed, takes %v", closedEngine.Tag(), dur)
 
-	// gofail: var SlowDownImport struct{}
+	// TODO: implement failpoint inject empty
+	failpoint.Inject("SlowDownImport", func() {})
 
 	return nil
 }

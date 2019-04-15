@@ -23,8 +23,8 @@ LINUX     := "Linux"
 MAC       := "Darwin"
 PACKAGES  := $$(go list ./...| grep -vE 'vendor|cmd|test|proto|diff|bin')
 
-GOFAIL_ENABLE  := $$(find $$PWD/lightning/ -type d | xargs gofail enable)
-GOFAIL_DISABLE := $$(find $$PWD/lightning/ -type d | xargs gofail disable)
+FAILPOINT_ENABLE  := $$(failpoint-ctl enable $$PWD/lightning/)
+FAILPOINT_DISABLE := $$(failpoint-ctl disable $$PWD/lightning/)
 
 RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
@@ -64,17 +64,15 @@ lightning-ctl:
 
 test:
 	mkdir -p "$(TEST_DIR)"
-	@hash gofail || $(GO) get -v github.com/pingcap/gofail
-	# ^FIXME switch back to etcd-io/gofail after their issue #16 is fixed.
-	$(GOFAIL_ENABLE)
+	@hash failpoint-ctl || $(GO) get -v github.com/pingcap/failpoint/failpoint-ctl
+	$(FAILPOINT_ENABLE)
 	@export log_level=error;\
 	$(GOTEST) -cover -covermode=count -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES)
-	$(GOFAIL_DISABLE)
+	$(FAILPOINT_DISABLE)
 
 lightning_for_integration_test:
-	@hash gofail || $(GO) get -v github.com/pingcap/gofail
-	# ^FIXME switch back to etcd-io/gofail after their issue #16 is fixed.
-	$(GOFAIL_ENABLE)
+	@hash failpoint-ctl || $(GO) get -v github.com/pingcap/failpoint/failpoint-ctl
+	$(FAILPOINT_ENABLE)
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
 		-o $(LIGHTNING_BIN).test \
@@ -83,7 +81,7 @@ lightning_for_integration_test:
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
 		-o $(LIGHTNING_CTL_BIN).test \
 		github.com/pingcap/tidb-lightning/cmd/tidb-lightning-ctl
-	$(GOFAIL_DISABLE)
+	$(FAILPOINT_DISABLE)
 
 integration_test: lightning_for_integration_test
 	@which bin/tidb-server
@@ -107,8 +105,10 @@ update:
 	GO111MODULE=on go mod verify
 	GO111MODULE=on go mod tidy
 
-gofail-enable:
-	$(GOFAIL_ENABLE)
+failpoint-enable:
+	@hash failpoint-ctl || $(GO) get -v github.com/pingcap/failpoint/failpoint-ctl
+	$(FAILPOINT_ENABLE)
 
-gofail-disable:
-	$(GOFAIL_DISABLE)
+failpoint-disable:
+	@hash failpoint-ctl || $(GO) get -v github.com/pingcap/failpoint/failpoint-ctl
+	$(FAILPOINT_DISABLE)
