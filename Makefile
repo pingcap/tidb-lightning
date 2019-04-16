@@ -64,23 +64,21 @@ lightning-ctl:
 
 test:
 	mkdir -p "$(TEST_DIR)"
-	@hash failpoint-ctl || $(GO) get -v github.com/pingcap/failpoint/failpoint-ctl
 	$(FAILPOINT_ENABLE)
 	@export log_level=error;\
-	$(GOTEST) -cover -covermode=count -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES)
+	$(GOTEST) -cover -covermode=count -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES) || ( $(FAILPOINT_DISABLE) && exit 1 )
 	$(FAILPOINT_DISABLE)
 
 lightning_for_integration_test:
-	@hash failpoint-ctl || $(GO) get -v github.com/pingcap/failpoint/failpoint-ctl
 	$(FAILPOINT_ENABLE)
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
 		-o $(LIGHTNING_BIN).test \
-		github.com/pingcap/tidb-lightning/cmd/tidb-lightning
+		github.com/pingcap/tidb-lightning/cmd/tidb-lightning || ( $(FAILPOINT_DISABLE) && exit 1 )
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
 		-o $(LIGHTNING_CTL_BIN).test \
-		github.com/pingcap/tidb-lightning/cmd/tidb-lightning-ctl
+		github.com/pingcap/tidb-lightning/cmd/tidb-lightning-ctl || ( $(FAILPOINT_DISABLE) && exit 1 )
 	$(FAILPOINT_DISABLE)
 
 integration_test: lightning_for_integration_test
@@ -92,7 +90,7 @@ integration_test: lightning_for_integration_test
 
 coverage:
 	GO111MODULE=off go get github.com/wadey/gocovmerge
-	gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go" > "$(TEST_DIR)/all_cov.out"
+	gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go|.*__failpoint_binding__.go" > "$(TEST_DIR)/all_cov.out"
 ifeq ("$(JenkinsCI)", "1")
 	GO111MODULE=off go get github.com/mattn/goveralls
 	@goveralls -coverprofile=$(TEST_DIR)/all_cov.out -service=jenkins-ci -repotoken $(COVERALLS_TOKEN)
@@ -105,10 +103,11 @@ update:
 	GO111MODULE=on go mod verify
 	GO111MODULE=on go mod tidy
 
-failpoint-enable:
+install-failpoint:
 	@hash failpoint-ctl || $(GO) get -v github.com/pingcap/failpoint/failpoint-ctl
+
+failpoint-enable: install-failpoint
 	$(FAILPOINT_ENABLE)
 
-failpoint-disable:
-	@hash failpoint-ctl || $(GO) get -v github.com/pingcap/failpoint/failpoint-ctl
+failpoint-disable: install-failpoint
 	$(FAILPOINT_DISABLE)

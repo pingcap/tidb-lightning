@@ -1235,7 +1235,6 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 	metric.ImportSecondsHistogram.Observe(dur.Seconds())
 	common.AppLogger.Infof("[%s] kv deliver all flushed, takes %v", closedEngine.Tag(), dur)
 
-	// TODO: implement failpoint inject empty
 	failpoint.Inject("SlowDownImport", func() {})
 
 	return nil
