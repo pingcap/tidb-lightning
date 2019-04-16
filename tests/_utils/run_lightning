@@ -16,7 +16,7 @@
 set -eu
 TEST_DIR=/tmp/lightning_test_result
 CONFIG="${1-config}"
-shift
+shift || true
 
 echo "[$(date)] <<<<<< RUNNING TEST FOR: tests/$TEST_NAME/$CONFIG.toml >>>>>>" >> "$TEST_DIR/lightning.log"
 bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out" DEVEL -config "tests/$TEST_NAME/$CONFIG.toml" "$@"

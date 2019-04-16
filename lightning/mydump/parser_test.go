@@ -37,9 +37,9 @@ func (s *testMydumpParserSuite) TearDownSuite(c *C) {}
 func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	reader := strings.NewReader(
 		"/* whatever pragmas */;" +
-			"INSERT INTO `namespaced`.`table` (columns, more, columns) VALUES (1, 2, 3),\n(4, 5, 6);" +
+			"INSERT INTO `namespaced`.`table` (columns, more, columns) VALUES (1,-2, 3),\n(4,5., 6);" +
 			"INSERT `namespaced`.`table` (x,y,z) VALUES (7,8,9);" +
-			"insert another_table values (10, 11, 12, '(13)', '(', 14, ')');",
+			"insert another_table values (10,11e1,12, '(13)', '(', 14, ')');",
 	)
 
 	ioWorkers := worker.NewPool(context.Background(), 5, "test")
@@ -49,9 +49,9 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 1,
 		Row: []types.Datum{
-			types.NewStringDatum("1"),
-			types.NewStringDatum("2"),
-			types.NewStringDatum("3"),
+			types.NewUintDatum(1),
+			types.NewIntDatum(-2),
+			types.NewUintDatum(3),
 		},
 	})
 	c.Assert(parser.Columns(), DeepEquals, []string{"columns", "more", "columns"})
@@ -63,9 +63,9 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 2,
 		Row: []types.Datum{
-			types.NewStringDatum("4"),
-			types.NewStringDatum("5"),
-			types.NewStringDatum("6"),
+			types.NewUintDatum(4),
+			types.NewStringDatum("5."),
+			types.NewUintDatum(6),
 		}})
 	c.Assert(parser.Columns(), DeepEquals, []string{"columns", "more", "columns"})
 	offset, rowID = parser.Pos()
@@ -76,9 +76,9 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 3,
 		Row: []types.Datum{
-			types.NewStringDatum("7"),
-			types.NewStringDatum("8"),
-			types.NewStringDatum("9"),
+			types.NewUintDatum(7),
+			types.NewUintDatum(8),
+			types.NewUintDatum(9),
 		},
 	})
 	c.Assert(parser.Columns(), DeepEquals, []string{"x", "y", "z"})
@@ -90,12 +90,12 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 4,
 		Row: []types.Datum{
-			types.NewStringDatum("10"),
-			types.NewStringDatum("11"),
-			types.NewStringDatum("12"),
+			types.NewUintDatum(10),
+			types.NewStringDatum("11e1"),
+			types.NewUintDatum(12),
 			types.NewStringDatum("(13)"),
 			types.NewStringDatum("("),
-			types.NewStringDatum("14"),
+			types.NewUintDatum(14),
 			types.NewStringDatum(")"),
 		}})
 	c.Assert(parser.Columns(), IsNil)
