@@ -46,7 +46,7 @@ run_sql 'DROP DATABASE cpeng;'
 rm -f "/tmp/tidb_lightning_checkpoint.pb"
 
 # Data engine part
-export GOFAIL_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/SlowDownImport=sleep(500);github.com/pingcap/tidb-lightning/lightning/restore/FailIfStatusBecomes=return(120);github.com/pingcap/tidb-lightning/lightning/restore/FailIfIndexEngineImported=return(140)'
+export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/SlowDownImport=sleep(500);github.com/pingcap/tidb-lightning/lightning/restore/FailIfStatusBecomes=return(120);github.com/pingcap/tidb-lightning/lightning/restore/FailIfIndexEngineImported=return(140)'
 set +e
 for i in $(seq "$ENGINE_COUNT"); do
     echo "******** Importing Table Now (step $i/$ENGINE_COUNT) ********"
