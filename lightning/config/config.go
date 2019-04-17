@@ -74,7 +74,10 @@ type Config struct {
 }
 
 func (c *Config) String() string {
-	bytes, _ := json.Marshal(c)
+	bytes, err := json.Marshal(c)
+	if err != nil {
+		log.L().Error("marshal config to json error", log.ShortError(err))
+	}
 	return string(bytes)
 }
 

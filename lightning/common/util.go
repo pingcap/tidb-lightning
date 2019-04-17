@@ -191,10 +191,6 @@ func IsContextCanceledError(err error) bool {
 	return log.IsContextCanceledError(err)
 }
 
-func ShouldLogError(err error) bool {
-	return true
-}
-
 // UniqueTable returns an unique table name.
 func UniqueTable(schema string, table string) string {
 	var builder strings.Builder
