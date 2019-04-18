@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	kv "github.com/pingcap/kvproto/pkg/import_kvpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
@@ -183,18 +184,14 @@ func (importer *Importer) OpenEngine(
 	logger := makeLogger(tag, engineUUID)
 	logger.Info("open engine")
 
-	// gofail: var FailIfEngineCountExceeds int
-	// {
-	// 	closedCounter := metric.ImporterEngineCounter.WithLabelValues("closed")
-	// 	openCount := metric.ReadCounter(openCounter)
-	// 	closedCount := metric.ReadCounter(closedCounter)
-	// 	if openCount - closedCount > float64(FailIfEngineCountExceeds) {
-	// 		panic(fmt.Sprintf("forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d", openCount, closedCount, FailIfEngineCountExceeds))
-	// 	}
-	// }
-	// goto RETURN
-
-	// gofail: RETURN:
+	failpoint.Inject("FailIfEngineCountExceeds", func(val failpoint.Value) {
+		closedCounter := metric.ImporterEngineCounter.WithLabelValues("closed")
+		openCount := metric.ReadCounter(openCounter)
+		closedCount := metric.ReadCounter(closedCounter)
+		if injectValue := val.(int); openCount-closedCount > float64(injectValue) {
+			panic(fmt.Sprintf("forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d", openCount, closedCount, injectValue))
+		}
+	})
 
 	return &OpenedEngine{
 		importer: importer,

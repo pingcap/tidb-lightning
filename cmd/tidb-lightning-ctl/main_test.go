@@ -17,9 +17,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	// ensure vendor contains it.
-	_ "github.com/pingcap/gofail/runtime"
 )
 
 func TestRunMain(t *testing.T) {
