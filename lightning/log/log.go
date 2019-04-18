@@ -110,6 +110,11 @@ func SetLevel(level zapcore.Level) zapcore.Level {
 
 // ShortError contructs a field which only records the error message without the
 // verbose text (i.e. excludes the stack trace).
+//
+// In Lightning, all errors are almost always propagated back to `main()` where
+// the error stack is written. Including the stack in the middle thus usually
+// just repeats known information. You should almost always use `ShortError`
+// instead of `zap.Error`, unless the error is no longer propagated upwards.
 func ShortError(err error) zap.Field {
 	if err == nil {
 		return zap.Skip()
@@ -164,6 +169,12 @@ type Task struct {
 }
 
 // End marks the end of a task.
+//
+// The `level` is the log level if the task *failed* (i.e. `err != nil`). If the
+// task *succeeded* (i.e. `err == nil`), the level from `Begin()` is used
+// instead.
+//
+// The `extraFields` are included in the log only when the task succeeded.
 func (task *Task) End(level zapcore.Level, err error, extraFields ...zap.Field) time.Duration {
 	elapsed := time.Since(task.since)
 	var verb string

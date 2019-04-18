@@ -375,3 +375,8 @@ func (engine *ClosedEngine) Cleanup(ctx context.Context) error {
 	task.End(zap.WarnLevel, err)
 	return errors.Trace(err)
 }
+
+// Logger returns the logger used including contextual fields to identify this engine
+func (engine *ClosedEngine) Logger() log.Logger {
+	return engine.logger
+}

@@ -640,7 +640,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 
 			go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
 				defer wg.Done()
-				// tag := fmt.Sprintf("%s:%d", t.tableName, eid)
+
 				engineLogTask := t.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
 				dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
 				engineLogTask.End(zap.ErrorLevel, err)
@@ -833,7 +833,9 @@ func (t *TableRestore) importEngine(
 	if rc.cfg.PostRestore.Level1Compact &&
 		atomic.CompareAndSwapInt32(&rc.compactState, compactStateIdle, compactStateDoing) {
 		go func() {
-			rc.doCompact(ctx, Level1Compact)
+			// we ignore level-1 compact failure since it is not fatal.
+			// no need log the error, it is done in (*Importer).Compact already.
+			var _ = rc.doCompact(ctx, Level1Compact)
 			atomic.StoreInt32(&rc.compactState, compactStateIdle)
 		}()
 	}
@@ -925,6 +927,8 @@ func (rc *RestoreController) switchToNormalMode(ctx context.Context) error {
 }
 
 func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
+	// we ignore switch mode failure since it is not fatal.
+	// no need log the error, it is done in (*Importer).SwitchMode already.
 	rc.importer.SwitchMode(ctx, mode)
 }
 
@@ -1219,13 +1223,19 @@ func (tr *TableRestore) restoreTableMeta(ctx context.Context, db *sql.DB) error 
 }
 
 func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
-	start := time.Now()
-	if err := closedEngine.Import(ctx); err != nil {
+	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
+
+	err := closedEngine.Import(ctx)
+	if err == nil {
+		closedEngine.Cleanup(ctx)
+	}
+
+	dur := task.End(zap.ErrorLevel, err)
+
+	if err != nil {
 		return errors.Trace(err)
 	}
-	closedEngine.Cleanup(ctx)
 
-	dur := time.Since(start)
 	metric.ImportSecondsHistogram.Observe(dur.Seconds())
 
 	// gofail: var SlowDownImport struct{}
@@ -1288,7 +1298,16 @@ func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum,
 		return nil, errors.Trace(err)
 	}
 	// set it back finally
-	defer UpdateGCLifeTime(ctx, db, ori)
+	defer func() {
+		err := UpdateGCLifeTime(ctx, db, ori)
+		if err != nil {
+			query := fmt.Sprintf("UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'", ori)
+			log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
+				zap.String("query", query),
+				log.ShortError(err),
+			)
+		}
+	}()
 
 	task := log.With(zap.String("table", table)).Begin(zap.InfoLevel, "remote checksum")
 
