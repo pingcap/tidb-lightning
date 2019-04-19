@@ -62,8 +62,9 @@ double_quoted = '"' (^'"' | bs any | '""')** '"';
 back_quoted = '`' (^'`' | '``')* '`';
 unquoted = ^([,;()'"`] | space)+;
 
-hex_string = /0x[0-9a-fA-F]+/ | "x'"i [0-9a-f]* "'";
-bin_string = /0b[01]+/ | "b'"i [01]* "'";
+integer = '-'? [0-9]+;
+hex_string = '0x' [0-9a-fA-F]+ | "x'"i [0-9a-fA-F]* "'";
+bin_string = '0b' [01]+ | "b'"i [01]* "'";
 
 main := |*
 	comment;
@@ -95,6 +96,11 @@ main := |*
 
 	'false'i => {
 		consumedToken = tokFalse
+		fbreak;
+	};
+
+	integer => {
+		consumedToken = tokInteger
 		fbreak;
 	};
 

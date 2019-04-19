@@ -62,8 +62,8 @@ func (s *testMydumpLoaderSuite) TestLoader(c *C) {
 	}{
 		{name: "i", dataFiles: 1},
 		{name: "report_case_high_risk", dataFiles: 1},
-		{name: "tbl_autoid", dataFiles: 1},
 		{name: "tbl_multi_index", dataFiles: 1},
+		{name: "tbl_autoid", dataFiles: 1},
 	}
 
 	for i, table := range expected {

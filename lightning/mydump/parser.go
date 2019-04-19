@@ -15,8 +15,10 @@ package mydump
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -154,11 +156,42 @@ const (
 	tokFalse
 	tokHexString
 	tokBinString
+	tokInteger
 	tokSingleQuoted
 	tokDoubleQuoted
 	tokBackQuoted
 	tokUnquoted
 )
+
+var tokenDescriptions = [...]string{
+	tokNil:          "<Nil>",
+	tokRowBegin:     "RowBegin",
+	tokRowEnd:       "RowEnd",
+	tokValues:       "Values",
+	tokNull:         "Null",
+	tokTrue:         "True",
+	tokFalse:        "False",
+	tokHexString:    "HexString",
+	tokBinString:    "BinString",
+	tokInteger:      "Integer",
+	tokSingleQuoted: "SingleQuoted",
+	tokDoubleQuoted: "DoubleQuoted",
+	tokBackQuoted:   "BackQuoted",
+	tokUnquoted:     "Unquoted",
+}
+
+// String implements the fmt.Stringer interface
+//
+// Mainly used for debugging a token.
+func (tok token) String() string {
+	t := int(tok)
+	if t >= 0 && t < len(tokenDescriptions) {
+		if description := tokenDescriptions[t]; description != "" {
+			return description
+		}
+	}
+	return fmt.Sprintf("<Unknown(%d)>", t)
+}
 
 func (parser *blockParser) readBlock() error {
 	startTime := time.Now()
@@ -287,10 +320,10 @@ func (parser *ChunkParser) ReadRow() error {
 	//                                              stateValues (no-op)
 	//              (             tokRowBegin
 	//                                              stateRow (reset row)
-	//              1             tokUnquoted
+	//              1             tokInteger
 	//                                              stateRow (append value)
 	//              ,
-	//              2             tokUnquoted
+	//              2             tokInteger
 	//                                              stateRow (append value)
 	//              )             tokRowEnd
 	//                                              return
@@ -305,7 +338,7 @@ func (parser *ChunkParser) ReadRow() error {
 	//              ,
 	//              (             tokRowBegin
 	//                                              stateRow (reset row)
-	//              3             tokUnquoted
+	//              3             tokInteger
 	//                                              stateRow (append value)
 	//              )             tokRowEnd
 	//                                              return
@@ -327,7 +360,7 @@ func (parser *ChunkParser) ReadRow() error {
 	//                                              stateValues
 	//              (             tokRowBegin
 	//                                              stateRow (reset row)
-	//              4             tokUnquoted
+	//              4             tokInteger
 	//                                              stateRow (append value)
 	//              )             tokRowEnd
 	//                                              return
@@ -377,6 +410,25 @@ func (parser *ChunkParser) ReadRow() error {
 				value.SetInt64(1)
 			case tokFalse:
 				value.SetInt64(0)
+			case tokInteger:
+				c := string(content)
+				if strings.HasPrefix(c, "-") {
+					i, err := strconv.ParseInt(c, 10, 64)
+					if err == nil {
+						value.SetInt64(i)
+						break
+					}
+				} else {
+					u, err := strconv.ParseUint(c, 10, 64)
+					if err == nil {
+						value.SetUint64(u)
+						break
+					}
+				}
+				// if the integer is too long, fallback to treating it as a
+				// string (all types that treats integer specially like BIT
+				// can't handle integers more than 64 bits anyway)
+				fallthrough
 			case tokUnquoted, tokSingleQuoted, tokDoubleQuoted:
 				value.SetString(parser.unescapeString(string(content)))
 			case tokHexString:
