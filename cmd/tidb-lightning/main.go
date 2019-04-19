@@ -15,6 +15,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
@@ -22,9 +23,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning"
-	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	plan "github.com/pingcap/tidb/planner/core"
+	"go.uber.org/zap"
 )
 
 func setGlobalVars() {
@@ -42,7 +44,8 @@ func main() {
 	case flag.ErrHelp:
 		os.Exit(0)
 	default:
-		common.AppLogger.Fatalf("parse cmd flags error: %s", err)
+		fmt.Println("Failed to parse command flags: ", err)
+		os.Exit(1)
 	}
 
 	app := lightning.New(cfg)
@@ -56,15 +59,15 @@ func main() {
 
 	go func() {
 		sig := <-sc
-		common.AppLogger.Infof("Got signal %v to exit.", sig)
+		log.L().Info("got signal to exit", zap.Stringer("signal", sig))
 		app.Stop()
 	}()
 
 	err = app.Run()
 	if err != nil {
-		common.AppLogger.Error("tidb lightning encountered error:", errors.ErrorStack(err))
+		log.L().Error("tidb lightning encountered error", zap.Error(err))
 		os.Exit(1)
 	}
 
-	common.AppLogger.Info("tidb lightning exit.")
+	log.L().Info("tidb lightning exit")
 }

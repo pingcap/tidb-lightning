@@ -16,20 +16,21 @@ package kv
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/satori/go.uuid"
-	"google.golang.org/grpc"
-
 	kv "github.com/pingcap/kvproto/pkg/import_kvpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pingcap/tidb-lightning/lightning/metric"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
+	"github.com/satori/go.uuid"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+
+	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/log"
+	"github.com/pingcap/tidb-lightning/lightning/metric"
 )
 
 const (
@@ -103,24 +104,15 @@ func (importer *Importer) SwitchMode(ctx context.Context, mode sst.SwitchMode) e
 			Mode: mode,
 		},
 	}
-	timer := time.Now()
 
+	task := log.With(zap.Stringer("mode", mode)).Begin(zap.DebugLevel, "switch mode")
 	_, err := importer.cli.SwitchMode(ctx, req)
-	if err != nil {
-		if strings.Contains(err.Error(), "status: Unimplemented") {
-			fmt.Fprintln(os.Stderr, "Error: The TiKV instance does not support mode switching. Please make sure the TiKV version is 2.0.4 or above.")
-		}
-		return errors.Trace(err)
-	}
-
-	common.AppLogger.Infof("switch to tikv %s mode takes %v", mode, time.Since(timer))
-	return nil
+	task.End(zap.WarnLevel, err)
+	return errors.Trace(err)
 }
 
 // Compact the target cluster for better performance.
 func (importer *Importer) Compact(ctx context.Context, level int32) error {
-	common.AppLogger.Infof("compact level %d", level)
-
 	req := &kv.CompactClusterRequest{
 		PdAddr: importer.pdAddr,
 		Request: &sst.CompactRequest{
@@ -128,10 +120,10 @@ func (importer *Importer) Compact(ctx context.Context, level int32) error {
 			OutputLevel: level,
 		},
 	}
-	timer := time.Now()
-	_, err := importer.cli.CompactCluster(ctx, req)
-	common.AppLogger.Infof("compact level %d takes %v", level, time.Since(timer))
 
+	task := log.With(zap.Int32("level", level)).Begin(zap.InfoLevel, "compact cluster")
+	_, err := importer.cli.CompactCluster(ctx, req)
+	task.End(zap.ErrorLevel, err)
 	return errors.Trace(err)
 }
 
@@ -139,7 +131,7 @@ func (importer *Importer) Compact(ctx context.Context, level int32) error {
 // to it via WriteStream instances.
 type OpenedEngine struct {
 	importer *Importer
-	tag      string
+	logger   log.Logger
 	uuid     uuid.UUID
 	ts       uint64
 }
@@ -158,6 +150,13 @@ func isIgnorableOpenCloseEngineError(err error) bool {
 
 func makeTag(tableName string, engineID int32) string {
 	return fmt.Sprintf("%s:%d", tableName, engineID)
+}
+
+func makeLogger(tag string, engineUUID uuid.UUID) log.Logger {
+	return log.With(
+		zap.String("engineTag", tag),
+		zap.Stringer("engineUUID", engineUUID),
+	)
 }
 
 var engineNamespace = uuid.Must(uuid.FromString("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf"))
@@ -181,7 +180,9 @@ func (importer *Importer) OpenEngine(
 
 	openCounter := metric.ImporterEngineCounter.WithLabelValues("open")
 	openCounter.Inc()
-	common.AppLogger.Infof("[%s] open engine %s", tag, engineUUID)
+
+	logger := makeLogger(tag, engineUUID)
+	logger.Info("open engine")
 
 	failpoint.Inject("FailIfEngineCountExceeds", func(val failpoint.Value) {
 		closedCounter := metric.ImporterEngineCounter.WithLabelValues("closed")
@@ -194,7 +195,7 @@ func (importer *Importer) OpenEngine(
 
 	return &OpenedEngine{
 		importer: importer,
-		tag:      tag,
+		logger:   logger,
 		ts:       uint64(time.Now().Unix()), // TODO ... set outside ? from pd ?
 		uuid:     engineUUID,
 	}, nil
@@ -226,7 +227,7 @@ func (engine *OpenedEngine) NewWriteStream(ctx context.Context) (*WriteStream, e
 	if err = wstream.Send(req); err != nil {
 		if _, closeErr := wstream.CloseAndRecv(); closeErr != nil {
 			// just log the close error, we need to propagate the send error instead
-			common.AppLogger.Warnf("[%s] close write stream cause failed : %v", engine.tag, closeErr)
+			engine.logger.Warn("close write stream failed", log.ShortError(closeErr))
 		}
 		return nil, errors.Trace(err)
 	}
@@ -264,7 +265,7 @@ func (stream *WriteStream) Put(kvs []kvec.KvPair) error {
 		if !common.IsRetryableError(sendErr) {
 			break
 		}
-		common.AppLogger.Errorf("[%s] write stream failed to send: %s", stream.engine.tag, sendErr.Error())
+		stream.engine.logger.Error("send write stream failed", log.ShortError(sendErr))
 		time.Sleep(retryBackoffTime)
 	}
 	return errors.Trace(sendErr)
@@ -273,9 +274,7 @@ func (stream *WriteStream) Put(kvs []kvec.KvPair) error {
 // Close the write stream.
 func (stream *WriteStream) Close() error {
 	if _, err := stream.wstream.CloseAndRecv(); err != nil {
-		if common.ShouldLogError(err) {
-			common.AppLogger.Errorf("[%s] close write stream cause failed : %v", stream.engine.tag, err)
-		}
+		stream.engine.logger.Error("close write stream failed", log.ShortError(err))
 		return errors.Trace(err)
 	}
 	return nil
@@ -286,20 +285,17 @@ func (stream *WriteStream) Close() error {
 // method anywhere.
 type ClosedEngine struct {
 	importer *Importer
-	tag      string
+	logger   log.Logger
 	uuid     uuid.UUID
 }
 
 // Close the opened engine to prepare it for importing. This method will return
 // error if any associated WriteStream is still not closed.
 func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
-	common.AppLogger.Infof("[%s] [%s] engine close", engine.tag, engine.uuid)
-	timer := time.Now()
-	closedEngine, err := engine.importer.UnsafeCloseEngineWithUUID(ctx, engine.tag, engine.uuid)
+	closedEngine, err := engine.importer.rawUnsafeCloseEngine(ctx, engine.logger, engine.uuid)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	common.AppLogger.Infof("[%s] [%s] engine close takes %v", engine.tag, engine.uuid, time.Since(timer))
 	metric.ImporterEngineCounter.WithLabelValues("closed").Inc()
 	return closedEngine, nil
 }
@@ -317,17 +313,28 @@ func (importer *Importer) UnsafeCloseEngine(ctx context.Context, tableName strin
 
 // UnsafeCloseEngineWithUUID closes the engine using the UUID alone.
 func (importer *Importer) UnsafeCloseEngineWithUUID(ctx context.Context, tag string, engineUUID uuid.UUID) (*ClosedEngine, error) {
+	logger := makeLogger(tag, engineUUID)
+	return importer.rawUnsafeCloseEngine(ctx, logger, engineUUID)
+}
+
+func (importer *Importer) rawUnsafeCloseEngine(ctx context.Context, logger log.Logger, engineUUID uuid.UUID) (*ClosedEngine, error) {
 	req := &kv.CloseEngineRequest{
 		Uuid: engineUUID.Bytes(),
 	}
+	task := logger.Begin(zap.InfoLevel, "engine close")
 	_, err := importer.cli.CloseEngine(ctx, req)
-	if !isIgnorableOpenCloseEngineError(err) {
+	if isIgnorableOpenCloseEngineError(err) {
+		err = nil
+	}
+	task.End(zap.ErrorLevel, err)
+
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return &ClosedEngine{
 		importer: importer,
-		tag:      tag,
+		logger:   logger,
 		uuid:     engineUUID,
 	}, nil
 }
@@ -337,41 +344,36 @@ func (engine *ClosedEngine) Import(ctx context.Context) error {
 	var err error
 
 	for i := 0; i < maxRetryTimes; i++ {
-		common.AppLogger.Infof("[%s] [%s] import", engine.tag, engine.uuid)
 		req := &kv.ImportEngineRequest{
 			Uuid:   engine.uuid.Bytes(),
 			PdAddr: engine.importer.pdAddr,
 		}
-		timer := time.Now()
+
+		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		_, err = engine.importer.cli.ImportEngine(ctx, req)
 		if !common.IsRetryableError(err) {
-			if err == nil {
-				common.AppLogger.Infof("[%s] [%s] import takes %v", engine.tag, engine.uuid, time.Since(timer))
-			} else if common.ShouldLogError(err) {
-				common.AppLogger.Errorf("[%s] [%s] import failed and cannot retry, err %v", engine.tag, engine.uuid, err)
-			}
+			task.End(zap.ErrorLevel, err)
 			return errors.Trace(err)
 		}
-		common.AppLogger.Warnf("[%s] [%s] import failed and retry %d time, err %v", engine.tag, engine.uuid, i+1, err)
+		task.Warn("import spuriously failed, going to retry again", log.ShortError(err))
 		time.Sleep(retryBackoffTime)
 	}
 
-	return errors.Annotatef(err, "[%s] [%s] import reach max retry %d and still failed", engine.tag, engine.uuid, maxRetryTimes)
+	return errors.Annotatef(err, "[%s] import reach max retry %d and still failed", engine.uuid, maxRetryTimes)
 }
 
 // Cleanup deletes the imported data from importer.
 func (engine *ClosedEngine) Cleanup(ctx context.Context) error {
-	common.AppLogger.Infof("[%s] [%s] cleanup ", engine.tag, engine.uuid)
 	req := &kv.CleanupEngineRequest{
 		Uuid: engine.uuid.Bytes(),
 	}
-	timer := time.Now()
+	task := engine.logger.Begin(zap.InfoLevel, "cleanup")
 	_, err := engine.importer.cli.CleanupEngine(ctx, req)
-	common.AppLogger.Infof("[%s] [%s] cleanup takes %v", engine.tag, engine.uuid, time.Since(timer))
+	task.End(zap.WarnLevel, err)
 	return errors.Trace(err)
 }
 
-// Tag gets an identification stirng of this engine for logging.
-func (engine *ClosedEngine) Tag() string {
-	return engine.tag
+// Logger returns the logger used including contextual fields to identify this engine
+func (engine *ClosedEngine) Logger() log.Logger {
+	return engine.logger
 }

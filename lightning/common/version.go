@@ -16,7 +16,8 @@ package common
 import (
 	"fmt"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb-lightning/lightning/log"
+	"go.uber.org/zap"
 )
 
 // Version information.
@@ -41,20 +42,18 @@ func GetRawInfo() string {
 
 // PrintInfo prints some information of the app, like git hash, binary build time, etc.
 func PrintInfo(app string, callback func()) {
-	oriLevel := GetLevel()
-	SetLevel(log.InfoLevel)
-	printInfo(app)
+	oldLevel := log.SetLevel(zap.InfoLevel)
+	defer log.SetLevel(oldLevel)
+
+	log.L().Info("Welcome to "+app,
+		zap.String("Release Version", ReleaseVersion),
+		zap.String("Git Commit Hash", GitHash),
+		zap.String("Git Branch", GitBranch),
+		zap.String("UTC Build Time", BuildTS),
+		zap.String("Go Version", GoVersion),
+	)
+
 	if callback != nil {
 		callback()
 	}
-	SetLevel(oriLevel)
-}
-
-func printInfo(app string) {
-	AppLogger.Infof("Welcome to %s", app)
-	AppLogger.Infof("Release Version: %s", ReleaseVersion)
-	AppLogger.Infof("Git Commit Hash: %s", GitHash)
-	AppLogger.Infof("Git Branch: %s", GitBranch)
-	AppLogger.Infof("UTC Build Time: %s", BuildTS)
-	AppLogger.Infof("Go Version: %s", GoVersion)
 }

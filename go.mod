@@ -26,12 +26,12 @@ require (
 	github.com/prometheus/client_golang v0.9.2
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/satori/go.uuid v1.2.0
-	github.com/sirupsen/logrus v1.3.0
+	github.com/sirupsen/logrus v1.3.0 // indirect
 	github.com/unrolled/render v0.0.0-20190117215946-449f39850074 // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
+	go.uber.org/zap v1.9.1
 	golang.org/x/text v0.3.0
 	google.golang.org/appengine v1.1.1-0.20180731164958-4216e58b9158 // indirect
 	google.golang.org/grpc v1.18.0
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 )

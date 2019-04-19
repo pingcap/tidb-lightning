@@ -22,7 +22,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/log"
+	"go.uber.org/zap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
@@ -103,7 +104,10 @@ func ExportStatement(sqlFile string, characterSet string) ([]byte, error) {
 
 	data, err = decodeCharacterSet(data, characterSet)
 	if err != nil {
-		common.AppLogger.Errorf("cannot decode input file as %s encoding, please convert it manually: %s", characterSet, sqlFile)
+		log.L().Error("cannot decode input file, please convert to target encoding manually",
+			zap.String("encoding", characterSet),
+			zap.String("path", sqlFile),
+		)
 		return nil, errors.Annotatef(err, "failed to decode %s as %s", sqlFile, characterSet)
 	}
 	return data, nil

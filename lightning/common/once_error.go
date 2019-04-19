@@ -28,16 +28,13 @@ type OnceError struct {
 // Set assigns an error to this instance, if `e != nil`.
 //
 // If this method is called multiple times, only the first call is effective.
-func (oe *OnceError) Set(tag string, e error) {
+func (oe *OnceError) Set(e error) {
 	if e != nil {
 		oe.lock.Lock()
 		if oe.err == nil {
 			oe.err = e
 		}
 		oe.lock.Unlock()
-		if ShouldLogError(e) {
-			AppLogger.Errorf("[%s] error %v", tag, e)
-		}
 	}
 }
 

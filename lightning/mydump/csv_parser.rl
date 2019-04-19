@@ -10,8 +10,9 @@ package mydump
 import (
 	"io"
 
-	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
 )
 
 %%{
@@ -81,7 +82,10 @@ func (parser *CSVParser) lex() (csvToken, []byte, error) {
 		%% write exec;
 
 		if cs == %%{ write error; }%% {
-			common.AppLogger.Errorf("Syntax error near byte %d, content is «%s»", parser.pos, string(data))
+			log.L().Error("syntax error",
+				zap.Int64("pos", parser.pos),
+				zap.ByteString("content", data),
+			)
 			return csvTokNil, nil, errors.New("Syntax error")
 		}
 

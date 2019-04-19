@@ -26,16 +26,17 @@ package mydump
 import (
 	"io"
 
-	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
 )
 
 
-//.... lightning/mydump/parser.rl:139
+//.... lightning/mydump/parser.rl:140
 
 
 
-//.... tmp_parser.go:38
+//.... tmp_parser.go:39
 const chunk_parser_start int = 21
 const chunk_parser_first_final int = 21
 const chunk_parser_error int = 0
@@ -43,12 +44,12 @@ const chunk_parser_error int = 0
 const chunk_parser_en_main int = 21
 
 
-//.... lightning/mydump/parser.rl:142
+//.... lightning/mydump/parser.rl:143
 
 func (parser *ChunkParser) lex() (token, []byte, error) {
 	var cs, ts, te, act, p int
 	
-//.... tmp_parser.go:51
+//.... tmp_parser.go:52
 	{
 	cs = chunk_parser_start
 	ts = 0
@@ -56,7 +57,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 	act = 0
 	}
 
-//.... lightning/mydump/parser.rl:146
+//.... lightning/mydump/parser.rl:147
 
 	for {
 		data := parser.buf
@@ -68,7 +69,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 		}
 
 		
-//.... tmp_parser.go:71
+//.... tmp_parser.go:72
 	{
 	var _widec int16
 	if p == pe {
@@ -283,7 +284,7 @@ tr4:
 	
 	goto st21
 tr8:
-//.... lightning/mydump/parser.rl:132
+//.... lightning/mydump/parser.rl:133
 p = (te) - 1
 {
 		consumedToken = tokUnquoted
@@ -291,12 +292,12 @@ p = (te) - 1
 	}
 	goto st21
 tr10:
-//.... lightning/mydump/parser.rl:70
+//.... lightning/mydump/parser.rl:71
 te = p+1
 
 	goto st21
 tr13:
-//.... lightning/mydump/parser.rl:112
+//.... lightning/mydump/parser.rl:113
 te = p+1
 {
 		consumedToken = tokBinString
@@ -304,7 +305,7 @@ te = p+1
 	}
 	goto st21
 tr22:
-//.... lightning/mydump/parser.rl:107
+//.... lightning/mydump/parser.rl:108
 te = p+1
 {
 		consumedToken = tokHexString
@@ -312,7 +313,7 @@ te = p+1
 	}
 	goto st21
 tr29:
-//.... lightning/mydump/parser.rl:72
+//.... lightning/mydump/parser.rl:73
 te = p+1
 {
 		consumedToken = tokRowBegin
@@ -320,7 +321,7 @@ te = p+1
 	}
 	goto st21
 tr30:
-//.... lightning/mydump/parser.rl:77
+//.... lightning/mydump/parser.rl:78
 te = p+1
 {
 		consumedToken = tokRowEnd
@@ -328,7 +329,7 @@ te = p+1
 	}
 	goto st21
 tr44:
-//.... lightning/mydump/parser.rl:122
+//.... lightning/mydump/parser.rl:123
 te = p
 p--
 {
@@ -337,7 +338,7 @@ p--
 	}
 	goto st21
 tr45:
-//.... lightning/mydump/parser.rl:117
+//.... lightning/mydump/parser.rl:118
 te = p
 p--
 {
@@ -346,7 +347,7 @@ p--
 	}
 	goto st21
 tr46:
-//.... lightning/mydump/parser.rl:132
+//.... lightning/mydump/parser.rl:133
 te = p
 p--
 {
@@ -355,7 +356,7 @@ p--
 	}
 	goto st21
 tr48:
-//.... lightning/mydump/parser.rl:102
+//.... lightning/mydump/parser.rl:103
 te = p
 p--
 {
@@ -364,7 +365,7 @@ p--
 	}
 	goto st21
 tr84:
-//.... lightning/mydump/parser.rl:127
+//.... lightning/mydump/parser.rl:128
 te = p
 p--
 {
@@ -386,7 +387,7 @@ act = 0
 //.... NONE:1
 ts = p
 
-//.... tmp_parser.go:389
+//.... tmp_parser.go:390
 		switch data[p] {
 		case 32:
 			goto tr10
@@ -460,42 +461,42 @@ tr26:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:132
+//.... lightning/mydump/parser.rl:133
 act = 14;
 	goto st22
 tr51:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:70
+//.... lightning/mydump/parser.rl:71
 act = 1;
 	goto st22
 tr65:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:97
+//.... lightning/mydump/parser.rl:98
 act = 7;
 	goto st22
 tr70:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:87
+//.... lightning/mydump/parser.rl:88
 act = 5;
 	goto st22
 tr73:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:92
+//.... lightning/mydump/parser.rl:93
 act = 6;
 	goto st22
 tr83:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:82
+//.... lightning/mydump/parser.rl:83
 act = 4;
 	goto st22
 	st22:
@@ -503,7 +504,7 @@ act = 4;
 			goto _test_eof22
 		}
 	st_case_22:
-//.... tmp_parser.go:506
+//.... tmp_parser.go:507
 		switch data[p] {
 		case 32:
 			goto tr4
@@ -587,7 +588,7 @@ tr1:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:122
+//.... lightning/mydump/parser.rl:123
 act = 12;
 	goto st23
 	st23:
@@ -595,7 +596,7 @@ act = 12;
 			goto _test_eof23
 		}
 	st_case_23:
-//.... tmp_parser.go:598
+//.... tmp_parser.go:599
 		if data[p] == 34 {
 			goto st2
 		}
@@ -693,7 +694,7 @@ tr6:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:117
+//.... lightning/mydump/parser.rl:118
 act = 11;
 	goto st24
 	st24:
@@ -701,7 +702,7 @@ act = 11;
 			goto _test_eof24
 		}
 	st_case_24:
-//.... tmp_parser.go:704
+//.... tmp_parser.go:705
 		if data[p] == 39 {
 			goto st5
 		}
@@ -775,7 +776,7 @@ te = p+1
 			goto _test_eof26
 		}
 	st_case_26:
-//.... tmp_parser.go:778
+//.... tmp_parser.go:779
 		switch data[p] {
 		case 10:
 			goto tr10
@@ -876,7 +877,7 @@ te = p+1
 			goto _test_eof29
 		}
 	st_case_29:
-//.... tmp_parser.go:879
+//.... tmp_parser.go:880
 		switch data[p] {
 		case 32:
 			goto st8
@@ -931,7 +932,7 @@ te = p+1
 			goto _test_eof30
 		}
 	st_case_30:
-//.... tmp_parser.go:934
+//.... tmp_parser.go:935
 		switch data[p] {
 		case 32:
 			goto st8
@@ -995,14 +996,14 @@ tr52:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:132
+//.... lightning/mydump/parser.rl:133
 act = 14;
 	goto st32
 tr54:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:112
+//.... lightning/mydump/parser.rl:113
 act = 10;
 	goto st32
 	st32:
@@ -1010,7 +1011,7 @@ act = 10;
 			goto _test_eof32
 		}
 	st_case_32:
-//.... tmp_parser.go:1013
+//.... tmp_parser.go:1014
 		switch data[p] {
 		case 32:
 			goto tr4
@@ -1040,14 +1041,14 @@ tr53:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:132
+//.... lightning/mydump/parser.rl:133
 act = 14;
 	goto st33
 tr55:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:107
+//.... lightning/mydump/parser.rl:108
 act = 9;
 	goto st33
 	st33:
@@ -1055,7 +1056,7 @@ act = 9;
 			goto _test_eof33
 		}
 	st_case_33:
-//.... tmp_parser.go:1058
+//.... tmp_parser.go:1059
 		switch data[p] {
 		case 32:
 			goto tr4
@@ -1101,7 +1102,7 @@ te = p+1
 			goto _test_eof34
 		}
 	st_case_34:
-//.... tmp_parser.go:1104
+//.... tmp_parser.go:1105
 		switch data[p] {
 		case 32:
 			goto tr46
@@ -1865,7 +1866,7 @@ te = p+1
 			goto _test_eof59
 		}
 	st_case_59:
-//.... tmp_parser.go:1868
+//.... tmp_parser.go:1869
 		switch data[p] {
 		case 32:
 			goto st11
@@ -2134,7 +2135,7 @@ te = p+1
 			goto _test_eof65
 		}
 	st_case_65:
-//.... tmp_parser.go:2137
+//.... tmp_parser.go:2138
 		switch data[p] {
 		case 32:
 			goto tr46
@@ -2192,7 +2193,7 @@ tr25:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:127
+//.... lightning/mydump/parser.rl:128
 act = 13;
 	goto st66
 	st66:
@@ -2200,7 +2201,7 @@ act = 13;
 			goto _test_eof66
 		}
 	st_case_66:
-//.... tmp_parser.go:2203
+//.... tmp_parser.go:2204
 		if data[p] == 96 {
 			goto st20
 		}
@@ -2408,10 +2409,13 @@ act = 13;
 	_out: {}
 	}
 
-//.... lightning/mydump/parser.rl:157
+//.... lightning/mydump/parser.rl:158
 
 		if cs == 0 {
-			common.AppLogger.Errorf("Syntax error near byte %d, content is «%s»", parser.pos, string(data))
+			log.L().Error("syntax error",
+				zap.Int64("pos", parser.pos),
+				zap.ByteString("content", data),
+			)
 			return tokNil, nil, errors.New("Syntax error")
 		}
 

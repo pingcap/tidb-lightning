@@ -30,9 +30,11 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/parser/mysql"
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
 const (
@@ -64,90 +66,88 @@ func IsDirExists(name string) bool {
 	return f != nil && f.IsDir()
 }
 
-func QueryRowWithRetry(ctx context.Context, db *sql.DB, query string, dest ...interface{}) (err error) {
-	maxRetry := defaultMaxRetry
-	for i := 0; i < maxRetry; i++ {
-		if i > 0 {
-			AppLogger.Warnf("query %s retry %d", query, i)
-			time.Sleep(retryTimeout)
-		}
-
-		err = db.QueryRowContext(ctx, query).Scan(dest...)
-		if err != nil {
-			if !IsRetryableError(err) {
-				return errors.Trace(err)
-			}
-			AppLogger.Warnf("query %s [error] %v", query, err)
-			continue
-		}
-
-		return nil
-	}
-
-	return errors.Errorf("query sql [%s] failed", query)
+// SQLWithRetry constructs a retryable transaction.
+type SQLWithRetry struct {
+	DB           *sql.DB
+	Logger       log.Logger
+	HideQueryLog bool
 }
 
-// TransactWithRetry executes an action in a transaction, and retry if the
-// action failed with a retryable error.
-func TransactWithRetry(ctx context.Context, db *sql.DB, purpose string, action func(context.Context, *sql.Tx) error) error {
-	maxRetry := defaultMaxRetry
-
+func (t SQLWithRetry) perform(ctx context.Context, parentLogger log.Logger, purpose string, action func() error) error {
 	var err error
-	for i := 0; i < maxRetry; i++ {
+outside:
+	for i := 0; i < defaultMaxRetry; i++ {
+		logger := parentLogger.With(zap.Int("retryCnt", i))
+
 		if i > 0 {
-			AppLogger.Warnf("transaction %s retry %d", purpose, i)
+			logger.Warn(purpose + " retry start")
 			time.Sleep(retryTimeout)
 		}
 
-		if err = transactImpl(ctx, db, purpose, action); err != nil {
-			if IsRetryableError(err) {
-				continue
+		err = action()
+		switch {
+		case err == nil:
+			return nil
+		case IsRetryableError(err):
+			logger.Warn(purpose+" failed but going to try again", log.ShortError(err))
+			continue
+		default:
+			break outside
+		}
+	}
+
+	return errors.Annotatef(err, "%s failed", purpose)
+}
+
+func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string, dest ...interface{}) error {
+	logger := t.Logger
+	if !t.HideQueryLog {
+		logger = logger.With(zap.String("query", query))
+	}
+	return t.perform(ctx, logger, purpose, func() error {
+		return t.DB.QueryRow(query).Scan(dest...)
+	})
+}
+
+// Transact executes an action in a transaction, and retry if the
+// action failed with a retryable error.
+func (t SQLWithRetry) Transact(ctx context.Context, purpose string, action func(context.Context, *sql.Tx) error) error {
+	return t.perform(ctx, t.Logger, purpose, func() error {
+		txn, err := t.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return errors.Annotate(err, "begin transaction failed")
+		}
+
+		err = action(ctx, txn)
+		if err != nil {
+			rerr := txn.Rollback()
+			if rerr != nil {
+				t.Logger.Error(purpose+" rollback transaction failed", log.ShortError(rerr))
 			}
-			if ShouldLogError(err) {
-				AppLogger.Errorf("transaction %s [error] %v", purpose, err)
-			}
-			return errors.Trace(err)
+			// we should return the exec err, instead of the rollback rerr.
+			// no need to errors.Trace() it, as the error comes from user code anyway.
+			return err
+		}
+
+		err = txn.Commit()
+		if err != nil {
+			return errors.Annotate(err, "commit transaction failed")
 		}
 
 		return nil
-	}
-
-	return errors.Annotatef(err, "transaction %s failed", purpose)
+	})
 }
 
-func transactImpl(ctx context.Context, db *sql.DB, purpose string, action func(context.Context, *sql.Tx) error) error {
-	txn, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return errors.Annotate(err, "begin transaction failed")
+// Exec executes a single SQL with optional retry.
+func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, args ...interface{}) error {
+	logger := t.Logger
+	if !t.HideQueryLog {
+		logger = logger.With(zap.String("query", query), zap.Reflect("args", args))
 	}
-
-	err = action(ctx, txn)
-	if err != nil {
-		AppLogger.Warnf("transaction %s [error]%v", purpose, err)
-		rerr := txn.Rollback()
-		if rerr != nil {
-			if ShouldLogError(rerr) {
-				AppLogger.Errorf("transaction %s [error] %v", purpose, rerr)
-			}
-		}
-		// we should return the exec err, instead of the rollback rerr.
-		// no need to errors.Trace() it, as the error comes from user code anyway.
-		return err
-	}
-
-	err = txn.Commit()
-	if err != nil {
-		return errors.Annotate(err, "commit failed")
-	}
-	return nil
-}
-
-// ExecWithRetry executes a single SQL with optional retry.
-func ExecWithRetry(ctx context.Context, db *sql.DB, purpose string, query string, args ...interface{}) error {
-	return errors.Trace(TransactWithRetry(ctx, db, purpose, func(c context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(c, query, args...)
+	return t.perform(ctx, logger, purpose, func() error {
+		_, err := t.DB.ExecContext(ctx, query, args...)
 		return errors.Trace(err)
-	}))
+	})
 }
 
 // IsRetryableError returns whether the error is transient (e.g. network
@@ -182,35 +182,13 @@ func IsRetryableError(err error) bool {
 	}
 }
 
-// ShouldLogError returns whether the error should be logged.
-// This function should only be used for inhabiting logs related to canceling,
-// where the log is usually just noise.
-//
-// This function returns `false` when:
-//
-//  - the error `IsContextCanceledError`
-//  - the log level is above "debug"
-//
-// This function also returns `false` when `err == nil`.
-func ShouldLogError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if AppLogger.IsLevelEnabled(logrus.DebugLevel) {
-		return true
-	}
-	return !IsContextCanceledError(err)
-}
-
 // IsContextCanceledError returns whether the error is caused by context
 // cancellation. This function should only be used when the code logic is
-// affected by whether the error is canceling or not. Normally, you should
-// simply use ShouldLogError.
+// affected by whether the error is canceling or not.
 //
 // This function returns `false` (not a context-canceled error) if `err == nil`.
 func IsContextCanceledError(err error) bool {
-	err = errors.Cause(err)
-	return err == context.Canceled || status.Code(err) == codes.Canceled
+	return log.IsContextCanceledError(err)
 }
 
 // UniqueTable returns an unique table name.

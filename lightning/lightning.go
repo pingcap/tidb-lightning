@@ -22,9 +22,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
 )
@@ -38,14 +40,15 @@ type Lightning struct {
 }
 
 func initEnv(cfg *config.Config) error {
-	if err := common.InitLogger(&cfg.App.LogConfig, cfg.TiDB.LogLevel); err != nil {
+	if err := log.InitLogger(&cfg.App.Config, cfg.TiDB.LogLevel); err != nil {
 		return errors.Trace(err)
 	}
 
 	if cfg.App.ProfilePort > 0 {
 		go func() {
 			http.Handle("/metrics", promhttp.Handler())
-			common.AppLogger.Info(http.ListenAndServe(fmt.Sprintf(":%d", cfg.App.ProfilePort), nil))
+			err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.App.ProfilePort), nil)
+			log.L().Info("stopped HTTP server", log.ShortError(err))
 		}()
 	}
 
@@ -67,7 +70,7 @@ func New(cfg *config.Config) *Lightning {
 func (l *Lightning) Run() error {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	common.PrintInfo("lightning", func() {
-		common.AppLogger.Infof("cfg %s", l.cfg)
+		log.L().Info("cfg", zap.Stringer("cfg", l.cfg))
 	})
 
 	l.wg.Add(1)
@@ -81,16 +84,17 @@ func (l *Lightning) Run() error {
 }
 
 func (l *Lightning) run() error {
+	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
 	mdl, err := mydump.NewMyDumpLoader(l.cfg)
+	loadTask.End(zap.ErrorLevel, err)
 	if err != nil {
-		common.AppLogger.Errorf("failed to load mydumper source : %s", errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 
 	dbMetas := mdl.GetDatabases()
 	procedure, err := restore.NewRestoreController(l.ctx, dbMetas, l.cfg)
 	if err != nil {
-		common.AppLogger.Errorf("failed to restore : %s", errors.ErrorStack(err))
+		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
 	}
 	defer procedure.Close()

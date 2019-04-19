@@ -20,14 +20,15 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
+	"go.uber.org/zap"
 )
 
 type TiDBManager struct {
@@ -73,26 +74,40 @@ func (timgr *TiDBManager) Close() {
 }
 
 func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, tablesSchema map[string]string) error {
+	sql := common.SQLWithRetry{
+		DB:     timgr.db,
+		Logger: log.With(zap.String("db", database)),
+	}
+
 	createDatabase := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
-	err := common.ExecWithRetry(ctx, timgr.db, createDatabase, createDatabase)
+	err := sql.Exec(ctx, "create database", createDatabase)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	useDB := fmt.Sprintf("USE `%s`", database)
-	err = common.ExecWithRetry(ctx, timgr.db, useDB, useDB)
+	err = sql.Exec(ctx, "use database", useDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	for _, sqlCreateTable := range tablesSchema {
-		timer := time.Now()
-		if err = safeCreateTable(ctx, timgr.db, sqlCreateTable); err != nil {
-			return errors.Trace(err)
-		}
-		common.AppLogger.Infof("%s takes %v", sqlCreateTable, time.Since(timer))
-	}
+	task := sql.Logger.Begin(zap.InfoLevel, "create tables")
+	for tbl, sqlCreateTable := range tablesSchema {
+		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-	return nil
+		safeCreateTable := createTableIfNotExistsStmt(sqlCreateTable)
+		sql2 := common.SQLWithRetry{
+			DB:           timgr.db,
+			Logger:       sql.Logger.With(zap.String("table", common.UniqueTable(database, tbl))),
+			HideQueryLog: true,
+		}
+		err = sql2.Exec(ctx, "create table", safeCreateTable)
+		if err != nil {
+			break
+		}
+	}
+	task.End(zap.ErrorLevel, err)
+
+	return errors.Trace(err)
 }
 
 var createTableRegexp = regexp.MustCompile(`(?i)CREATE TABLE( IF NOT EXISTS)?`)
@@ -108,12 +123,6 @@ func createTableIfNotExistsStmt(createTable string) string {
 	return createTable
 }
 
-func safeCreateTable(ctx context.Context, db *sql.DB, createTable string) error {
-	createTable = createTableIfNotExistsStmt(createTable)
-	err := common.ExecWithRetry(ctx, db, createTable, createTable)
-	return errors.Trace(err)
-}
-
 func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
 	baseURL := *timgr.baseURL
 	baseURL.Path = fmt.Sprintf("schema/%s", schema)
@@ -121,14 +130,17 @@ func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
 	var tables []*model.TableInfo
 	err := common.GetJSON(timgr.client, baseURL.String(), &tables)
 	if err != nil {
-		return nil, errors.Annotatef(errors.Trace(err), "get tables for schema %s", schema)
+		return nil, errors.Annotatef(err, "get tables for schema %s", schema)
 	}
 	return tables, nil
 }
 
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
-	query := "DROP TABLE " + tableName
-	return errors.Trace(common.ExecWithRetry(ctx, timgr.db, query, query))
+	sql := common.SQLWithRetry{
+		DB:     timgr.db,
+		Logger: log.With(zap.String("table", tableName)),
+	}
+	return sql.Exec(ctx, "drop table", "DROP TABLE "+tableName)
 }
 
 func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.MDDatabaseMeta) (map[string]*TidbDBInfo, error) {
@@ -173,31 +185,50 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.
 }
 
 func (timgr *TiDBManager) getCreateTableStmt(ctx context.Context, schema, table string) (string, error) {
-	query := fmt.Sprintf("SHOW CREATE TABLE %s", common.UniqueTable(schema, table))
+	tableName := common.UniqueTable(schema, table)
+	sql := common.SQLWithRetry{
+		DB:     timgr.db,
+		Logger: log.With(zap.String("table", tableName)),
+	}
 	var tbl, createTable string
-	err := common.QueryRowWithRetry(ctx, timgr.db, query, &tbl, &createTable)
-	return createTable, errors.Annotatef(err, "%s", query)
+	err := sql.QueryRow(ctx, "show create table",
+		"SHOW CREATE TABLE "+tableName,
+		&tbl, &createTable,
+	)
+	return createTable, err
 }
 
-func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (gcLifeTime string, err error) {
-	query := "SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'"
-	err = common.QueryRowWithRetry(ctx, db, query, &gcLifeTime)
-	return gcLifeTime, errors.Annotatef(err, "%s", query)
+func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
+	var gcLifeTime string
+	err := common.SQLWithRetry{DB: db, Logger: log.L()}.QueryRow(ctx, "obtain GC lifetime",
+		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
+		&gcLifeTime,
+	)
+	return gcLifeTime, err
 }
 
 func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
-	query := "UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'"
-	err := common.ExecWithRetry(ctx, db, query, query, gcLifeTime)
-	return errors.Annotatef(err, "%s -- ? = %s", query, gcLifeTime)
+	sql := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.With(zap.String("gcLifeTime", gcLifeTime)),
+	}
+	return sql.Exec(ctx, "update GC lifetime",
+		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
+		gcLifeTime,
+	)
 }
 
-func AlterAutoIncrement(ctx context.Context, db *sql.DB, schema string, table string, incr int64) error {
-	tableName := common.UniqueTable(schema, table)
+func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr int64) error {
+	sql := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.With(zap.String("table", tableName), zap.Int64("auto_increment", incr)),
+	}
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
-	common.AppLogger.Infof("[%s.%s] %s", schema, table, query)
-	err := common.ExecWithRetry(ctx, db, query, query)
+	task := sql.Logger.Begin(zap.InfoLevel, "alter table auto_increment")
+	err := sql.Exec(ctx, "alter table auto_increment", query)
+	task.End(zap.ErrorLevel, err)
 	if err != nil {
-		common.AppLogger.Errorf("query failed %v, you should do it manually, err %v", query, err)
+		task.Error("alter table auto_increment failed, please perform the query manually", zap.String("query", query))
 	}
 	return errors.Annotatef(err, "%s", query)
 }
