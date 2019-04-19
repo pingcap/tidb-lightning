@@ -90,6 +90,7 @@ func (c *KVChecksum) SumKVS() uint64 {
 	return c.kvs
 }
 
+// MarshalLogObject implements the zapcore.ObjectMarshaler interface.
 func (c *KVChecksum) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
 	encoder.AddUint64("cksum", c.checksum)
 	encoder.AddUint64("size", c.bytes)

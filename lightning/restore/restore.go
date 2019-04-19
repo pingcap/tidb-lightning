@@ -100,8 +100,8 @@ func (es *errorSummaries) emitLog() {
 	es.Lock()
 	defer es.Unlock()
 
-	logger := log.L()
 	if errorCount := len(es.summary); errorCount > 0 {
+		logger := log.L()
 		logger.Error("tables failed to be imported", zap.Int("count", errorCount))
 		for tableName, errorSummary := range es.summary {
 			logger.Error("-",
@@ -845,7 +845,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
-		err := t.restoreTableMeta(ctx, rc.tidbMgr.db)
+		err := AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Base()+1)
 		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
@@ -1212,10 +1212,6 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 	}
 
 	ccp.ColumnPermutation = colPerm
-}
-
-func (tr *TableRestore) restoreTableMeta(ctx context.Context, db *sql.DB) error {
-	return AlterAutoIncrement(ctx, db, tr.tableName, tr.alloc.Base()+1)
 }
 
 func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
