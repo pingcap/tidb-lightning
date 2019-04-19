@@ -1,4 +1,4 @@
 CREATE TABLE `bit`(
     `ref` INT NOT NULL,
-    `pk` BIT(2) NOT NULL PRIMARY KEY
+    `pk` BIT(2) NOT NULL
 );

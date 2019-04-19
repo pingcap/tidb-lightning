@@ -31,7 +31,7 @@ import (
 )
 
 
-//.... lightning/mydump/parser.rl:133
+//.... lightning/mydump/parser.rl:139
 
 
 
@@ -43,7 +43,7 @@ const chunk_parser_error int = 0
 const chunk_parser_en_main int = 21
 
 
-//.... lightning/mydump/parser.rl:136
+//.... lightning/mydump/parser.rl:142
 
 func (parser *ChunkParser) lex() (token, []byte, error) {
 	var cs, ts, te, act, p int
@@ -56,7 +56,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 	act = 0
 	}
 
-//.... lightning/mydump/parser.rl:140
+//.... lightning/mydump/parser.rl:146
 
 	for {
 		data := parser.buf
@@ -107,12 +107,12 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 		goto st_case_27
 	case 28:
 		goto st_case_28
+	case 29:
+		goto st_case_29
 	case 8:
 		goto st_case_8
 	case 9:
 		goto st_case_9
-	case 29:
-		goto st_case_29
 	case 30:
 		goto st_case_30
 	case 31:
@@ -123,10 +123,10 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 		goto st_case_33
 	case 34:
 		goto st_case_34
-	case 35:
-		goto st_case_35
 	case 10:
 		goto st_case_10
+	case 35:
+		goto st_case_35
 	case 36:
 		goto st_case_36
 	case 37:
@@ -175,8 +175,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 		goto st_case_58
 	case 59:
 		goto st_case_59
-	case 60:
-		goto st_case_60
 	case 11:
 		goto st_case_11
 	case 12:
@@ -193,6 +191,8 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 		goto st_case_17
 	case 18:
 		goto st_case_18
+	case 60:
+		goto st_case_60
 	case 61:
 		goto st_case_61
 	case 62:
@@ -203,14 +203,12 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 		goto st_case_64
 	case 65:
 		goto st_case_65
-	case 66:
-		goto st_case_66
 	case 19:
 		goto st_case_19
 	case 20:
 		goto st_case_20
-	case 67:
-		goto st_case_67
+	case 66:
+		goto st_case_66
 	}
 	goto st_out
 tr4:
@@ -242,37 +240,37 @@ tr4:
 		consumedToken = tokFalse
 		{p++; cs = 21; goto _out }
 	}
-	case 8:
+	case 9:
 	{p = (te) - 1
 
 		consumedToken = tokHexString
 		{p++; cs = 21; goto _out }
 	}
-	case 9:
+	case 10:
 	{p = (te) - 1
 
 		consumedToken = tokBinString
 		{p++; cs = 21; goto _out }
 	}
-	case 10:
+	case 11:
 	{p = (te) - 1
 
 		consumedToken = tokSingleQuoted
 		{p++; cs = 21; goto _out }
 	}
-	case 11:
+	case 12:
 	{p = (te) - 1
 
 		consumedToken = tokDoubleQuoted
 		{p++; cs = 21; goto _out }
 	}
-	case 12:
+	case 13:
 	{p = (te) - 1
 
 		consumedToken = tokBackQuoted
 		{p++; cs = 21; goto _out }
 	}
-	case 13:
+	case 14:
 	{p = (te) - 1
 
 		consumedToken = tokUnquoted
@@ -285,7 +283,7 @@ tr4:
 	
 	goto st21
 tr8:
-//.... lightning/mydump/parser.rl:126
+//.... lightning/mydump/parser.rl:132
 p = (te) - 1
 {
 		consumedToken = tokUnquoted
@@ -293,12 +291,12 @@ p = (te) - 1
 	}
 	goto st21
 tr10:
-//.... lightning/mydump/parser.rl:69
+//.... lightning/mydump/parser.rl:70
 te = p+1
 
 	goto st21
 tr13:
-//.... lightning/mydump/parser.rl:106
+//.... lightning/mydump/parser.rl:112
 te = p+1
 {
 		consumedToken = tokBinString
@@ -306,7 +304,7 @@ te = p+1
 	}
 	goto st21
 tr22:
-//.... lightning/mydump/parser.rl:101
+//.... lightning/mydump/parser.rl:107
 te = p+1
 {
 		consumedToken = tokHexString
@@ -314,7 +312,7 @@ te = p+1
 	}
 	goto st21
 tr29:
-//.... lightning/mydump/parser.rl:71
+//.... lightning/mydump/parser.rl:72
 te = p+1
 {
 		consumedToken = tokRowBegin
@@ -322,15 +320,15 @@ te = p+1
 	}
 	goto st21
 tr30:
-//.... lightning/mydump/parser.rl:76
+//.... lightning/mydump/parser.rl:77
 te = p+1
 {
 		consumedToken = tokRowEnd
 		{p++; cs = 21; goto _out }
 	}
 	goto st21
-tr43:
-//.... lightning/mydump/parser.rl:116
+tr44:
+//.... lightning/mydump/parser.rl:122
 te = p
 p--
 {
@@ -338,8 +336,8 @@ p--
 		{p++; cs = 21; goto _out }
 	}
 	goto st21
-tr44:
-//.... lightning/mydump/parser.rl:111
+tr45:
+//.... lightning/mydump/parser.rl:117
 te = p
 p--
 {
@@ -347,8 +345,8 @@ p--
 		{p++; cs = 21; goto _out }
 	}
 	goto st21
-tr45:
-//.... lightning/mydump/parser.rl:126
+tr46:
+//.... lightning/mydump/parser.rl:132
 te = p
 p--
 {
@@ -356,8 +354,17 @@ p--
 		{p++; cs = 21; goto _out }
 	}
 	goto st21
+tr48:
+//.... lightning/mydump/parser.rl:102
+te = p
+p--
+{
+		consumedToken = tokInteger
+		{p++; cs = 21; goto _out }
+	}
+	goto st21
 tr84:
-//.... lightning/mydump/parser.rl:121
+//.... lightning/mydump/parser.rl:127
 te = p
 p--
 {
@@ -379,7 +386,7 @@ act = 0
 //.... NONE:1
 ts = p
 
-//.... tmp_parser.go:382
+//.... tmp_parser.go:389
 		switch data[p] {
 		case 32:
 			goto tr10
@@ -396,51 +403,56 @@ ts = p
 		case 45:
 			goto st25
 		case 47:
-			goto st27
+			goto st28
 		case 48:
-			goto st30
+			goto st31
 		case 59:
 			goto tr10
 		case 66:
-			goto tr34
+			goto tr35
 		case 67:
-			goto st36
+			goto st35
 		case 70:
-			goto st43
+			goto st42
 		case 73:
-			goto st47
+			goto st46
 		case 78:
-			goto st50
+			goto st49
 		case 84:
-			goto st53
+			goto st52
 		case 85:
-			goto st56
+			goto st55
 		case 86:
-			goto st61
+			goto st60
 		case 88:
-			goto tr42
+			goto tr43
 		case 96:
 			goto st20
 		case 98:
-			goto tr34
+			goto tr35
 		case 99:
-			goto st36
+			goto st35
 		case 102:
-			goto st43
+			goto st42
 		case 105:
-			goto st47
+			goto st46
 		case 110:
-			goto st50
+			goto st49
 		case 116:
-			goto st53
+			goto st52
 		case 117:
-			goto st56
+			goto st55
 		case 118:
-			goto st61
+			goto st60
 		case 120:
-			goto tr42
+			goto tr43
 		}
-		if 9 <= data[p] && data[p] <= 13 {
+		switch {
+		case data[p] > 13:
+			if 49 <= data[p] && data[p] <= 57 {
+				goto st27
+			}
+		case data[p] >= 9:
 			goto tr10
 		}
 		goto tr26
@@ -448,56 +460,42 @@ tr26:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:126
-act = 13;
+//.... lightning/mydump/parser.rl:132
+act = 14;
 	goto st22
-tr49:
+tr51:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:69
+//.... lightning/mydump/parser.rl:70
 act = 1;
-	goto st22
-tr53:
-//.... NONE:1
-te = p+1
-
-//.... lightning/mydump/parser.rl:106
-act = 9;
-	goto st22
-tr55:
-//.... NONE:1
-te = p+1
-
-//.... lightning/mydump/parser.rl:101
-act = 8;
 	goto st22
 tr65:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:96
+//.... lightning/mydump/parser.rl:97
 act = 7;
 	goto st22
 tr70:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:86
+//.... lightning/mydump/parser.rl:87
 act = 5;
 	goto st22
 tr73:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:91
+//.... lightning/mydump/parser.rl:92
 act = 6;
 	goto st22
 tr83:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:81
+//.... lightning/mydump/parser.rl:82
 act = 4;
 	goto st22
 	st22:
@@ -505,7 +503,7 @@ act = 4;
 			goto _test_eof22
 		}
 	st_case_22:
-//.... tmp_parser.go:508
+//.... tmp_parser.go:506
 		switch data[p] {
 		case 32:
 			goto tr4
@@ -589,19 +587,19 @@ tr1:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:116
-act = 11;
+//.... lightning/mydump/parser.rl:122
+act = 12;
 	goto st23
 	st23:
 		if p++; p == pe {
 			goto _test_eof23
 		}
 	st_case_23:
-//.... tmp_parser.go:600
+//.... tmp_parser.go:598
 		if data[p] == 34 {
 			goto st2
 		}
-		goto tr43
+		goto tr44
 	st3:
 		if p++; p == pe {
 			goto _test_eof3
@@ -695,19 +693,19 @@ tr6:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:111
-act = 10;
+//.... lightning/mydump/parser.rl:117
+act = 11;
 	goto st24
 	st24:
 		if p++; p == pe {
 			goto _test_eof24
 		}
 	st_case_24:
-//.... tmp_parser.go:706
+//.... tmp_parser.go:704
 		if data[p] == 39 {
 			goto st5
 		}
-		goto tr44
+		goto tr45
 	st6:
 		if p++; p == pe {
 			goto _test_eof6
@@ -742,28 +740,32 @@ act = 10;
 	st_case_25:
 		switch data[p] {
 		case 32:
-			goto tr45
-		case 34:
-			goto tr45
-		case 44:
-			goto tr45
-		case 45:
 			goto tr46
+		case 34:
+			goto tr46
+		case 44:
+			goto tr46
+		case 45:
+			goto tr47
 		case 59:
-			goto tr45
+			goto tr46
 		case 96:
-			goto tr45
+			goto tr46
 		}
 		switch {
-		case data[p] > 13:
-			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+		case data[p] < 39:
+			if 9 <= data[p] && data[p] <= 13 {
+				goto tr46
 			}
-		case data[p] >= 9:
-			goto tr45
+		case data[p] > 41:
+			if 48 <= data[p] && data[p] <= 57 {
+				goto st27
+			}
+		default:
+			goto tr46
 		}
 		goto tr26
-tr46:
+tr47:
 //.... NONE:1
 te = p+1
 
@@ -773,7 +775,7 @@ te = p+1
 			goto _test_eof26
 		}
 	st_case_26:
-//.... tmp_parser.go:776
+//.... tmp_parser.go:778
 		switch data[p] {
 		case 10:
 			goto tr10
@@ -796,7 +798,7 @@ te = p+1
 		case data[p] >= 9:
 			goto st7
 		}
-		goto tr46
+		goto tr47
 	st7:
 		if p++; p == pe {
 			goto _test_eof7
@@ -813,45 +815,75 @@ te = p+1
 	st_case_27:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr48
 		case 34:
-			goto tr45
-		case 42:
-			goto tr47
+			goto tr48
 		case 44:
-			goto tr45
+			goto tr48
 		case 59:
-			goto tr45
+			goto tr48
 		case 96:
-			goto tr45
+			goto tr48
 		}
 		switch {
-		case data[p] > 13:
-			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+		case data[p] < 39:
+			if 9 <= data[p] && data[p] <= 13 {
+				goto tr48
 			}
-		case data[p] >= 9:
-			goto tr45
+		case data[p] > 41:
+			if 48 <= data[p] && data[p] <= 57 {
+				goto st27
+			}
+		default:
+			goto tr48
 		}
 		goto tr26
-tr47:
-//.... NONE:1
-te = p+1
-
-	goto st28
 	st28:
 		if p++; p == pe {
 			goto _test_eof28
 		}
 	st_case_28:
-//.... tmp_parser.go:847
+		switch data[p] {
+		case 32:
+			goto tr46
+		case 34:
+			goto tr46
+		case 42:
+			goto tr49
+		case 44:
+			goto tr46
+		case 59:
+			goto tr46
+		case 96:
+			goto tr46
+		}
+		switch {
+		case data[p] > 13:
+			if 39 <= data[p] && data[p] <= 41 {
+				goto tr46
+			}
+		case data[p] >= 9:
+			goto tr46
+		}
+		goto tr26
+tr49:
+//.... NONE:1
+te = p+1
+
+	goto st29
+	st29:
+		if p++; p == pe {
+			goto _test_eof29
+		}
+	st_case_29:
+//.... tmp_parser.go:879
 		switch data[p] {
 		case 32:
 			goto st8
 		case 34:
 			goto st8
 		case 42:
-			goto tr48
+			goto tr50
 		case 44:
 			goto st8
 		case 59:
@@ -867,7 +899,7 @@ te = p+1
 		case data[p] >= 9:
 			goto st8
 		}
-		goto tr47
+		goto tr49
 	st8:
 		if p++; p == pe {
 			goto _test_eof8
@@ -889,28 +921,28 @@ te = p+1
 			goto tr10
 		}
 		goto st8
-tr48:
+tr50:
 //.... NONE:1
 te = p+1
 
-	goto st29
-	st29:
+	goto st30
+	st30:
 		if p++; p == pe {
-			goto _test_eof29
+			goto _test_eof30
 		}
-	st_case_29:
-//.... tmp_parser.go:902
+	st_case_30:
+//.... tmp_parser.go:934
 		switch data[p] {
 		case 32:
 			goto st8
 		case 34:
 			goto st8
 		case 42:
-			goto tr48
+			goto tr50
 		case 44:
 			goto st8
 		case 47:
-			goto tr49
+			goto tr51
 		case 59:
 			goto st8
 		case 96:
@@ -924,37 +956,7 @@ te = p+1
 		case data[p] >= 9:
 			goto st8
 		}
-		goto tr47
-	st30:
-		if p++; p == pe {
-			goto _test_eof30
-		}
-	st_case_30:
-		switch data[p] {
-		case 32:
-			goto tr45
-		case 34:
-			goto tr45
-		case 44:
-			goto tr45
-		case 59:
-			goto tr45
-		case 96:
-			goto tr45
-		case 98:
-			goto st31
-		case 120:
-			goto st33
-		}
-		switch {
-		case data[p] > 13:
-			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
-			}
-		case data[p] >= 9:
-			goto tr45
-		}
-		goto tr26
+		goto tr49
 	st31:
 		if p++; p == pe {
 			goto _test_eof31
@@ -962,157 +964,165 @@ te = p+1
 	st_case_31:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr48
 		case 34:
-			goto tr45
+			goto tr48
 		case 44:
-			goto tr45
+			goto tr48
 		case 59:
-			goto tr45
+			goto tr48
 		case 96:
-			goto tr45
+			goto tr48
+		case 98:
+			goto tr52
+		case 120:
+			goto tr53
 		}
 		switch {
 		case data[p] < 39:
 			if 9 <= data[p] && data[p] <= 13 {
-				goto tr45
+				goto tr48
 			}
 		case data[p] > 41:
-			if 48 <= data[p] && data[p] <= 49 {
-				goto st32
+			if 48 <= data[p] && data[p] <= 57 {
+				goto st27
 			}
 		default:
-			goto tr45
+			goto tr48
 		}
 		goto tr26
+tr52:
+//.... NONE:1
+te = p+1
+
+//.... lightning/mydump/parser.rl:132
+act = 14;
+	goto st32
+tr54:
+//.... NONE:1
+te = p+1
+
+//.... lightning/mydump/parser.rl:112
+act = 10;
+	goto st32
 	st32:
 		if p++; p == pe {
 			goto _test_eof32
 		}
 	st_case_32:
+//.... tmp_parser.go:1013
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr4
 		case 34:
-			goto tr45
-		case 43:
-			goto tr53
+			goto tr4
 		case 44:
-			goto tr45
+			goto tr4
 		case 59:
-			goto tr45
+			goto tr4
 		case 96:
-			goto tr45
+			goto tr4
 		}
 		switch {
-		case data[p] > 13:
-			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+		case data[p] < 39:
+			if 9 <= data[p] && data[p] <= 13 {
+				goto tr4
 			}
-		case data[p] >= 9:
-			goto tr45
+		case data[p] > 41:
+			if 48 <= data[p] && data[p] <= 49 {
+				goto tr54
+			}
+		default:
+			goto tr4
 		}
 		goto tr26
+tr53:
+//.... NONE:1
+te = p+1
+
+//.... lightning/mydump/parser.rl:132
+act = 14;
+	goto st33
+tr55:
+//.... NONE:1
+te = p+1
+
+//.... lightning/mydump/parser.rl:107
+act = 9;
+	goto st33
 	st33:
 		if p++; p == pe {
 			goto _test_eof33
 		}
 	st_case_33:
+//.... tmp_parser.go:1058
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr4
 		case 34:
-			goto tr45
+			goto tr4
 		case 44:
-			goto tr45
+			goto tr4
 		case 59:
-			goto tr45
+			goto tr4
 		case 96:
-			goto tr45
+			goto tr4
 		}
 		switch {
 		case data[p] < 48:
 			switch {
 			case data[p] > 13:
 				if 39 <= data[p] && data[p] <= 41 {
-					goto tr45
+					goto tr4
 				}
 			case data[p] >= 9:
-				goto tr45
+				goto tr4
 			}
 		case data[p] > 57:
 			switch {
 			case data[p] > 70:
 				if 97 <= data[p] && data[p] <= 102 {
-					goto st34
+					goto tr55
 				}
 			case data[p] >= 65:
-				goto st34
+				goto tr55
 			}
 		default:
-			goto st34
+			goto tr55
 		}
 		goto tr26
+tr35:
+//.... NONE:1
+te = p+1
+
+	goto st34
 	st34:
 		if p++; p == pe {
 			goto _test_eof34
 		}
 	st_case_34:
+//.... tmp_parser.go:1104
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
-		case 43:
-			goto tr55
-		case 44:
-			goto tr45
-		case 59:
-			goto tr45
-		case 96:
-			goto tr45
-		}
-		switch {
-		case data[p] > 13:
-			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
-			}
-		case data[p] >= 9:
-			goto tr45
-		}
-		goto tr26
-tr34:
-//.... NONE:1
-te = p+1
-
-	goto st35
-	st35:
-		if p++; p == pe {
-			goto _test_eof35
-		}
-	st_case_35:
-//.... tmp_parser.go:1094
-		switch data[p] {
-		case 32:
-			goto tr45
-		case 34:
-			goto tr45
+			goto tr46
 		case 39:
 			goto st10
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
+			goto tr46
 		case 96:
-			goto tr45
+			goto tr46
 		}
 		switch {
 		case data[p] > 13:
 			if 40 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st10:
@@ -1127,6 +1137,36 @@ te = p+1
 			goto st10
 		}
 		goto tr8
+	st35:
+		if p++; p == pe {
+			goto _test_eof35
+		}
+	st_case_35:
+		switch data[p] {
+		case 32:
+			goto tr46
+		case 34:
+			goto tr46
+		case 44:
+			goto tr46
+		case 59:
+			goto tr46
+		case 79:
+			goto st36
+		case 96:
+			goto tr46
+		case 111:
+			goto st36
+		}
+		switch {
+		case data[p] > 13:
+			if 39 <= data[p] && data[p] <= 41 {
+				goto tr46
+			}
+		case data[p] >= 9:
+			goto tr46
+		}
+		goto tr26
 	st36:
 		if p++; p == pe {
 			goto _test_eof36
@@ -1134,27 +1174,27 @@ te = p+1
 	st_case_36:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 79:
+			goto tr46
+		case 78:
 			goto st37
 		case 96:
-			goto tr45
-		case 111:
+			goto tr46
+		case 110:
 			goto st37
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st37:
@@ -1164,27 +1204,27 @@ te = p+1
 	st_case_37:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 78:
+			goto tr46
+		case 86:
 			goto st38
 		case 96:
-			goto tr45
-		case 110:
+			goto tr46
+		case 118:
 			goto st38
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st38:
@@ -1194,27 +1234,27 @@ te = p+1
 	st_case_38:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 86:
+			goto tr46
+		case 69:
 			goto st39
 		case 96:
-			goto tr45
-		case 118:
+			goto tr46
+		case 101:
 			goto st39
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st39:
@@ -1224,27 +1264,27 @@ te = p+1
 	st_case_39:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 69:
+			goto tr46
+		case 82:
 			goto st40
 		case 96:
-			goto tr45
-		case 101:
+			goto tr46
+		case 114:
 			goto st40
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st40:
@@ -1254,27 +1294,27 @@ te = p+1
 	st_case_40:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 82:
+			goto tr46
+		case 84:
 			goto st41
 		case 96:
-			goto tr45
-		case 114:
+			goto tr46
+		case 116:
 			goto st41
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st41:
@@ -1284,27 +1324,25 @@ te = p+1
 	st_case_41:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
+		case 40:
+			goto tr10
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 84:
-			goto st42
+			goto tr46
 		case 96:
-			goto tr45
-		case 116:
-			goto st42
+			goto tr46
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st42:
@@ -1314,25 +1352,27 @@ te = p+1
 	st_case_42:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
-		case 40:
-			goto tr10
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
+			goto tr46
+		case 65:
+			goto st43
 		case 96:
-			goto tr45
+			goto tr46
+		case 97:
+			goto st43
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st43:
@@ -1342,27 +1382,27 @@ te = p+1
 	st_case_43:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 65:
+			goto tr46
+		case 76:
 			goto st44
 		case 96:
-			goto tr45
-		case 97:
+			goto tr46
+		case 108:
 			goto st44
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st44:
@@ -1372,27 +1412,27 @@ te = p+1
 	st_case_44:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 76:
+			goto tr46
+		case 83:
 			goto st45
 		case 96:
-			goto tr45
-		case 108:
+			goto tr46
+		case 115:
 			goto st45
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st45:
@@ -1402,27 +1442,27 @@ te = p+1
 	st_case_45:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 83:
-			goto st46
+			goto tr46
+		case 69:
+			goto tr65
 		case 96:
-			goto tr45
-		case 115:
-			goto st46
+			goto tr46
+		case 101:
+			goto tr65
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st46:
@@ -1432,27 +1472,27 @@ te = p+1
 	st_case_46:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 69:
-			goto tr65
+			goto tr46
+		case 78:
+			goto st47
 		case 96:
-			goto tr45
-		case 101:
-			goto tr65
+			goto tr46
+		case 110:
+			goto st47
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st47:
@@ -1462,27 +1502,27 @@ te = p+1
 	st_case_47:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 78:
+			goto tr46
+		case 84:
 			goto st48
 		case 96:
-			goto tr45
-		case 110:
+			goto tr46
+		case 116:
 			goto st48
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st48:
@@ -1492,27 +1532,27 @@ te = p+1
 	st_case_48:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 84:
-			goto st49
+			goto tr46
+		case 79:
+			goto tr51
 		case 96:
-			goto tr45
-		case 116:
-			goto st49
+			goto tr46
+		case 111:
+			goto tr51
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st49:
@@ -1522,27 +1562,27 @@ te = p+1
 	st_case_49:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 79:
-			goto tr49
+			goto tr46
+		case 85:
+			goto st50
 		case 96:
-			goto tr45
-		case 111:
-			goto tr49
+			goto tr46
+		case 117:
+			goto st50
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st50:
@@ -1552,27 +1592,27 @@ te = p+1
 	st_case_50:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 85:
+			goto tr46
+		case 76:
 			goto st51
 		case 96:
-			goto tr45
-		case 117:
+			goto tr46
+		case 108:
 			goto st51
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st51:
@@ -1582,27 +1622,27 @@ te = p+1
 	st_case_51:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
+			goto tr46
 		case 76:
-			goto st52
+			goto tr70
 		case 96:
-			goto tr45
+			goto tr46
 		case 108:
-			goto st52
+			goto tr70
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st52:
@@ -1612,27 +1652,27 @@ te = p+1
 	st_case_52:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 76:
-			goto tr70
+			goto tr46
+		case 82:
+			goto st53
 		case 96:
-			goto tr45
-		case 108:
-			goto tr70
+			goto tr46
+		case 114:
+			goto st53
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st53:
@@ -1642,27 +1682,27 @@ te = p+1
 	st_case_53:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 82:
+			goto tr46
+		case 85:
 			goto st54
 		case 96:
-			goto tr45
-		case 114:
+			goto tr46
+		case 117:
 			goto st54
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st54:
@@ -1672,27 +1712,27 @@ te = p+1
 	st_case_54:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 85:
-			goto st55
+			goto tr46
+		case 69:
+			goto tr73
 		case 96:
-			goto tr45
-		case 117:
-			goto st55
+			goto tr46
+		case 101:
+			goto tr73
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st55:
@@ -1702,27 +1742,27 @@ te = p+1
 	st_case_55:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 69:
-			goto tr73
+			goto tr46
+		case 83:
+			goto st56
 		case 96:
-			goto tr45
-		case 101:
-			goto tr73
+			goto tr46
+		case 115:
+			goto st56
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st56:
@@ -1732,27 +1772,27 @@ te = p+1
 	st_case_56:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 83:
+			goto tr46
+		case 73:
 			goto st57
 		case 96:
-			goto tr45
-		case 115:
+			goto tr46
+		case 105:
 			goto st57
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st57:
@@ -1762,27 +1802,27 @@ te = p+1
 	st_case_57:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 73:
+			goto tr46
+		case 78:
 			goto st58
 		case 96:
-			goto tr45
-		case 105:
+			goto tr46
+		case 110:
 			goto st58
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st58:
@@ -1792,89 +1832,59 @@ te = p+1
 	st_case_58:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 78:
-			goto st59
-		case 96:
-			goto tr45
-		case 110:
-			goto st59
-		}
-		switch {
-		case data[p] > 13:
-			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
-			}
-		case data[p] >= 9:
-			goto tr45
-		}
-		goto tr26
-	st59:
-		if p++; p == pe {
-			goto _test_eof59
-		}
-	st_case_59:
-		switch data[p] {
-		case 32:
-			goto tr45
-		case 34:
-			goto tr45
-		case 44:
-			goto tr45
-		case 59:
-			goto tr45
+			goto tr46
 		case 71:
 			goto tr77
 		case 96:
-			goto tr45
+			goto tr46
 		case 103:
 			goto tr77
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 tr77:
 //.... NONE:1
 te = p+1
 
-	goto st60
-	st60:
+	goto st59
+	st59:
 		if p++; p == pe {
-			goto _test_eof60
+			goto _test_eof59
 		}
-	st_case_60:
-//.... tmp_parser.go:1858
+	st_case_59:
+//.... tmp_parser.go:1868
 		switch data[p] {
 		case 32:
 			goto st11
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
+			goto tr46
 		case 96:
-			goto tr45
+			goto tr46
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st11:
@@ -1964,6 +1974,36 @@ te = p+1
 			goto tr10
 		}
 		goto tr8
+	st60:
+		if p++; p == pe {
+			goto _test_eof60
+		}
+	st_case_60:
+		switch data[p] {
+		case 32:
+			goto tr46
+		case 34:
+			goto tr46
+		case 44:
+			goto tr46
+		case 59:
+			goto tr46
+		case 65:
+			goto st61
+		case 96:
+			goto tr46
+		case 97:
+			goto st61
+		}
+		switch {
+		case data[p] > 13:
+			if 39 <= data[p] && data[p] <= 41 {
+				goto tr46
+			}
+		case data[p] >= 9:
+			goto tr46
+		}
+		goto tr26
 	st61:
 		if p++; p == pe {
 			goto _test_eof61
@@ -1971,27 +2011,27 @@ te = p+1
 	st_case_61:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 65:
+			goto tr46
+		case 76:
 			goto st62
 		case 96:
-			goto tr45
-		case 97:
+			goto tr46
+		case 108:
 			goto st62
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st62:
@@ -2001,27 +2041,27 @@ te = p+1
 	st_case_62:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 76:
+			goto tr46
+		case 85:
 			goto st63
 		case 96:
-			goto tr45
-		case 108:
+			goto tr46
+		case 117:
 			goto st63
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st63:
@@ -2031,27 +2071,27 @@ te = p+1
 	st_case_63:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 85:
+			goto tr46
+		case 69:
 			goto st64
 		case 96:
-			goto tr45
-		case 117:
+			goto tr46
+		case 101:
 			goto st64
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st64:
@@ -2061,91 +2101,61 @@ te = p+1
 	st_case_64:
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 69:
-			goto st65
-		case 96:
-			goto tr45
-		case 101:
-			goto st65
-		}
-		switch {
-		case data[p] > 13:
-			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
-			}
-		case data[p] >= 9:
-			goto tr45
-		}
-		goto tr26
-	st65:
-		if p++; p == pe {
-			goto _test_eof65
-		}
-	st_case_65:
-		switch data[p] {
-		case 32:
-			goto tr45
-		case 34:
-			goto tr45
-		case 44:
-			goto tr45
-		case 59:
-			goto tr45
+			goto tr46
 		case 83:
 			goto tr83
 		case 96:
-			goto tr45
+			goto tr46
 		case 115:
 			goto tr83
 		}
 		switch {
 		case data[p] > 13:
 			if 39 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
-tr42:
+tr43:
 //.... NONE:1
 te = p+1
 
-	goto st66
-	st66:
+	goto st65
+	st65:
 		if p++; p == pe {
-			goto _test_eof66
+			goto _test_eof65
 		}
-	st_case_66:
-//.... tmp_parser.go:2127
+	st_case_65:
+//.... tmp_parser.go:2137
 		switch data[p] {
 		case 32:
-			goto tr45
+			goto tr46
 		case 34:
-			goto tr45
+			goto tr46
 		case 39:
 			goto st19
 		case 44:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
+			goto tr46
 		case 96:
-			goto tr45
+			goto tr46
 		}
 		switch {
 		case data[p] > 13:
 			if 40 <= data[p] && data[p] <= 41 {
-				goto tr45
+				goto tr46
 			}
 		case data[p] >= 9:
-			goto tr45
+			goto tr46
 		}
 		goto tr26
 	st19:
@@ -2157,11 +2167,15 @@ te = p+1
 			goto tr22
 		}
 		switch {
-		case data[p] > 57:
+		case data[p] < 65:
+			if 48 <= data[p] && data[p] <= 57 {
+				goto st19
+			}
+		case data[p] > 70:
 			if 97 <= data[p] && data[p] <= 102 {
 				goto st19
 			}
-		case data[p] >= 48:
+		default:
 			goto st19
 		}
 		goto tr8
@@ -2178,15 +2192,15 @@ tr25:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/parser.rl:121
-act = 12;
-	goto st67
-	st67:
+//.... lightning/mydump/parser.rl:127
+act = 13;
+	goto st66
+	st66:
 		if p++; p == pe {
-			goto _test_eof67
+			goto _test_eof66
 		}
-	st_case_67:
-//.... tmp_parser.go:2189
+	st_case_66:
+//.... tmp_parser.go:2203
 		if data[p] == 96 {
 			goto st20
 		}
@@ -2207,16 +2221,16 @@ act = 12;
 	_test_eof7: cs = 7; goto _test_eof
 	_test_eof27: cs = 27; goto _test_eof
 	_test_eof28: cs = 28; goto _test_eof
+	_test_eof29: cs = 29; goto _test_eof
 	_test_eof8: cs = 8; goto _test_eof
 	_test_eof9: cs = 9; goto _test_eof
-	_test_eof29: cs = 29; goto _test_eof
 	_test_eof30: cs = 30; goto _test_eof
 	_test_eof31: cs = 31; goto _test_eof
 	_test_eof32: cs = 32; goto _test_eof
 	_test_eof33: cs = 33; goto _test_eof
 	_test_eof34: cs = 34; goto _test_eof
-	_test_eof35: cs = 35; goto _test_eof
 	_test_eof10: cs = 10; goto _test_eof
+	_test_eof35: cs = 35; goto _test_eof
 	_test_eof36: cs = 36; goto _test_eof
 	_test_eof37: cs = 37; goto _test_eof
 	_test_eof38: cs = 38; goto _test_eof
@@ -2241,7 +2255,6 @@ act = 12;
 	_test_eof57: cs = 57; goto _test_eof
 	_test_eof58: cs = 58; goto _test_eof
 	_test_eof59: cs = 59; goto _test_eof
-	_test_eof60: cs = 60; goto _test_eof
 	_test_eof11: cs = 11; goto _test_eof
 	_test_eof12: cs = 12; goto _test_eof
 	_test_eof13: cs = 13; goto _test_eof
@@ -2250,15 +2263,15 @@ act = 12;
 	_test_eof16: cs = 16; goto _test_eof
 	_test_eof17: cs = 17; goto _test_eof
 	_test_eof18: cs = 18; goto _test_eof
+	_test_eof60: cs = 60; goto _test_eof
 	_test_eof61: cs = 61; goto _test_eof
 	_test_eof62: cs = 62; goto _test_eof
 	_test_eof63: cs = 63; goto _test_eof
 	_test_eof64: cs = 64; goto _test_eof
 	_test_eof65: cs = 65; goto _test_eof
-	_test_eof66: cs = 66; goto _test_eof
 	_test_eof19: cs = 19; goto _test_eof
 	_test_eof20: cs = 20; goto _test_eof
-	_test_eof67: cs = 67; goto _test_eof
+	_test_eof66: cs = 66; goto _test_eof
 
 	_test_eof: {}
 	if p == eof {
@@ -2268,95 +2281,93 @@ act = 12;
 		case 2:
 			goto tr4
 		case 23:
-			goto tr43
+			goto tr44
 		case 3:
 			goto tr4
 		case 5:
 			goto tr4
 		case 24:
-			goto tr44
+			goto tr45
 		case 6:
 			goto tr4
 		case 25:
-			goto tr45
+			goto tr46
 		case 26:
-			goto tr45
+			goto tr46
 		case 7:
 			goto tr8
 		case 27:
-			goto tr45
+			goto tr48
 		case 28:
-			goto tr45
+			goto tr46
+		case 29:
+			goto tr46
 		case 8:
 			goto tr8
 		case 9:
 			goto tr8
-		case 29:
-			goto tr45
 		case 30:
-			goto tr45
+			goto tr46
 		case 31:
-			goto tr45
+			goto tr48
 		case 32:
-			goto tr45
+			goto tr4
 		case 33:
-			goto tr45
+			goto tr4
 		case 34:
-			goto tr45
-		case 35:
-			goto tr45
+			goto tr46
 		case 10:
 			goto tr8
+		case 35:
+			goto tr46
 		case 36:
-			goto tr45
+			goto tr46
 		case 37:
-			goto tr45
+			goto tr46
 		case 38:
-			goto tr45
+			goto tr46
 		case 39:
-			goto tr45
+			goto tr46
 		case 40:
-			goto tr45
+			goto tr46
 		case 41:
-			goto tr45
+			goto tr46
 		case 42:
-			goto tr45
+			goto tr46
 		case 43:
-			goto tr45
+			goto tr46
 		case 44:
-			goto tr45
+			goto tr46
 		case 45:
-			goto tr45
+			goto tr46
 		case 46:
-			goto tr45
+			goto tr46
 		case 47:
-			goto tr45
+			goto tr46
 		case 48:
-			goto tr45
+			goto tr46
 		case 49:
-			goto tr45
+			goto tr46
 		case 50:
-			goto tr45
+			goto tr46
 		case 51:
-			goto tr45
+			goto tr46
 		case 52:
-			goto tr45
+			goto tr46
 		case 53:
-			goto tr45
+			goto tr46
 		case 54:
-			goto tr45
+			goto tr46
 		case 55:
-			goto tr45
+			goto tr46
 		case 56:
-			goto tr45
+			goto tr46
 		case 57:
-			goto tr45
+			goto tr46
 		case 58:
-			goto tr45
+			goto tr46
 		case 59:
-			goto tr45
-		case 60:
-			goto tr45
+			goto tr46
 		case 11:
 			goto tr8
 		case 12:
@@ -2373,23 +2384,23 @@ act = 12;
 			goto tr8
 		case 18:
 			goto tr8
+		case 60:
+			goto tr46
 		case 61:
-			goto tr45
+			goto tr46
 		case 62:
-			goto tr45
+			goto tr46
 		case 63:
-			goto tr45
+			goto tr46
 		case 64:
-			goto tr45
+			goto tr46
 		case 65:
-			goto tr45
-		case 66:
-			goto tr45
+			goto tr46
 		case 19:
 			goto tr8
 		case 20:
 			goto tr4
-		case 67:
+		case 66:
 			goto tr84
 		}
 	}
@@ -2397,7 +2408,7 @@ act = 12;
 	_out: {}
 	}
 
-//.... lightning/mydump/parser.rl:151
+//.... lightning/mydump/parser.rl:157
 
 		if cs == 0 {
 			common.AppLogger.Errorf("Syntax error near byte %d, content is «%s»", parser.pos, string(data))
