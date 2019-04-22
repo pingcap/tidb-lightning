@@ -20,9 +20,9 @@ require (
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/montanaflynn/stats v0.5.0 // indirect
 	github.com/onsi/gomega v1.4.3 // indirect
-	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
+	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.0
-	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
+	github.com/pingcap/failpoint v0.0.0-20190416093020-cb5345727375
 	github.com/pingcap/kvproto v0.0.0-20190226063853-f6c0b7ffff11
 	github.com/pingcap/parser v0.0.0-20190305073013-4f60445a0550
 	github.com/pingcap/tidb v0.0.0-20190309032432-ea9970968c73
