@@ -64,10 +64,19 @@ func main() {
 	}()
 
 	err = app.Run()
+	logger := log.L()
 	if err != nil {
-		log.L().Error("tidb lightning encountered error", zap.Error(err))
-		os.Exit(1)
+		logger.Error("tidb lightning encountered error", zap.Error(err))
+	} else {
+		logger.Info("tidb lightning exit")
 	}
 
-	log.L().Info("tidb lightning exit")
+	syncErr := logger.Sync()
+	if syncErr != nil {
+		fmt.Fprintln(os.Stderr, "sync log failed", syncErr)
+	}
+
+	if err != nil || syncErr != nil {
+		os.Exit(1)
+	}
 }

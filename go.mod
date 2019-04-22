@@ -3,12 +3,7 @@ module github.com/pingcap/tidb-lightning
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/coreos/go-semver v0.2.0
-	github.com/cznic/golex v0.0.0-20181122101858-9c343928389c // indirect
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
-	github.com/cznic/parser v0.0.0-20181122101858-d773202d5b1f
-	github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
-	github.com/cznic/strutil v0.0.0-20181122101858-275e90344537
-	github.com/cznic/y v0.0.0-20181122101901-b05e8c2e8d7b
 	github.com/go-sql-driver/mysql v1.4.1
 	github.com/gogo/protobuf v1.2.1
 	github.com/grpc-ecosystem/grpc-gateway v1.6.4 // indirect
@@ -17,7 +12,7 @@ require (
 	github.com/montanaflynn/stats v0.5.0 // indirect
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.1
-	github.com/pingcap/failpoint v0.0.0-20190416093020-cb5345727375
+	github.com/pingcap/failpoint v0.0.0-20190422094118-d8535965f59b
 	github.com/pingcap/kvproto v0.0.0-20190215154024-7f2fc73ef562
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
 	github.com/pingcap/parser v0.0.0-20190325012055-cc0fa08f99ca
