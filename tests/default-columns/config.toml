@@ -1,7 +1,7 @@
 [lightning]
 check-requirements = false
-file = "/tmp/lightning_test_result/lightning.log"
-level = "debug"
+file = "/tmp/lightning_test_result/defcol-errors.log"
+level = "info"
 
 [tikv-importer]
 addr = "127.0.0.1:8808"

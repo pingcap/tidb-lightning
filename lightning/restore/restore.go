@@ -1201,6 +1201,11 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 			if i, ok := columnMap[colInfo.Name.L]; ok {
 				colPerm = append(colPerm, i)
 			} else {
+				t.logger.Warn("column missing from data file, going to fill with default value",
+					zap.Stringer("path", &ccp.Key),
+					zap.String("colName", colInfo.Name.O),
+					zap.Stringer("colType", &colInfo.FieldType),
+				)
 				colPerm = append(colPerm, -1)
 			}
 		}
