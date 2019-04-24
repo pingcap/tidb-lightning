@@ -23,7 +23,7 @@ run_sql 'SELECT min(pk), count(pk) FROM defcol.t'
 check_contains 'min(pk): 1'
 check_contains 'count(pk): 9'
 
-run_sql 'SELECT pk FROM defcol.t WHERE x IS NOT NULL OR y <> 123'
+run_sql 'SELECT pk FROM defcol.t WHERE x IS NOT NULL OR y <> 123 OR z IS NULL OR z NOT BETWEEN now() - INTERVAL 5 MINUTE AND now()'
 check_not_contains 'pk:'
 
 run_sql 'SELECT xx FROM defcol.u WHERE yy = 40'
