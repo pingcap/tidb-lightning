@@ -12,10 +12,8 @@ data-source-dir = "/tmp/lightning_test_result/restore.mydump"
 
 [tidb]
 host = "127.0.0.1"
-port = 4000
 user = "root"
 status-port = 10080
-pd-addr = "127.0.0.1:2379"
 log-level = "error"
 
 [post-restore]
