@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -79,13 +80,17 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 		Logger: log.With(zap.String("db", database)),
 	}
 
-	createDatabase := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
-	err := sql.Exec(ctx, "create database", createDatabase)
+	var createDatabase strings.Builder
+	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
+	common.WriteMySQLIdentifier(&createDatabase, database)
+	err := sql.Exec(ctx, "create database", createDatabase.String())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	useDB := fmt.Sprintf("USE `%s`", database)
-	err = sql.Exec(ctx, "use database", useDB)
+	var useDB strings.Builder
+	useDB.WriteString("USE ")
+	common.WriteMySQLIdentifier(&useDB, database)
+	err = sql.Exec(ctx, "use database", useDB.String())
 	if err != nil {
 		return errors.Trace(err)
 	}
