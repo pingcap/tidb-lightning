@@ -21,11 +21,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-tools/pkg/filter"
-	"github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
+	"github.com/pingcap/tidb-tools/pkg/filter"
+	"github.com/pingcap/tidb-tools/pkg/table-router"
 	"go.uber.org/zap"
 )
 
@@ -301,9 +301,22 @@ func (s *mdLoaderSetup) route() error {
 		return nil
 	}
 
-	knownDBNames := make(map[string]string)
+	type dbInfo struct {
+		path  string
+		count int
+	}
+
+	knownDBNames := make(map[string]dbInfo)
 	for _, info := range s.dbSchemas {
-		knownDBNames[info.tableName.Schema] = info.path
+		knownDBNames[info.tableName.Schema] = dbInfo{
+			path:  info.path,
+			count: 1,
+		}
+	}
+	for _, info := range s.tableSchemas {
+		dbInfo := knownDBNames[info.tableName.Schema]
+		dbInfo.count++
+		knownDBNames[info.tableName.Schema] = dbInfo
 	}
 
 	run := func(arr []fileInfo) error {
@@ -312,13 +325,21 @@ func (s *mdLoaderSetup) route() error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if _, ok := knownDBNames[dbName]; !ok {
-				path := knownDBNames[info.tableName.Schema]
-				knownDBNames[dbName] = path
-				s.dbSchemas = append(s.dbSchemas, fileInfo{
-					tableName: filter.Table{Schema: dbName},
-					path:      path,
-				})
+			if dbName != info.tableName.Schema {
+				oldInfo := knownDBNames[info.tableName.Schema]
+				oldInfo.count--
+				knownDBNames[info.tableName.Schema] = oldInfo
+
+				newInfo, ok := knownDBNames[dbName]
+				newInfo.count++
+				if !ok {
+					newInfo.path = oldInfo.path
+					s.dbSchemas = append(s.dbSchemas, fileInfo{
+						tableName: filter.Table{Schema: dbName},
+						path:      oldInfo.path,
+					})
+				}
+				knownDBNames[dbName] = newInfo
 			}
 			arr[i].tableName = filter.Table{Schema: dbName, Name: tableName}
 		}
@@ -331,6 +352,17 @@ func (s *mdLoaderSetup) route() error {
 	if err := run(s.tableDatas); err != nil {
 		return errors.Trace(err)
 	}
+
+	// remove all schemas which has been entirely routed away
+	// https://github.com/golang/go/wiki/SliceTricks#filtering-without-allocating
+	remainingSchemas := s.dbSchemas[:0]
+	for _, info := range s.dbSchemas {
+		if knownDBNames[info.tableName.Schema].count > 0 {
+			remainingSchemas = append(remainingSchemas, info)
+		}
+	}
+	s.dbSchemas = remainingSchemas
+
 	return nil
 }
 
