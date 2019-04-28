@@ -323,11 +323,17 @@ func (cfg *Config) Adjust() error {
 			}
 			if cfg.TiDB.Port <= 0 {
 				cfg.TiDB.Port = settings.Port
+				if cfg.TiDB.Port <= 0 {
+					return errors.New("invalid `tidb.port` setting")
+				}
 			}
 		}
 		if len(cfg.TiDB.PdAddr) == 0 {
 			pdAddrs := strings.Split(settings.Path, ",")
 			cfg.TiDB.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
+			if len(cfg.TiDB.PdAddr) == 0 {
+				return errors.New("invalid `tidb.pd-addr` setting")
+			}
 		}
 	}
 
