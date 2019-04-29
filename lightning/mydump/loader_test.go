@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	md "github.com/pingcap/tidb-lightning/lightning/mydump"
+	"github.com/pingcap/tidb-tools/pkg/table-router"
 )
 
 var _ = Suite(&testMydumpLoaderSuite{})
@@ -39,6 +40,22 @@ func (s *testMydumpLoaderSuite) TearDownSuite(c *C) {}
 
 func (s *testMydumpLoaderSuite) SetUpTest(c *C) {
 	s.cfg = &config.Config{Mydumper: config.MydumperRuntime{SourceDir: c.MkDir()}}
+}
+
+func (s *testMydumpLoaderSuite) touch(c *C, filename ...string) string {
+	components := make([]string, len(filename)+1)
+	components = append(components, s.cfg.Mydumper.SourceDir)
+	components = append(components, filename...)
+	path := path.Join(components...)
+	err := ioutil.WriteFile(path, nil, 0644)
+	c.Assert(err, IsNil)
+	return path
+}
+
+func (s *testMydumpLoaderSuite) mkdir(c *C, dirname string) {
+	path := path.Join(s.cfg.Mydumper.SourceDir, dirname)
+	err := os.Mkdir(path, 0755)
+	c.Assert(err, IsNil)
 }
 
 func (s *testMydumpLoaderSuite) TestLoader(c *C) {
@@ -85,17 +102,12 @@ func (s *testMydumpLoaderSuite) TestDuplicatedDB(c *C) {
 			b/
 				db-schema-create.sql
 	*/
-	dir := s.cfg.Mydumper.SourceDir
-	err := os.Mkdir(path.Join(dir, "a"), 0755)
-	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "a", "db-schema-create.sql"), nil, 0644)
-	c.Assert(err, IsNil)
-	err = os.Mkdir(path.Join(dir, "b"), 0755)
-	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "b", "db-schema-create.sql"), nil, 0644)
-	c.Assert(err, IsNil)
+	s.mkdir(c, "a")
+	s.touch(c, "a", "db-schema-create.sql")
+	s.mkdir(c, "b")
+	s.touch(c, "b", "db-schema-create.sql")
 
-	_, err = md.NewMyDumpLoader(s.cfg)
+	_, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, ErrorMatches, `invalid database schema file, duplicated item - .*/db-schema-create\.sql`)
 }
 
@@ -126,19 +138,13 @@ func (s *testMydumpLoaderSuite) TestDuplicatedTable(c *C) {
 				db.tbl-schema.sql
 	*/
 
-	dir := s.cfg.Mydumper.SourceDir
-	err := ioutil.WriteFile(path.Join(dir, "db-schema-create.sql"), nil, 0644)
-	c.Assert(err, IsNil)
-	err = os.Mkdir(path.Join(dir, "a"), 0755)
-	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "a", "db.tbl-schema.sql"), nil, 0644)
-	c.Assert(err, IsNil)
-	err = os.Mkdir(path.Join(dir, "b"), 0755)
-	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "b", "db.tbl-schema.sql"), nil, 0644)
-	c.Assert(err, IsNil)
+	s.touch(c, "db-schema-create.sql")
+	s.mkdir(c, "a")
+	s.touch(c, "a", "db.tbl-schema.sql")
+	s.mkdir(c, "b")
+	s.touch(c, "b", "db.tbl-schema.sql")
 
-	_, err = md.NewMyDumpLoader(s.cfg)
+	_, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, ErrorMatches, `invalid table schema file, duplicated item - .*/db.tbl-schema\.sql`)
 }
 
@@ -149,13 +155,10 @@ func (s *testMydumpLoaderSuite) TestDataNoHostDB(c *C) {
 			db.tbl.sql
 	*/
 
-	dir := s.cfg.Mydumper.SourceDir
-	err := ioutil.WriteFile(path.Join(dir, "notdb-schema-create.sql"), nil, 0644)
-	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "db.tbl.sql"), nil, 0644)
-	c.Assert(err, IsNil)
+	s.touch(c, "notdb-schema-create.sql")
+	s.touch(c, "db.tbl.sql")
 
-	_, err = md.NewMyDumpLoader(s.cfg)
+	_, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, ErrorMatches, `invalid data file, miss host db - .*/db.tbl\.sql`)
 }
 
@@ -166,13 +169,10 @@ func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
 			db.tbl.sql
 	*/
 
-	dir := s.cfg.Mydumper.SourceDir
-	err := ioutil.WriteFile(path.Join(dir, "db-schema-create.sql"), nil, 0644)
-	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "db.tbl.sql"), nil, 0644)
-	c.Assert(err, IsNil)
+	s.touch(c, "db-schema-create.sql")
+	s.touch(c, "db.tbl.sql")
 
-	_, err = md.NewMyDumpLoader(s.cfg)
+	_, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, ErrorMatches, `invalid data file, miss host table - .*/db.tbl\.sql`)
 }
 
@@ -200,39 +200,18 @@ func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
 }
 
 func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
-	dir := s.cfg.Mydumper.SourceDir
-
-	pDBSchema := path.Join(dir, "db-schema-create.sql")
-	err := ioutil.WriteFile(pDBSchema, nil, 0644)
-	c.Assert(err, IsNil)
-
-	pT1Schema := path.Join(dir, "db.tbl.with.dots-schema.sql")
-	err = ioutil.WriteFile(pT1Schema, nil, 0644)
-	c.Assert(err, IsNil)
-
-	pT1Data := path.Join(dir, "db.tbl.with.dots.0001.sql")
-	err = ioutil.WriteFile(pT1Data, nil, 0644)
-	c.Assert(err, IsNil)
-
-	pT2Schema := path.Join(dir, "db.0002-schema.sql")
-	err = ioutil.WriteFile(pT2Schema, nil, 0644)
-	c.Assert(err, IsNil)
-
-	pT2Data := path.Join(dir, "db.0002.sql")
-	err = ioutil.WriteFile(pT2Data, nil, 0644)
-	c.Assert(err, IsNil)
+	pDBSchema := s.touch(c, "db-schema-create.sql")
+	pT1Schema := s.touch(c, "db.tbl.with.dots-schema.sql")
+	pT1Data := s.touch(c, "db.tbl.with.dots.0001.sql")
+	pT2Schema := s.touch(c, "db.0002-schema.sql")
+	pT2Data := s.touch(c, "db.0002.sql")
 
 	// insert some tables with file name structures which we're going to ignore.
-	err = ioutil.WriteFile(path.Join(dir, "db.v-schema-view.sql"), nil, 0644)
-	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "db.v-schema-trigger.sql"), nil, 0644)
-	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "db.v-schema-post.sql"), nil, 0644)
-	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "db.sql"), nil, 0644)
-	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "db-schema.sql"), nil, 0644)
-	c.Assert(err, IsNil)
+	s.touch(c, "db.v-schema-view.sql")
+	s.touch(c, "db.v-schema-trigger.sql")
+	s.touch(c, "db.v-schema-post.sql")
+	s.touch(c, "db.sql")
+	s.touch(c, "db-schema.sql")
 
 	mdl, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, IsNil)
@@ -255,4 +234,113 @@ func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
 			},
 		},
 	}})
+}
+
+func (s *testMydumpLoaderSuite) TestRouter(c *C) {
+	s.cfg.Routes = []*router.TableRule{
+		{
+			SchemaPattern: "a*",
+			TablePattern:  "t*",
+			TargetSchema:  "b",
+			TargetTable:   "u",
+		},
+		{
+			SchemaPattern: "c*",
+			TargetSchema:  "c",
+		},
+	}
+
+	/*
+		path/
+			a0-schema-create.sql
+			a0.t0-schema.sql
+			a0.t0.1.sql
+			a0.t1-schema.sql
+			a0.t1.1.sql
+			a1-schema-create.sql
+			a1.s1-schema.sql
+			a1.s1.1.schema.sql
+			a1.t2-schema.sql
+			a1.t2.1.sql
+			c0-schema-create.sql
+			c0.t3-schema.sql
+			c0.t3.1.sql
+			d0-schema-create.sql
+	*/
+
+	pA0SchemaCreate := s.touch(c, "a0-schema-create.sql")
+	pA0T0Schema := s.touch(c, "a0.t0-schema.sql")
+	pA0T0Data := s.touch(c, "a0.t0.1.sql")
+	_ = s.touch(c, "a0.t1-schema.sql")
+	pA0T1Data := s.touch(c, "a0.t1.1.sql")
+
+	pA1SchemaCreate := s.touch(c, "a1-schema-create.sql")
+	pA1S1Schema := s.touch(c, "a1.s1-schema.sql")
+	pA1S1Data := s.touch(c, "a1.s1.1.sql")
+	_ = s.touch(c, "a1.t2-schema.sql")
+	pA1T2Data := s.touch(c, "a1.t2.1.sql")
+
+	pC0SchemaCreate := s.touch(c, "c0-schema-create.sql")
+	pC0T3Schema := s.touch(c, "c0.t3-schema.sql")
+	pC0T3Data := s.touch(c, "c0.t3.1.sql")
+
+	pD0SchemaCreate := s.touch(c, "d0-schema-create.sql")
+
+	mdl, err := md.NewMyDumpLoader(s.cfg)
+	c.Assert(err, IsNil)
+
+	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
+		{
+			Name:       "a1",
+			SchemaFile: pA1SchemaCreate,
+			Tables: []*md.MDTableMeta{
+				{
+					DB:         "a1",
+					Name:       "s1",
+					SchemaFile: pA1S1Schema,
+					DataFiles:  []string{pA1S1Data},
+				},
+			},
+		},
+		{
+			Name:       "d0",
+			SchemaFile: pD0SchemaCreate,
+		},
+		{
+			Name:       "b",
+			SchemaFile: pA0SchemaCreate,
+			Tables: []*md.MDTableMeta{
+				{
+					DB:         "b",
+					Name:       "u",
+					SchemaFile: pA0T0Schema,
+					DataFiles:  []string{pA0T0Data, pA0T1Data, pA1T2Data},
+				},
+			},
+		},
+		{
+			Name:       "c",
+			SchemaFile: pC0SchemaCreate,
+			Tables: []*md.MDTableMeta{
+				{
+					DB:         "c",
+					Name:       "t3",
+					SchemaFile: pC0T3Schema,
+					DataFiles:  []string{pC0T3Data},
+				},
+			},
+		},
+	})
+}
+
+func (s *testMydumpLoaderSuite) TestBadRouterRule(c *C) {
+	s.cfg.Routes = []*router.TableRule{{
+		SchemaPattern: "a*b",
+		TargetSchema:  "ab",
+	}}
+
+	s.touch(c, "a1b-schema-create.sql")
+
+	_, err := md.NewMyDumpLoader(s.cfg)
+	c.Assert(err, ErrorMatches, `.*pattern a\*b not valid`)
 }
