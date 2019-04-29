@@ -82,7 +82,7 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	var r *router.Table
 	if len(cfg.Routes) > 0 {
 		var err error
-		r, err = router.NewTableRouter(false, cfg.Routes)
+		r, err = router.NewTableRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

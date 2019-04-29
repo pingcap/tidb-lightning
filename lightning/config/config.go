@@ -119,6 +119,7 @@ type MydumperRuntime struct {
 	NoSchema         bool      `toml:"no-schema" json:"no-schema"`
 	CharacterSet     string    `toml:"character-set" json:"character-set"`
 	CSV              CSVConfig `toml:"csv" json:"csv"`
+	CaseSensitive    bool      `toml:"case-sensitive" json:"case-sensitive"`
 }
 
 type TikvImporter struct {
@@ -286,7 +287,9 @@ func (cfg *Config) Load() error {
 	}
 
 	for _, rule := range cfg.Routes {
-		rule.ToLower()
+		if !cfg.Mydumper.CaseSensitive {
+			rule.ToLower()
+		}
 		if err := rule.Valid(); err != nil {
 			return errors.Trace(err)
 		}

@@ -82,6 +82,10 @@ no-schema=false
 # note that the *data* files are always parsed as binary regardless of schema encoding.
 #character-set = "auto"
 
+# make table and database names case-sensitive, i.e. treats `DB`.`TBL` and `db`.`tbl` as two
+# different objects. Currently only affects [[routes]].
+case-sensitive = false
+
 # CSV files are imported according to MySQL's LOAD DATA INFILE rules.
 [mydumper.csv]
 # separator between fields, should be an ASCII character.
