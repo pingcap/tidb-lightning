@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -36,6 +38,7 @@ type TiDBManager struct {
 	db      *sql.DB
 	client  *http.Client
 	baseURL *url.URL
+	parser  *parser.Parser
 }
 
 type TidbDBInfo struct {
@@ -63,10 +66,14 @@ func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
 		return nil, errors.Trace(err)
 	}
 
+	parser := parser.New()
+	parser.SetSQLMode(dsn.SQLMode)
+
 	return &TiDBManager{
 		db:      db,
 		client:  &http.Client{},
 		baseURL: u,
+		parser:  parser,
 	}, nil
 }
 
@@ -99,13 +106,16 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		safeCreateTable := createTableIfNotExistsStmt(sqlCreateTable, tbl)
+		sqlCreateTable, err = timgr.createTableIfNotExistsStmt(sqlCreateTable, tbl)
+		if err != nil {
+			break
+		}
 		sql2 := common.SQLWithRetry{
 			DB:           timgr.db,
 			Logger:       sql.Logger.With(zap.String("table", common.UniqueTable(database, tbl))),
 			HideQueryLog: true,
 		}
-		err = sql2.Exec(ctx, "create table", safeCreateTable)
+		err = sql2.Exec(ctx, "create table", sqlCreateTable)
 		if err != nil {
 			break
 		}
@@ -115,22 +125,29 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 	return errors.Trace(err)
 }
 
-var createTableRegexp = regexp.MustCompile(
-	`(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?` +
-		"(?:[0-9a-z$_\u0080-\U0010ffff]+|\"(?:[^\"]|\"\"|\\.)*\"|`(?:[^`]|``)*`)",
-)
-
-func createTableIfNotExistsStmt(createTable, tblName string) string {
-	if loc := createTableRegexp.FindStringIndex(createTable); len(loc) == 2 {
-		var res strings.Builder
-		res.Grow(len(createTable))
-		res.WriteString(createTable[:loc[0]])
-		res.WriteString("CREATE TABLE IF NOT EXISTS ")
-		common.WriteMySQLIdentifier(&res, tblName)
-		res.WriteString(createTable[loc[1]:])
-		return res.String()
+func (timgr *TiDBManager) createTableIfNotExistsStmt(createTable, tblName string) (string, error) {
+	stmts, _, err := timgr.parser.Parse(createTable, "", "")
+	if err != nil {
+		return "", err
 	}
-	return createTable
+
+	var res strings.Builder
+	res.Grow(len(createTable))
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
+
+	for _, stmt := range stmts {
+		if createTableNode, ok := stmt.(*ast.CreateTableStmt); ok {
+			createTableNode.Table.Schema = model.NewCIStr("")
+			createTableNode.Table.Name = model.NewCIStr(tblName)
+			createTableNode.IfNotExists = true
+		}
+		if err := stmt.Restore(ctx); err != nil {
+			return "", err
+		}
+		ctx.WritePlain(";")
+	}
+
+	return res.String(), nil
 }
 
 func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
