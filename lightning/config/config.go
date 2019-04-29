@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-tools/pkg/filter"
+	tidbcfg "github.com/pingcap/tidb/config"
 )
 
 const (
@@ -304,11 +305,7 @@ func (cfg *Config) Adjust() error {
 		if resp.StatusCode != http.StatusOK {
 			return errors.Errorf("TiDB settings returned %s, please manually fill in `tidb.port` and `tidb.pd-addr`", resp.Status)
 		}
-		var settings struct {
-			Port             int    `json:"port"`
-			AdvertiseAddress string `json:"advertise-address"`
-			Path             string `json:"path"`
-		}
+		var settings tidbcfg.Config
 		err = json.NewDecoder(resp.Body).Decode(&settings)
 		if err != nil {
 			return errors.Annotate(err, "cannot decode settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
@@ -322,7 +319,7 @@ func (cfg *Config) Adjust() error {
 				}
 			}
 			if cfg.TiDB.Port <= 0 {
-				cfg.TiDB.Port = settings.Port
+				cfg.TiDB.Port = int(settings.Port)
 				if cfg.TiDB.Port <= 0 {
 					return errors.New("invalid `tidb.port` setting")
 				}
