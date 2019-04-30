@@ -65,7 +65,7 @@ func (s *configTestSuite) TestAdjustPdAddrAndPortViaAdvertiseAddr(c *C) {
 
 	err := cfg.Adjust()
 	c.Assert(err, IsNil)
-	c.Assert(cfg.TiDB.Port, Equals, 5555)
+	c.Assert(cfg.TiDB.Port, Equals, 6666)
 	c.Assert(cfg.TiDB.PdAddr, Equals, "34.34.34.34:3434")
 }
 

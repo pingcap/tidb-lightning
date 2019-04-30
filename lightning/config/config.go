@@ -18,10 +18,8 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -311,18 +309,9 @@ func (cfg *Config) Adjust() error {
 			return errors.Annotate(err, "cannot decode settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
 		}
 		if cfg.TiDB.Port <= 0 {
-			_, portStr, err := net.SplitHostPort(settings.AdvertiseAddress)
-			if err == nil {
-				port, err := strconv.Atoi(portStr)
-				if err == nil {
-					cfg.TiDB.Port = port
-				}
-			}
+			cfg.TiDB.Port = int(settings.Port)
 			if cfg.TiDB.Port <= 0 {
-				cfg.TiDB.Port = int(settings.Port)
-				if cfg.TiDB.Port <= 0 {
-					return errors.New("invalid `tidb.port` setting")
-				}
+				return errors.New("invalid `tidb.port` setting")
 			}
 		}
 		if len(cfg.TiDB.PdAddr) == 0 {
