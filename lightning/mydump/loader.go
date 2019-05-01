@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -194,11 +193,11 @@ func (s *mdLoaderSetup) setup(dir string) error {
 
 	// Put the small table in the front of the slice which can avoid large table
 	// take a long time to import and block small table to release index worker.
-	for _, dbMeta := range s.loader.dbs {
+	/*for _, dbMeta := range s.loader.dbs {
 		sort.SliceStable(dbMeta.Tables, func(i, j int) bool {
 			return dbMeta.Tables[i].TotalSize < dbMeta.Tables[j].TotalSize
 		})
-	}
+	}*/
 
 	return nil
 }
