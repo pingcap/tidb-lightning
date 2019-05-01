@@ -159,7 +159,7 @@ func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
 			RegionConcurrency: runtime.NumCPU(),
-			TableConcurrency:  8,
+			TableConcurrency:  6,
 			IndexConcurrency:  2,
 			IOConcurrency:     5,
 			CheckRequirements: true,
