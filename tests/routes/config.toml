@@ -1,0 +1,31 @@
+[lightning]
+check-requirements = false
+file = "/tmp/lightning_test_result/lightning.log"
+level = "info"
+
+# the complicated routing rules should be tested in tidb-tools repo already
+# here we're just verifying the basic things do work.
+[[routes]]
+schema-pattern = "routes_a*"
+table-pattern = "t*"
+target-schema = "routes_b"
+target-table = "u"
+
+[tikv-importer]
+addr = "127.0.0.1:8808"
+
+[mydumper]
+data-source-dir = "tests/routes/data"
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+log-level = "error"
+
+[post-restore]
+checksum = true
+compact = false
+analyze = false
