@@ -17,8 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
+"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -210,7 +210,7 @@ func (s *mdLoaderSetup) setup(dir string) error {
 	// take a long time to import and block small table to release index worker.
 	for _, dbMeta := range s.loader.dbs {
 		sort.SliceStable(dbMeta.Tables, func(i, j int) bool {
-			return dbMeta.Tables[i].TotalSize < dbMeta.Tables[j].TotalSize
+			return dbMeta.Tables[i].TotalSize > dbMeta.Tables[j].TotalSize
 		})
 	}
 
