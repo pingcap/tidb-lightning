@@ -10,7 +10,7 @@ pprof-port = 8289
 # index-concurrency controls the maximum handled index concurrently while reading Mydumper SQL files. It can affect the tikv-importer disk usage.
 index-concurrency = 2
 # table-concurrency controls the maximum handled tables concurrently while reading Mydumper SQL files. It can affect the tikv-importer memory usage.
-table-concurrency = 8
+table-concurrency = 6
 # region-concurrency changes the concurrency number of data. It is set to the number of logical CPU cores by default and needs no configuration.
 # In mixed configuration, you can set it to 75% of the size of logical CPU cores.
 # region-concurrency default to runtime.NumCPU()
@@ -82,6 +82,10 @@ no-schema=false
 # note that the *data* files are always parsed as binary regardless of schema encoding.
 #character-set = "auto"
 
+# make table and database names case-sensitive, i.e. treats `DB`.`TBL` and `db`.`tbl` as two
+# different objects. Currently only affects [[routes]].
+case-sensitive = false
+
 # CSV files are imported according to MySQL's LOAD DATA INFILE rules.
 [mydumper.csv]
 # separator between fields, should be an ASCII character.
@@ -138,3 +142,25 @@ analyze = true
 switch-mode = "5m"
 # the duration which the an import progress will be printed to the log.
 log-progress = "5m"
+
+## Table filter options. See the documentation for details
+# [black-white-list]
+# do-dbs = ["patterns"]
+# ignore-dbs = ["patterns"]
+#
+# [[black-white-list.do-tables]]
+# db-name = "db-pattern"
+# table-name = "table-pattern"
+#
+# [[black-white-list.ignore-tables]]
+# db-name = "db-pattern"
+# table-name = "table-pattern"
+
+## Rules to rename existing databases/tables and possibly merge them together.
+## The patterns support wildcards with `*` and `?`.
+## Routes are applied _after_ black-white-list.
+# [[routes]]
+# schema-pattern = "shard_db_*"
+# table-pattern = "shard_table_*"
+# target-schema = "shard_db"
+# target-table = "shard_table"

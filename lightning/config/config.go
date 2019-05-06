@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-tools/pkg/filter"
+	"github.com/pingcap/tidb-tools/pkg/table-router"
 )
 
 const (
@@ -62,12 +63,13 @@ type Config struct {
 
 	// not implemented yet.
 	// ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
-	Checkpoint   Checkpoint      `toml:"checkpoint" json:"checkpoint"`
-	Mydumper     MydumperRuntime `toml:"mydumper" json:"mydumper"`
-	BWList       *filter.Rules   `toml:"black-white-list" json:"black-white-list"`
-	TikvImporter TikvImporter    `toml:"tikv-importer" json:"tikv-importer"`
-	PostRestore  PostRestore     `toml:"post-restore" json:"post-restore"`
-	Cron         Cron            `toml:"cron" json:"cron"`
+	Checkpoint   Checkpoint          `toml:"checkpoint" json:"checkpoint"`
+	Mydumper     MydumperRuntime     `toml:"mydumper" json:"mydumper"`
+	BWList       *filter.Rules       `toml:"black-white-list" json:"black-white-list"`
+	TikvImporter TikvImporter        `toml:"tikv-importer" json:"tikv-importer"`
+	PostRestore  PostRestore         `toml:"post-restore" json:"post-restore"`
+	Cron         Cron                `toml:"cron" json:"cron"`
+	Routes       []*router.TableRule `toml:"routes" json:"routes"`
 
 	// command line flags
 	ConfigFile string `json:"config-file"`
@@ -117,6 +119,7 @@ type MydumperRuntime struct {
 	NoSchema         bool      `toml:"no-schema" json:"no-schema"`
 	CharacterSet     string    `toml:"character-set" json:"character-set"`
 	CSV              CSVConfig `toml:"csv" json:"csv"`
+	CaseSensitive    bool      `toml:"case-sensitive" json:"case-sensitive"`
 }
 
 type TikvImporter struct {
@@ -156,7 +159,7 @@ func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
 			RegionConcurrency: runtime.NumCPU(),
-			TableConcurrency:  8,
+			TableConcurrency:  6,
 			IndexConcurrency:  2,
 			IOConcurrency:     5,
 			CheckRequirements: true,
@@ -281,6 +284,15 @@ func (cfg *Config) Load() error {
 	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
 	if err != nil {
 		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
+	}
+
+	for _, rule := range cfg.Routes {
+		if !cfg.Mydumper.CaseSensitive {
+			rule.ToLower()
+		}
+		if err := rule.Valid(); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
