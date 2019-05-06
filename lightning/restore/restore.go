@@ -446,6 +446,9 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 				remainNanoseconds := (estimated/finished - 1) * nanoseconds
 				state = "writing"
 				remaining = zap.Duration("remaining", time.Duration(remainNanoseconds).Round(time.Second))
+			} else {
+				state = "writing"
+				remaining = zap.Skip()
 			}
 
 			// Note: a speed of 28 MiB/s roughly corresponds to 100 GiB/hour.
