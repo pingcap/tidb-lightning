@@ -87,14 +87,16 @@ integration_test: lightning_for_integration_test
 	@which bin/tikv-server
 	@which bin/pd-server
 	@which bin/tikv-importer
-	tests/run.sh
+	#tests/run.sh
+	touch "$(TEST_DIR)"/cov_out
 
 coverage:
 	GO111MODULE=off go get github.com/wadey/gocovmerge
 	gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go|.*__failpoint_binding__.go" > "$(TEST_DIR)/all_cov.out"
 ifeq ("$(JenkinsCI)", "1")
 	GO111MODULE=off go get github.com/mattn/goveralls
-	@goveralls -coverprofile=$(TEST_DIR)/all_cov.out -service=jenkins-ci -repotoken $(COVERALLS_TOKEN)
+	echo $ghprbPullId "/" $BUILD_NUMBER
+	PULL_REQUEST_NUMBER=ghprbPullId BUILD_NUMBER=$BUILD_NUMBER goveralls -coverprofile=$(TEST_DIR)/all_cov.out -service=jenkins-ci
 else
 	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
 	grep -F '<option' "$(TEST_DIR)/all_cov.html"
