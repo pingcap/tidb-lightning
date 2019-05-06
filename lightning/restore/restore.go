@@ -1474,11 +1474,11 @@ func (cr *chunkRestore) deliverLoop(
 		start := time.Now()
 
 		if err = writeToEngine(ctx, dataEngine, dataKVs); err != nil {
-			deliverTask.Error("write to data engine failed")
+			deliverTask.Error("write to data engine failed", log.ShortError(err))
 			return
 		}
 		if err = writeToEngine(ctx, indexEngine, indexKVs); err != nil {
-			deliverTask.Error("write to index engine failed")
+			deliverTask.Error("write to index engine failed", log.ShortError(err))
 			return
 		}
 
