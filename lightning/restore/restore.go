@@ -1204,6 +1204,11 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 			if i, ok := columnMap[colInfo.Name.L]; ok {
 				colPerm = append(colPerm, i)
 			} else {
+				t.logger.Warn("column missing from data file, going to fill with default value",
+					zap.Stringer("path", &ccp.Key),
+					zap.String("colName", colInfo.Name.O),
+					zap.Stringer("colType", &colInfo.FieldType),
+				)
 				colPerm = append(colPerm, -1)
 			}
 		}
@@ -1587,14 +1592,14 @@ outside:
 
 		// sql -> kv
 		lastRow := cr.parser.LastRow()
-		kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
+		kvs, err := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
 		encodeDur := time.Since(start)
 		encodeTotalDur += encodeDur
 		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 
 		if err != nil {
-			logTask.Error("kv encode failed", log.ShortError(err))
-			return errors.Trace(err)
+			// error is already logged inside kvEncoder.Encode(), just propagate up directly.
+			return err
 		}
 
 		deliverKvStart := time.Now()

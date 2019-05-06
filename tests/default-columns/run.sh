@@ -31,3 +31,5 @@ check_contains 'xx: 1'
 
 run_sql 'SELECT xx FROM defcol.u WHERE yy = 60'
 check_contains 'xx: 2'
+
+grep -q '\["column missing from data file, going to fill with default value"\] \[table=`defcol`\.`u`\].*\[colName=xx\]' "$TEST_DIR/defcol-errors.log"
