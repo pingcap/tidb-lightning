@@ -8,6 +8,7 @@ LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GoVersion=$(sh
 
 LIGHTNING_BIN := bin/tidb-lightning
 LIGHTNING_CTL_BIN := bin/tidb-lightning-ctl
+FAILPOINT_CTL_BIN := bin/failpoint-ctl
 TEST_DIR := /tmp/lightning_test_result
 # this is hard-coded unless we want to generate *.toml on fly.
 
@@ -23,8 +24,8 @@ LINUX     := "Linux"
 MAC       := "Darwin"
 PACKAGES  := $$(go list ./...| grep -vE 'vendor|cmd|test|proto|diff|bin')
 
-FAILPOINT_ENABLE  := $$(failpoint-ctl enable $$PWD/lightning/)
-FAILPOINT_DISABLE := $$(failpoint-ctl disable $$PWD/lightning/)
+FAILPOINT_ENABLE  := $$($(FAILPOINT_CTL_BIN) enable $$PWD/lightning/)
+FAILPOINT_DISABLE := $$($(FAILPOINT_CTL_BIN) disable $$PWD/lightning/)
 
 RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
@@ -62,14 +63,14 @@ lightning:
 lightning-ctl:
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_CTL_BIN) cmd/tidb-lightning-ctl/main.go
 
-test:
+test: install-failpoint
 	mkdir -p "$(TEST_DIR)"
 	$(FAILPOINT_ENABLE)
 	@export log_level=error;\
 	$(GOTEST) -cover -covermode=count -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES) || ( $(FAILPOINT_DISABLE) && exit 1 )
 	$(FAILPOINT_DISABLE)
 
-lightning_for_integration_test:
+lightning_for_integration_test: install-failpoint
 	$(FAILPOINT_ENABLE)
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
@@ -104,7 +105,7 @@ update:
 	GO111MODULE=on go mod tidy
 
 install-failpoint:
-	@hash failpoint-ctl || $(GO) get -v github.com/pingcap/failpoint/failpoint-ctl
+	@which $(FAILPOINT_CTL_BIN) >/dev/null 2>&1 || $(GOBUILD) -o $(FAILPOINT_CTL_BIN) github.com/pingcap/failpoint/failpoint-ctl
 
 failpoint-enable: install-failpoint
 	$(FAILPOINT_ENABLE)
