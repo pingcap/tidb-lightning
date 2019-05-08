@@ -53,3 +53,5 @@ set +e
 run_lightning on
 [ $? -ne 0 ] || exit 1
 set -e
+
+grep -q '\["kv convert failed"\].*\[originalRow=.*col=1,kind=uint64,val=9.*\].*\[originalCol=1\] \[colName=a\] \[colType="timestamp BINARY"\]' "$TEST_DIR/sqlmode-error.log"
