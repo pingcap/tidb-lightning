@@ -144,4 +144,5 @@ $(GOLANGCI_LINT_BIN):
 	cd tools && $(GOBUILD) -o ../$(GOLANGCI_LINT_BIN) github.com/golangci/golangci-lint/cmd/golangci-lint
 
 lint: $(GOLANGCI_LINT_BIN)
-	$(GOLANGCI_LINT_BIN) run lightning cmd/*
+	export PACKAGES=$(PACKAGES) && \
+	$(GOLANGCI_LINT_BIN) run $${PACKAGES//github.com\/pingcap\/tidb-lightning\//}
