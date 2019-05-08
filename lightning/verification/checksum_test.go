@@ -50,11 +50,11 @@ func (s *testKVChcksumSuite) TestChcksum(c *C) {
 	excpectChecksum := uint64(4850203904608948940)
 
 	kvs := []kvec.KvPair{
-		kvec.KvPair{
+		{
 			Key: []byte("Cop"),
 			Val: []byte("PingCAP"),
 		},
-		kvec.KvPair{
+		{
 			Key: []byte("Introduction"),
 			Val: []byte("Inspired by Google Spanner/F1, PingCAP develops TiDB."),
 		},

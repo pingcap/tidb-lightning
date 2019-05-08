@@ -24,19 +24,19 @@ type splitKVSuite struct{}
 
 func (s *splitKVSuite) TestSplitKV(c *C) {
 	pairs := []kvenc.KvPair{
-		kvenc.KvPair{
+		{
 			Key: []byte{1, 2, 3},
 			Val: []byte{4, 5, 6},
 		},
-		kvenc.KvPair{
+		{
 			Key: []byte{7, 8},
 			Val: []byte{9, 0},
 		},
-		kvenc.KvPair{
+		{
 			Key: []byte{1, 2, 3, 4},
 			Val: []byte{5, 6, 7, 8},
 		},
-		kvenc.KvPair{
+		{
 			Key: []byte{9, 0},
 			Val: []byte{1, 2},
 		},
