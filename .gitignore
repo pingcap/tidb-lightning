@@ -7,3 +7,4 @@ test_*/
 *.pyc
 *.ezdraw
 vendor/
+tools/bin/
