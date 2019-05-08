@@ -8,7 +8,9 @@ LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GoVersion=$(sh
 
 LIGHTNING_BIN := bin/tidb-lightning
 LIGHTNING_CTL_BIN := bin/tidb-lightning-ctl
-FAILPOINT_CTL_BIN := bin/failpoint-ctl
+FAILPOINT_CTL_BIN := tools/bin/failpoint-ctl
+REVIVE_BIN        := tools/bin/revive
+GOLANGCI_LINT_BIN := tools/bin/golangci-lint
 TEST_DIR := /tmp/lightning_test_result
 # this is hard-coded unless we want to generate *.toml on fly.
 
@@ -23,6 +25,7 @@ ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
 PACKAGES  := $$(go list ./...| grep -vE 'vendor|cmd|test|proto|diff|bin')
+FILES     := $$(find lightning cmd -name '*.go' -type f -not -name '*.pb.go' -not -name '*_generated.go')
 
 FAILPOINT_ENABLE  := $$($(FAILPOINT_CTL_BIN) enable $$PWD/lightning/)
 FAILPOINT_DISABLE := $$($(FAILPOINT_CTL_BIN) disable $$PWD/lightning/)
@@ -33,7 +36,9 @@ ifeq ("$(WITH_RACE)", "1")
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
-.PHONY: all build parser clean lightning lightning-ctl test integration_test
+.PHONY: all build clean lightning lightning-ctl test lightning_for_integration_test \
+	integration_test coverage update ensure_failpoint_ctl failpoint_enable failpoint_disable \
+	check vet fmt revive
 
 default: clean lightning lightning-ctl checksuccess
 
@@ -41,7 +46,7 @@ build:
 	$(GOBUILD)
 
 clean:
-	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN)
+	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN) $(FAILPOINT_CTL_BIN) $(REVIVE_BIN)
 
 checksuccess:
 	@if [ -f $(LIGHTNING_BIN) ] && [ -f $(LIGHTNING_CTRL_BIN) ]; \
@@ -63,14 +68,14 @@ lightning:
 lightning-ctl:
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_CTL_BIN) cmd/tidb-lightning-ctl/main.go
 
-test: install-failpoint
+test: ensure_failpoint_ctl
 	mkdir -p "$(TEST_DIR)"
 	$(FAILPOINT_ENABLE)
 	@export log_level=error;\
 	$(GOTEST) -cover -covermode=count -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES) || ( $(FAILPOINT_DISABLE) && exit 1 )
 	$(FAILPOINT_DISABLE)
 
-lightning_for_integration_test: install-failpoint
+lightning_for_integration_test: ensure_failpoint_ctl
 	$(FAILPOINT_ENABLE)
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
@@ -104,11 +109,40 @@ update:
 	GO111MODULE=on go mod verify
 	GO111MODULE=on go mod tidy
 
-install-failpoint:
-	@which $(FAILPOINT_CTL_BIN) >/dev/null 2>&1 || $(GOBUILD) -o $(FAILPOINT_CTL_BIN) github.com/pingcap/failpoint/failpoint-ctl
+$(FAILPOINT_CTL_BIN):
+	cd tools && $(GOBUILD) -o ../$(FAILPOINT_CTL_BIN) github.com/pingcap/failpoint/failpoint-ctl
 
-failpoint-enable: install-failpoint
+ensure_failpoint_ctl: $(FAILPOINT_CTL_BIN)
+	@[ "$$(grep -h failpoint go.mod tools/go.mod | uniq | wc -l)" -eq 1 ] || \
+	( echo 'failpoint version of go.mod and tools/go.mod differ' && false )
+
+failpoint_enable: ensure_failpoint_ctl
 	$(FAILPOINT_ENABLE)
 
-failpoint-disable: install-failpoint
+failpoint_disable: ensure_failpoint_ctl
 	$(FAILPOINT_DISABLE)
+
+
+check: fmt revive vet lint
+
+fmt:
+	gofmt -s -l -w $(FILES)
+
+$(REVIVE_BIN):
+	cd tools && $(GOBUILD) -o ../$(REVIVE_BIN) github.com/mgechev/revive
+
+revive: $(REVIVE_BIN)
+	$(REVIVE_BIN) -formatter friendly -config tools/revive.toml $(FILES)
+
+vet:
+	go vet -unreachable=false  $(PACKAGES)
+# Not checking unreachable since Ragel-generated code do contain unreachable branches and
+# go vet cannot be selectively silenced (https://github.com/golang/go/issues/17058).
+# This is enabled in revive instead.
+
+$(GOLANGCI_LINT_BIN):
+	cd tools && $(GOBUILD) -o ../$(GOLANGCI_LINT_BIN) github.com/golangci/golangci-lint/cmd/golangci-lint
+
+lint: $(GOLANGCI_LINT_BIN)
+	export PACKAGES=$(PACKAGES) && \
+	$(GOLANGCI_LINT_BIN) run $${PACKAGES//github.com\/pingcap\/tidb-lightning\//}

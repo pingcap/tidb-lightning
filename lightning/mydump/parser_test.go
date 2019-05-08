@@ -119,31 +119,31 @@ func (s *testMydumpParserSuite) TestReadChunks(c *C) {
 	chunks, err := mydump.ReadChunks(parser, 32)
 	c.Assert(err, IsNil)
 	c.Assert(chunks, DeepEquals, []mydump.Chunk{
-		mydump.Chunk{
+		{
 			Offset:       0,
 			EndOffset:    40,
 			PrevRowIDMax: 0,
 			RowIDMax:     2,
 		},
-		mydump.Chunk{
+		{
 			Offset:       40,
 			EndOffset:    88,
 			PrevRowIDMax: 2,
 			RowIDMax:     4,
 		},
-		mydump.Chunk{
+		{
 			Offset:       88,
 			EndOffset:    130,
 			PrevRowIDMax: 4,
 			RowIDMax:     7,
 		},
-		mydump.Chunk{
+		{
 			Offset:       130,
 			EndOffset:    165,
 			PrevRowIDMax: 7,
 			RowIDMax:     8,
 		},
-		mydump.Chunk{
+		{
 			Offset:       165,
 			EndOffset:    179,
 			PrevRowIDMax: 8,
