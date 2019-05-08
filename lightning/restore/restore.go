@@ -1432,12 +1432,12 @@ func (cr *chunkRestore) deliverLoop(
 	var channelClosed bool
 	var dataKVs, indexKVs []kvenc.KvPair
 
-	deliverTask := t.logger.With(
+	deliverLogger := t.logger.With(
 		zap.Int32("engineNumber", engineID),
 		zap.Int("fileIndex", cr.index),
 		zap.Stringer("path", &cr.chunk.Key),
 		zap.String("task", "deliver"),
-	).Begin(zap.InfoLevel, "deliver started")
+	)
 
 	for !channelClosed {
 		var dataChecksum, indexChecksum verify.KVChecksum
@@ -1474,11 +1474,11 @@ func (cr *chunkRestore) deliverLoop(
 		start := time.Now()
 
 		if err = writeToEngine(ctx, dataEngine, dataKVs); err != nil {
-			deliverTask.Error("write to data engine failed", log.ShortError(err))
+			deliverLogger.Error("write to data engine failed", log.ShortError(err))
 			return
 		}
 		if err = writeToEngine(ctx, indexEngine, indexKVs); err != nil {
-			deliverTask.Error("write to index engine failed", log.ShortError(err))
+			deliverLogger.Error("write to index engine failed", log.ShortError(err))
 			return
 		}
 
