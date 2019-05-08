@@ -1400,7 +1400,13 @@ func writeToEngine(ctx context.Context, engine *kv.OpenedEngine, totalKVs []kven
 
 	var putError error
 	for _, kvs := range splitIntoDeliveryStreams(totalKVs, maxDeliverBytes) {
-		putError = stream.Put(kvs)
+		for i := 0; i < 5; i++ {
+			putError = stream.Put(kvs)
+			if putError == nil {
+				break
+			}
+		}
+		// retry still failed
 		if putError != nil {
 			break
 		}
@@ -1433,6 +1439,13 @@ func (cr *chunkRestore) deliverLoop(
 ) (deliverTotalDur time.Duration, err error) {
 	var channelClosed bool
 	var dataKVs, indexKVs []kvenc.KvPair
+
+	deliverLogger := t.logger.With(
+		zap.Int32("engineNumber", engineID),
+		zap.Int("fileIndex", cr.index),
+		zap.Stringer("path", &cr.chunk.Key),
+		zap.String("task", "deliver"),
+	)
 
 	for !channelClosed {
 		var dataChecksum, indexChecksum verify.KVChecksum
@@ -1469,9 +1482,11 @@ func (cr *chunkRestore) deliverLoop(
 		start := time.Now()
 
 		if err = writeToEngine(ctx, dataEngine, dataKVs); err != nil {
+			deliverLogger.Error("write to data engine failed", log.ShortError(err))
 			return
 		}
 		if err = writeToEngine(ctx, indexEngine, indexKVs); err != nil {
+			deliverLogger.Error("write to index engine failed", log.ShortError(err))
 			return
 		}
 
