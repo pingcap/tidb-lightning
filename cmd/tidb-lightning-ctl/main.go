@@ -92,7 +92,10 @@ func run() error {
 		cfg.TikvImporter.Addr = *importerAddr
 	}
 
-	cfg.Adjust()
+	err = cfg.Adjust()
+	if err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 

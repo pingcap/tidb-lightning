@@ -18,7 +18,9 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 	"github.com/pingcap/tidb-tools/pkg/table-router"
+	tidbcfg "github.com/pingcap/tidb/config"
 )
 
 const (
@@ -166,10 +169,8 @@ func NewConfig() *Config {
 		},
 		TiDB: DBStore{
 			Host:                       "127.0.0.1",
-			Port:                       4000,
 			User:                       "root",
 			StatusPort:                 10080,
-			PdAddr:                     "127.0.0.1:2379",
 			LogLevel:                   "error",
 			StrSQLMode:                 mysql.DefaultSQLMode,
 			BuildStatsConcurrency:      20,
@@ -254,7 +255,9 @@ func LoadConfig(args []string) (*Config, error) {
 		cfg.TikvImporter.Addr = *importerAddr
 	}
 
-	cfg.Adjust()
+	if err := cfg.Adjust(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
@@ -298,8 +301,39 @@ func (cfg *Config) Load() error {
 	return nil
 }
 
-func (cfg *Config) Adjust() {
+// Adjust fixes the invalid or unspecified settings to reasonable valid values.
+func (cfg *Config) Adjust() error {
 	cfg.App.Config.Adjust()
+
+	// automatically determine the TiDB port & PD address from TiDB settings
+	if cfg.TiDB.Port <= 0 || len(cfg.TiDB.PdAddr) == 0 {
+		resp, err := http.Get(fmt.Sprintf("http://%s:%d/settings", cfg.TiDB.Host, cfg.TiDB.StatusPort))
+		if err != nil {
+			return errors.Annotate(err, "cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return errors.Errorf("TiDB settings returned %s, please manually fill in `tidb.port` and `tidb.pd-addr`", resp.Status)
+		}
+		var settings tidbcfg.Config
+		err = json.NewDecoder(resp.Body).Decode(&settings)
+		if err != nil {
+			return errors.Annotate(err, "cannot decode settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
+		}
+		if cfg.TiDB.Port <= 0 {
+			cfg.TiDB.Port = int(settings.Port)
+			if cfg.TiDB.Port <= 0 {
+				return errors.New("invalid `tidb.port` setting")
+			}
+		}
+		if len(cfg.TiDB.PdAddr) == 0 {
+			pdAddrs := strings.Split(settings.Path, ",")
+			cfg.TiDB.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
+			if len(cfg.TiDB.PdAddr) == 0 {
+				return errors.New("invalid `tidb.pd-addr` setting")
+			}
+		}
+	}
 
 	// handle mydumper
 	if cfg.Mydumper.BatchSize <= 0 {
@@ -329,4 +363,6 @@ func (cfg *Config) Adjust() {
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
 	}
+
+	return nil
 }
