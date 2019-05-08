@@ -19,7 +19,7 @@
 set -eu
 
 run_sql 'DROP DATABASE IF EXISTS `x``f"n`;'
-run_sql 'DROP DATABASE IF EXISTS `中文庫🥳`;'
+run_sql 'DROP DATABASE IF EXISTS `中文庫`;'
 run_lightning
 echo 'Import finished'
 
@@ -33,5 +33,5 @@ run_sql 'SELECT _tidb_rowid > 80000, b > 80000 FROM `x``f"n`.`exotic``table````n
 check_contains '_tidb_rowid > 80000: 1'
 check_contains 'b > 80000: 1'
 
-run_sql 'SELECT * FROM `中文庫🥳`.中文表'
+run_sql 'SELECT * FROM `中文庫`.中文表'
 check_contains 'a: 2345'
