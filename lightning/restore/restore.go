@@ -1407,7 +1407,13 @@ func writeToEngine(ctx context.Context, engine *kv.OpenedEngine, totalKVs []kven
 
 	var putError error
 	for _, kvs := range splitIntoDeliveryStreams(totalKVs, maxDeliverBytes) {
-		putError = stream.Put(kvs)
+		for i := 0; i < 5; i++ {
+			putError = stream.Put(kvs)
+			if putError == nil {
+				break
+			}
+		}
+		// retry still failed
 		if putError != nil {
 			break
 		}
@@ -1476,9 +1482,15 @@ func (cr *chunkRestore) deliverLoop(
 		start := time.Now()
 
 		if err = writeToEngine(ctx, dataEngine, dataKVs); err != nil {
+			common.AppLogger.Errorf("[%s:%d] write to data engine from #%d (%s) failed: %s",
+				t.tableName, engineID, cr.index, &cr.chunk.Key, err.Error(),
+			)
 			return
 		}
 		if err = writeToEngine(ctx, indexEngine, indexKVs); err != nil {
+			common.AppLogger.Errorf("[%s:%d] write to index engine from #%d (%s) failed: %s",
+				t.tableName, engineID, cr.index, &cr.chunk.Key, err.Error(),
+			)
 			return
 		}
 
