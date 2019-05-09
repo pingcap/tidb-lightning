@@ -79,54 +79,46 @@ func (parser *CSVParser) lex() (csvToken, []byte, error) {
 		goto st_case_10
 	case 1:
 		goto st_case_1
-	case 11:
-		goto st_case_11
 	case 2:
 		goto st_case_2
+	case 11:
+		goto st_case_11
 	case 12:
 		goto st_case_12
-	case 13:
-		goto st_case_13
 	case 3:
 		goto st_case_3
-	case 14:
-		goto st_case_14
+	case 13:
+		goto st_case_13
 	case 4:
 		goto st_case_4
+	case 14:
+		goto st_case_14
 	case 15:
 		goto st_case_15
+	case 5:
+		goto st_case_5
 	case 16:
 		goto st_case_16
+	case 6:
+		goto st_case_6
 	case 17:
 		goto st_case_17
+	case 7:
+		goto st_case_7
 	case 18:
 		goto st_case_18
 	case 19:
 		goto st_case_19
-	case 5:
-		goto st_case_5
 	case 20:
 		goto st_case_20
-	case 6:
-		goto st_case_6
 	case 21:
 		goto st_case_21
-	case 7:
-		goto st_case_7
 	case 22:
 		goto st_case_22
 	case 23:
 		goto st_case_23
 	case 24:
 		goto st_case_24
-	case 25:
-		goto st_case_25
-	case 26:
-		goto st_case_26
-	case 27:
-		goto st_case_27
-	case 28:
-		goto st_case_28
 	}
 	goto st_out
 tr0:
@@ -146,12 +138,6 @@ tr0:
 		consumedToken = csvTokField
 		{p++; cs = 8; goto _out }
 	}
-	case 3:
-	{p = (te) - 1
-
-		consumedToken = csvTokNewLine
-		{p++; cs = 8; goto _out }
-	}
 	}
 	
 	goto st8
@@ -163,7 +149,7 @@ p = (te) - 1
 		{p++; cs = 8; goto _out }
 	}
 	goto st8
-tr19:
+tr17:
 //.... lightning/mydump/csv_parser.rl:42
 te = p+1
 {
@@ -171,7 +157,16 @@ te = p+1
 		{p++; cs = 8; goto _out }
 	}
 	goto st8
-tr27:
+tr23:
+//.... lightning/mydump/csv_parser.rl:52
+te = p
+p--
+{
+		consumedToken = csvTokNewLine
+		{p++; cs = 8; goto _out }
+	}
+	goto st8
+tr24:
 //.... lightning/mydump/csv_parser.rl:47
 te = p
 p--
@@ -180,7 +175,7 @@ p--
 		{p++; cs = 8; goto _out }
 	}
 	goto st8
-tr30:
+tr25:
 //.... lightning/mydump/csv_parser.rl:42
 te = p
 p--
@@ -203,11 +198,22 @@ act = 0
 //.... NONE:1
 ts = p
 
-//.... tmp_parser.go:206
+//.... tmp_parser.go:201
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -251,15 +257,9 @@ ts = p
 		}
 		switch _widec {
 		case 10:
-			goto tr15
-		case 2829:
-			goto tr17
-		case 3085:
-			goto tr18
-		case 3341:
-			goto tr20
-		case 3597:
-			goto tr22
+			goto st9
+		case 13:
+			goto st9
 		case 3932:
 			goto tr1
 		case 4188:
@@ -269,33 +269,41 @@ ts = p
 		case 4700:
 			goto st5
 		case 4956:
-			goto tr19
+			goto tr17
 		case 5212:
-			goto tr21
+			goto tr18
 		case 5468:
-			goto st27
+			goto st23
 		case 5724:
-			goto st28
+			goto st24
 		}
 		switch {
 		case _widec < 3165:
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto tr1
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto tr1
+					}
+				default:
 					goto tr1
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto st2
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			default:
@@ -305,28 +313,37 @@ ts = p
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
-						goto tr19
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
+						goto tr17
 					}
-				case _widec >= 3328:
-					goto tr19
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto tr17
+					}
+				default:
+					goto tr17
 				}
 			case _widec > 3583:
 				switch {
 				case _widec < 3595:
 					if 3584 <= _widec && _widec <= 3593 {
-						goto tr21
+						goto tr18
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
-						goto tr21
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr18
+						}
+					case _widec >= 3598:
+						goto tr18
 					}
 				default:
-					goto tr21
+					goto tr18
 				}
 			default:
-				goto tr19
+				goto tr17
 			}
 		default:
 			goto st2
@@ -336,33 +353,18 @@ st_case_0:
 	st0:
 		cs = 0
 		goto _out
-tr15:
-//.... NONE:1
-te = p+1
-
-//.... lightning/mydump/csv_parser.rl:52
-act = 3;
-	goto st9
-tr20:
-//.... NONE:1
-te = p+1
-
-//.... lightning/mydump/csv_parser.rl:42
-act = 1;
-	goto st9
 	st9:
 		if p++; p == pe {
 			goto _test_eof9
 		}
 	st_case_9:
-//.... tmp_parser.go:358
 		switch data[p] {
 		case 10:
-			goto tr15
+			goto st9
 		case 13:
-			goto tr15
+			goto st9
 		}
-		goto tr0
+		goto tr23
 tr1:
 //.... NONE:1
 te = p+1
@@ -375,11 +377,22 @@ act = 2;
 			goto _test_eof10
 		}
 	st_case_10:
-//.... tmp_parser.go:378
+//.... tmp_parser.go:380
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -438,113 +451,25 @@ act = 2;
 			if 2816 <= _widec && _widec <= 2825 {
 				goto tr1
 			}
-		case _widec > 2907:
-			if 2909 <= _widec && _widec <= 3071 {
+		case _widec > 2828:
+			switch {
+			case _widec > 2907:
+				if 2909 <= _widec && _widec <= 3071 {
+					goto tr1
+				}
+			case _widec >= 2830:
 				goto tr1
 			}
 		default:
 			goto tr1
 		}
-		goto tr27
+		goto tr24
 	st1:
 		if p++; p == pe {
 			goto _test_eof1
 		}
 	st_case_1:
 		goto tr1
-tr17:
-//.... NONE:1
-te = p+1
-
-//.... lightning/mydump/csv_parser.rl:47
-act = 2;
-	goto st11
-	st11:
-		if p++; p == pe {
-			goto _test_eof11
-		}
-	st_case_11:
-//.... tmp_parser.go:467
-		_widec = int16(data[p])
-		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
-				_widec = 2816 + (int16(data[p]) - 0)
-				if  data[p] == delim  {
-					_widec += 256
-				}
-				if  data[p] == sep  {
-					_widec += 512
-				}
-			}
-		case data[p] > 91:
-			switch {
-			case data[p] > 92:
-				if 93 <= data[p] {
-					_widec = 2816 + (int16(data[p]) - 0)
-					if  data[p] == delim  {
-						_widec += 256
-					}
-					if  data[p] == sep  {
-						_widec += 512
-					}
-				}
-			case data[p] >= 92:
-				_widec = 3840 + (int16(data[p]) - 0)
-				if  data[p] == delim  {
-					_widec += 256
-				}
-				if  parser.escFlavor != backslashEscapeFlavorNone  {
-					_widec += 512
-				}
-				if  data[p] == sep  {
-					_widec += 1024
-				}
-			}
-		default:
-			_widec = 2816 + (int16(data[p]) - 0)
-			if  data[p] == delim  {
-				_widec += 256
-			}
-			if  data[p] == sep  {
-				_widec += 512
-			}
-		}
-		switch _widec {
-		case 10:
-			goto tr15
-		case 2829:
-			goto tr17
-		case 3085:
-			goto tr15
-		case 3341:
-			goto tr15
-		case 3597:
-			goto tr15
-		case 3932:
-			goto tr1
-		case 4444:
-			goto st1
-		case 4700:
-			goto st1
-		case 5468:
-			goto st1
-		case 5724:
-			goto st1
-		}
-		switch {
-		case _widec < 2827:
-			if 2816 <= _widec && _widec <= 2825 {
-				goto tr1
-			}
-		case _widec > 2907:
-			if 2909 <= _widec && _widec <= 3071 {
-				goto tr1
-			}
-		default:
-			goto tr1
-		}
-		goto tr27
 	st2:
 		if p++; p == pe {
 			goto _test_eof2
@@ -552,8 +477,19 @@ act = 2;
 	st_case_2:
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -597,6 +533,8 @@ act = 2;
 		}
 		switch _widec {
 		case 10:
+			goto st2
+		case 13:
 			goto st2
 		case 3932:
 			goto st2
@@ -620,20 +558,28 @@ act = 2;
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto st2
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr3
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr3
+					}
+				default:
 					goto tr3
 				}
 			default:
@@ -643,11 +589,15 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto st2
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3583:
@@ -656,8 +606,13 @@ act = 2;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr4
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr4
+						}
+					case _widec >= 3598:
 						goto tr4
 					}
 				default:
@@ -676,17 +631,24 @@ te = p+1
 
 //.... lightning/mydump/csv_parser.rl:47
 act = 2;
-	goto st12
-	st12:
+	goto st11
+	st11:
 		if p++; p == pe {
-			goto _test_eof12
+			goto _test_eof11
 		}
-	st_case_12:
-//.... tmp_parser.go:685
+	st_case_11:
+//.... tmp_parser.go:640
 		_widec = int16(data[p])
 		switch {
-		case data[p] > 9:
-			if 11 <= data[p] {
+		case data[p] < 11:
+			if data[p] <= 9 {
+				_widec = 768 + (int16(data[p]) - 0)
+				if  data[p] == delim  {
+					_widec += 256
+				}
+			}
+		case data[p] > 12:
+			if 14 <= data[p] {
 				_widec = 768 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -699,31 +661,46 @@ act = 2;
 			}
 		}
 		switch {
-		case _widec > 1033:
-			if 1035 <= _widec && _widec <= 1279 {
+		case _widec < 1035:
+			if 1024 <= _widec && _widec <= 1033 {
 				goto st2
 			}
-		case _widec >= 1024:
+		case _widec > 1036:
+			if 1038 <= _widec && _widec <= 1279 {
+				goto st2
+			}
+		default:
 			goto st2
 		}
-		goto tr27
+		goto tr24
 tr4:
 //.... NONE:1
 te = p+1
 
 //.... lightning/mydump/csv_parser.rl:47
 act = 2;
-	goto st13
-	st13:
+	goto st12
+	st12:
 		if p++; p == pe {
-			goto _test_eof13
+			goto _test_eof12
 		}
-	st_case_13:
-//.... tmp_parser.go:722
+	st_case_12:
+//.... tmp_parser.go:688
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -767,6 +744,8 @@ act = 2;
 		}
 		switch _widec {
 		case 10:
+			goto st2
+		case 13:
 			goto st2
 		case 3932:
 			goto st2
@@ -790,20 +769,28 @@ act = 2;
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto st2
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr4
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr4
+					}
+				default:
 					goto tr4
 				}
 			default:
@@ -813,11 +800,15 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto st2
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3583:
@@ -826,8 +817,13 @@ act = 2;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr4
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr4
+						}
+					case _widec >= 3598:
 						goto tr4
 					}
 				default:
@@ -839,7 +835,7 @@ act = 2;
 		default:
 			goto tr4
 		}
-		goto tr27
+		goto tr24
 	st3:
 		if p++; p == pe {
 			goto _test_eof3
@@ -852,17 +848,28 @@ te = p+1
 
 //.... lightning/mydump/csv_parser.rl:47
 act = 2;
-	goto st14
-	st14:
+	goto st13
+	st13:
 		if p++; p == pe {
-			goto _test_eof14
+			goto _test_eof13
 		}
-	st_case_14:
-//.... tmp_parser.go:861
+	st_case_13:
+//.... tmp_parser.go:857
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -907,6 +914,8 @@ act = 2;
 		switch _widec {
 		case 10:
 			goto st2
+		case 13:
+			goto st2
 		case 3932:
 			goto st2
 		case 4188:
@@ -929,20 +938,28 @@ act = 2;
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto st2
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr4
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr4
+					}
+				default:
 					goto tr4
 				}
 			default:
@@ -952,11 +969,15 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto st2
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3583:
@@ -965,8 +986,13 @@ act = 2;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr4
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr4
+						}
+					case _widec >= 3598:
 						goto tr4
 					}
 				default:
@@ -978,7 +1004,7 @@ act = 2;
 		default:
 			goto tr4
 		}
-		goto tr27
+		goto tr24
 	st4:
 		if p++; p == pe {
 			goto _test_eof4
@@ -986,8 +1012,19 @@ act = 2;
 	st_case_4:
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -1032,6 +1069,8 @@ act = 2;
 		switch _widec {
 		case 10:
 			goto st2
+		case 13:
+			goto st2
 		case 3932:
 			goto st2
 		case 4188:
@@ -1054,20 +1093,28 @@ act = 2;
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto st2
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr4
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr4
+					}
+				default:
 					goto tr4
 				}
 			default:
@@ -1077,11 +1124,15 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto st2
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3583:
@@ -1090,8 +1141,13 @@ act = 2;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr4
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr4
+						}
+					case _widec >= 3598:
 						goto tr4
 					}
 				default:
@@ -1110,68 +1166,92 @@ te = p+1
 
 //.... lightning/mydump/csv_parser.rl:47
 act = 2;
+	goto st14
+	st14:
+		if p++; p == pe {
+			goto _test_eof14
+		}
+	st_case_14:
+//.... tmp_parser.go:1175
+		_widec = int16(data[p])
+		switch {
+		case data[p] < 11:
+			if data[p] <= 9 {
+				_widec = 768 + (int16(data[p]) - 0)
+				if  data[p] == delim  {
+					_widec += 256
+				}
+			}
+		case data[p] > 12:
+			if 14 <= data[p] {
+				_widec = 768 + (int16(data[p]) - 0)
+				if  data[p] == delim  {
+					_widec += 256
+				}
+			}
+		default:
+			_widec = 768 + (int16(data[p]) - 0)
+			if  data[p] == delim  {
+				_widec += 256
+			}
+		}
+		switch _widec {
+		case 10:
+			goto st2
+		case 13:
+			goto st2
+		}
+		switch {
+		case _widec < 782:
+			switch {
+			case _widec > 777:
+				if 779 <= _widec && _widec <= 780 {
+					goto st2
+				}
+			case _widec >= 768:
+				goto st2
+			}
+		case _widec > 1033:
+			switch {
+			case _widec > 1036:
+				if 1038 <= _widec && _widec <= 1279 {
+					goto st2
+				}
+			case _widec >= 1035:
+				goto st2
+			}
+		default:
+			goto st2
+		}
+		goto tr24
+tr18:
+//.... NONE:1
+te = p+1
+
+//.... lightning/mydump/csv_parser.rl:42
+act = 1;
 	goto st15
 	st15:
 		if p++; p == pe {
 			goto _test_eof15
 		}
 	st_case_15:
-//.... tmp_parser.go:1119
+//.... tmp_parser.go:1239
 		_widec = int16(data[p])
 		switch {
-		case data[p] > 9:
-			if 11 <= data[p] {
-				_widec = 768 + (int16(data[p]) - 0)
-				if  data[p] == delim  {
-					_widec += 256
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
 				}
-			}
-		default:
-			_widec = 768 + (int16(data[p]) - 0)
-			if  data[p] == delim  {
-				_widec += 256
-			}
-		}
-		if _widec == 10 {
-			goto st2
-		}
-		switch {
-		case _widec < 779:
-			if 768 <= _widec && _widec <= 777 {
-				goto st2
-			}
-		case _widec > 1033:
-			if 1035 <= _widec && _widec <= 1279 {
-				goto st2
-			}
-		default:
-			goto st2
-		}
-		goto tr27
-tr18:
-//.... NONE:1
-te = p+1
-
-//.... lightning/mydump/csv_parser.rl:52
-act = 3;
-	goto st16
-tr22:
-//.... NONE:1
-te = p+1
-
-//.... lightning/mydump/csv_parser.rl:42
-act = 1;
-	goto st16
-	st16:
-		if p++; p == pe {
-			goto _test_eof16
-		}
-	st_case_16:
-//.... tmp_parser.go:1170
-		_widec = int16(data[p])
-		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -1215,333 +1295,8 @@ act = 1;
 		}
 		switch _widec {
 		case 10:
-			goto tr18
-		case 2829:
-			goto tr18
-		case 3085:
-			goto tr28
-		case 3341:
-			goto tr18
-		case 3597:
-			goto tr29
-		case 3932:
 			goto st2
-		case 4188:
-			goto tr3
-		case 4444:
-			goto st3
-		case 4700:
-			goto tr6
-		case 4956:
-			goto st2
-		case 5212:
-			goto tr4
-		case 5468:
-			goto st4
-		case 5724:
-			goto tr8
-		}
-		switch {
-		case _widec < 3165:
-			switch {
-			case _widec < 2909:
-				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
-						goto st2
-					}
-				case _widec >= 2816:
-					goto st2
-				}
-			case _widec > 3071:
-				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
-						goto tr3
-					}
-				case _widec >= 3072:
-					goto tr3
-				}
-			default:
-				goto st2
-			}
-		case _widec > 3327:
-			switch {
-			case _widec < 3421:
-				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
-						goto st2
-					}
-				case _widec >= 3328:
-					goto st2
-				}
-			case _widec > 3583:
-				switch {
-				case _widec < 3595:
-					if 3584 <= _widec && _widec <= 3593 {
-						goto tr4
-					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
-						goto tr4
-					}
-				default:
-					goto tr4
-				}
-			default:
-				goto st2
-			}
-		default:
-			goto tr3
-		}
-		goto tr0
-tr28:
-//.... NONE:1
-te = p+1
-
-//.... lightning/mydump/csv_parser.rl:47
-act = 2;
-	goto st17
-	st17:
-		if p++; p == pe {
-			goto _test_eof17
-		}
-	st_case_17:
-//.... tmp_parser.go:1311
-		_widec = int16(data[p])
-		switch {
-		case data[p] > 9:
-			if 11 <= data[p] {
-				_widec = 768 + (int16(data[p]) - 0)
-				if  data[p] == delim  {
-					_widec += 256
-				}
-			}
-		default:
-			_widec = 768 + (int16(data[p]) - 0)
-			if  data[p] == delim  {
-				_widec += 256
-			}
-		}
-		switch _widec {
-		case 10:
-			goto tr15
-		case 781:
-			goto tr15
-		case 1037:
-			goto tr18
-		}
-		switch {
-		case _widec > 1033:
-			if 1035 <= _widec && _widec <= 1279 {
-				goto st2
-			}
-		case _widec >= 1024:
-			goto st2
-		}
-		goto tr27
-tr29:
-//.... NONE:1
-te = p+1
-
-//.... lightning/mydump/csv_parser.rl:47
-act = 2;
-	goto st18
-	st18:
-		if p++; p == pe {
-			goto _test_eof18
-		}
-	st_case_18:
-//.... tmp_parser.go:1356
-		_widec = int16(data[p])
-		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
-				_widec = 2816 + (int16(data[p]) - 0)
-				if  data[p] == delim  {
-					_widec += 256
-				}
-				if  data[p] == sep  {
-					_widec += 512
-				}
-			}
-		case data[p] > 91:
-			switch {
-			case data[p] > 92:
-				if 93 <= data[p] {
-					_widec = 2816 + (int16(data[p]) - 0)
-					if  data[p] == delim  {
-						_widec += 256
-					}
-					if  data[p] == sep  {
-						_widec += 512
-					}
-				}
-			case data[p] >= 92:
-				_widec = 3840 + (int16(data[p]) - 0)
-				if  data[p] == delim  {
-					_widec += 256
-				}
-				if  parser.escFlavor != backslashEscapeFlavorNone  {
-					_widec += 512
-				}
-				if  data[p] == sep  {
-					_widec += 1024
-				}
-			}
-		default:
-			_widec = 2816 + (int16(data[p]) - 0)
-			if  data[p] == delim  {
-				_widec += 256
-			}
-			if  data[p] == sep  {
-				_widec += 512
-			}
-		}
-		switch _widec {
-		case 10:
-			goto tr18
-		case 2829:
-			goto tr18
-		case 3085:
-			goto tr29
-		case 3341:
-			goto tr18
-		case 3597:
-			goto tr29
-		case 3932:
-			goto st2
-		case 4188:
-			goto tr4
-		case 4444:
-			goto st3
-		case 4700:
-			goto tr8
-		case 4956:
-			goto st2
-		case 5212:
-			goto tr4
-		case 5468:
-			goto st4
-		case 5724:
-			goto tr8
-		}
-		switch {
-		case _widec < 3165:
-			switch {
-			case _widec < 2909:
-				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
-						goto st2
-					}
-				case _widec >= 2816:
-					goto st2
-				}
-			case _widec > 3071:
-				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
-						goto tr4
-					}
-				case _widec >= 3072:
-					goto tr4
-				}
-			default:
-				goto st2
-			}
-		case _widec > 3327:
-			switch {
-			case _widec < 3421:
-				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
-						goto st2
-					}
-				case _widec >= 3328:
-					goto st2
-				}
-			case _widec > 3583:
-				switch {
-				case _widec < 3595:
-					if 3584 <= _widec && _widec <= 3593 {
-						goto tr4
-					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
-						goto tr4
-					}
-				default:
-					goto tr4
-				}
-			default:
-				goto st2
-			}
-		default:
-			goto tr4
-		}
-		goto tr27
-tr21:
-//.... NONE:1
-te = p+1
-
-//.... lightning/mydump/csv_parser.rl:42
-act = 1;
-	goto st19
-	st19:
-		if p++; p == pe {
-			goto _test_eof19
-		}
-	st_case_19:
-//.... tmp_parser.go:1497
-		_widec = int16(data[p])
-		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
-				_widec = 2816 + (int16(data[p]) - 0)
-				if  data[p] == delim  {
-					_widec += 256
-				}
-				if  data[p] == sep  {
-					_widec += 512
-				}
-			}
-		case data[p] > 91:
-			switch {
-			case data[p] > 92:
-				if 93 <= data[p] {
-					_widec = 2816 + (int16(data[p]) - 0)
-					if  data[p] == delim  {
-						_widec += 256
-					}
-					if  data[p] == sep  {
-						_widec += 512
-					}
-				}
-			case data[p] >= 92:
-				_widec = 3840 + (int16(data[p]) - 0)
-				if  data[p] == delim  {
-					_widec += 256
-				}
-				if  parser.escFlavor != backslashEscapeFlavorNone  {
-					_widec += 512
-				}
-				if  data[p] == sep  {
-					_widec += 1024
-				}
-			}
-		default:
-			_widec = 2816 + (int16(data[p]) - 0)
-			if  data[p] == delim  {
-				_widec += 256
-			}
-			if  data[p] == sep  {
-				_widec += 512
-			}
-		}
-		switch _widec {
-		case 10:
+		case 13:
 			goto st2
 		case 3932:
 			goto st2
@@ -1565,20 +1320,28 @@ act = 1;
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto st2
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr3
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr3
+					}
+				default:
 					goto tr3
 				}
 			default:
@@ -1588,11 +1351,15 @@ act = 1;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto st2
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3583:
@@ -1601,8 +1368,13 @@ act = 1;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr4
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr4
+						}
+					case _widec >= 3598:
 						goto tr4
 					}
 				default:
@@ -1614,7 +1386,7 @@ act = 1;
 		default:
 			goto tr3
 		}
-		goto tr30
+		goto tr25
 	st5:
 		if p++; p == pe {
 			goto _test_eof5
@@ -1622,8 +1394,19 @@ act = 1;
 	st_case_5:
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -1667,6 +1450,8 @@ act = 1;
 		}
 		switch _widec {
 		case 10:
+			goto tr9
+		case 13:
 			goto tr9
 		case 3932:
 			goto tr9
@@ -1690,20 +1475,28 @@ act = 1;
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto tr9
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr10
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr10
+					}
+				default:
 					goto tr10
 				}
 			default:
@@ -1713,11 +1506,15 @@ act = 1;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto tr9
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3583:
@@ -1726,8 +1523,13 @@ act = 1;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr11
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr11
+						}
+					case _widec >= 3598:
 						goto tr11
 					}
 				default:
@@ -1746,17 +1548,28 @@ te = p+1
 
 //.... lightning/mydump/csv_parser.rl:47
 act = 2;
-	goto st20
-	st20:
+	goto st16
+	st16:
 		if p++; p == pe {
-			goto _test_eof20
+			goto _test_eof16
 		}
-	st_case_20:
-//.... tmp_parser.go:1755
+	st_case_16:
+//.... tmp_parser.go:1557
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -1801,6 +1614,8 @@ act = 2;
 		switch _widec {
 		case 10:
 			goto st2
+		case 13:
+			goto st2
 		case 3932:
 			goto tr9
 		case 4188:
@@ -1808,7 +1623,7 @@ act = 2;
 		case 4444:
 			goto st6
 		case 4700:
-			goto st21
+			goto st17
 		case 4956:
 			goto st2
 		case 5212:
@@ -1816,27 +1631,35 @@ act = 2;
 		case 5468:
 			goto st7
 		case 5724:
-			goto st23
+			goto st19
 		}
 		switch {
 		case _widec < 3165:
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto tr9
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr3
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr3
+					}
+				default:
 					goto tr3
 				}
 			default:
@@ -1846,11 +1669,15 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto st2
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3583:
@@ -1859,8 +1686,13 @@ act = 2;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr4
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr4
+						}
+					case _widec >= 3598:
 						goto tr4
 					}
 				default:
@@ -1872,22 +1704,29 @@ act = 2;
 		default:
 			goto tr3
 		}
-		goto tr27
+		goto tr24
 	st6:
 		if p++; p == pe {
 			goto _test_eof6
 		}
 	st_case_6:
 		goto tr9
-	st21:
+	st17:
 		if p++; p == pe {
-			goto _test_eof21
+			goto _test_eof17
 		}
-	st_case_21:
+	st_case_17:
 		_widec = int16(data[p])
 		switch {
-		case data[p] > 9:
-			if 11 <= data[p] {
+		case data[p] < 11:
+			if data[p] <= 9 {
+				_widec = 768 + (int16(data[p]) - 0)
+				if  data[p] == delim  {
+					_widec += 256
+				}
+			}
+		case data[p] > 12:
+			if 14 <= data[p] {
 				_widec = 768 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -1899,22 +1738,35 @@ act = 2;
 				_widec += 256
 			}
 		}
-		if _widec == 10 {
+		switch _widec {
+		case 10:
+			goto tr9
+		case 13:
 			goto tr9
 		}
 		switch {
-		case _widec < 779:
-			if 768 <= _widec && _widec <= 777 {
+		case _widec < 782:
+			switch {
+			case _widec > 777:
+				if 779 <= _widec && _widec <= 780 {
+					goto tr9
+				}
+			case _widec >= 768:
 				goto tr9
 			}
 		case _widec > 1033:
-			if 1035 <= _widec && _widec <= 1279 {
+			switch {
+			case _widec > 1036:
+				if 1038 <= _widec && _widec <= 1279 {
+					goto tr9
+				}
+			case _widec >= 1035:
 				goto tr9
 			}
 		default:
 			goto tr9
 		}
-		goto tr27
+		goto tr24
 	st7:
 		if p++; p == pe {
 			goto _test_eof7
@@ -1922,8 +1774,19 @@ act = 2;
 	st_case_7:
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -1968,6 +1831,8 @@ act = 2;
 		switch _widec {
 		case 10:
 			goto tr9
+		case 13:
+			goto tr9
 		case 3932:
 			goto tr9
 		case 4188:
@@ -1990,20 +1855,28 @@ act = 2;
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto tr9
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr11
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr11
+					}
+				default:
 					goto tr11
 				}
 			default:
@@ -2013,11 +1886,15 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto tr9
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3583:
@@ -2026,8 +1903,13 @@ act = 2;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr11
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr11
+						}
+					case _widec >= 3598:
 						goto tr11
 					}
 				default:
@@ -2046,17 +1928,28 @@ te = p+1
 
 //.... lightning/mydump/csv_parser.rl:47
 act = 2;
-	goto st22
-	st22:
+	goto st18
+	st18:
 		if p++; p == pe {
-			goto _test_eof22
+			goto _test_eof18
 		}
-	st_case_22:
-//.... tmp_parser.go:2055
+	st_case_18:
+//.... tmp_parser.go:1937
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -2100,6 +1993,8 @@ act = 2;
 		}
 		switch _widec {
 		case 10:
+			goto st2
+		case 13:
 			goto st2
 		case 3932:
 			goto tr9
@@ -2108,7 +2003,7 @@ act = 2;
 		case 4444:
 			goto st6
 		case 4700:
-			goto st23
+			goto st19
 		case 4956:
 			goto st2
 		case 5212:
@@ -2116,27 +2011,35 @@ act = 2;
 		case 5468:
 			goto st7
 		case 5724:
-			goto st23
+			goto st19
 		}
 		switch {
 		case _widec < 3165:
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto tr9
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr4
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr4
+					}
+				default:
 					goto tr4
 				}
 			default:
@@ -2146,11 +2049,15 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto st2
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3583:
@@ -2159,8 +2066,13 @@ act = 2;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr4
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr4
+						}
+					case _widec >= 3598:
 						goto tr4
 					}
 				default:
@@ -2172,16 +2084,27 @@ act = 2;
 		default:
 			goto tr4
 		}
-		goto tr27
-	st23:
+		goto tr24
+	st19:
 		if p++; p == pe {
-			goto _test_eof23
+			goto _test_eof19
 		}
-	st_case_23:
+	st_case_19:
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -2226,6 +2149,8 @@ act = 2;
 		switch _widec {
 		case 10:
 			goto tr9
+		case 13:
+			goto tr9
 		case 3932:
 			goto tr9
 		case 4188:
@@ -2248,20 +2173,28 @@ act = 2;
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto tr9
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr11
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr11
+					}
+				default:
 					goto tr11
 				}
 			default:
@@ -2271,11 +2204,15 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto tr9
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3583:
@@ -2284,8 +2221,13 @@ act = 2;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr11
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr11
+						}
+					case _widec >= 3598:
 						goto tr11
 					}
 				default:
@@ -2297,24 +2239,35 @@ act = 2;
 		default:
 			goto tr11
 		}
-		goto tr27
+		goto tr24
 tr13:
 //.... NONE:1
 te = p+1
 
 //.... lightning/mydump/csv_parser.rl:47
 act = 2;
-	goto st24
-	st24:
+	goto st20
+	st20:
 		if p++; p == pe {
-			goto _test_eof24
+			goto _test_eof20
 		}
-	st_case_24:
-//.... tmp_parser.go:2313
+	st_case_20:
+//.... tmp_parser.go:2255
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -2359,6 +2312,8 @@ act = 2;
 		switch _widec {
 		case 10:
 			goto st2
+		case 13:
+			goto st2
 		case 3932:
 			goto tr9
 		case 4188:
@@ -2366,7 +2321,7 @@ act = 2;
 		case 4444:
 			goto st7
 		case 4700:
-			goto st23
+			goto st19
 		case 4956:
 			goto st2
 		case 5212:
@@ -2374,27 +2329,35 @@ act = 2;
 		case 5468:
 			goto st7
 		case 5724:
-			goto st23
+			goto st19
 		}
 		switch {
 		case _widec < 3165:
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto tr9
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr4
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr4
+					}
+				default:
 					goto tr4
 				}
 			default:
@@ -2404,11 +2367,15 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto st2
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3583:
@@ -2417,8 +2384,13 @@ act = 2;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr4
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr4
+						}
+					case _widec >= 3598:
 						goto tr4
 					}
 				default:
@@ -2430,24 +2402,35 @@ act = 2;
 		default:
 			goto tr4
 		}
-		goto tr27
+		goto tr24
 tr10:
 //.... NONE:1
 te = p+1
 
 //.... lightning/mydump/csv_parser.rl:47
 act = 2;
-	goto st25
-	st25:
+	goto st21
+	st21:
 		if p++; p == pe {
-			goto _test_eof25
+			goto _test_eof21
 		}
-	st_case_25:
-//.... tmp_parser.go:2446
+	st_case_21:
+//.... tmp_parser.go:2418
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -2508,8 +2491,13 @@ act = 2;
 		switch {
 		case _widec < 3083:
 			switch {
-			case _widec < 2827:
-				if 2816 <= _widec && _widec <= 2825 {
+			case _widec < 2830:
+				switch {
+				case _widec > 2825:
+					if 2827 <= _widec && _widec <= 2828 {
+						goto tr1
+					}
+				case _widec >= 2816:
 					goto tr1
 				}
 			case _widec > 2907:
@@ -2524,19 +2512,28 @@ act = 2;
 			default:
 				goto tr1
 			}
-		case _widec > 3163:
+		case _widec > 3084:
 			switch {
 			case _widec < 3584:
-				if 3165 <= _widec && _widec <= 3327 {
+				switch {
+				case _widec > 3163:
+					if 3165 <= _widec && _widec <= 3327 {
+						goto st2
+					}
+				case _widec >= 3086:
 					goto st2
 				}
 			case _widec > 3593:
 				switch {
+				case _widec < 3598:
+					if 3595 <= _widec && _widec <= 3596 {
+						goto st2
+					}
 				case _widec > 3675:
 					if 3677 <= _widec && _widec <= 3839 {
 						goto st2
 					}
-				case _widec >= 3595:
+				default:
 					goto st2
 				}
 			default:
@@ -2545,24 +2542,35 @@ act = 2;
 		default:
 			goto st2
 		}
-		goto tr27
+		goto tr24
 tr12:
 //.... NONE:1
 te = p+1
 
 //.... lightning/mydump/csv_parser.rl:47
 act = 2;
-	goto st26
-	st26:
+	goto st22
+	st22:
 		if p++; p == pe {
-			goto _test_eof26
+			goto _test_eof22
 		}
-	st_case_26:
-//.... tmp_parser.go:2561
+	st_case_22:
+//.... tmp_parser.go:2558
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -2606,6 +2614,8 @@ act = 2;
 		}
 		switch _widec {
 		case 10:
+			goto st2
+		case 13:
 			goto st2
 		case 3932:
 			goto tr9
@@ -2625,20 +2635,29 @@ act = 2;
 			goto st5
 		}
 		switch {
-		case _widec < 3083:
+		case _widec < 3086:
 			switch {
-			case _widec < 2827:
-				if 2816 <= _widec && _widec <= 2825 {
+			case _widec < 2830:
+				switch {
+				case _widec > 2825:
+					if 2827 <= _widec && _widec <= 2828 {
+						goto tr9
+					}
+				case _widec >= 2816:
 					goto tr9
 				}
 			case _widec > 2907:
 				switch {
-				case _widec > 3071:
-					if 3072 <= _widec && _widec <= 3081 {
+				case _widec < 3072:
+					if 2909 <= _widec && _widec <= 3071 {
+						goto tr9
+					}
+				case _widec > 3081:
+					if 3083 <= _widec && _widec <= 3084 {
 						goto st2
 					}
-				case _widec >= 2909:
-					goto tr9
+				default:
+					goto st2
 				}
 			default:
 				goto tr9
@@ -2647,20 +2666,28 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3165 <= _widec && _widec <= 3337 {
 						goto st2
 					}
-				case _widec >= 3165:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto st2
+					}
+				default:
 					goto st2
 				}
 			case _widec > 3593:
 				switch {
+				case _widec < 3598:
+					if 3595 <= _widec && _widec <= 3596 {
+						goto st2
+					}
 				case _widec > 3675:
 					if 3677 <= _widec && _widec <= 3839 {
 						goto st2
 					}
-				case _widec >= 3595:
+				default:
 					goto st2
 				}
 			default:
@@ -2669,22 +2696,33 @@ act = 2;
 		default:
 			goto st2
 		}
-		goto tr27
-	st27:
+		goto tr24
+	st23:
 		if p++; p == pe {
-			goto _test_eof27
+			goto _test_eof23
 		}
-	st_case_27:
+	st_case_23:
 		goto tr1
-	st28:
+	st24:
 		if p++; p == pe {
-			goto _test_eof28
+			goto _test_eof24
 		}
-	st_case_28:
+	st_case_24:
 		_widec = int16(data[p])
 		switch {
-		case data[p] < 11:
-			if data[p] <= 9 {
+		case data[p] < 14:
+			switch {
+			case data[p] > 9:
+				if 11 <= data[p] && data[p] <= 12 {
+					_widec = 2816 + (int16(data[p]) - 0)
+					if  data[p] == delim  {
+						_widec += 256
+					}
+					if  data[p] == sep  {
+						_widec += 512
+					}
+				}
+			default:
 				_widec = 2816 + (int16(data[p]) - 0)
 				if  data[p] == delim  {
 					_widec += 256
@@ -2728,6 +2766,8 @@ act = 2;
 		}
 		switch _widec {
 		case 10:
+			goto tr9
+		case 13:
 			goto tr9
 		case 3932:
 			goto tr9
@@ -2751,20 +2791,28 @@ act = 2;
 			switch {
 			case _widec < 2909:
 				switch {
-				case _widec > 2825:
-					if 2827 <= _widec && _widec <= 2907 {
+				case _widec < 2827:
+					if 2816 <= _widec && _widec <= 2825 {
 						goto tr9
 					}
-				case _widec >= 2816:
+				case _widec > 2828:
+					if 2830 <= _widec && _widec <= 2907 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3071:
 				switch {
-				case _widec > 3081:
-					if 3083 <= _widec && _widec <= 3163 {
+				case _widec < 3083:
+					if 3072 <= _widec && _widec <= 3081 {
 						goto tr10
 					}
-				case _widec >= 3072:
+				case _widec > 3084:
+					if 3086 <= _widec && _widec <= 3163 {
+						goto tr10
+					}
+				default:
 					goto tr10
 				}
 			default:
@@ -2774,11 +2822,15 @@ act = 2;
 			switch {
 			case _widec < 3421:
 				switch {
-				case _widec > 3337:
-					if 3339 <= _widec && _widec <= 3419 {
+				case _widec < 3339:
+					if 3328 <= _widec && _widec <= 3337 {
 						goto tr9
 					}
-				case _widec >= 3328:
+				case _widec > 3340:
+					if 3342 <= _widec && _widec <= 3419 {
+						goto tr9
+					}
+				default:
 					goto tr9
 				}
 			case _widec > 3583:
@@ -2787,8 +2839,13 @@ act = 2;
 					if 3584 <= _widec && _widec <= 3593 {
 						goto tr11
 					}
-				case _widec > 3675:
-					if 3677 <= _widec && _widec <= 3839 {
+				case _widec > 3596:
+					switch {
+					case _widec > 3675:
+						if 3677 <= _widec && _widec <= 3839 {
+							goto tr11
+						}
+					case _widec >= 3598:
 						goto tr11
 					}
 				default:
@@ -2800,94 +2857,82 @@ act = 2;
 		default:
 			goto tr10
 		}
-		goto tr30
+		goto tr25
 	st_out:
 	_test_eof8: cs = 8; goto _test_eof
 	_test_eof9: cs = 9; goto _test_eof
 	_test_eof10: cs = 10; goto _test_eof
 	_test_eof1: cs = 1; goto _test_eof
-	_test_eof11: cs = 11; goto _test_eof
 	_test_eof2: cs = 2; goto _test_eof
+	_test_eof11: cs = 11; goto _test_eof
 	_test_eof12: cs = 12; goto _test_eof
-	_test_eof13: cs = 13; goto _test_eof
 	_test_eof3: cs = 3; goto _test_eof
-	_test_eof14: cs = 14; goto _test_eof
+	_test_eof13: cs = 13; goto _test_eof
 	_test_eof4: cs = 4; goto _test_eof
+	_test_eof14: cs = 14; goto _test_eof
 	_test_eof15: cs = 15; goto _test_eof
+	_test_eof5: cs = 5; goto _test_eof
 	_test_eof16: cs = 16; goto _test_eof
+	_test_eof6: cs = 6; goto _test_eof
 	_test_eof17: cs = 17; goto _test_eof
+	_test_eof7: cs = 7; goto _test_eof
 	_test_eof18: cs = 18; goto _test_eof
 	_test_eof19: cs = 19; goto _test_eof
-	_test_eof5: cs = 5; goto _test_eof
 	_test_eof20: cs = 20; goto _test_eof
-	_test_eof6: cs = 6; goto _test_eof
 	_test_eof21: cs = 21; goto _test_eof
-	_test_eof7: cs = 7; goto _test_eof
 	_test_eof22: cs = 22; goto _test_eof
 	_test_eof23: cs = 23; goto _test_eof
 	_test_eof24: cs = 24; goto _test_eof
-	_test_eof25: cs = 25; goto _test_eof
-	_test_eof26: cs = 26; goto _test_eof
-	_test_eof27: cs = 27; goto _test_eof
-	_test_eof28: cs = 28; goto _test_eof
 
 	_test_eof: {}
 	if p == eof {
 		switch cs {
 		case 9:
-			goto tr0
+			goto tr23
 		case 10:
-			goto tr27
+			goto tr24
 		case 1:
 			goto tr0
-		case 11:
-			goto tr27
 		case 2:
 			goto tr0
+		case 11:
+			goto tr24
 		case 12:
-			goto tr27
-		case 13:
-			goto tr27
+			goto tr24
 		case 3:
 			goto tr0
-		case 14:
-			goto tr27
+		case 13:
+			goto tr24
 		case 4:
 			goto tr0
+		case 14:
+			goto tr24
 		case 15:
-			goto tr27
-		case 16:
-			goto tr0
-		case 17:
-			goto tr27
-		case 18:
-			goto tr27
-		case 19:
-			goto tr30
+			goto tr25
 		case 5:
 			goto tr0
-		case 20:
-			goto tr27
+		case 16:
+			goto tr24
 		case 6:
 			goto tr14
-		case 21:
-			goto tr27
+		case 17:
+			goto tr24
 		case 7:
 			goto tr14
+		case 18:
+			goto tr24
+		case 19:
+			goto tr24
+		case 20:
+			goto tr24
+		case 21:
+			goto tr24
 		case 22:
-			goto tr27
+			goto tr24
 		case 23:
-			goto tr27
+			goto tr25
 		case 24:
-			goto tr27
-		case 25:
-			goto tr27
-		case 26:
-			goto tr27
-		case 27:
-			goto tr30
-		case 28:
-			goto tr30
+			goto tr25
 		}
 	}
 

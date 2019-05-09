@@ -383,3 +383,37 @@ func (s *testMydumpCSVParserSuite) TestEmpty(c *C) {
 	parser = mydump.NewCSVParser(&cfg, strings.NewReader("h\n"), config.ReadBlockSize, s.ioWorkers)
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 }
+
+func (s *testMydumpCSVParserSuite) TestCRLF(c *C) {
+	cfg := config.CSVConfig{
+		Separator: ",",
+		Delimiter: `"`,
+	}
+	parser := mydump.NewCSVParser(&cfg, strings.NewReader("a\rb\r\nc\n\n\n\nd"), config.ReadBlockSize, s.ioWorkers)
+
+	c.Assert(parser.ReadRow(), IsNil)
+	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+		RowID: 1,
+		Row:   []types.Datum{types.NewStringDatum("a")},
+	})
+
+	c.Assert(parser.ReadRow(), IsNil)
+	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+		RowID: 2,
+		Row:   []types.Datum{types.NewStringDatum("b")},
+	})
+
+	c.Assert(parser.ReadRow(), IsNil)
+	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+		RowID: 3,
+		Row:   []types.Datum{types.NewStringDatum("c")},
+	})
+
+	c.Assert(parser.ReadRow(), IsNil)
+	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+		RowID: 4,
+		Row:   []types.Datum{types.NewStringDatum("d")},
+	})
+
+	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
+}

@@ -32,11 +32,11 @@ machine csv_parser;
 # 	"5\"6",7
 #
 
-q = ^'\n' when { fc == delim };
+q = ^[\r\n] when { fc == delim };
 bs = '\\' when { parser.escFlavor != backslashEscapeFlavorNone };
-sep = ^'\n' when { fc == sep };
+sep = ^[\r\n] when { fc == sep };
 
-c = (^'\n' - q - bs - sep) | bs any;
+c = (^[\r\n] - q - bs - sep) | bs any;
 
 main := |*
 	sep => {
@@ -44,7 +44,7 @@ main := |*
 		fbreak;
 	};
 
-	q (c | '\n' | sep | q q)* q | c+ => {
+	q (c | [\r\n] | sep | q q)* q | c+ => {
 		consumedToken = csvTokField
 		fbreak;
 	};
