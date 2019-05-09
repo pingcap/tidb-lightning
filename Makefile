@@ -24,7 +24,7 @@ GOTEST    := GO111MODULE=on CGO_ENABLED=1 $(GO) test -p 3
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGES  := $$(go list ./...| grep -vE 'vendor|cmd|test|proto|diff|bin')
+PACKAGES  := $$(go list ./...| grep -vE 'vendor|cmd|test|proto|diff|bin|fuzz')
 FILES     := $$(find lightning cmd -name '*.go' -type f -not -name '*.pb.go' -not -name '*_generated.go')
 
 FAILPOINT_ENABLE  := $$($(FAILPOINT_CTL_BIN) enable $$PWD/lightning/)
