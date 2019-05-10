@@ -2,10 +2,13 @@ package config_test
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
+	"regexp"
 	"strconv"
 	"testing"
 
@@ -105,4 +108,111 @@ func (s *configTestSuite) TestAdjustWillNotContactServerIfEverythingIsDefined(c 
 	c.Assert(err, IsNil)
 	c.Assert(cfg.TiDB.Port, Equals, 4567)
 	c.Assert(cfg.TiDB.PdAddr, Equals, "234.56.78.90:12345")
+}
+
+func (s *configTestSuite) TestInvalidCSV(c *C) {
+	d := c.MkDir()
+	p := path.Join(d, "cfg.toml")
+
+	testCases := []struct {
+		input string
+		err   string
+	}{
+		{
+			input: `
+				[mydumper.csv]
+				separator = ''
+			`,
+			err: "invalid config: `mydumper.csv.separator` must be exactly one byte long",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				separator = 'hello'
+			`,
+			err: "invalid config: `mydumper.csv.separator` must be exactly one byte long",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				separator = '\'
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				separator = '，'
+			`,
+			err: "invalid config: `mydumper.csv.separator` must be exactly one byte long",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				delimiter = ''
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				delimiter = 'hello'
+			`,
+			err: "invalid config: `mydumper.csv.delimiter` must be one byte long or empty",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				delimiter = '\'
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				delimiter = '“'
+			`,
+			err: "invalid config: `mydumper.csv.delimiter` must be one byte long or empty",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				separator = '|'
+				delimiter = '|'
+			`,
+			err: "invalid config: cannot use the same character for both CSV delimiter and separator",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				separator = '\'
+				backslash-escape = true
+			`,
+			err: "invalid config: cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				delimiter = '\'
+				backslash-escape = true
+			`,
+			err: "invalid config: cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true",
+		},
+	}
+
+	for _, tc := range testCases {
+		comment := Commentf("input = %s", tc.input)
+
+		cfg := config.NewConfig()
+		cfg.ConfigFile = p
+		err := ioutil.WriteFile(p, []byte(tc.input), 0644)
+		c.Assert(err, IsNil, comment)
+
+		err = cfg.Load()
+		if tc.err != "" {
+			c.Assert(err, ErrorMatches, regexp.QuoteMeta(tc.err), comment)
+		} else {
+			c.Assert(err, IsNil, comment)
+		}
+	}
 }
