@@ -29,10 +29,33 @@ import (
 
 var _ = Suite(&testMydumpParserSuite{})
 
-type testMydumpParserSuite struct{}
+type testMydumpParserSuite struct {
+	ioWorkers *worker.Pool
+}
 
-func (s *testMydumpParserSuite) SetUpSuite(c *C)    {}
+func (s *testMydumpParserSuite) SetUpSuite(c *C) {
+	s.ioWorkers = worker.NewPool(context.Background(), 5, "test_sql")
+}
 func (s *testMydumpParserSuite) TearDownSuite(c *C) {}
+
+func (s *testMydumpParserSuite) runTestCases(c *C, mode mysql.SQLMode, blockBufSize int64, cases []testCase) {
+	for _, tc := range cases {
+		parser := mydump.NewChunkParser(mode, strings.NewReader(tc.input), blockBufSize, s.ioWorkers)
+		for i, row := range tc.expected {
+			comment := Commentf("input = %q, row = %d", tc.input, i+1)
+			c.Assert(parser.ReadRow(), IsNil, comment)
+			c.Assert(parser.LastRow(), DeepEquals, mydump.Row{RowID: int64(i) + 1, Row: row}, comment)
+		}
+		c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF, Commentf("input = %q", tc.input))
+	}
+}
+
+func (s *testMydumpParserSuite) runFailingTestCases(c *C, mode mysql.SQLMode, blockBufSize int64, cases []string) {
+	for _, tc := range cases {
+		parser := mydump.NewChunkParser(mode, strings.NewReader(tc), blockBufSize, s.ioWorkers)
+		c.Assert(parser.ReadRow(), ErrorMatches, "Syntax error.*", Commentf("input = %q", tc))
+	}
+}
 
 func (s *testMydumpParserSuite) TestReadRow(c *C) {
 	reader := strings.NewReader(
@@ -42,8 +65,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			"insert another_table values (10,11e1,12, '(13)', '(', 14, ')');",
 	)
 
-	ioWorkers := worker.NewPool(context.Background(), 5, "test")
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -113,8 +135,7 @@ func (s *testMydumpParserSuite) TestReadChunks(c *C) {
 		INSERT foo VALUES (29,30,31,32),(33,34,35,36);
 	`)
 
-	ioWorkers := worker.NewPool(context.Background(), 5, "test")
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, s.ioWorkers)
 
 	chunks, err := mydump.ReadChunks(parser, 32)
 	c.Assert(err, IsNil)
@@ -160,8 +181,7 @@ func (s *testMydumpParserSuite) TestNestedRow(c *C) {
 		("789",CONVERT("[]" USING UTF8MB4));
 	`)
 
-	ioWorkers := worker.NewPool(context.Background(), 5, "test")
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, s.ioWorkers)
 	chunks, err := mydump.ReadChunks(parser, 96)
 
 	c.Assert(err, IsNil)
@@ -179,4 +199,265 @@ func (s *testMydumpParserSuite) TestNestedRow(c *C) {
 			RowIDMax:     3,
 		},
 	})
+}
+
+func (s *testMydumpParserSuite) TestVariousSyntax(c *C) {
+	testCases := []testCase{
+		{
+			input:    "INSERT INTO foobar VALUES (1, 2);",
+			expected: [][]types.Datum{{types.NewUintDatum(1), types.NewUintDatum(2)}},
+		},
+		{
+			input:    "INSERT INTO `foobar` VALUES (3, 4);",
+			expected: [][]types.Datum{{types.NewUintDatum(3), types.NewUintDatum(4)}},
+		},
+		{
+			input:    `INSERT INTO "foobar" VALUES (5, 6);`,
+			expected: [][]types.Datum{{types.NewUintDatum(5), types.NewUintDatum(6)}},
+		},
+		{
+			input: `(7, -8, Null, '9'), (b'10', 0b11, 0x12, x'13'), ("14", True, False, 0)`,
+			expected: [][]types.Datum{
+				{
+					types.NewUintDatum(7),
+					types.NewIntDatum(-8),
+					nullDatum,
+					types.NewStringDatum("9"),
+				},
+				{
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{2})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{3})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0x12})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0x13})),
+				},
+				{
+					types.NewStringDatum("14"),
+					types.NewIntDatum(1),
+					types.NewIntDatum(0),
+					types.NewUintDatum(0),
+				},
+			},
+		},
+		{
+			input: `
+				(.15, 1.6, 17.),
+				(.18e1, 1.9e1, 20.e1), (.21e-1, 2.2e-1, 23.e-1), (.24e+1, 2.5e+1, 26.e+1),
+				(-.27, -2.8, -29.),
+				(-.30e1, -3.1e1, -32.e1), (-.33e-1, -3.4e-1, -35.e-1), (-.36e+1, -3.7e+1, -38.e+1),
+				(1e39, 1e-40, 1e+41),
+				(.42E1, 4.3E1, 44.E1), (.45E-1, 4.6E-1, 47.E-1), (.48E+1, 4.9E+1, 50.E+1),
+				(-.51E1, -5.2E1, -53.E1), (-.54E-1, -5.5E-1, -56.E-1), (-.57E+1, -5.8E+1, -59.E+1),
+				(1E60, 1E-61, 1E+62),
+				(6.33333333333333333333333333333333333333333333, -6.44444444444444444444444444444444444444444444, -0.0),
+				(65555555555555555555555555555555555555555555.5, -66666666666666666666666666666666666666666666.6, 0.0)
+			`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum(".15"), types.NewStringDatum("1.6"), types.NewStringDatum("17.")},
+				{types.NewStringDatum(".18e1"), types.NewStringDatum("1.9e1"), types.NewStringDatum("20.e1")},
+				{types.NewStringDatum(".21e-1"), types.NewStringDatum("2.2e-1"), types.NewStringDatum("23.e-1")},
+				{types.NewStringDatum(".24e+1"), types.NewStringDatum("2.5e+1"), types.NewStringDatum("26.e+1")},
+				{types.NewStringDatum("-.27"), types.NewStringDatum("-2.8"), types.NewStringDatum("-29.")},
+				{types.NewStringDatum("-.30e1"), types.NewStringDatum("-3.1e1"), types.NewStringDatum("-32.e1")},
+				{types.NewStringDatum("-.33e-1"), types.NewStringDatum("-3.4e-1"), types.NewStringDatum("-35.e-1")},
+				{types.NewStringDatum("-.36e+1"), types.NewStringDatum("-3.7e+1"), types.NewStringDatum("-38.e+1")},
+				{types.NewStringDatum("1e39"), types.NewStringDatum("1e-40"), types.NewStringDatum("1e+41")},
+				{types.NewStringDatum(".42E1"), types.NewStringDatum("4.3E1"), types.NewStringDatum("44.E1")},
+				{types.NewStringDatum(".45E-1"), types.NewStringDatum("4.6E-1"), types.NewStringDatum("47.E-1")},
+				{types.NewStringDatum(".48E+1"), types.NewStringDatum("4.9E+1"), types.NewStringDatum("50.E+1")},
+				{types.NewStringDatum("-.51E1"), types.NewStringDatum("-5.2E1"), types.NewStringDatum("-53.E1")},
+				{types.NewStringDatum("-.54E-1"), types.NewStringDatum("-5.5E-1"), types.NewStringDatum("-56.E-1")},
+				{types.NewStringDatum("-.57E+1"), types.NewStringDatum("-5.8E+1"), types.NewStringDatum("-59.E+1")},
+				{types.NewStringDatum("1E60"), types.NewStringDatum("1E-61"), types.NewStringDatum("1E+62")},
+				{
+					types.NewStringDatum("6.33333333333333333333333333333333333333333333"),
+					types.NewStringDatum("-6.44444444444444444444444444444444444444444444"),
+					types.NewStringDatum("-0.0"),
+				},
+				{
+					types.NewStringDatum("65555555555555555555555555555555555555555555.5"),
+					types.NewStringDatum("-66666666666666666666666666666666666666666666.6"),
+					types.NewStringDatum("0.0"),
+				},
+			},
+		},
+		{
+			input: `
+				(0x123456ABCDEFabcdef, 0xABCDEF123456, 0xabcdef123456, 0x123),
+				(x'123456ABCDEFabcdef', x'ABCDEF123456', x'abcdef123456', x''),
+				(X'123456ABCDEFabcdef', X'ABCDEF123456', X'abcdef123456', X''),
+				(
+					0b101010101010101010101010101010101010101010101010101010101010101010,
+					b'010101010101010101010101010101010101010101010101010101010101010101',
+					B'110011001100110011001100110011001100110011001100110011001100',
+					b'',
+					B''
+				)
+			`,
+			expected: [][]types.Datum{
+				{
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0x12, 0x34, 0x56, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0xab, 0xcd, 0xef, 0x12, 0x34, 0x56})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0xab, 0xcd, 0xef, 0x12, 0x34, 0x56})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0x01, 0x23})),
+				},
+				{
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0x12, 0x34, 0x56, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0xab, 0xcd, 0xef, 0x12, 0x34, 0x56})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0xab, 0xcd, 0xef, 0x12, 0x34, 0x56})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{})),
+				},
+				{
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0x12, 0x34, 0x56, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0xab, 0xcd, 0xef, 0x12, 0x34, 0x56})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0xab, 0xcd, 0xef, 0x12, 0x34, 0x56})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{})),
+				},
+				{
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0x02, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0x01, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{0x0c, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{})),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{})),
+				},
+			},
+		},
+		{
+			input:    "/* comment */; -- comment",
+			expected: [][]types.Datum{},
+		},
+		{
+			input: `
+				-- comment /* ...
+				insert into xxx -- comment
+				values -- comment
+				(true, false), -- comment
+				(null, 00000); -- comment ... */
+			`,
+			expected: [][]types.Datum{
+				{types.NewIntDatum(1), types.NewIntDatum(0)},
+				{nullDatum, types.NewUintDatum(0)},
+			},
+		},
+		{
+			input:    `('\0\b\n\r\t\Z\'\a')`,
+			expected: [][]types.Datum{{types.NewStringDatum("\x00\b\n\r\t\x26'a")}},
+		},
+		{
+			input:    `(CONVERT("[1,2,3]" USING UTF8MB4))`,
+			expected: [][]types.Datum{{types.NewStringDatum("[1,2,3]")}},
+		},
+	}
+
+	s.runTestCases(c, mysql.ModeNone, config.ReadBlockSize, testCases)
+}
+
+func (s *testMydumpParserSuite) TestPseudoKeywords(c *C) {
+	reader := strings.NewReader(`
+		INSERT INTO t (
+			c, C,
+			co, CO,
+			con, CON,
+			conv, CONV,
+			conve, CONVE,
+			conver, CONVER,
+			convert, CONVERT,
+			u, U,
+			us, US,
+			usi, USI,
+			usin, USIN,
+			ut, UT,
+			utf, UTF,
+			utf8, UTF8,
+			utf8m, UTF8M,
+			utf8mb, UTF8MB,
+			utf8mb4, UTF8MB4,
+			t, T,
+			tr, TR,
+			tru, TRU,
+			f, F,
+			fa, FA,
+			fal, FAL,
+			fals, FALS,
+			n, N,
+			nu, NU,
+			nul, NUL,
+			v, V,
+			va, VA,
+			val, VAL,
+			valu, VALU,
+			value, VALUE,
+			i, I,
+			ins, INS,
+			inse, INSE,
+			inser, INSER,
+		) VALUES ();
+	`)
+
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, s.ioWorkers)
+	c.Assert(parser.ReadRow(), IsNil)
+	c.Assert(parser.Columns(), DeepEquals, []string{
+		"c", "C",
+		"co", "CO",
+		"con", "CON",
+		"conv", "CONV",
+		"conve", "CONVE",
+		"conver", "CONVER",
+		"convert", "CONVERT",
+		"u", "U",
+		"us", "US",
+		"usi", "USI",
+		"usin", "USIN",
+		"ut", "UT",
+		"utf", "UTF",
+		"utf8", "UTF8",
+		"utf8m", "UTF8M",
+		"utf8mb", "UTF8MB",
+		"utf8mb4", "UTF8MB4",
+		"t", "T",
+		"tr", "TR",
+		"tru", "TRU",
+		"f", "F",
+		"fa", "FA",
+		"fal", "FAL",
+		"fals", "FALS",
+		"n", "N",
+		"nu", "NU",
+		"nul", "NUL",
+		"v", "V",
+		"va", "VA",
+		"val", "VAL",
+		"valu", "VALU",
+		"value", "VALUE",
+		"i", "I",
+		"ins", "INS",
+		"inse", "INSE",
+		"inser", "INSER",
+	})
+}
+
+func (s *testMydumpParserSuite) TestSyntaxError(c *C) {
+	inputs := []string{
+		"('xxx)",
+		`("xxx)`,
+		"(`xxx)",
+		"(/* xxx)",
+		`('\')`,
+		`("\")`,
+		`('\)`,
+		`("\)`,
+		"(",
+		"(1",
+		"(1,",
+		"(values)",
+		"insert into e (f",
+		"insert into e (3) values (4)",
+		"insert into e ('3') values (4)",
+		"insert into e (0x3) values (4)",
+		"insert into e (x'3') values (4)",
+		"insert into e (b'3') values (4)",
+		"3",
+		"(`values`)",
+	}
+
+	s.runFailingTestCases(c, mysql.ModeNone, config.ReadBlockSize, inputs)
 }
