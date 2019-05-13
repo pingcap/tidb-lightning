@@ -77,7 +77,7 @@ func (s *utilSuite) TestGetJSON(c *C) {
 	}
 	err = common.GetJSON(http.DefaultClient, testServer.URL, &response)
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "http status code != 200"), IsTrue)
+	c.Assert(err, ErrorMatches ".*http status code != 200.*")
 }
 
 func (s *utilSuite) TestIsRetryableError(c *C) {
