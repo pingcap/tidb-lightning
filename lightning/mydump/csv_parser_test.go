@@ -65,7 +65,6 @@ func (s *testMydumpCSVParserSuite) runFailingTestCases(c *C, cfg *config.CSVConf
 		parser := mydump.NewCSVParser(cfg, strings.NewReader(tc), blockBufSize, s.ioWorkers)
 		c.Assert(parser.ReadRow(), ErrorMatches, "Syntax error", Commentf("input = %q", tc))
 	}
-
 }
 
 func (s *testMydumpCSVParserSuite) TestTCPH(c *C) {
@@ -596,7 +595,10 @@ func (s *testMydumpCSVParserSuite) TestOverlappingSepDelim(c *C) {
 			input:    ",\n",
 			expected: [][]types.Datum{{nullDatum, nullDatum}},
 		},
-
+		{
+			input:    ",\r\n",
+			expected: [][]types.Datum{{nullDatum, nullDatum}},
+		},
 		{
 			input:    ",,",
 			expected: [][]types.Datum{{nullDatum}},
