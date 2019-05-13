@@ -16,7 +16,6 @@ package kv
 import (
 	"bytes"
 	"fmt"
-	"unsafe"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/types"
@@ -53,11 +52,10 @@ func (s *kvSuite) TestMarshal(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(encoder.buf.String(), Equals, "[col=0][kind=string][val=1][col=1][kind=null][val=NULL][col=2][kind=min][val=-inf][col=3][kind=max][val=+inf]")
 
-	invalid := []types.Datum{nullDatum, minNotNull}
-	pkind := (*byte)(unsafe.Pointer(&invalid[1]))
-	*pkind = 0x55
+	invalid := types.Datum{}
+	invalid.SetInterface(1)
 	encoder.buf.Reset()
-	err = rowArrayMarshaler(invalid).MarshalLogArray(encoder)
+	err = rowArrayMarshaler([]types.Datum{nullDatum, invalid}).MarshalLogArray(encoder)
 	c.Assert(err, ErrorMatches, "cannot convert.*")
 	c.Assert(encoder.buf.String(), Equals, "[col=0][kind=null][val=NULL]")
 }
