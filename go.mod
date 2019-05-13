@@ -6,6 +6,7 @@ require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/go-sql-driver/mysql v1.4.1
 	github.com/gogo/protobuf v1.2.1
+	github.com/golang/mock v1.1.1
 	github.com/grpc-ecosystem/grpc-gateway v1.6.4 // indirect
 	github.com/joho/sqltocsv v0.0.0-20190321025444-a9e6f980056c
 	github.com/kr/pretty v0.1.0 // indirect
