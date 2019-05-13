@@ -20,7 +20,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -77,7 +76,7 @@ func (s *utilSuite) TestGetJSON(c *C) {
 	}
 	err = common.GetJSON(http.DefaultClient, testServer.URL, &response)
 	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches ".*http status code != 200.*")
+	c.Assert(err, ErrorMatches, ".*http status code != 200.*")
 }
 
 func (s *utilSuite) TestIsRetryableError(c *C) {
