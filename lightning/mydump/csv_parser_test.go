@@ -63,7 +63,7 @@ func (s *testMydumpCSVParserSuite) runTestCases(c *C, cfg *config.CSVConfig, blo
 func (s *testMydumpCSVParserSuite) runFailingTestCases(c *C, cfg *config.CSVConfig, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
 		parser := mydump.NewCSVParser(cfg, strings.NewReader(tc), blockBufSize, s.ioWorkers)
-		c.Assert(parser.ReadRow(), ErrorMatches, "Syntax error", Commentf("input = %q", tc))
+		c.Assert(parser.ReadRow(), ErrorMatches, "syntax error", Commentf("input = %q", tc))
 	}
 }
 

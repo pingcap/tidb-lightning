@@ -86,7 +86,7 @@ func (parser *CSVParser) lex() (csvToken, []byte, error) {
 				zap.Int64("pos", parser.pos),
 				zap.ByteString("content", data),
 			)
-			return csvTokNil, nil, errors.New("Syntax error")
+			return csvTokNil, nil, errors.New("syntax error")
 		}
 
 		if consumedToken != csvTokNil {

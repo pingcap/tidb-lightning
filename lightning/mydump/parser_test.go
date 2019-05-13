@@ -53,7 +53,7 @@ func (s *testMydumpParserSuite) runTestCases(c *C, mode mysql.SQLMode, blockBufS
 func (s *testMydumpParserSuite) runFailingTestCases(c *C, mode mysql.SQLMode, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
 		parser := mydump.NewChunkParser(mode, strings.NewReader(tc), blockBufSize, s.ioWorkers)
-		c.Assert(parser.ReadRow(), ErrorMatches, "Syntax error.*", Commentf("input = %q", tc))
+		c.Assert(parser.ReadRow(), ErrorMatches, "syntax error.*", Commentf("input = %q", tc))
 	}
 }
 

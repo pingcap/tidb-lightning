@@ -2271,7 +2271,7 @@ act = 13;
 				zap.Int64("pos", parser.pos),
 				zap.ByteString("content", data),
 			)
-			return tokNil, nil, errors.New("Syntax error")
+			return tokNil, nil, errors.New("syntax error")
 		}
 
 		if consumedToken != tokNil {
@@ -2285,7 +2285,7 @@ act = 13;
 			if te == eof {
 				return tokNil, nil, io.EOF
 			} else {
-				return tokNil, nil, errors.New("Syntax error: unexpected EOF")
+				return tokNil, nil, errors.New("syntax error: unexpected EOF")
 			}
 		}
 
