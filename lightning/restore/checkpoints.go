@@ -40,6 +40,7 @@ import (
 type CheckpointStatus uint8
 
 const (
+	CheckpointStatusMissing         CheckpointStatus = 0
 	CheckpointStatusMaxInvalid      CheckpointStatus = 25
 	CheckpointStatusLoaded          CheckpointStatus = 30
 	CheckpointStatusAllWritten      CheckpointStatus = 60
@@ -81,6 +82,8 @@ func (status CheckpointStatus) MetricName() string {
 		return "checksum"
 	case CheckpointStatusAnalyzed, CheckpointStatusAnalyzeSkipped:
 		return "analyzed"
+	case CheckpointStatusMissing:
+		return "missing"
 	default:
 		return "invalid"
 	}
@@ -728,7 +731,10 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	tableModel := cpdb.checkpoints.Checkpoints[tableName]
+	tableModel, ok := cpdb.checkpoints.Checkpoints[tableName]
+	if !ok {
+		tableModel = &TableCheckpointModel{}
+	}
 
 	cp := &TableCheckpoint{
 		Status:    CheckpointStatus(tableModel.Status),
