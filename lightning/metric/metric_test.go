@@ -14,6 +14,7 @@
 package metric_test
 
 import (
+	"errors"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -45,4 +46,15 @@ func (s *testMetricSuite) TestReadHistogramSum(c *C) {
 	histogram.Observe(11131.5)
 	histogram.Observe(15261.0)
 	c.Assert(metric.ReadHistogramSum(histogram), Equals, 26392.5)
+}
+
+func (s *testMetricSuite) TestRecordEngineCount(c *C) {
+	metric.RecordEngineCount("table1", nil)
+	metric.RecordEngineCount("table1", errors.New("mock error"))
+	successCounter, err := metric.ProcessedEngineCounter.GetMetricWithLabelValues("table1", "success")
+	c.Assert(err, IsNil)
+	c.Assert(metric.ReadCounter(successCounter), Equals, 1.0)
+	failureCount, err := metric.ProcessedEngineCounter.GetMetricWithLabelValues("table1", "failure")
+	c.Assert(err, IsNil)
+	c.Assert(metric.ReadCounter(failureCount), Equals, 1.0)
 }

@@ -1,6 +1,20 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package config_test
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -97,6 +111,42 @@ func (s *configTestSuite) TestAdjustConnectRefused(c *C) {
 	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
 }
 
+func (s *configTestSuite) TestDecodeError(c *C) {
+	ts, host, port := startMockServer(c, http.StatusOK, "invalid-string")
+	defer ts.Close()
+
+	cfg := config.NewConfig()
+	cfg.TiDB.Host = host
+	cfg.TiDB.StatusPort = port
+
+	err := cfg.Adjust()
+	c.Assert(err, ErrorMatches, "cannot decode settings from TiDB.*")
+}
+
+func (s *configTestSuite) TestInvalidSetting(c *C) {
+	ts, host, port := startMockServer(c, http.StatusOK, `{"port": 0}`)
+	defer ts.Close()
+
+	cfg := config.NewConfig()
+	cfg.TiDB.Host = host
+	cfg.TiDB.StatusPort = port
+
+	err := cfg.Adjust()
+	c.Assert(err, ErrorMatches, "invalid `tidb.port` setting")
+}
+
+func (s *configTestSuite) TestInvalidPDAddr(c *C) {
+	ts, host, port := startMockServer(c, http.StatusOK, `{"port": 1234, "path": ",,"}`)
+	defer ts.Close()
+
+	cfg := config.NewConfig()
+	cfg.TiDB.Host = host
+	cfg.TiDB.StatusPort = port
+
+	err := cfg.Adjust()
+	c.Assert(err, ErrorMatches, "invalid `tidb.pd-addr` setting")
+}
+
 func (s *configTestSuite) TestAdjustWillNotContactServerIfEverythingIsDefined(c *C) {
 	cfg := config.NewConfig()
 	cfg.TiDB.Host = "123.45.67.89"
@@ -108,6 +158,18 @@ func (s *configTestSuite) TestAdjustWillNotContactServerIfEverythingIsDefined(c 
 	c.Assert(err, IsNil)
 	c.Assert(cfg.TiDB.Port, Equals, 4567)
 	c.Assert(cfg.TiDB.PdAddr, Equals, "234.56.78.90:12345")
+}
+
+func (s *configTestSuite) TestAdjustWillBatchImportRatioInvalid(c *C) {
+	cfg := config.NewConfig()
+	cfg.TiDB.Host = "123.45.67.89"
+	cfg.TiDB.Port = 4567
+	cfg.TiDB.StatusPort = 8901
+	cfg.TiDB.PdAddr = "234.56.78.90:12345"
+	cfg.Mydumper.BatchImportRatio = -1
+	err := cfg.Adjust()
+	c.Assert(err, IsNil)
+	c.Assert(cfg.Mydumper.BatchImportRatio, Equals, 0.75)
 }
 
 func (s *configTestSuite) TestInvalidCSV(c *C) {
@@ -198,6 +260,37 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 			`,
 			err: "invalid config: cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true",
 		},
+		{
+			input: `
+				invalid[mydumper.csv]
+				delimiter = '\'
+				backslash-escape = true
+			`,
+			err: "Near line 0 (last key parsed ''): bare keys cannot contain '['",
+		},
+		{
+			input: `
+				[tidb]
+				sql-mode = "invalid-sql-mode"
+			`,
+			err: "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE: ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'invalid-sql-mode'",
+		},
+		{
+			input: `
+				[[routes]]
+				schema-pattern = ""
+				table-pattern = "shard_table_*"
+			`,
+			err: "schema pattern of table route rule should not be empty",
+		},
+		{
+			input: `
+				[[routes]]
+				schema-pattern = "schema_*"
+				table-pattern = ""
+			`,
+			err: "target schema of table route rule should not be empty",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -215,4 +308,31 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 			c.Assert(err, IsNil, comment)
 		}
 	}
+}
+
+func (s *configTestSuite) TestDurationUnmarshal(c *C) {
+	duration := config.Duration{}
+	err := duration.UnmarshalText([]byte("13m20s"))
+	c.Assert(err, IsNil)
+	c.Assert(duration.Duration.Seconds(), Equals, 13*60+20.0)
+	err = duration.UnmarshalText([]byte("13x20s"))
+	c.Assert(err, ErrorMatches, "time: unknown unit x in duration 13x20s")
+}
+
+func (s *configTestSuite) TestLoadConfig(c *C) {
+	cfg, err := config.LoadConfig([]string{"-tidb-port", "sss"})
+	c.Assert(err, ErrorMatches, `invalid value "sss" for flag -tidb-port: parse error`)
+	c.Assert(cfg, IsNil)
+
+	cfg, err = config.LoadConfig([]string{"-V"})
+	c.Assert(err, Equals, flag.ErrHelp)
+	c.Assert(cfg, IsNil)
+
+	cfg, err = config.LoadConfig([]string{"-config", "not-exists"})
+	c.Assert(err, ErrorMatches, ".*no such file or directory.*")
+	c.Assert(cfg, IsNil)
+
+	cfg, err = config.LoadConfig([]string{"-tidb-status", "111111"})
+	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
+	c.Assert(cfg, IsNil)
 }
