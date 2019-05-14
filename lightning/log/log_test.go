@@ -35,6 +35,6 @@ func (s *logSuite) TestConfigAdjust(c *C) {
 
 	cfg.File = "."
 	err := log.InitLogger(cfg, "info")
-	log.L().Named("xx")
 	c.Assert(err, ErrorMatches, "can't use directory as log file name")
+	log.L().Named("xx")
 }
