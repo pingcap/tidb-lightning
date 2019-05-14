@@ -585,7 +585,7 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 		UPDATE %s.%s SET pos = ?, prev_rowid_max = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ?
 		WHERE (table_name, engine_id, path, offset) = (?, ?, ?, ?);
 	`, cpdb.schema, checkpointTableNameChunk)
-	checksumQuery := fmt.Sprintf(`
+	rebaseQuery := fmt.Sprintf(`
 		UPDATE %s.%s SET alloc_base = GREATEST(?, alloc_base) WHERE table_name = ?;
 	`, cpdb.schema, checkpointTableNameTable)
 	tableStatusQuery := fmt.Sprintf(`
@@ -602,11 +602,11 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 			return errors.Trace(e)
 		}
 		defer chunkStmt.Close()
-		checksumStmt, e := tx.PrepareContext(c, checksumQuery)
+		rebaseStmt, e := tx.PrepareContext(c, rebaseQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
-		defer checksumStmt.Close()
+		defer rebaseStmt.Close()
 		tableStatusStmt, e := tx.PrepareContext(c, tableStatusQuery)
 		if e != nil {
 			return errors.Trace(e)
@@ -625,7 +625,7 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 				}
 			}
 			if cpd.hasRebase {
-				if _, e := checksumStmt.ExecContext(c, cpd.allocBase, tableName); e != nil {
+				if _, e := rebaseStmt.ExecContext(c, cpd.allocBase, tableName); e != nil {
 					return errors.Trace(e)
 				}
 			}
