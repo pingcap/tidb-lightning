@@ -2,6 +2,7 @@ module github.com/pingcap/tidb-lightning
 
 require (
 	github.com/BurntSushi/toml v0.3.1
+	github.com/DATA-DOG/go-sqlmock v1.3.3
 	github.com/coreos/go-semver v0.2.0
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/go-sql-driver/mysql v1.4.1

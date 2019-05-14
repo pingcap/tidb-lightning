@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -65,15 +66,21 @@ func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
 		return nil, errors.Trace(err)
 	}
 
+	return NewTiDBManagerWithDB(db, u, dsn.SQLMode), nil
+}
+
+// NewTiDBManagerWithDB creates a new TiDB manager with an existing database
+// connection.
+func NewTiDBManagerWithDB(db *sql.DB, baseURL *url.URL, sqlMode mysql.SQLMode) *TiDBManager {
 	parser := parser.New()
-	parser.SetSQLMode(dsn.SQLMode)
+	parser.SetSQLMode(sqlMode)
 
 	return &TiDBManager{
 		db:      db,
 		client:  &http.Client{},
-		baseURL: u,
+		baseURL: baseURL,
 		parser:  parser,
-	}, nil
+	}
 }
 
 func (timgr *TiDBManager) Close() {
