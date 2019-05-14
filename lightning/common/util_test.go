@@ -16,6 +16,7 @@ package common_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"google.golang.org/grpc/codes"
@@ -109,4 +111,8 @@ func (s *utilSuite) TestIsRetryableError(c *C) {
 	c.Assert(common.IsRetryableError(status.Error(codes.OutOfRange, "")), IsTrue)
 	c.Assert(common.IsRetryableError(status.Error(codes.Unavailable, "")), IsTrue)
 	c.Assert(common.IsRetryableError(status.Error(codes.DataLoss, "")), IsTrue)
+
+	// sqlmock errors
+	c.Assert(common.IsRetryableError(fmt.Errorf("call to database Close was not expected")), IsFalse)
+	c.Assert(common.IsRetryableError(errors.New("call to database Close was not expected")), IsTrue)
 }
