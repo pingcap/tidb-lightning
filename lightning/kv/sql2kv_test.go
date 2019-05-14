@@ -75,7 +75,6 @@ func (s *kvSuite) TestEncode(c *C) {
 	// Strict mode
 	strictMode := NewTableKVEncoder(tbl, mysql.ModeStrictAllTables)
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1})
-	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, ".*overflows tinyint")
 	c.Assert(pairs, IsNil)
 
@@ -84,7 +83,6 @@ func (s *kvSuite) TestEncode(c *C) {
 		types.NewStringDatum("invalid-pk"),
 	}
 	pairs, err = strictMode.Encode(logger, rowsWithPk, 2, []int{0, 1})
-	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, ".*Data Truncated")
 
 	rowsWithPk2 := []types.Datum{
@@ -101,7 +99,6 @@ func (s *kvSuite) TestEncode(c *C) {
 	mockTbl := &mockTable{Table: tbl}
 	mockMode := NewTableKVEncoder(mockTbl, mysql.ModeStrictAllTables)
 	pairs, err = mockMode.Encode(logger, rowsWithPk2, 2, []int{0, 1})
-	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, "mock error")
 
 	// Non-strict mode
