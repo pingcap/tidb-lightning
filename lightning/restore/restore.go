@@ -62,7 +62,7 @@ const (
 
 const (
 	indexEngineID      = -1
-	wholeTableEngineID = math.MaxInt32
+	WholeTableEngineID = math.MaxInt32
 )
 
 const (
@@ -320,7 +320,7 @@ func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int
 		return
 	}
 
-	if engineID == wholeTableEngineID {
+	if engineID == WholeTableEngineID {
 		metric.RecordTableCount(statusIfSucceed.MetricName(), err)
 	} else {
 		metric.RecordEngineCount(statusIfSucceed.MetricName(), err)
@@ -386,7 +386,7 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 
 		failpoint.Inject("FailIfIndexEngineImported", func(val failpoint.Value) {
 			if merger, ok := scp.merger.(*StatusCheckpointMerger); ok &&
-				merger.EngineID == wholeTableEngineID &&
+				merger.EngineID == WholeTableEngineID &&
 				merger.Status == CheckpointStatusIndexImported && val.(int) > 0 {
 				rc.checkpointsWg.Done()
 				rc.checkpointsWg.Wait()
@@ -690,7 +690,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 			panic("forcing failure due to FailBeforeIndexEngineImported")
 		})
 
-		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusIndexImported)
+		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusIndexImported)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -850,7 +850,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		rc.alterTableLock.Lock()
 		err := AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Base()+1)
 		rc.alterTableLock.Unlock()
-		rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
+		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
 			return err
 		}
@@ -868,10 +868,10 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	if cp.Status < CheckpointStatusChecksummed {
 		if !rc.cfg.PostRestore.Checksum {
 			t.logger.Info("skip checksum")
-			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
+			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
 			err := t.compareChecksum(ctx, rc.tidbMgr.db, localChecksum)
-			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusChecksummed)
+			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -882,10 +882,10 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	if cp.Status < CheckpointStatusAnalyzed {
 		if !rc.cfg.PostRestore.Analyze {
 			t.logger.Info("skip analyze")
-			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
+			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 		} else {
 			err := t.analyzeTable(ctx, rc.tidbMgr.db)
-			rc.saveStatusCheckpoint(t.tableName, wholeTableEngineID, err, CheckpointStatusAnalyzed)
+			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAnalyzed)
 			if err != nil {
 				return errors.Trace(err)
 			}

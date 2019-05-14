@@ -188,7 +188,7 @@ type TableCheckpointMerger interface {
 }
 
 type StatusCheckpointMerger struct {
-	EngineID int32 // wholeTableEngineID == apply to whole table.
+	EngineID int32 // WholeTableEngineID == apply to whole table.
 	Status   CheckpointStatus
 }
 
@@ -197,11 +197,11 @@ func (merger *StatusCheckpointMerger) SetInvalid() {
 }
 
 func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
-	if merger.EngineID == wholeTableEngineID || merger.Status <= CheckpointStatusMaxInvalid {
+	if merger.EngineID == WholeTableEngineID || merger.Status <= CheckpointStatusMaxInvalid {
 		cpd.status = merger.Status
 		cpd.hasStatus = true
 	}
-	if merger.EngineID >= 0 && merger.EngineID != wholeTableEngineID {
+	if merger.EngineID != WholeTableEngineID {
 		cpd.insertEngineCheckpointDiff(merger.EngineID, engineCheckpointDiff{
 			hasStatus: true,
 			status:    merger.Status,
