@@ -47,12 +47,11 @@ type TidbDBInfo struct {
 }
 
 type TidbTableInfo struct {
-	ID              int64
-	Name            string
-	Columns         int
-	Indices         int
-	CreateTableStmt string
-	core            *model.TableInfo
+	ID      int64
+	Name    string
+	Columns int
+	Indices int
+	core    *model.TableInfo
 }
 
 func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
@@ -190,18 +189,16 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.
 				metric.RecordTableCount(metric.TableStatePending, err)
 				return nil, err
 			}
-			createTableStmt, err := timgr.getCreateTableStmt(ctx, schema.Name, tableName)
 			metric.RecordTableCount(metric.TableStatePending, err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			tableInfo := &TidbTableInfo{
-				ID:              tbl.ID,
-				Name:            tableName,
-				Columns:         len(tbl.Columns),
-				Indices:         len(tbl.Indices),
-				CreateTableStmt: createTableStmt,
-				core:            tbl,
+				ID:      tbl.ID,
+				Name:    tableName,
+				Columns: len(tbl.Columns),
+				Indices: len(tbl.Indices),
+				core:    tbl,
 			}
 			dbInfo.Tables[tableName] = tableInfo
 		}
@@ -209,20 +206,6 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.
 		result[schema.Name] = dbInfo
 	}
 	return result, nil
-}
-
-func (timgr *TiDBManager) getCreateTableStmt(ctx context.Context, schema, table string) (string, error) {
-	tableName := common.UniqueTable(schema, table)
-	sql := common.SQLWithRetry{
-		DB:     timgr.db,
-		Logger: log.With(zap.String("table", tableName)),
-	}
-	var tbl, createTable string
-	err := sql.QueryRow(ctx, "show create table",
-		"SHOW CREATE TABLE "+tableName,
-		&tbl, &createTable,
-	)
-	return createTable, err
 }
 
 func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
