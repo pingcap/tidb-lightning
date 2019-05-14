@@ -70,7 +70,7 @@ type Logger struct {
 // logger for lightning, different from tidb logger.
 var (
 	appLogger = Logger{zap.NewNop()}
-	appLevel  zap.AtomicLevel
+	appLevel  = zap.NewAtomicLevel()
 )
 
 // InitLogger initializes Lightning's and also the TiDB library's loggers.
