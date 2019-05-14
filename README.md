@@ -1,7 +1,7 @@
 # TiDB-Lightning
 
 [![Build Status](https://internal.pingcap.net/idc-jenkins/job/test_lightning_master/badge/icon)](https://internal.pingcap.net/idc-jenkins/job/test_lightning_master/)
-[![Coverage Status](https://coveralls.io/repos/github/pingcap/tidb-lightning/badge.svg)](https://coveralls.io/github/pingcap/tidb-lightning)
+[![Coverage Status](https://coveralls.io/repos/github/pingcap/tidb-lightning/badge.svg?branch=master)](https://coveralls.io/github/pingcap/tidb-lightning?branch=master)
 
 **TiDB-Lightning** is a tool for fast full import of large amounts of data into a TiDB cluster.
 Currently, we support reading SQL dump exported via mydumper.
