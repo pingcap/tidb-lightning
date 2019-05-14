@@ -14,48 +14,31 @@
 package kv
 
 import (
-	"bytes"
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/types"
 	"go.uber.org/zap/zapcore"
 )
-
-type mockEncoder struct {
-	zapcore.ArrayEncoder
-	zapcore.ObjectEncoder
-	buf *bytes.Buffer
-}
-
-func (enc *mockEncoder) AppendObject(obj zapcore.ObjectMarshaler) error {
-	err := obj.MarshalLogObject(enc)
-	return err
-}
-
-func (enc *mockEncoder) AddInt(key string, value int) {
-	enc.buf.WriteString(fmt.Sprintf("[%v=%v]", key, value))
-}
-
-func (enc *mockEncoder) AddString(key string, value string) {
-	enc.buf.WriteString(fmt.Sprintf("[%v=%v]", key, value))
-}
 
 func (s *kvSuite) TestMarshal(c *C) {
 	nullDatum := types.Datum{}
 	nullDatum.SetNull()
 	minNotNull := types.Datum{}
 	minNotNull.SetMinNotNull()
-	datums := rowArrayMarshaler{types.NewStringDatum("1"), nullDatum, minNotNull, types.MaxValueDatum()}
-	encoder := &mockEncoder{buf: &bytes.Buffer{}}
-	err := datums.MarshalLogArray(encoder)
+	encoder := zapcore.NewMapObjectEncoder()
+	err := encoder.AddArray("test", rowArrayMarshaler{types.NewStringDatum("1"), nullDatum, minNotNull, types.MaxValueDatum()})
 	c.Assert(err, IsNil)
-	c.Assert(encoder.buf.String(), Equals, "[col=0][kind=string][val=1][col=1][kind=null][val=NULL][col=2][kind=min][val=-inf][col=3][kind=max][val=+inf]")
+	c.Assert(encoder.Fields["test"], DeepEquals, []interface{}{
+		map[string]interface{}{"col": 0, "kind": "string", "val": "1"},
+		map[string]interface{}{"col": 1, "kind": "null", "val": "NULL"},
+		map[string]interface{}{"col": 2, "kind": "min", "val": "-inf"},
+		map[string]interface{}{"col": 3, "kind": "max", "val": "+inf"},
+	})
 
 	invalid := types.Datum{}
 	invalid.SetInterface(1)
-	encoder.buf.Reset()
-	err = rowArrayMarshaler([]types.Datum{nullDatum, invalid}).MarshalLogArray(encoder)
+	err = encoder.AddArray("bad-test", rowArrayMarshaler{minNotNull, invalid})
 	c.Assert(err, ErrorMatches, "cannot convert.*")
-	c.Assert(encoder.buf.String(), Equals, "[col=0][kind=null][val=NULL]")
+	c.Assert(encoder.Fields["bad-test"], DeepEquals, []interface{}{
+		map[string]interface{}{"col": 0, "kind": "min", "val": "-inf"},
+	})
 }
