@@ -50,4 +50,6 @@ func (s *testWorkerPool) TestApplyRecycle(c *C) {
 	c.Assert(pool.Apply(), Equals, w1)
 
 	c.Assert(pool.HasWorker(), Equals, false)
+
+	c.Assert(func() { pool.Recycle(nil) }, PanicMatches, "invalid restore worker")
 }
