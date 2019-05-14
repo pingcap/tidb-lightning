@@ -162,6 +162,10 @@ func (s *configTestSuite) TestAdjustWillNotContactServerIfEverythingIsDefined(c 
 
 func (s *configTestSuite) TestAdjustWillBatchImportRatioInvalid(c *C) {
 	cfg := config.NewConfig()
+	cfg.TiDB.Host = "123.45.67.89"
+	cfg.TiDB.Port = 4567
+	cfg.TiDB.StatusPort = 8901
+	cfg.TiDB.PdAddr = "234.56.78.90:12345"
 	cfg.Mydumper.BatchImportRatio = -1
 	err := cfg.Adjust()
 	c.Assert(err, IsNil)
