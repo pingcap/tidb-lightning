@@ -371,6 +371,9 @@ func (parser *ChunkParser) ReadRow() error {
 	for {
 		tok, content, err := parser.lex()
 		if err != nil {
+			if err == io.EOF && st != stateValues {
+				return errors.Errorf("syntax error: premature EOF at offset %d", parser.pos)
+			}
 			return errors.Trace(err)
 		}
 		switch st {
@@ -380,6 +383,12 @@ func (parser *ChunkParser) ReadRow() error {
 				st = stateColumns
 			case tokValues:
 				st = stateValues
+			case tokUnquoted, tokDoubleQuoted, tokBackQuoted:
+			default:
+				return errors.Errorf(
+					"syntax error: unexpected %s (%s) at offset %d, expecting %s",
+					tok, content, parser.pos, "table name",
+				)
 			}
 		case stateColumns:
 			switch tok {
@@ -388,6 +397,11 @@ func (parser *ChunkParser) ReadRow() error {
 			case tokUnquoted, tokDoubleQuoted, tokBackQuoted:
 				columnName := parser.unescapeString(string(content))
 				parser.columns = append(parser.columns, columnName)
+			default:
+				return errors.Errorf(
+					"syntax error: unexpected %s (%s) at offset %d, expecting %s",
+					tok, content, parser.pos, "column list",
+				)
 			}
 		case stateValues:
 			switch tok {
@@ -398,6 +412,12 @@ func (parser *ChunkParser) ReadRow() error {
 			case tokUnquoted, tokDoubleQuoted, tokBackQuoted:
 				parser.columns = nil
 				st = stateTableName
+			case tokValues:
+			default:
+				return errors.Errorf(
+					"syntax error: unexpected %s (%s) at offset %d, expecting %s",
+					tok, content, parser.pos, "start of row",
+				)
 			}
 		case stateRow:
 			var value types.Datum
@@ -444,7 +464,10 @@ func (parser *ChunkParser) ReadRow() error {
 				}
 				value.SetBinaryLiteral(binLit)
 			default:
-				return errors.Errorf("Syntax error at position %d", parser.pos)
+				return errors.Errorf(
+					"syntax error: unexpected %s (%s) at offset %d, expecting %s",
+					tok, content, parser.pos, "data literal",
+				)
 			}
 			row.Row = append(row.Row, value)
 		}

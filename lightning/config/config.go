@@ -276,12 +276,27 @@ func (cfg *Config) Load() error {
 		return errors.Trace(err)
 	}
 
-	if len(cfg.Mydumper.CSV.Separator) != 1 {
+	// Reject problematic CSV configurations.
+	csv := &cfg.Mydumper.CSV
+	if len(csv.Separator) != 1 {
 		return errors.New("invalid config: `mydumper.csv.separator` must be exactly one byte long")
 	}
 
-	if len(cfg.Mydumper.CSV.Delimiter) > 1 {
+	if len(csv.Delimiter) > 1 {
 		return errors.New("invalid config: `mydumper.csv.delimiter` must be one byte long or empty")
+	}
+
+	if csv.Separator == csv.Delimiter {
+		return errors.New("invalid config: cannot use the same character for both CSV delimiter and separator")
+	}
+
+	if csv.BackslashEscape {
+		if csv.Separator == `\` {
+			return errors.New("invalid config: cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true")
+		}
+		if csv.Delimiter == `\` {
+			return errors.New("invalid config: cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true")
+		}
 	}
 
 	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)

@@ -45,13 +45,12 @@ machine chunk_parser;
 #  - The parts of the function `CONVERT(` and `USING UTF8MB4)`
 #    (to strip the unnecessary detail from mydumper JSON output)
 block_comment = '/*' any* :>> '*/';
-line_comment = /--[^\n]*\n/;
+line_comment = /--[^\r\n]*/;
 comment =
 	block_comment |
 	line_comment |
 	space |
 	[,;] |
-	'into'i |
 	'convert('i |
 	'using utf8mb4)'i;
 
@@ -61,7 +60,7 @@ bs = '\\' when { parser.escFlavor != backslashEscapeFlavorNone };
 single_quoted = "'" (^"'" | bs any | "''")** "'";
 double_quoted = '"' (^'"' | bs any | '""')** '"';
 back_quoted = '`' (^'`' | '``')* '`';
-unquoted = ^([,;()'"`] | space)+;
+unquoted = ^([,;()'"`/*] | space)+;
 
 integer = '-'? [0-9]+;
 hex_string = '0x' [0-9a-fA-F]+ | "x'"i [0-9a-fA-F]* "'";
@@ -161,7 +160,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 				zap.Int64("pos", parser.pos),
 				zap.ByteString("content", data),
 			)
-			return tokNil, nil, errors.New("Syntax error")
+			return tokNil, nil, errors.New("syntax error")
 		}
 
 		if consumedToken != tokNil {
@@ -172,7 +171,11 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 		}
 
 		if parser.isLastChunk {
-			return tokNil, nil, io.EOF
+			if te == eof {
+				return tokNil, nil, io.EOF
+			} else {
+				return tokNil, nil, errors.New("syntax error: unexpected EOF")
+			}
 		}
 
 		parser.buf = parser.buf[ts:]
