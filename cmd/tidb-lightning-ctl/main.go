@@ -222,9 +222,9 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tableName s
 	}
 
 	for _, table := range targetTables {
-		for engineID := 0; engineID < table.EnginesCount; engineID++ {
-			fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, int32(engineID))
-			closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, int32(engineID))
+		for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
+			fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
+			closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, engineID)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "* Encountered error while closing engine:", err)
 				lastErr = err

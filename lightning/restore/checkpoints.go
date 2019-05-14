@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -240,8 +241,9 @@ func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 }
 
 type DestroyedTableCheckpoint struct {
-	TableName    string
-	EnginesCount int
+	TableName   string
+	MinEngineID int32
+	MaxEngineID int32
 }
 
 type CheckpointsDB interface {
@@ -951,7 +953,8 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	selectQuery := fmt.Sprintf(`
 		SELECT
 			t.table_name,
-			COALESCE(MAX(e.engine_id) + 1, 0)
+			COALESCE(MIN(e.engine_id), 0),
+			COALESCE(MAX(e.engine_id), -1)
 		FROM %[1]s.%[4]s t
 		LEFT JOIN %[1]s.%[5]s e ON t.table_name = e.table_name
 		WHERE t.%[2]s = ? AND t.status <= %[3]d
@@ -983,7 +986,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		defer rows.Close()
 		for rows.Next() {
 			var dtc DestroyedTableCheckpoint
-			if e := rows.Scan(&dtc.TableName, &dtc.EnginesCount); e != nil {
+			if e := rows.Scan(&dtc.TableName, &dtc.MinEngineID, &dtc.MaxEngineID); e != nil {
 				return errors.Trace(e)
 			}
 			targetTables = append(targetTables, dtc)
@@ -1120,9 +1123,20 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 			continue
 		}
 		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
+			var minEngineID, maxEngineID int32 = math.MaxInt32, math.MinInt32
+			for engineID := range tableModel.Engines {
+				if engineID < minEngineID {
+					minEngineID = engineID
+				}
+				if engineID > maxEngineID {
+					maxEngineID = engineID
+				}
+			}
+
 			targetTables = append(targetTables, DestroyedTableCheckpoint{
-				TableName:    tableName,
-				EnginesCount: len(tableModel.Engines),
+				TableName:   tableName,
+				MinEngineID: minEngineID,
+				MaxEngineID: maxEngineID,
 			})
 		}
 	}
