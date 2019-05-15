@@ -34,8 +34,8 @@ import (
 )
 
 const (
-	maxRetryTimes           int = 3 // tikv-importer has done retry internally. so we don't retry many times.
-	defaultRetryBackoffTime     = time.Second * 3
+	maxRetryTimes           = 3 // tikv-importer has done retry internally. so we don't retry many times.
+	defaultRetryBackoffTime = time.Second * 3
 )
 
 /*
@@ -96,7 +96,9 @@ func NewImporter(ctx context.Context, importServerAddr string, pdAddr string) (*
 // Close the importer connection.
 func (importer *Importer) Close() {
 	if importer.conn != nil {
-		importer.conn.Close()
+		if err := importer.conn.Close(); err != nil {
+			log.L().Warn("close importer gRPC connection failed", zap.Error(err))
+		}
 	}
 }
 
