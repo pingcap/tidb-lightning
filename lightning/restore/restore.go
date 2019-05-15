@@ -93,7 +93,16 @@ type errorSummary struct {
 
 type errorSummaries struct {
 	sync.Mutex
+	logger  log.Logger
 	summary map[string]errorSummary
+}
+
+// makeErrorSummaries returns an initialized errorSummaries instance
+func makeErrorSummaries(logger log.Logger) errorSummaries {
+	return errorSummaries{
+		logger:  logger,
+		summary: make(map[string]errorSummary),
+	}
 }
 
 func (es *errorSummaries) emitLog() {
@@ -101,7 +110,7 @@ func (es *errorSummaries) emitLog() {
 	defer es.Unlock()
 
 	if errorCount := len(es.summary); errorCount > 0 {
-		logger := log.L()
+		logger := es.logger
 		logger.Error("tables failed to be imported", zap.Int("count", errorCount))
 		for tableName, errorSummary := range es.summary {
 			logger.Error("-",
@@ -168,10 +177,7 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 		importer:      importer,
 		tidbMgr:       tidbMgr,
 
-		errorSummaries: errorSummaries{
-			summary: make(map[string]errorSummary),
-		},
-
+		errorSummaries:    makeErrorSummaries(log.L()),
 		checkpointsDB:     cpdb,
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
