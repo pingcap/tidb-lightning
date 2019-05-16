@@ -319,6 +319,16 @@ func (s *configTestSuite) TestDurationUnmarshal(c *C) {
 	c.Assert(err, ErrorMatches, "time: unknown unit x in duration 13x20s")
 }
 
+func (s *configTestSuite) TestDurationMarshalJSON(c *C) {
+	duration := config.Duration{}
+	err := duration.UnmarshalText([]byte("13m20s"))
+	c.Assert(err, IsNil)
+	c.Assert(duration.Duration.Seconds(), Equals, 13*60+20.0)
+	result, err := duration.MarshalJSON()
+	c.Assert(err, IsNil)
+	c.Assert(string(result), Equals, `"13m20s"`)
+}
+
 func (s *configTestSuite) TestLoadConfig(c *C) {
 	cfg, err := config.LoadConfig([]string{"-tidb-port", "sss"})
 	c.Assert(err, ErrorMatches, `invalid value "sss" for flag -tidb-port: parse error`)
@@ -335,4 +345,33 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	cfg, err = config.LoadConfig([]string{"-tidb-status", "111111"})
 	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
 	c.Assert(cfg, IsNil)
+
+	cfg, err = config.LoadConfig([]string{
+		"-L", "debug",
+		"-log-file", "/path/to/file.log",
+		"-tidb-host", "172.16.30.11",
+		"-tidb-port", "4001",
+		"-tidb-user", "guest",
+		"-pd-urls", "172.16.30.11:2379,172.16.30.12:2379",
+		"-d", "/path/to/import",
+		"-importer", "172.16.30.11:23008",
+	})
+	c.Assert(err, IsNil)
+	c.Assert(cfg.App.Config.Level, Equals, "debug")
+	c.Assert(cfg.App.Config.File, Equals, "/path/to/file.log")
+	c.Assert(cfg.TiDB.Host, Equals, "172.16.30.11")
+	c.Assert(cfg.TiDB.Port, Equals, 4001)
+	c.Assert(cfg.TiDB.User, Equals, "guest")
+	c.Assert(cfg.TiDB.PdAddr, Equals, "172.16.30.11:2379,172.16.30.12:2379")
+	c.Assert(cfg.Mydumper.SourceDir, Equals, "/path/to/import")
+	c.Assert(cfg.TikvImporter.Addr, Equals, "172.16.30.11:23008")
+
+	cfg.Checkpoint.DSN = ""
+	cfg.Checkpoint.Driver = "mysql"
+	err = cfg.Adjust()
+	c.Assert(err, IsNil)
+	c.Assert(cfg.Checkpoint.DSN, Equals, "guest:@tcp(172.16.30.11:4001)/?charset=utf8")
+
+	result := cfg.String()
+	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)
 }
