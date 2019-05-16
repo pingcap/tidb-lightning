@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	. "github.com/pingcap/tidb-lightning/mock"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/satori/go.uuid"
 )
@@ -30,13 +31,7 @@ func (s *importerSuite) setUpTest(c *C) {
 	s.controller = gomock.NewController(c)
 	s.mockClient = NewMockImportKVClient(s.controller)
 	s.mockWriter = NewMockImportKV_WriteEngineClient(s.controller)
-
-	s.importer = &Importer{
-		conn:             nil,
-		cli:              s.mockClient,
-		pdAddr:           testPDAddr,
-		retryBackoffTime: 0,
-	}
+	s.importer = NewMockImporter(s.mockClient, testPDAddr)
 }
 
 func (s *importerSuite) tearDownTest() {

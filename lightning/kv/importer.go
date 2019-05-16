@@ -93,6 +93,18 @@ func NewImporter(ctx context.Context, importServerAddr string, pdAddr string) (*
 	}, nil
 }
 
+// NewMockImporter creates an *unconnected* importer based on a custom
+// ImportKVClient. This is provided for testing only. Do not use this function
+// outside of tests.
+func NewMockImporter(cli kv.ImportKVClient, pdAddr string) *Importer {
+	return &Importer{
+		conn:             nil,
+		cli:              cli,
+		pdAddr:           pdAddr,
+		retryBackoffTime: 0,
+	}
+}
+
 // Close the importer connection.
 func (importer *Importer) Close() {
 	if importer.conn != nil {
