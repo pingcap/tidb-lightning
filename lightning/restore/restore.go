@@ -1545,6 +1545,84 @@ func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *Rest
 	}
 }
 
+func (cr *chunkRestore) encodeLoop(
+	ctx context.Context,
+	kvsCh chan<- deliveredKVs,
+	t *TableRestore,
+	logger log.Logger,
+	kvEncoder *kv.TableKVEncoder,
+	deliverCompleteCh <-chan deliverResult,
+) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
+	send := func(kvs deliveredKVs) error {
+		select {
+		case kvsCh <- kvs:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case deliverResult := <-deliverCompleteCh:
+			if deliverResult.err == nil {
+				panic("unexpected: deliverCompleteCh prematurely fulfilled with no error")
+			}
+			return errors.Trace(deliverResult.err)
+		}
+	}
+
+	initializedColumns := false
+outside:
+	for {
+		offset, _ := cr.parser.Pos()
+		if offset >= cr.chunk.Chunk.EndOffset {
+			break
+		}
+
+		start := time.Now()
+		err = cr.parser.ReadRow()
+		newOffset, rowID := cr.parser.Pos()
+		switch errors.Cause(err) {
+		case nil:
+			if !initializedColumns {
+				if len(cr.chunk.ColumnPermutation) == 0 {
+					t.initializeColumns(cr.parser.Columns(), cr.chunk)
+				}
+				initializedColumns = true
+			}
+		case io.EOF:
+			break outside
+		default:
+			err = errors.Trace(err)
+			return
+		}
+
+		readDur := time.Since(start)
+		readTotalDur += readDur
+		metric.RowReadSecondsHistogram.Observe(readDur.Seconds())
+		metric.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+
+		// sql -> kv
+		lastRow := cr.parser.LastRow()
+		kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
+		encodeDur := time.Since(start)
+		encodeTotalDur += encodeDur
+		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
+
+		if encodeErr != nil {
+			// error is already logged inside kvEncoder.Encode(), just propagate up directly.
+			err = encodeErr
+			return
+		}
+
+		deliverKvStart := time.Now()
+		if err = send(deliveredKVs{kvs: kvs, offset: newOffset, rowID: rowID}); err != nil {
+			return
+		}
+		metric.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
+	}
+
+	lastOffset, lastRowID := cr.parser.Pos()
+	err = send(deliveredKVs{kvs: nil, offset: lastOffset, rowID: lastRowID})
+	return
+}
+
 func (cr *chunkRestore) restore(
 	ctx context.Context,
 	t *TableRestore,
@@ -1562,9 +1640,6 @@ func (cr *chunkRestore) restore(
 		kvEncoder = nil
 	}()
 
-	readTotalDur := time.Duration(0)
-	encodeTotalDur := time.Duration(0)
-
 	kvsCh := make(chan deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
 
@@ -1581,74 +1656,9 @@ func (cr *chunkRestore) restore(
 		zap.Stringer("path", &cr.chunk.Key),
 	).Begin(zap.InfoLevel, "restore file")
 
-	initializedColumns := false
-outside:
-	for {
-		offset, _ := cr.parser.Pos()
-		if offset >= cr.chunk.Chunk.EndOffset {
-			break
-		}
-
-		start := time.Now()
-		err := cr.parser.ReadRow()
-		newOffset, rowID := cr.parser.Pos()
-		switch errors.Cause(err) {
-		case nil:
-			if !initializedColumns {
-				if len(cr.chunk.ColumnPermutation) == 0 {
-					t.initializeColumns(cr.parser.Columns(), cr.chunk)
-				}
-				initializedColumns = true
-			}
-		case io.EOF:
-			break outside
-		default:
-			return errors.Trace(err)
-		}
-
-		readDur := time.Since(start)
-		readTotalDur += readDur
-		metric.RowReadSecondsHistogram.Observe(readDur.Seconds())
-		metric.RowReadBytesHistogram.Observe(float64(newOffset - offset))
-
-		// sql -> kv
-		lastRow := cr.parser.LastRow()
-		kvs, err := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
-		encodeDur := time.Since(start)
-		encodeTotalDur += encodeDur
-		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
-
-		if err != nil {
-			// error is already logged inside kvEncoder.Encode(), just propagate up directly.
-			return err
-		}
-
-		deliverKvStart := time.Now()
-		select {
-		case kvsCh <- deliveredKVs{kvs: kvs, offset: newOffset, rowID: rowID}:
-			break
-		case <-ctx.Done():
-			return ctx.Err()
-		case deliverResult := <-deliverCompleteCh:
-			if deliverResult.err == nil {
-				panic("unexpected: deliverCompleteCh prematurely fulfilled with no error")
-			}
-			return errors.Trace(deliverResult.err)
-		}
-		metric.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
-	}
-
-	lastOffset, lastRowID := cr.parser.Pos()
-	select {
-	case kvsCh <- deliveredKVs{kvs: nil, offset: lastOffset, rowID: lastRowID}:
-		break
-	case <-ctx.Done():
-		return ctx.Err()
-	case deliverResult := <-deliverCompleteCh:
-		if deliverResult.err == nil {
-			panic("unexpected: deliverCompleteCh prematurely fulfilled with no error")
-		}
-		return errors.Trace(deliverResult.err)
+	readTotalDur, encodeTotalDur, err := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh)
+	if err != nil {
+		return err
 	}
 
 	select {
