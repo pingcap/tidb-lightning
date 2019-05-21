@@ -17,12 +17,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
+	"reflect"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -150,6 +153,13 @@ func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, ar
 	})
 }
 
+// sqlmock uses fmt.Errorf to produce expectation failures, which will cause
+// unnecessary retry if not specially handled >:(
+var stdFatalErrorsRegexp = regexp.MustCompile(
+	`^call to (?s:.*) was not expected|arguments do not match:|could not match actual sql`,
+)
+var stdErrorType = reflect.TypeOf(stderrors.New(""))
+
 // IsRetryableError returns whether the error is transient (e.g. network
 // connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
 // function returns `false` (irrecoverable) if `err == nil`.
@@ -174,7 +184,12 @@ func IsRetryableError(err error) bool {
 		}
 	default:
 		switch status.Code(err) {
-		case codes.Unknown, codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
+		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
+			return true
+		case codes.Unknown:
+			if reflect.TypeOf(err) == stdErrorType {
+				return !stdFatalErrorsRegexp.MatchString(err.Error())
+			}
 			return true
 		default:
 			return false

@@ -34,8 +34,8 @@ import (
 )
 
 const (
-	maxRetryTimes    int = 3 // tikv-importer has done retry internally. so we don't retry many times.
-	retryBackoffTime     = time.Second * 3
+	maxRetryTimes           = 3 // tikv-importer has done retry internally. so we don't retry many times.
+	defaultRetryBackoffTime = time.Second * 3
 )
 
 /*
@@ -71,9 +71,10 @@ Usual workflow:
 // Importer represents a gRPC connection to tikv-importer. This type is
 // goroutine safe: you can share this instance and execute any method anywhere.
 type Importer struct {
-	conn   *grpc.ClientConn
-	cli    kv.ImportKVClient
-	pdAddr string
+	conn             *grpc.ClientConn
+	cli              kv.ImportKVClient
+	pdAddr           string
+	retryBackoffTime time.Duration
 }
 
 // NewImporter creates a new connection to tikv-importer. A single connection
@@ -85,15 +86,32 @@ func NewImporter(ctx context.Context, importServerAddr string, pdAddr string) (*
 	}
 
 	return &Importer{
-		conn:   conn,
-		cli:    kv.NewImportKVClient(conn),
-		pdAddr: pdAddr,
+		conn:             conn,
+		cli:              kv.NewImportKVClient(conn),
+		pdAddr:           pdAddr,
+		retryBackoffTime: defaultRetryBackoffTime,
 	}, nil
+}
+
+// NewMockImporter creates an *unconnected* importer based on a custom
+// ImportKVClient. This is provided for testing only. Do not use this function
+// outside of tests.
+func NewMockImporter(cli kv.ImportKVClient, pdAddr string) *Importer {
+	return &Importer{
+		conn:             nil,
+		cli:              cli,
+		pdAddr:           pdAddr,
+		retryBackoffTime: 0,
+	}
 }
 
 // Close the importer connection.
 func (importer *Importer) Close() {
-	importer.conn.Close()
+	if importer.conn != nil {
+		if err := importer.conn.Close(); err != nil {
+			log.L().Warn("close importer gRPC connection failed", zap.Error(err))
+		}
+	}
 }
 
 // SwitchMode switches the TiKV cluster to another operation mode.
@@ -266,7 +284,7 @@ func (stream *WriteStream) Put(kvs []kvec.KvPair) error {
 			break
 		}
 		stream.engine.logger.Error("send write stream failed", log.ShortError(sendErr))
-		time.Sleep(retryBackoffTime)
+		time.Sleep(stream.engine.importer.retryBackoffTime)
 	}
 	return errors.Trace(sendErr)
 }
@@ -356,7 +374,7 @@ func (engine *ClosedEngine) Import(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 		task.Warn("import spuriously failed, going to retry again", log.ShortError(err))
-		time.Sleep(retryBackoffTime)
+		time.Sleep(engine.importer.retryBackoffTime)
 	}
 
 	return errors.Annotatef(err, "[%s] import reach max retry %d and still failed", engine.uuid, maxRetryTimes)

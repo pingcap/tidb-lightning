@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -47,12 +48,11 @@ type TidbDBInfo struct {
 }
 
 type TidbTableInfo struct {
-	ID              int64
-	Name            string
-	Columns         int
-	Indices         int
-	CreateTableStmt string
-	core            *model.TableInfo
+	ID      int64
+	Name    string
+	Columns int
+	Indices int
+	core    *model.TableInfo
 }
 
 func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
@@ -66,15 +66,21 @@ func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
 		return nil, errors.Trace(err)
 	}
 
+	return NewTiDBManagerWithDB(db, u, dsn.SQLMode), nil
+}
+
+// NewTiDBManagerWithDB creates a new TiDB manager with an existing database
+// connection.
+func NewTiDBManagerWithDB(db *sql.DB, baseURL *url.URL, sqlMode mysql.SQLMode) *TiDBManager {
 	parser := parser.New()
-	parser.SetSQLMode(dsn.SQLMode)
+	parser.SetSQLMode(sqlMode)
 
 	return &TiDBManager{
 		db:      db,
 		client:  &http.Client{},
-		baseURL: u,
+		baseURL: baseURL,
 		parser:  parser,
-	}, nil
+	}
 }
 
 func (timgr *TiDBManager) Close() {
@@ -190,18 +196,16 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.
 				metric.RecordTableCount(metric.TableStatePending, err)
 				return nil, err
 			}
-			createTableStmt, err := timgr.getCreateTableStmt(ctx, schema.Name, tableName)
 			metric.RecordTableCount(metric.TableStatePending, err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			tableInfo := &TidbTableInfo{
-				ID:              tbl.ID,
-				Name:            tableName,
-				Columns:         len(tbl.Columns),
-				Indices:         len(tbl.Indices),
-				CreateTableStmt: createTableStmt,
-				core:            tbl,
+				ID:      tbl.ID,
+				Name:    tableName,
+				Columns: len(tbl.Columns),
+				Indices: len(tbl.Indices),
+				core:    tbl,
 			}
 			dbInfo.Tables[tableName] = tableInfo
 		}
@@ -209,20 +213,6 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.
 		result[schema.Name] = dbInfo
 	}
 	return result, nil
-}
-
-func (timgr *TiDBManager) getCreateTableStmt(ctx context.Context, schema, table string) (string, error) {
-	tableName := common.UniqueTable(schema, table)
-	sql := common.SQLWithRetry{
-		DB:     timgr.db,
-		Logger: log.With(zap.String("table", tableName)),
-	}
-	var tbl, createTable string
-	err := sql.QueryRow(ctx, "show create table",
-		"SHOW CREATE TABLE "+tableName,
-		&tbl, &createTable,
-	)
-	return createTable, err
 }
 
 func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {

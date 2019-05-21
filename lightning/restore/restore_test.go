@@ -49,9 +49,8 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 		tableInfo.State = model.StatePublic
 
 		dbInfo.Tables[tc.name] = &TidbTableInfo{
-			Name:            tc.name,
-			CreateTableStmt: tc.createStmt,
-			core:            tableInfo,
+			Name: tc.name,
+			core: tableInfo,
 		}
 	}
 
@@ -66,9 +65,8 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 
 func (s *restoreSuite) TestNewTableRestoreFailure(c *C) {
 	tableInfo := &TidbTableInfo{
-		Name:            "failure",
-		CreateTableStmt: "N/A",
-		core:            &model.TableInfo{},
+		Name: "failure",
+		core: &model.TableInfo{},
 	}
 	dbInfo := &TidbDBInfo{Name: "mockdb", Tables: map[string]*TidbTableInfo{
 		"failure": tableInfo,

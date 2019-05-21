@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -39,6 +40,7 @@ import (
 type CheckpointStatus uint8
 
 const (
+	CheckpointStatusMissing         CheckpointStatus = 0
 	CheckpointStatusMaxInvalid      CheckpointStatus = 25
 	CheckpointStatusLoaded          CheckpointStatus = 30
 	CheckpointStatusAllWritten      CheckpointStatus = 60
@@ -80,6 +82,8 @@ func (status CheckpointStatus) MetricName() string {
 		return "checksum"
 	case CheckpointStatusAnalyzed, CheckpointStatusAnalyzeSkipped:
 		return "analyzed"
+	case CheckpointStatusMissing:
+		return "missing"
 	default:
 		return "invalid"
 	}
@@ -188,7 +192,7 @@ type TableCheckpointMerger interface {
 }
 
 type StatusCheckpointMerger struct {
-	EngineID int32 // wholeTableEngineID == apply to whole table.
+	EngineID int32 // WholeTableEngineID == apply to whole table.
 	Status   CheckpointStatus
 }
 
@@ -197,11 +201,11 @@ func (merger *StatusCheckpointMerger) SetInvalid() {
 }
 
 func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
-	if merger.EngineID == wholeTableEngineID || merger.Status <= CheckpointStatusMaxInvalid {
+	if merger.EngineID == WholeTableEngineID || merger.Status <= CheckpointStatusMaxInvalid {
 		cpd.status = merger.Status
 		cpd.hasStatus = true
 	}
-	if merger.EngineID >= 0 && merger.EngineID != wholeTableEngineID {
+	if merger.EngineID != WholeTableEngineID {
 		cpd.insertEngineCheckpointDiff(merger.EngineID, engineCheckpointDiff{
 			hasStatus: true,
 			status:    merger.Status,
@@ -240,8 +244,9 @@ func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 }
 
 type DestroyedTableCheckpoint struct {
-	TableName    string
-	EnginesCount int
+	TableName   string
+	MinEngineID int32
+	MaxEngineID int32
 }
 
 type CheckpointsDB interface {
@@ -585,7 +590,7 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 		UPDATE %s.%s SET pos = ?, prev_rowid_max = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ?
 		WHERE (table_name, engine_id, path, offset) = (?, ?, ?, ?);
 	`, cpdb.schema, checkpointTableNameChunk)
-	checksumQuery := fmt.Sprintf(`
+	rebaseQuery := fmt.Sprintf(`
 		UPDATE %s.%s SET alloc_base = GREATEST(?, alloc_base) WHERE table_name = ?;
 	`, cpdb.schema, checkpointTableNameTable)
 	tableStatusQuery := fmt.Sprintf(`
@@ -602,11 +607,11 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 			return errors.Trace(e)
 		}
 		defer chunkStmt.Close()
-		checksumStmt, e := tx.PrepareContext(c, checksumQuery)
+		rebaseStmt, e := tx.PrepareContext(c, rebaseQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
-		defer checksumStmt.Close()
+		defer rebaseStmt.Close()
 		tableStatusStmt, e := tx.PrepareContext(c, tableStatusQuery)
 		if e != nil {
 			return errors.Trace(e)
@@ -625,7 +630,7 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 				}
 			}
 			if cpd.hasRebase {
-				if _, e := checksumStmt.ExecContext(c, cpd.allocBase, tableName); e != nil {
+				if _, e := rebaseStmt.ExecContext(c, cpd.allocBase, tableName); e != nil {
 					return errors.Trace(e)
 				}
 			}
@@ -726,7 +731,10 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	tableModel := cpdb.checkpoints.Checkpoints[tableName]
+	tableModel, ok := cpdb.checkpoints.Checkpoints[tableName]
+	if !ok {
+		tableModel = &TableCheckpointModel{}
+	}
 
 	cp := &TableCheckpoint{
 		Status:    CheckpointStatus(tableModel.Status),
@@ -951,7 +959,8 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	selectQuery := fmt.Sprintf(`
 		SELECT
 			t.table_name,
-			COALESCE(MAX(e.engine_id) + 1, 0)
+			COALESCE(MIN(e.engine_id), 0),
+			COALESCE(MAX(e.engine_id), -1)
 		FROM %[1]s.%[4]s t
 		LEFT JOIN %[1]s.%[5]s e ON t.table_name = e.table_name
 		WHERE t.%[2]s = ? AND t.status <= %[3]d
@@ -983,7 +992,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		defer rows.Close()
 		for rows.Next() {
 			var dtc DestroyedTableCheckpoint
-			if e := rows.Scan(&dtc.TableName, &dtc.EnginesCount); e != nil {
+			if e := rows.Scan(&dtc.TableName, &dtc.MinEngineID, &dtc.MaxEngineID); e != nil {
 				return errors.Trace(e)
 			}
 			targetTables = append(targetTables, dtc)
@@ -1120,9 +1129,20 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 			continue
 		}
 		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
+			var minEngineID, maxEngineID int32 = math.MaxInt32, math.MinInt32
+			for engineID := range tableModel.Engines {
+				if engineID < minEngineID {
+					minEngineID = engineID
+				}
+				if engineID > maxEngineID {
+					maxEngineID = engineID
+				}
+			}
+
 			targetTables = append(targetTables, DestroyedTableCheckpoint{
-				TableName:    tableName,
-				EnginesCount: len(tableModel.Engines),
+				TableName:   tableName,
+				MinEngineID: minEngineID,
+				MaxEngineID: maxEngineID,
 			})
 		}
 	}
