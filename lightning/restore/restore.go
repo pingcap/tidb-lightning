@@ -93,7 +93,16 @@ type errorSummary struct {
 
 type errorSummaries struct {
 	sync.Mutex
+	logger  log.Logger
 	summary map[string]errorSummary
+}
+
+// makeErrorSummaries returns an initialized errorSummaries instance
+func makeErrorSummaries(logger log.Logger) errorSummaries {
+	return errorSummaries{
+		logger:  logger,
+		summary: make(map[string]errorSummary),
+	}
 }
 
 func (es *errorSummaries) emitLog() {
@@ -101,7 +110,7 @@ func (es *errorSummaries) emitLog() {
 	defer es.Unlock()
 
 	if errorCount := len(es.summary); errorCount > 0 {
-		logger := log.L()
+		logger := es.logger
 		logger.Error("tables failed to be imported", zap.Int("count", errorCount))
 		for tableName, errorSummary := range es.summary {
 			logger.Error("-",
@@ -168,10 +177,7 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 		importer:      importer,
 		tidbMgr:       tidbMgr,
 
-		errorSummaries: errorSummaries{
-			summary: make(map[string]errorSummary),
-		},
-
+		errorSummaries:    makeErrorSummaries(log.L()),
 		checkpointsDB:     cpdb,
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
@@ -1539,41 +1545,27 @@ func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *Rest
 	}
 }
 
-func (cr *chunkRestore) restore(
+func (cr *chunkRestore) encodeLoop(
 	ctx context.Context,
+	kvsCh chan<- deliveredKVs,
 	t *TableRestore,
-	engineID int32,
-	dataEngine, indexEngine *kv.OpenedEngine,
-	rc *RestoreController,
-) error {
-	// Create the encoder.
-	kvEncoder := kv.NewTableKVEncoder(
-		t.encTable,
-		rc.cfg.TiDB.SQLMode,
-	)
-	defer func() {
-		kvEncoder.Close()
-		kvEncoder = nil
-	}()
-
-	readTotalDur := time.Duration(0)
-	encodeTotalDur := time.Duration(0)
-
-	kvsCh := make(chan deliveredKVs, maxKVQueueSize)
-	deliverCompleteCh := make(chan deliverResult)
-
-	go func() {
-		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
-		deliverCompleteCh <- deliverResult{dur, err}
-	}()
-
-	defer close(kvsCh)
-
-	logTask := t.logger.With(
-		zap.Int32("engineNumber", engineID),
-		zap.Int("fileIndex", cr.index),
-		zap.Stringer("path", &cr.chunk.Key),
-	).Begin(zap.InfoLevel, "restore file")
+	logger log.Logger,
+	kvEncoder *kv.TableKVEncoder,
+	deliverCompleteCh <-chan deliverResult,
+) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
+	send := func(kvs deliveredKVs) error {
+		select {
+		case kvsCh <- kvs:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case deliverResult := <-deliverCompleteCh:
+			if deliverResult.err == nil {
+				panic("unexpected: deliverCompleteCh prematurely fulfilled with no error")
+			}
+			return errors.Trace(deliverResult.err)
+		}
+	}
 
 	initializedColumns := false
 outside:
@@ -1584,7 +1576,7 @@ outside:
 		}
 
 		start := time.Now()
-		err := cr.parser.ReadRow()
+		err = cr.parser.ReadRow()
 		newOffset, rowID := cr.parser.Pos()
 		switch errors.Cause(err) {
 		case nil:
@@ -1597,7 +1589,8 @@ outside:
 		case io.EOF:
 			break outside
 		default:
-			return errors.Trace(err)
+			err = errors.Trace(err)
+			return
 		}
 
 		readDur := time.Since(start)
@@ -1607,42 +1600,65 @@ outside:
 
 		// sql -> kv
 		lastRow := cr.parser.LastRow()
-		kvs, err := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
+		kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
 		encodeDur := time.Since(start)
 		encodeTotalDur += encodeDur
 		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 
-		if err != nil {
+		if encodeErr != nil {
 			// error is already logged inside kvEncoder.Encode(), just propagate up directly.
-			return err
+			err = encodeErr
+			return
 		}
 
 		deliverKvStart := time.Now()
-		select {
-		case kvsCh <- deliveredKVs{kvs: kvs, offset: newOffset, rowID: rowID}:
-			break
-		case <-ctx.Done():
-			return ctx.Err()
-		case deliverResult := <-deliverCompleteCh:
-			if deliverResult.err == nil {
-				panic("unexpected: deliverCompleteCh prematurely fulfilled with no error")
-			}
-			return errors.Trace(deliverResult.err)
+		if err = send(deliveredKVs{kvs: kvs, offset: newOffset, rowID: rowID}); err != nil {
+			return
 		}
 		metric.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
 	}
 
 	lastOffset, lastRowID := cr.parser.Pos()
-	select {
-	case kvsCh <- deliveredKVs{kvs: nil, offset: lastOffset, rowID: lastRowID}:
-		break
-	case <-ctx.Done():
-		return ctx.Err()
-	case deliverResult := <-deliverCompleteCh:
-		if deliverResult.err == nil {
-			panic("unexpected: deliverCompleteCh prematurely fulfilled with no error")
-		}
-		return errors.Trace(deliverResult.err)
+	err = send(deliveredKVs{kvs: nil, offset: lastOffset, rowID: lastRowID})
+	return
+}
+
+func (cr *chunkRestore) restore(
+	ctx context.Context,
+	t *TableRestore,
+	engineID int32,
+	dataEngine, indexEngine *kv.OpenedEngine,
+	rc *RestoreController,
+) error {
+	// Create the encoder.
+	kvEncoder := kv.NewTableKVEncoder(
+		t.encTable,
+		rc.cfg.TiDB.SQLMode,
+	)
+	kvsCh := make(chan deliveredKVs, maxKVQueueSize)
+	deliverCompleteCh := make(chan deliverResult)
+
+	defer func() {
+		kvEncoder.Close()
+		kvEncoder = nil
+		close(kvsCh)
+	}()
+
+	go func() {
+		defer close(deliverCompleteCh)
+		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
+		deliverCompleteCh <- deliverResult{dur, err}
+	}()
+
+	logTask := t.logger.With(
+		zap.Int32("engineNumber", engineID),
+		zap.Int("fileIndex", cr.index),
+		zap.Stringer("path", &cr.chunk.Key),
+	).Begin(zap.InfoLevel, "restore file")
+
+	readTotalDur, encodeTotalDur, err := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh)
+	if err != nil {
+		return err
 	}
 
 	select {

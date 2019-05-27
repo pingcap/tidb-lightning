@@ -183,6 +183,7 @@ func NewConfig() *Config {
 			LogProgress: Duration{Duration: 5 * time.Minute},
 		},
 		Mydumper: MydumperRuntime{
+			ReadBlockSize: ReadBlockSize,
 			CSV: CSVConfig{
 				Separator: ",",
 			},
