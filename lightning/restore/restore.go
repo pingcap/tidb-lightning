@@ -1642,10 +1642,10 @@ func (cr *chunkRestore) restore(
 		kvEncoder.Close()
 		kvEncoder = nil
 		close(kvsCh)
-		close(deliverCompleteCh)
 	}()
 
 	go func() {
+		defer close(deliverCompleteCh)
 		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
 		deliverCompleteCh <- deliverResult{dur, err}
 	}()
