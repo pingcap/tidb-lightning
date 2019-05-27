@@ -266,9 +266,13 @@ var _ = Suite(&tableRestoreSuite{})
 type tableRestoreSuite struct {
 	tr  *TableRestore
 	cfg *config.Config
+
+	tableInfo *TidbTableInfo
+	dbInfo    *TidbDBInfo
+	tableMeta *mydump.MDTableMeta
 }
 
-func (s *tableRestoreSuite) SetUpTest(c *C) {
+func (s *tableRestoreSuite) SetUpSuite(c *C) {
 	// Produce a mock table info
 
 	p := parser.New()
@@ -287,10 +291,10 @@ func (s *tableRestoreSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	core.State = model.StatePublic
 
-	tableInfo := &TidbTableInfo{Name: "table", core: core}
-	dbInfo := &TidbDBInfo{
+	s.tableInfo = &TidbTableInfo{Name: "table", core: core}
+	s.dbInfo = &TidbDBInfo{
 		Name:   "db",
-		Tables: map[string]*TidbTableInfo{"table": tableInfo},
+		Tables: map[string]*TidbTableInfo{"table": s.tableInfo},
 	}
 
 	// Write some sample SQL dump
@@ -307,17 +311,19 @@ func (s *tableRestoreSuite) SetUpTest(c *C) {
 		fakeDataFiles = append(fakeDataFiles, fakeDataPath)
 	}
 
-	tableMeta := &mydump.MDTableMeta{
+	s.tableMeta = &mydump.MDTableMeta{
 		DB:         "db",
 		Name:       "table",
 		TotalSize:  222,
 		SchemaFile: path.Join(fakeDataDir, "db.table-schema.sql"),
 		DataFiles:  fakeDataFiles,
 	}
+}
 
+func (s *tableRestoreSuite) SetUpTest(c *C) {
 	// Collect into the test TableRestore structure
-
-	s.tr, err = NewTableRestore("`db`.`table`", tableMeta, dbInfo, tableInfo, &TableCheckpoint{})
+	var err error
+	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &TableCheckpoint{})
 	c.Assert(err, IsNil)
 
 	s.cfg = config.NewConfig()

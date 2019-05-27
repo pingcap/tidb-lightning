@@ -1635,20 +1635,20 @@ func (cr *chunkRestore) restore(
 		t.encTable,
 		rc.cfg.TiDB.SQLMode,
 	)
+	kvsCh := make(chan deliveredKVs, maxKVQueueSize)
+	deliverCompleteCh := make(chan deliverResult)
+
 	defer func() {
 		kvEncoder.Close()
 		kvEncoder = nil
+		close(kvsCh)
+		close(deliverCompleteCh)
 	}()
-
-	kvsCh := make(chan deliveredKVs, maxKVQueueSize)
-	deliverCompleteCh := make(chan deliverResult)
 
 	go func() {
 		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
 		deliverCompleteCh <- deliverResult{dur, err}
 	}()
-
-	defer close(kvsCh)
 
 	logTask := t.logger.With(
 		zap.Int32("engineNumber", engineID),
