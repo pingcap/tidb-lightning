@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
+	"github.com/pingcap/tidb-lightning/lightning/web"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
@@ -352,6 +353,7 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 
 			if len(cpd) > 0 {
 				rc.checkpointsDB.Update(cpd)
+				web.BroadcastCheckpointDiff(cpd)
 			}
 			rc.checkpointsWg.Done()
 		}
@@ -488,8 +490,10 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
+				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 				err := task.tr.restoreTable(ctx, rc, task.cp)
 				tableLogTask.End(zap.ErrorLevel, err)
+				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
 				restoreErr.Set(err)
 				wg.Done()
@@ -558,6 +562,7 @@ func (t *TableRestore) restoreTable(
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, t.tableName, cp.Engines); err != nil {
 			return errors.Trace(err)
 		}
+		web.BroadcastTableCheckpoint(t.tableName, cp)
 
 		// rebase the allocator so it exceeds the number of rows.
 		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoIncID)

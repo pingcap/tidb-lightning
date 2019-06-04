@@ -14,6 +14,7 @@
 package lightning
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
+	"github.com/pingcap/tidb-lightning/lightning/web"
 )
 
 type Lightning struct {
@@ -68,6 +70,8 @@ func (l *Lightning) Serve() {
 	http.HandleFunc("/tasks", func(w http.ResponseWriter, req *http.Request) {
 		l.handleTask(w, req)
 	})
+	http.HandleFunc("/progress/task", handleProgressTask)
+	http.HandleFunc("/progress/table", handleProgressTable)
 
 	l.server.Addr = l.globalCfg.App.StatusAddr
 	err := l.server.ListenAndServe()
@@ -104,7 +108,7 @@ func (l *Lightning) RunServer() error {
 
 var taskCfgRecorderKey struct{}
 
-func (l *Lightning) run(taskCfg *config.Config) error {
+func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	failpoint.Inject("SkipRunTask", func() error {
 		if recorder, ok := l.ctx.Value(&taskCfgRecorderKey).(chan *config.Config); ok {
 			recorder <- taskCfg
@@ -116,15 +120,24 @@ func (l *Lightning) run(taskCfg *config.Config) error {
 		log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 	})
 
+	web.BroadcastStartTask()
+	defer func() {
+		web.BroadcastEndTask(err)
+	}()
+
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
-	mdl, err := mydump.NewMyDumpLoader(taskCfg)
+	var mdl *mydump.MDLoader
+	mdl, err = mydump.NewMyDumpLoader(taskCfg)
 	loadTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	dbMetas := mdl.GetDatabases()
-	procedure, err := restore.NewRestoreController(l.ctx, dbMetas, taskCfg)
+	web.BroadcastInitProgress(dbMetas)
+
+	var procedure *restore.RestoreController
+	procedure, err = restore.NewRestoreController(l.ctx, dbMetas, taskCfg)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
@@ -217,4 +230,39 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 	l.taskCfgs.Push(cfg)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(taskResponse{ID: cfg.TaskID})
+}
+
+func writeBytesCompressed(w http.ResponseWriter, b []byte) {
+	w.Header().Set("Content-Encoding", "gzip")
+	w.WriteHeader(http.StatusOK)
+	gw, _ := gzip.NewWriterLevel(w, gzip.BestSpeed)
+	gw.Write(b)
+	gw.Close()
+}
+
+func handleProgressTask(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	res, err := web.MarshalTaskProgress()
+	if err == nil {
+		writeBytesCompressed(w, res)
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(err.Error())
+	}
+}
+
+func handleProgressTable(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	tableName := req.URL.Query().Get("t")
+	res, err := web.MarshalTableCheckpoints(tableName)
+	if err == nil {
+		writeBytesCompressed(w, res)
+	} else {
+		if errors.IsNotFound(err) {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(err.Error())
+	}
 }

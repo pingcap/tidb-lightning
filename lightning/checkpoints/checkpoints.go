@@ -118,9 +118,31 @@ type ChunkCheckpoint struct {
 	Checksum          verify.KVChecksum
 }
 
+func (ccp *ChunkCheckpoint) DeepCopy() *ChunkCheckpoint {
+	colPerm := make([]int, 0, len(ccp.ColumnPermutation))
+	colPerm = append(colPerm, ccp.ColumnPermutation...)
+	return &ChunkCheckpoint{
+		Key:               ccp.Key,
+		ColumnPermutation: colPerm,
+		Chunk:             ccp.Chunk,
+		Checksum:          ccp.Checksum,
+	}
+}
+
 type EngineCheckpoint struct {
 	Status CheckpointStatus
 	Chunks []*ChunkCheckpoint // a sorted array
+}
+
+func (engine *EngineCheckpoint) DeepCopy() *EngineCheckpoint {
+	chunks := make([]*ChunkCheckpoint, 0, len(engine.Chunks))
+	for _, chunk := range engine.Chunks {
+		chunks = append(chunks, chunk.DeepCopy())
+	}
+	return &EngineCheckpoint{
+		Status: engine.Status,
+		Chunks: chunks,
+	}
 }
 
 type TableCheckpoint struct {
@@ -129,6 +151,17 @@ type TableCheckpoint struct {
 	Engines   map[int32]*EngineCheckpoint
 }
 
+func (cp *TableCheckpoint) DeepCopy() *TableCheckpoint {
+	engines := make(map[int32]*EngineCheckpoint, len(cp.Engines))
+	for engineID, engine := range cp.Engines {
+		engines[engineID] = engine.DeepCopy()
+	}
+	return &TableCheckpoint{
+		Status:    cp.Status,
+		AllocBase: cp.AllocBase,
+		Engines:   engines,
+	}
+}
 func (cp *TableCheckpoint) CountChunks() int {
 	result := 0
 	for _, engine := range cp.Engines {
@@ -182,6 +215,40 @@ func (cpd *TableCheckpointDiff) String() string {
 		"{hasStatus:%v, hasRebase:%v, status:%d, allocBase:%d, engines:[%d]}",
 		cpd.hasStatus, cpd.hasRebase, cpd.status, cpd.allocBase, len(cpd.engines),
 	)
+}
+
+// Apply the diff to this checkpoint.
+func (cp *TableCheckpoint) Apply(cpd *TableCheckpointDiff) {
+	if cpd.hasStatus {
+		cp.Status = cpd.status
+	}
+	if cpd.hasRebase {
+		cp.AllocBase = cpd.allocBase
+	}
+	for engineID, engineDiff := range cpd.engines {
+		engine := cp.Engines[engineID]
+		if engine == nil {
+			continue
+		}
+		if engineDiff.hasStatus {
+			engine.Status = engineDiff.status
+		}
+		for key, diff := range engineDiff.chunks {
+			index := sort.Search(len(engine.Chunks), func(i int) bool {
+				return !engine.Chunks[i].Key.less(&key)
+			})
+			if index >= len(engine.Chunks) {
+				continue
+			}
+			chunk := engine.Chunks[index]
+			if chunk.Key != key {
+				continue
+			}
+			chunk.Chunk.Offset = diff.pos
+			chunk.Chunk.PrevRowIDMax = diff.rowID
+			chunk.Checksum = diff.checksum
+		}
+	}
 }
 
 type TableCheckpointMerger interface {
@@ -295,33 +362,6 @@ func (*NullCheckpointsDB) InsertEngineCheckpoints(_ context.Context, _ string, _
 }
 
 func (*NullCheckpointsDB) Update(map[string]*TableCheckpointDiff) {}
-
-type MemoryCheckpointsDB map[string]*TableCheckpoint
-
-func (cpdb *MemoryCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
-	for tableName, cpd := range checkpointDiffs {
-		tbl := (*cpdb)[tableName]
-		if cpd.hasStatus {
-			tbl.Status = cpd.status
-		}
-		if cpd.hasRebase {
-			tbl.AllocBase = cpd.allocBase
-		}
-		for engineID, engineDiff := range cpd.engines {
-			engine := tbl.Engines[engineID]
-			if engineDiff.hasStatus {
-				engine.Status = engineDiff.status
-			}
-			for _, chunk := range engine.Chunks {
-				if diff, ok := engineDiff.chunks[chunk.Key]; ok {
-					chunk.Chunk.Offset = diff.pos
-					chunk.Chunk.PrevRowIDMax = diff.rowID
-					chunk.Checksum = diff.checksum
-				}
-			}
-		}
-	}
-}
 
 type MySQLCheckpointsDB struct {
 	db      *sql.DB
