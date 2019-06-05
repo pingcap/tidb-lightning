@@ -26,10 +26,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
 	"go.uber.org/zap"
+	"modernc.org/mathutil"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"

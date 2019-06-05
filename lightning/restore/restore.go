@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/kvencoder"
 	"go.uber.org/zap"
+	"modernc.org/mathutil"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
