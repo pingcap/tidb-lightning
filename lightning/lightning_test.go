@@ -14,7 +14,11 @@
 package lightning
 
 import (
+	"io/ioutil"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -29,36 +33,93 @@ func TestLightning(t *testing.T) {
 }
 
 func (s *lightningSuite) TestInitEnv(c *C) {
-	cfg := &config.Config{
-		App: config.Lightning{ProfilePort: 45678},
+	cfg := &config.GlobalConfig{
+		App: config.GlobalLightning{StatusAddr: ":45678"},
 	}
 	err := initEnv(cfg)
 	c.Assert(err, IsNil)
-	cfg.App.ProfilePort = 0
+	cfg.App.StatusAddr = ""
 	cfg.App.Config.File = "."
 	err = initEnv(cfg)
 	c.Assert(err, ErrorMatches, "can't use directory as log file name")
 }
 
 func (s *lightningSuite) TestRun(c *C) {
-	cfg := &config.Config{}
+	cfg := config.NewGlobalConfig()
+	cfg.TiDB.Host = "test.invalid"
+	cfg.TiDB.Port = 4000
+	cfg.TiDB.PdAddr = "test.invalid:2379"
 	cfg.Mydumper.SourceDir = "not-exists"
 	lightning := New(cfg)
-	err := lightning.Run()
+	err := lightning.RunOnce()
 	c.Assert(err, ErrorMatches, ".*mydumper dir does not exist")
 
-	cfg.Mydumper.SourceDir = "."
-	cfg.Checkpoint.Enable = true
-	cfg.Checkpoint.Driver = "invalid"
-	lightning = New(cfg)
-	err = lightning.Run()
+	err = lightning.run(&config.Config{
+		Mydumper: config.MydumperRuntime{SourceDir: "."},
+		Checkpoint: config.Checkpoint{
+			Enable: true,
+			Driver: "invalid",
+		},
+	})
 	c.Assert(err, ErrorMatches, "Unknown checkpoint driver invalid")
 
-	cfg.Mydumper.SourceDir = "."
-	cfg.Checkpoint.Enable = true
-	cfg.Checkpoint.Driver = "file"
-	cfg.Checkpoint.DSN = "any-file"
-	lightning = New(cfg)
-	err = lightning.Run()
+	err = lightning.run(&config.Config{
+		Mydumper: config.MydumperRuntime{SourceDir: "."},
+		Checkpoint: config.Checkpoint{
+			Enable: true,
+			Driver: "file",
+			DSN:    "any-file",
+		},
+	})
 	c.Assert(err, NotNil)
+}
+
+func (s *lightningSuite) TestRunServer(c *C) {
+	cfg := config.NewGlobalConfig()
+	cfg.TiDB.Host = "test.invalid"
+	cfg.TiDB.Port = 4000
+	cfg.TiDB.PdAddr = "test.invalid:2379"
+	cfg.App.ServerMode = true
+	cfg.App.StatusAddr = "127.0.0.1:45678"
+
+	lightning := New(cfg)
+	go lightning.Serve()
+	defer lightning.Stop()
+
+	url := "http://127.0.0.1:45678/tasks"
+
+	// Wait a bit until the server is really listening.
+	time.Sleep(500 * time.Millisecond)
+
+	resp, err := http.Get(url)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusMethodNotAllowed)
+	c.Assert(resp.Header.Get("Allow"), Equals, http.MethodPost)
+	resp.Body.Close()
+
+	resp, err = http.Post(url, "application/toml", strings.NewReader("????"))
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotImplemented)
+	data, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(data, BytesEquals, []byte("server-mode not enabled\n"))
+	resp.Body.Close()
+
+	go lightning.RunServer()
+
+	resp, err = http.Post(url, "application/toml", strings.NewReader("????"))
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	data, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(data), Matches, "cannot parse task.*\n")
+	resp.Body.Close()
+
+	resp, err = http.Post(url, "application/toml", strings.NewReader("[mydumper.csv]\nseparator = 'fooo'"))
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	data, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(data), Matches, "invalid task configuration:.*\n")
+	resp.Body.Close()
 }

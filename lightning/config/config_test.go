@@ -16,12 +16,10 @@ package config_test
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path"
 	"regexp"
 	"strconv"
 	"testing"
@@ -173,9 +171,6 @@ func (s *configTestSuite) TestAdjustWillBatchImportRatioInvalid(c *C) {
 }
 
 func (s *configTestSuite) TestInvalidCSV(c *C) {
-	d := c.MkDir()
-	p := path.Join(d, "cfg.toml")
-
 	testCases := []struct {
 		input string
 		err   string
@@ -262,14 +257,6 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 		},
 		{
 			input: `
-				invalid[mydumper.csv]
-				delimiter = '\'
-				backslash-escape = true
-			`,
-			err: "Near line 0 (last key parsed ''): bare keys cannot contain '['",
-		},
-		{
-			input: `
 				[tidb]
 				sql-mode = "invalid-sql-mode"
 			`,
@@ -297,17 +284,28 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 		comment := Commentf("input = %s", tc.input)
 
 		cfg := config.NewConfig()
-		cfg.ConfigFile = p
-		err := ioutil.WriteFile(p, []byte(tc.input), 0644)
-		c.Assert(err, IsNil, comment)
+		cfg.TiDB.Port = 4000
+		cfg.TiDB.PdAddr = "test.invalid:2379"
+		err := cfg.LoadFromTOML([]byte(tc.input))
+		c.Assert(err, IsNil)
 
-		err = cfg.Load()
+		err = cfg.Adjust()
 		if tc.err != "" {
 			c.Assert(err, ErrorMatches, regexp.QuoteMeta(tc.err), comment)
 		} else {
 			c.Assert(err, IsNil, comment)
 		}
 	}
+}
+
+func (s *configTestSuite) TestInvalidTOML(c *C) {
+	cfg := &config.Config{}
+	err := cfg.LoadFromTOML([]byte(`
+		invalid[mydumper.csv]
+		delimiter = '\'
+		backslash-escape = true
+	`))
+	c.Assert(err, ErrorMatches, regexp.QuoteMeta("Near line 0 (last key parsed ''): bare keys cannot contain '['"))
 }
 
 func (s *configTestSuite) TestDurationUnmarshal(c *C) {
@@ -330,23 +328,23 @@ func (s *configTestSuite) TestDurationMarshalJSON(c *C) {
 }
 
 func (s *configTestSuite) TestLoadConfig(c *C) {
-	cfg, err := config.LoadConfig([]string{"-tidb-port", "sss"})
+	cfg, err := config.LoadGlobalConfig([]string{"-tidb-port", "sss"}, nil)
 	c.Assert(err, ErrorMatches, `invalid value "sss" for flag -tidb-port: parse error`)
 	c.Assert(cfg, IsNil)
 
-	cfg, err = config.LoadConfig([]string{"-V"})
+	cfg, err = config.LoadGlobalConfig([]string{"-V"}, nil)
 	c.Assert(err, Equals, flag.ErrHelp)
 	c.Assert(cfg, IsNil)
 
-	cfg, err = config.LoadConfig([]string{"-config", "not-exists"})
+	cfg, err = config.LoadGlobalConfig([]string{"-config", "not-exists"}, nil)
 	c.Assert(err, ErrorMatches, ".*no such file or directory.*")
 	c.Assert(cfg, IsNil)
 
-	cfg, err = config.LoadConfig([]string{"-tidb-status", "111111"})
-	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
+	cfg, err = config.LoadGlobalConfig([]string{"--server-mode"}, nil)
+	c.Assert(err, ErrorMatches, "If server-mode is enabled, the status-addr must be a valid listen address")
 	c.Assert(cfg, IsNil)
 
-	cfg, err = config.LoadConfig([]string{
+	cfg, err = config.LoadGlobalConfig([]string{
 		"-L", "debug",
 		"-log-file", "/path/to/file.log",
 		"-tidb-host", "172.16.30.11",
@@ -355,7 +353,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 		"-pd-urls", "172.16.30.11:2379,172.16.30.12:2379",
 		"-d", "/path/to/import",
 		"-importer", "172.16.30.11:23008",
-	})
+	}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(cfg.App.Config.Level, Equals, "debug")
 	c.Assert(cfg.App.Config.File, Equals, "/path/to/file.log")
@@ -366,12 +364,16 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	c.Assert(cfg.Mydumper.SourceDir, Equals, "/path/to/import")
 	c.Assert(cfg.TikvImporter.Addr, Equals, "172.16.30.11:23008")
 
-	cfg.Checkpoint.DSN = ""
-	cfg.Checkpoint.Driver = "mysql"
-	err = cfg.Adjust()
+	taskCfg := config.NewConfig()
+	err = taskCfg.LoadFromGlobal(cfg)
 	c.Assert(err, IsNil)
-	c.Assert(cfg.Checkpoint.DSN, Equals, "guest:@tcp(172.16.30.11:4001)/?charset=utf8")
 
-	result := cfg.String()
+	taskCfg.Checkpoint.DSN = ""
+	taskCfg.Checkpoint.Driver = "mysql"
+	err = taskCfg.Adjust()
+	c.Assert(err, IsNil)
+	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:@tcp(172.16.30.11:4001)/?charset=utf8")
+
+	result := taskCfg.String()
 	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)
 }

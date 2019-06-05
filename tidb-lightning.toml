@@ -1,8 +1,18 @@
 ### tidb-lightning configuartion
 [lightning]
 
-# background profile for debuging ( 0 to disable )
-pprof-port = 8289
+# Listening address for the HTTP server (set to empty string to disable).
+# The server is responsible for the web interface, submitting import tasks,
+# serving Prometheus metrics and exposing debug profiling data.
+status-addr = ":8289"
+
+# Toggle server mode.
+# If "false", running Lightning will immediately start the import job, and exits
+# after the job is finished.
+# If "true", running Lightning will wait for user to submit tasks, via the HTTP API
+# (`curl http://lightning-ip:8289/tasks --data-binary @tidb-lightning.toml`).
+# The program will keep running and waiting for more tasks, until receiving the SIGINT signal.
+server-mode = false
 
 # check if the cluster satisfies the minimum requirement before starting
 # check-requirements = true

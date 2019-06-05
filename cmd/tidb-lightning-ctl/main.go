@@ -38,62 +38,34 @@ func main() {
 }
 
 func run() error {
+	var (
+		compact                                     *bool
+		mode, flagImportEngine, flagCleanupEngine   *string
+		cpRemove, cpErrIgnore, cpErrDestroy, cpDump *string
+
+		fsUsage func()
+	)
+
+	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], func(fs *flag.FlagSet) {
+		compact = fs.Bool("compact", false, "do manual compaction on the target cluster")
+		mode = fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
+
+		flagImportEngine = fs.String("import-engine", "", "manually import a closed engine (value can be '`db`.`table`:123' or a UUID")
+		flagCleanupEngine = fs.String("cleanup-engine", "", "manually delete a closed engine")
+
+		cpRemove = fs.String("checkpoint-remove", "", "remove the checkpoint associated with the given table (value can be 'all' or '`db`.`table`')")
+		cpErrIgnore = fs.String("checkpoint-error-ignore", "", "ignore errors encoutered previously on the given table (value can be 'all' or '`db`.`table`'); may corrupt this table if used incorrectly")
+		cpErrDestroy = fs.String("checkpoint-error-destroy", "", "deletes imported data with table which has an error before (value can be 'all' or '`db`.`table`')")
+		cpDump = fs.String("checkpoint-dump", "", "dump the checkpoint information as two CSV files in the given folder")
+
+		fsUsage = fs.Usage
+	}))
+
 	cfg := config.NewConfig()
-	fs := flag.NewFlagSet("lightning-ctl", flag.ExitOnError)
-
-	fs.StringVar(&cfg.ConfigFile, "config", "", "tidb-lightning configuration file")
-
-	logLevel := fs.String("L", "", `log level: info, debug, warn, error, fatal (default "info")`)
-	logFilePath := fs.String("log-file", "", "log file path")
-	tidbHost := fs.String("tidb-host", "", "TiDB server host")
-	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
-	tidbUser := fs.String("tidb-user", "", "TiDB user name to connect")
-	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
-	importerAddr := fs.String("importer", "", "address (host:port) to connect to tikv-importer")
-
-	compact := fs.Bool("compact", false, "do manual compaction on the target cluster")
-	mode := fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
-
-	flagImportEngine := fs.String("import-engine", "", "manually import a closed engine (value can be '`db`.`table`:123' or a UUID")
-	flagCleanupEngine := fs.String("cleanup-engine", "", "manually delete a closed engine")
-
-	cpRemove := fs.String("checkpoint-remove", "", "remove the checkpoint associated with the given table (value can be 'all' or '`db`.`table`')")
-	cpErrIgnore := fs.String("checkpoint-error-ignore", "", "ignore errors encoutered previously on the given table (value can be 'all' or '`db`.`table`'); may corrupt this table if used incorrectly")
-	cpErrDestroy := fs.String("checkpoint-error-destroy", "", "deletes imported data with table which has an error before (value can be 'all' or '`db`.`table`')")
-	cpDump := fs.String("checkpoint-dump", "", "dump the checkpoint information as two CSV files in the given folder")
-
-	err := fs.Parse(os.Args[1:])
-	if err == nil {
-		err = cfg.Load()
+	if err := cfg.LoadFromGlobal(globalCfg); err != nil {
+		return err
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if *logLevel != "" {
-		cfg.App.Config.Level = *logLevel
-	}
-	if *logFilePath != "" {
-		cfg.App.Config.File = *logFilePath
-	}
-	if *tidbHost != "" {
-		cfg.TiDB.Host = *tidbHost
-	}
-	if *tidbPort != 0 {
-		cfg.TiDB.Port = *tidbPort
-	}
-	if *tidbUser != "" {
-		cfg.TiDB.User = *tidbUser
-	}
-	if *pdAddr != "" {
-		cfg.TiDB.PdAddr = *pdAddr
-	}
-	if *importerAddr != "" {
-		cfg.TikvImporter.Addr = *importerAddr
-	}
-
-	err = cfg.Adjust()
-	if err != nil {
+	if err := cfg.Adjust(); err != nil {
 		return err
 	}
 
@@ -125,7 +97,7 @@ func run() error {
 		return errors.Trace(checkpointDump(ctx, cfg, *cpDump))
 	}
 
-	fs.Usage()
+	fsUsage()
 	return nil
 }
 
