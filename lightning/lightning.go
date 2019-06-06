@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
+	"github.com/pingcap/failpoint"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -109,7 +110,16 @@ func (l *Lightning) RunServer() error {
 	}
 }
 
+var taskCfgRecorderKey struct{}
+
 func (l *Lightning) run(taskCfg *config.Config) error {
+	failpoint.Inject("SkipRunTask", func() {
+		if recorder, ok := l.ctx.Value(&taskCfgRecorderKey).(chan *config.Config); ok {
+			recorder <- taskCfg
+		}
+		failpoint.Return(nil)
+	})
+
 	common.PrintInfo("lightning", func() {
 		log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 	})

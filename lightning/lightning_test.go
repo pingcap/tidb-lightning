@@ -19,8 +19,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"fmt"
+	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 )
 
@@ -122,4 +125,39 @@ func (s *lightningSuite) TestRunServer(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(data), Matches, "invalid task configuration:.*\n")
 	resp.Body.Close()
+
+	taskCfgCh := make(chan *config.Config)
+	lightning.ctx = context.WithValue(lightning.ctx, &taskCfgRecorderKey, taskCfgCh)
+	failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/SkipRunTask", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/SkipRunTask")
+
+	for i := 0; i < 20; i++ {
+		resp, err = http.Post(url, "application/toml", strings.NewReader(fmt.Sprintf(`
+			[mydumper]
+			data-source-dir = 'demo-path-%d'
+			[mydumper.csv]
+			separator = '/'
+		`, i)))
+		c.Assert(err, IsNil)
+		c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+		select {
+		case taskCfg := <-taskCfgCh:
+			c.Assert(taskCfg.TiDB.Host, Equals, "test.invalid")
+			c.Assert(taskCfg.Mydumper.SourceDir, Equals, fmt.Sprintf("demo-path-%d", i))
+			c.Assert(taskCfg.Mydumper.CSV.Separator, Equals, "/")
+		case <-time.After(500 * time.Millisecond):
+			c.Fatalf("task is not queued after 500ms (i = %d)", i)
+		}
+	}
+
+	// Check that queuing too many tasks will cause the server to reject it.
+	for i := 0; i < 80; i++ {
+		_, err = http.Post(url, "application/toml", strings.NewReader(""))
+		c.Assert(err, IsNil)
+	}
+	resp, err = http.Post(url, "application/toml", strings.NewReader(""))
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusServiceUnavailable)
 }
+

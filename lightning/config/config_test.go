@@ -377,3 +377,11 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	result := taskCfg.String()
 	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)
 }
+
+func (s *configTestSuite) TestLoadFromInvalidConfig(c *C) {
+	taskCfg := config.NewConfig()
+	err := taskCfg.LoadFromGlobal(&config.GlobalConfig {
+		ConfigFileContent: []byte("invalid toml"),
+	})
+	c.Assert(err, ErrorMatches, "Near line 1.*")
+}
