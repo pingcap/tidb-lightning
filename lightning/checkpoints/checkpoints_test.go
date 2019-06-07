@@ -1,9 +1,15 @@
-package restore
+package checkpoints
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
+
+func Test(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&checkpointSuite{})
 

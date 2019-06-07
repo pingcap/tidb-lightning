@@ -18,7 +18,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"path"
@@ -41,6 +40,7 @@ import (
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
+	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
@@ -61,8 +61,7 @@ const (
 )
 
 const (
-	indexEngineID      = -1
-	WholeTableEngineID = math.MaxInt32
+	indexEngineID = -1
 )
 
 const (
@@ -561,7 +560,7 @@ func (t *TableRestore) restoreTable(
 		}
 
 		// rebase the allocator so it exceeds the number of rows.
-		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.core.AutoIncID)
+		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoIncID)
 		for _, engine := range cp.Engines {
 			for _, chunk := range engine.Chunks {
 				cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, chunk.Chunk.RowIDMax)
@@ -1125,7 +1124,7 @@ func NewTableRestore(
 	cp *TableCheckpoint,
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocator(cp.AllocBase)
-	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.core)
+	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
@@ -1190,12 +1189,12 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 //
 // The column permutation of (d, b, a) is set to be [2, 1, -1, 0].
 func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
-	colPerm := make([]int, 0, len(t.tableInfo.core.Columns)+1)
-	shouldIncludeRowID := !t.tableInfo.core.PKIsHandle
+	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
+	shouldIncludeRowID := !t.tableInfo.Core.PKIsHandle
 
 	if len(columns) == 0 {
 		// no provided columns, so use identity permutation.
-		for i := range t.tableInfo.core.Columns {
+		for i := range t.tableInfo.Core.Columns {
 			colPerm = append(colPerm, i)
 		}
 		if shouldIncludeRowID {
@@ -1206,7 +1205,7 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 		for i, column := range columns {
 			columnMap[column] = i
 		}
-		for _, colInfo := range t.tableInfo.core.Columns {
+		for _, colInfo := range t.tableInfo.Core.Columns {
 			if i, ok := columnMap[colInfo.Name.L]; ok {
 				colPerm = append(colPerm, i)
 			} else {

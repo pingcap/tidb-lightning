@@ -60,7 +60,7 @@ checksuccess:
 	@rm tmp_parser.go
 
 data_parsers: lightning/mydump/parser_generated.go lightning/mydump/csv_parser_generated.go
-	PATH="$(GOPATH)/bin":$(PATH) protoc -I. -I"$(GOPATH)/src" lightning/restore/file_checkpoints.proto --gogofaster_out=.
+	PATH="$(GOPATH)/bin":$(PATH) protoc -I. -I"$(GOPATH)/src" lightning/checkpoints/file_checkpoints.proto --gogofaster_out=.
 
 lightning:
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/tidb-lightning/main.go

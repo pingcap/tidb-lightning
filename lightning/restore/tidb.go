@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -40,19 +41,6 @@ type TiDBManager struct {
 	client  *http.Client
 	baseURL *url.URL
 	parser  *parser.Parser
-}
-
-type TidbDBInfo struct {
-	Name   string
-	Tables map[string]*TidbTableInfo
-}
-
-type TidbTableInfo struct {
-	ID      int64
-	Name    string
-	Columns int
-	Indices int
-	core    *model.TableInfo
 }
 
 func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
@@ -205,7 +193,7 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.
 				Name:    tableName,
 				Columns: len(tbl.Columns),
 				Indices: len(tbl.Indices),
-				core:    tbl,
+				Core:    tbl,
 			}
 			dbInfo.Tables[tableName] = tableInfo
 		}

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package checkpoints
 
 import (
 	"context"
@@ -55,6 +55,8 @@ const (
 )
 
 const nodeID = 0
+
+const WholeTableEngineID = math.MaxInt32
 
 const (
 	// the table names to store each kind of checkpoint in the checkpoint database
@@ -293,6 +295,33 @@ func (*NullCheckpointsDB) InsertEngineCheckpoints(_ context.Context, _ string, _
 }
 
 func (*NullCheckpointsDB) Update(map[string]*TableCheckpointDiff) {}
+
+type MemoryCheckpointsDB map[string]*TableCheckpoint
+
+func (cpdb *MemoryCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
+	for tableName, cpd := range checkpointDiffs {
+		tbl := (*cpdb)[tableName]
+		if cpd.hasStatus {
+			tbl.Status = cpd.status
+		}
+		if cpd.hasRebase {
+			tbl.AllocBase = cpd.allocBase
+		}
+		for engineID, engineDiff := range cpd.engines {
+			engine := tbl.Engines[engineID]
+			if engineDiff.hasStatus {
+				engine.Status = engineDiff.status
+			}
+			for _, chunk := range engine.Chunks {
+				if diff, ok := engineDiff.chunks[chunk.Key]; ok {
+					chunk.Chunk.Offset = diff.pos
+					chunk.Chunk.PrevRowIDMax = diff.rowID
+					chunk.Checksum = diff.checksum
+				}
+			}
+		}
+	}
+}
 
 type MySQLCheckpointsDB struct {
 	db      *sql.DB
