@@ -14,6 +14,7 @@
 package verification_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -75,4 +76,17 @@ func (s *testKVChcksumSuite) TestChcksum(c *C) {
 	c.Assert(checksum.SumSize(), Equals, kvBytes<<1)
 	c.Assert(checksum.SumKVS(), Equals, uint64(len(kvs))<<1)
 	c.Assert(uint64NotEqual(checksum.Sum(), excpectChecksum), IsTrue)
+}
+
+func (s *testKVChcksumSuite) TestChecksumJSON(c *C) {
+	testStruct := &struct {
+		Checksum verification.KVChecksum
+	}{
+		Checksum: verification.MakeKVChecksum(123, 456, 7890),
+	}
+
+	res, err := json.Marshal(testStruct)
+
+	c.Assert(err, IsNil)
+	c.Assert(res, BytesEquals, []byte(`{"Checksum":{"cksum":7890,"size":123,"kvs":456}}`))
 }
