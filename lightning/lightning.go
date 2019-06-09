@@ -22,9 +22,9 @@ import (
 	"runtime"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
-	"github.com/pingcap/failpoint"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -152,9 +152,16 @@ func (l *Lightning) Stop() {
 }
 
 func (l *Lightning) handleNewTask(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "only POST is allowed", http.StatusMethodNotAllowed)
+	switch req.Method {
+	case http.MethodGet:
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, len(l.taskCfgs))
+		return
+	case http.MethodPost:
+		break
+	default:
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+		http.Error(w, "only GET and POST are allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
