@@ -76,6 +76,9 @@ var (
 	requiredTiKVVersion = *semver.New("2.1.0")
 )
 
+// DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
+var DeliverPauser = common.NewPauser()
+
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
@@ -343,6 +346,7 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 	coalesed := make(map[string]*TableCheckpointDiff)
 
 	hasCheckpoint := make(chan struct{}, 1)
+	defer close(hasCheckpoint)
 
 	go func() {
 		for range hasCheckpoint {
@@ -548,6 +552,12 @@ func (t *TableRestore) restoreTable(
 	cp *TableCheckpoint,
 ) error {
 	// 1. Load the table info.
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 
 	// no need to do anything if the chunks are already populated
 	if len(cp.Engines) > 0 {
@@ -1574,6 +1584,10 @@ func (cr *chunkRestore) encodeLoop(
 	initializedColumns := false
 outside:
 	for {
+		if err = DeliverPauser.Wait(ctx); err != nil {
+			return
+		}
+
 		offset, _ := cr.parser.Pos()
 		if offset >= cr.chunk.Chunk.EndOffset {
 			break
@@ -1651,7 +1665,10 @@ func (cr *chunkRestore) restore(
 	go func() {
 		defer close(deliverCompleteCh)
 		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
-		deliverCompleteCh <- deliverResult{dur, err}
+		select {
+		case <-ctx.Done():
+		case deliverCompleteCh <- deliverResult{dur, err}:
+		}
 	}()
 
 	logTask := t.logger.With(
