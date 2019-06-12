@@ -23,19 +23,10 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	plan "github.com/pingcap/tidb/planner/core"
 	"go.uber.org/zap"
 )
 
-func setGlobalVars() {
-	// hardcode it
-	plan.SetPreparedPlanCache(true)
-	plan.PreparedPlanCacheCapacity = 10
-}
-
 func main() {
-	setGlobalVars()
-
 	cfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
 	app := lightning.New(cfg)
 

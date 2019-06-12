@@ -19,7 +19,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
-	"runtime"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -50,8 +49,6 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		fmt.Println("Failed to initialize environment:", err)
 		os.Exit(1)
 	}
-
-	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	ctx, shutdown := context.WithCancel(context.Background())
 	return &Lightning{
@@ -113,11 +110,11 @@ func (l *Lightning) RunServer() error {
 var taskCfgRecorderKey struct{}
 
 func (l *Lightning) run(taskCfg *config.Config) error {
-	failpoint.Inject("SkipRunTask", func() {
+	failpoint.Inject("SkipRunTask", func() error {
 		if recorder, ok := l.ctx.Value(&taskCfgRecorderKey).(chan *config.Config); ok {
 			recorder <- taskCfg
 		}
-		failpoint.Return(nil)
+		return nil
 	})
 
 	common.PrintInfo("lightning", func() {

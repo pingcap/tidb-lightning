@@ -30,7 +30,8 @@ type GlobalLightning struct {
 	StatusAddr string `toml:"status-addr" json:"status-addr"`
 	ServerMode bool   `toml:"server-mode" json:"server-mode"`
 
-	// The legacy alias for setting "status-addr"
+	// The legacy alias for setting "status-addr". The value should always the
+	// same as StatusAddr, and will not be published in the JSON encoding.
 	PProfPort int `toml:"pprof-port" json:"-"`
 }
 
