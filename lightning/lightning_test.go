@@ -14,13 +14,13 @@
 package lightning
 
 import (
-	"io/ioutil"
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
-	"fmt"
-	"context"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -94,18 +94,22 @@ func (s *lightningSuite) TestRunServer(c *C) {
 	// Wait a bit until the server is really listening.
 	time.Sleep(500 * time.Millisecond)
 
-	resp, err := http.Get(url)
+	req, err := http.NewRequest(http.MethodPut, url, nil)
+	c.Assert(err, IsNil)
+	resp, err := http.DefaultClient.Do(req)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusMethodNotAllowed)
-	c.Assert(resp.Header.Get("Allow"), Equals, http.MethodPost)
+	c.Assert(resp.Header.Get("Allow"), Equals, http.MethodGet+", "+http.MethodPost)
 	resp.Body.Close()
 
 	resp, err = http.Post(url, "application/toml", strings.NewReader("????"))
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusNotImplemented)
-	data, err := ioutil.ReadAll(resp.Body)
+	var data map[string]string
+	err = json.NewDecoder(resp.Body).Decode(&data)
 	c.Assert(err, IsNil)
-	c.Assert(data, BytesEquals, []byte("server-mode not enabled\n"))
+	c.Assert(data, HasKey, "error")
+	c.Assert(data["error"], Equals, "server-mode not enabled")
 	resp.Body.Close()
 
 	go lightning.RunServer()
@@ -113,17 +117,19 @@ func (s *lightningSuite) TestRunServer(c *C) {
 	resp, err = http.Post(url, "application/toml", strings.NewReader("????"))
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
-	data, err = ioutil.ReadAll(resp.Body)
+	err = json.NewDecoder(resp.Body).Decode(&data)
 	c.Assert(err, IsNil)
-	c.Assert(string(data), Matches, "cannot parse task.*\n")
+	c.Assert(data, HasKey, "error")
+	c.Assert(data["error"], Matches, "cannot parse task.*")
 	resp.Body.Close()
 
 	resp, err = http.Post(url, "application/toml", strings.NewReader("[mydumper.csv]\nseparator = 'fooo'"))
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
-	data, err = ioutil.ReadAll(resp.Body)
+	err = json.NewDecoder(resp.Body).Decode(&data)
 	c.Assert(err, IsNil)
-	c.Assert(string(data), Matches, "invalid task configuration:.*\n")
+	c.Assert(data, HasKey, "error")
+	c.Assert(data["error"], Matches, "invalid task configuration:.*")
 	resp.Body.Close()
 
 	taskCfgCh := make(chan *config.Config)
@@ -140,6 +146,11 @@ func (s *lightningSuite) TestRunServer(c *C) {
 		`, i)))
 		c.Assert(err, IsNil)
 		c.Assert(resp.StatusCode, Equals, http.StatusOK)
+		var result map[string]int
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		c.Assert(err, IsNil)
+		c.Assert(result, HasKey, "id")
+		resp.Body.Close()
 
 		select {
 		case taskCfg := <-taskCfgCh:
@@ -150,14 +161,4 @@ func (s *lightningSuite) TestRunServer(c *C) {
 			c.Fatalf("task is not queued after 500ms (i = %d)", i)
 		}
 	}
-
-	// Check that queuing too many tasks will cause the server to reject it.
-	for i := 0; i < 80; i++ {
-		_, err = http.Post(url, "application/toml", strings.NewReader(""))
-		c.Assert(err, IsNil)
-	}
-	resp, err = http.Post(url, "application/toml", strings.NewReader(""))
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusServiceUnavailable)
 }
-

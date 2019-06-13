@@ -15,6 +15,7 @@ package lightning
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -34,7 +35,7 @@ import (
 
 type Lightning struct {
 	globalCfg *config.GlobalConfig
-	taskCfgs  chan *config.Config
+	taskCfgs  *config.ConfigList
 	ctx       context.Context
 	shutdown  context.CancelFunc
 	server    http.Server
@@ -65,7 +66,7 @@ func (l *Lightning) Serve() {
 
 	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/tasks", func(w http.ResponseWriter, req *http.Request) {
-		l.handleNewTask(w, req)
+		l.handleTask(w, req)
 	})
 
 	l.server.Addr = l.globalCfg.App.StatusAddr
@@ -86,23 +87,17 @@ func (l *Lightning) RunOnce() error {
 }
 
 func (l *Lightning) RunServer() error {
-	var finalErr error
-	l.taskCfgs = make(chan *config.Config, 64)
-
+	l.taskCfgs = config.NewConfigList()
 	log.L().Info("Lightning server is running, post to /tasks to start an import task")
 
 	for {
-		select {
-		case <-l.ctx.Done():
-			return l.ctx.Err()
-		case task := <-l.taskCfgs:
-			if task == nil {
-				return finalErr
-			}
-			err := l.run(task)
-			if err != nil {
-				finalErr = err
-			}
+		task, err := l.taskCfgs.Pop(l.ctx)
+		if err != nil {
+			return err
+		}
+		err = l.run(task)
+		if err != nil {
+			log.L().Error("tidb lightning encountered error", zap.Error(err))
 		}
 	}
 }
@@ -148,53 +143,78 @@ func (l *Lightning) Stop() {
 	l.shutdown()
 }
 
-func (l *Lightning) handleNewTask(w http.ResponseWriter, req *http.Request) {
+func (l *Lightning) handleTask(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
 	switch req.Method {
 	case http.MethodGet:
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, len(l.taskCfgs))
-		return
+		l.handleGetTask(w)
 	case http.MethodPost:
-		break
+		l.handlePostTask(w, req)
 	default:
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
-		http.Error(w, "only GET and POST are allowed", http.StatusMethodNotAllowed)
-		return
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		w.Write([]byte(`{"error":"only GET and POST are allowed"}`))
+	}
+}
+
+func (l *Lightning) handleGetTask(w http.ResponseWriter) {
+	var response struct {
+		Enabled   bool     `json:"enabled"`
+		QueuedIDs []uint32 `json:"queue"`
 	}
 
-	cfgs := l.taskCfgs
-	if cfgs == nil {
-		w.Header().Set("Cache-Control", "no-store")
-		http.Error(w, "server-mode not enabled", http.StatusNotImplemented)
+	response.Enabled = l.taskCfgs != nil
+	if response.Enabled {
+		response.QueuedIDs = l.taskCfgs.AllIDs()
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+
+	type errorResponse struct {
+		Error string `json:"error"`
+	}
+	type taskResponse struct {
+		ID uint32 `json:"id"`
+	}
+
+	if l.taskCfgs == nil {
+		w.WriteHeader(http.StatusNotImplemented)
+		json.NewEncoder(w).Encode(errorResponse{Error: "server-mode not enabled"})
 		return
 	}
 
 	data, err := ioutil.ReadAll(req.Body)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("cannot read request: %v", err), http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("cannot read request: %v", err)})
 		return
 	}
 	log.L().Debug("received task config", zap.ByteString("content", data))
 
 	cfg := config.NewConfig()
 	if err = cfg.LoadFromGlobal(l.globalCfg); err != nil {
-		http.Error(w, fmt.Sprintf("cannot restore from global config: %v", err), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("cannot restore from global config: %v", err)})
 		return
 	}
 	if err = cfg.LoadFromTOML(data); err != nil {
-		http.Error(w, fmt.Sprintf("cannot parse task (must be TOML): %v", err), http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("cannot parse task (must be TOML): %v", err)})
 		return
 	}
 	if err = cfg.Adjust(); err != nil {
-		http.Error(w, fmt.Sprintf("invalid task configuration: %v", err), http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(errorResponse{Error: fmt.Sprintf("invalid task configuration: %v", err)})
 		return
 	}
 
-	select {
-	case cfgs <- cfg:
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("task queued"))
-	default:
-		http.Error(w, "task queue overflowed, please try again later", http.StatusServiceUnavailable)
-	}
+	l.taskCfgs.Push(cfg)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(taskResponse{ID: cfg.TaskID})
 }
