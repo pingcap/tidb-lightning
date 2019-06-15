@@ -109,8 +109,8 @@ func (cl *ConfigList) AllIDs() []int64 {
 	cl.cond.L.Lock()
 	defer cl.cond.L.Unlock()
 	res := make([]int64, 0, len(cl.taskIDMap))
-	for taskID := range cl.taskIDMap {
-		res = append(res, taskID)
+	for element := cl.nodes.Front(); element != nil; element = element.Next() {
+		res = append(res, element.Value.(*Config).TaskID)
 	}
 	return res
 }
