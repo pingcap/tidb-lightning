@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 
 	"github.com/pingcap/errors"
@@ -36,11 +38,12 @@ import (
 )
 
 type Lightning struct {
-	globalCfg *config.GlobalConfig
-	taskCfgs  *config.ConfigList
-	ctx       context.Context
-	shutdown  context.CancelFunc
-	server    http.Server
+	globalCfg  *config.GlobalConfig
+	taskCfgs   *config.ConfigList
+	ctx        context.Context
+	shutdown   context.CancelFunc
+	server     http.Server
+	serverAddr net.Addr
 }
 
 func initEnv(cfg *config.GlobalConfig) error {
@@ -61,21 +64,35 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 	}
 }
 
-func (l *Lightning) Serve() {
+func (l *Lightning) GoServe() error {
 	if len(l.globalCfg.App.StatusAddr) == 0 {
-		return
+		return nil
 	}
 
-	http.Handle("/metrics", promhttp.Handler())
-	http.HandleFunc("/tasks", func(w http.ResponseWriter, req *http.Request) {
-		l.handleTask(w, req)
-	})
-	http.HandleFunc("/progress/task", handleProgressTask)
-	http.HandleFunc("/progress/table", handleProgressTable)
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
 
-	l.server.Addr = l.globalCfg.App.StatusAddr
-	err := l.server.ListenAndServe()
-	log.L().Info("stopped HTTP server", log.ShortError(err))
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	mux.HandleFunc("/progress/task", handleProgressTask)
+	mux.HandleFunc("/progress/table", handleProgressTable)
+
+	listener, err := net.Listen("tcp", l.globalCfg.App.StatusAddr)
+	if err != nil {
+		return err
+	}
+	l.serverAddr = listener.Addr()
+	l.server.Handler = mux
+
+	go func() {
+		err := l.server.Serve(listener)
+		log.L().Info("stopped HTTP server", log.ShortError(err))
+	}()
+	return nil
 }
 
 // Run Lightning using the global config as the same as the task config.
@@ -92,7 +109,10 @@ func (l *Lightning) RunOnce() error {
 
 func (l *Lightning) RunServer() error {
 	l.taskCfgs = config.NewConfigList()
-	log.L().Info("Lightning server is running, post to /tasks to start an import task")
+	log.L().Info(
+		"Lightning server is running, post to /tasks to start an import task",
+		zap.Stringer("address", l.serverAddr),
+	)
 
 	for {
 		task, err := l.taskCfgs.Pop(l.ctx)
