@@ -108,7 +108,7 @@ func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string
 		logger = logger.With(zap.String("query", query))
 	}
 	return t.perform(ctx, logger, purpose, func() error {
-		return t.DB.QueryRow(query).Scan(dest...)
+		return t.DB.QueryRowContext(ctx, query).Scan(dest...)
 	})
 }
 
