@@ -21,6 +21,7 @@ require (
 	github.com/prometheus/client_golang v0.9.3
 	github.com/prometheus/client_model v0.0.0-20190129233127-fd36f4220a90
 	github.com/satori/go.uuid v1.2.0
+	github.com/shurcooL/httpgzip v0.0.0-20190516014818-1c7afaae1203
 	go.uber.org/zap v1.10.0
 	golang.org/x/text v0.3.2
 	google.golang.org/grpc v1.21.0

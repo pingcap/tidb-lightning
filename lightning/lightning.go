@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -77,6 +78,7 @@ func (l *Lightning) GoServe() error {
 	}
 
 	mux := http.NewServeMux()
+	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
 	mux.Handle("/metrics", promhttp.Handler())
 
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -92,6 +94,17 @@ func (l *Lightning) GoServe() error {
 	mux.HandleFunc("/progress/table", handleProgressTable)
 	mux.HandleFunc("/pause", handlePause)
 	mux.HandleFunc("/resume", handleResume)
+
+	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
+		IndexHTML: true,
+		ServeError: func(w http.ResponseWriter, req *http.Request, err error) {
+			if os.IsNotExist(err) && !strings.Contains(req.URL.Path, ".") {
+				http.Redirect(w, req, "/web/", http.StatusFound)
+			} else {
+				httpgzip.NonSpecific(w, req, err)
+			}
+		},
+	})))
 
 	listener, err := net.Listen("tcp", l.globalCfg.App.StatusAddr)
 	if err != nil {
