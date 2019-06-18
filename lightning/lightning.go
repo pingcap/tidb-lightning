@@ -160,8 +160,8 @@ func (l *Lightning) handleTask(w http.ResponseWriter, req *http.Request) {
 
 func (l *Lightning) handleGetTask(w http.ResponseWriter) {
 	var response struct {
-		Enabled   bool     `json:"enabled"`
-		QueuedIDs []uint32 `json:"queue"`
+		Enabled   bool    `json:"enabled"`
+		QueuedIDs []int64 `json:"queue"`
 	}
 
 	response.Enabled = l.taskCfgs != nil
@@ -180,7 +180,7 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		Error string `json:"error"`
 	}
 	type taskResponse struct {
-		ID uint32 `json:"id"`
+		ID int64 `json:"id"`
 	}
 
 	if l.taskCfgs == nil {

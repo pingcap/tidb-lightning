@@ -17,14 +17,14 @@ import (
 	"container/list"
 	"context"
 	"sync"
+	"time"
 )
 
 // ConfigList is a goroutine-safe FIFO list of *Config, which supports removal
 // from the middle. The list is not expected to be very long.
 type ConfigList struct {
 	cond      *sync.Cond
-	nextID    uint32
-	taskIDMap map[uint32]*list.Element
+	taskIDMap map[int64]*list.Element
 	nodes     list.List
 }
 
@@ -32,17 +32,16 @@ type ConfigList struct {
 func NewConfigList() *ConfigList {
 	return &ConfigList{
 		cond:      sync.NewCond(new(sync.Mutex)),
-		taskIDMap: make(map[uint32]*list.Element),
+		taskIDMap: make(map[int64]*list.Element),
 	}
 }
 
 // Push adds a configuration to the end of the list. The field `cfg.TaskID` will
 // be modified to include a unique ID to identify this task.
 func (cl *ConfigList) Push(cfg *Config) {
+	id := time.Now().UnixNano()
 	cl.cond.L.Lock()
 	defer cl.cond.L.Unlock()
-	id := cl.nextID
-	cl.nextID++
 	cfg.TaskID = id
 	cl.taskIDMap[id] = cl.nodes.PushBack(cfg)
 	cl.cond.Broadcast()
@@ -81,7 +80,7 @@ func (cl *ConfigList) Pop(ctx context.Context) (*Config, error) {
 
 // Remove removes a task from the list given its task ID. Returns true if a task
 // is successfully removed, false if the task ID did not exist.
-func (cl *ConfigList) Remove(taskID uint32) bool {
+func (cl *ConfigList) Remove(taskID int64) bool {
 	cl.cond.L.Lock()
 	defer cl.cond.L.Unlock()
 	element, ok := cl.taskIDMap[taskID]
@@ -95,7 +94,7 @@ func (cl *ConfigList) Remove(taskID uint32) bool {
 
 // Get obtains a task from the list given its task ID. If the task ID did not
 // exist, the returned bool field will be false.
-func (cl *ConfigList) Get(taskID uint32) (*Config, bool) {
+func (cl *ConfigList) Get(taskID int64) (*Config, bool) {
 	cl.cond.L.Lock()
 	defer cl.cond.L.Unlock()
 	element, ok := cl.taskIDMap[taskID]
@@ -106,10 +105,10 @@ func (cl *ConfigList) Get(taskID uint32) (*Config, bool) {
 }
 
 // AllIDs returns a list of all task IDs in the list.
-func (cl *ConfigList) AllIDs() []uint32 {
+func (cl *ConfigList) AllIDs() []int64 {
 	cl.cond.L.Lock()
 	defer cl.cond.L.Unlock()
-	res := make([]uint32, 0, len(cl.taskIDMap))
+	res := make([]int64, 0, len(cl.taskIDMap))
 	for taskID := range cl.taskIDMap {
 		res = append(res, taskID)
 	}

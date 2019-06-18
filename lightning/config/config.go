@@ -58,7 +58,7 @@ type DBStore struct {
 }
 
 type Config struct {
-	TaskID uint32 `toml:"-" json:"id"`
+	TaskID int64 `toml:"-" json:"id"`
 
 	App  Lightning `toml:"lightning" json:"lightning"`
 	TiDB DBStore   `toml:"tidb" json:"tidb"`
