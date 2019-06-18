@@ -114,3 +114,29 @@ func (cl *ConfigList) AllIDs() []int64 {
 	}
 	return res
 }
+
+// MoveToFront moves a task to the front of the list. Returns true if the task
+// is successfully moved (including no-op), false if the task ID did not exist.
+func (cl *ConfigList) MoveToFront(taskID int64) bool {
+	cl.cond.L.Lock()
+	defer cl.cond.L.Unlock()
+	element, ok := cl.taskIDMap[taskID]
+	if !ok {
+		return false
+	}
+	cl.nodes.MoveToFront(element)
+	return true
+}
+
+// MoveToBack moves a task to the back of the list. Returns true if the task is
+// successfully moved (including no-op), false if the task ID did not exist.
+func (cl *ConfigList) MoveToBack(taskID int64) bool {
+	cl.cond.L.Lock()
+	defer cl.cond.L.Unlock()
+	element, ok := cl.taskIDMap[taskID]
+	if !ok {
+		return false
+	}
+	cl.nodes.MoveToBack(element)
+	return true
+}
