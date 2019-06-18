@@ -15,9 +15,7 @@ package config
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"runtime"
 	"strings"
@@ -50,7 +48,6 @@ type DBStore struct {
 	StatusPort int    `toml:"status-port" json:"status-port"`
 	PdAddr     string `toml:"pd-addr" json:"pd-addr"`
 	StrSQLMode string `toml:"sql-mode" json:"sql-mode"`
-	LogLevel   string `toml:"log-level" json:"log-level"`
 
 	SQLMode mysql.SQLMode `toml:"-" json:"-"`
 
@@ -61,11 +58,11 @@ type DBStore struct {
 }
 
 type Config struct {
+	TaskID int64 `toml:"-" json:"id"`
+
 	App  Lightning `toml:"lightning" json:"lightning"`
 	TiDB DBStore   `toml:"tidb" json:"tidb"`
 
-	// not implemented yet.
-	// ProgressStore DBStore `toml:"progress-store" json:"progress-store"`
 	Checkpoint   Checkpoint          `toml:"checkpoint" json:"checkpoint"`
 	Mydumper     MydumperRuntime     `toml:"mydumper" json:"mydumper"`
 	BWList       *filter.Rules       `toml:"black-white-list" json:"black-white-list"`
@@ -73,9 +70,6 @@ type Config struct {
 	PostRestore  PostRestore         `toml:"post-restore" json:"post-restore"`
 	Cron         Cron                `toml:"cron" json:"cron"`
 	Routes       []*router.TableRule `toml:"routes" json:"routes"`
-
-	// command line flags
-	ConfigFile string `json:"config-file"`
 }
 
 func (c *Config) String() string {
@@ -87,12 +81,10 @@ func (c *Config) String() string {
 }
 
 type Lightning struct {
-	log.Config
 	TableConcurrency  int  `toml:"table-concurrency" json:"table-concurrency"`
 	IndexConcurrency  int  `toml:"index-concurrency" json:"index-concurrency"`
 	RegionConcurrency int  `toml:"region-concurrency" json:"region-concurrency"`
 	IOConcurrency     int  `toml:"io-concurrency" json:"io-concurrency"`
-	ProfilePort       int  `toml:"pprof-port" json:"pprof-port"`
 	CheckRequirements bool `toml:"check-requirements" json:"check-requirements"`
 }
 
@@ -171,7 +163,6 @@ func NewConfig() *Config {
 			Host:                       "127.0.0.1",
 			User:                       "root",
 			StatusPort:                 10080,
-			LogLevel:                   "error",
 			StrSQLMode:                 mysql.DefaultSQLMode,
 			BuildStatsConcurrency:      20,
 			DistSQLScanConcurrency:     100,
@@ -186,6 +177,7 @@ func NewConfig() *Config {
 			ReadBlockSize: ReadBlockSize,
 			CSV: CSVConfig{
 				Separator: ",",
+				Delimiter: `"`,
 			},
 		},
 		PostRestore: PostRestore{
@@ -194,89 +186,30 @@ func NewConfig() *Config {
 	}
 }
 
-func LoadConfig(args []string) (*Config, error) {
-	cfg := NewConfig()
-
-	fs := flag.NewFlagSet("lightning", flag.ContinueOnError)
-
-	// if both `-c` and `-config` are specified, the last one in the command line will take effect.
-	// the default value is assigned immediately after the StringVar() call,
-	// so it is fine to not give any default value for `-c`, to keep the `-h` page clean.
-	fs.StringVar(&cfg.ConfigFile, "c", "", "(deprecated alias of -config)")
-	fs.StringVar(&cfg.ConfigFile, "config", "", "tidb-lightning configuration file")
-	printVersion := fs.Bool("V", false, "print version of lightning")
-
-	logLevel := fs.String("L", "", `log level: info, debug, warn, error, fatal (default "info")`)
-	logFilePath := fs.String("log-file", "", "log file path")
-	tidbHost := fs.String("tidb-host", "", "TiDB server host")
-	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
-	tidbUser := fs.String("tidb-user", "", "TiDB user name to connect")
-	tidbStatusPort := fs.Int("tidb-status", 0, "TiDB server status port (default 10080)")
-	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
-	dataSrcPath := fs.String("d", "", "Directory of the dump to import")
-	importerAddr := fs.String("importer", "", "address (host:port) to connect to tikv-importer")
-
-	if err := fs.Parse(args); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if *printVersion {
-		fmt.Println(common.GetRawInfo())
-		return nil, flag.ErrHelp
+// LoadFromGlobal resets the current configuration to the global settings.
+func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
+	if err := cfg.LoadFromTOML(global.ConfigFileContent); err != nil {
+		return err
 	}
 
-	if err := cfg.Load(); err != nil {
-		return nil, errors.Trace(err)
-	}
+	cfg.TiDB.Host = global.TiDB.Host
+	cfg.TiDB.Port = global.TiDB.Port
+	cfg.TiDB.User = global.TiDB.User
+	cfg.TiDB.StatusPort = global.TiDB.StatusPort
+	cfg.TiDB.PdAddr = global.TiDB.PdAddr
+	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
+	cfg.TikvImporter.Addr = global.TikvImporter.Addr
 
-	if *logLevel != "" {
-		cfg.App.Config.Level = *logLevel
-	}
-	if *logFilePath != "" {
-		cfg.App.Config.File = *logFilePath
-	}
-	if *tidbHost != "" {
-		cfg.TiDB.Host = *tidbHost
-	}
-	if *tidbPort != 0 {
-		cfg.TiDB.Port = *tidbPort
-	}
-	if *tidbStatusPort != 0 {
-		cfg.TiDB.StatusPort = *tidbStatusPort
-	}
-	if *tidbUser != "" {
-		cfg.TiDB.User = *tidbUser
-	}
-	if *pdAddr != "" {
-		cfg.TiDB.PdAddr = *pdAddr
-	}
-	if *dataSrcPath != "" {
-		cfg.Mydumper.SourceDir = *dataSrcPath
-	}
-	if *importerAddr != "" {
-		cfg.TikvImporter.Addr = *importerAddr
-	}
-
-	if err := cfg.Adjust(); err != nil {
-		return nil, err
-	}
-
-	return cfg, nil
+	return nil
 }
 
-func (cfg *Config) Load() error {
-	// use standard config if unspecified.
-	if cfg.ConfigFile == "" {
-		return nil
-	}
+// LoadFromTOML overwrites the current configuration by the TOML data
+func (cfg *Config) LoadFromTOML(data []byte) error {
+	return errors.Trace(toml.Unmarshal(data, cfg))
+}
 
-	data, err := ioutil.ReadFile(cfg.ConfigFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = toml.Unmarshal(data, cfg); err != nil {
-		return errors.Trace(err)
-	}
-
+// Adjust fixes the invalid or unspecified settings to reasonable valid values.
+func (cfg *Config) Adjust() error {
 	// Reject problematic CSV configurations.
 	csv := &cfg.Mydumper.CSV
 	if len(csv.Separator) != 1 {
@@ -300,6 +233,7 @@ func (cfg *Config) Load() error {
 		}
 	}
 
+	var err error
 	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
 	if err != nil {
 		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
@@ -313,13 +247,6 @@ func (cfg *Config) Load() error {
 			return errors.Trace(err)
 		}
 	}
-
-	return nil
-}
-
-// Adjust fixes the invalid or unspecified settings to reasonable valid values.
-func (cfg *Config) Adjust() error {
-	cfg.App.Config.Adjust()
 
 	// automatically determine the TiDB port & PD address from TiDB settings
 	if cfg.TiDB.Port <= 0 || len(cfg.TiDB.PdAddr) == 0 {

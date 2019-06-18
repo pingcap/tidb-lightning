@@ -14,40 +14,20 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	plan "github.com/pingcap/tidb/planner/core"
 	"go.uber.org/zap"
 )
 
-func setGlobalVars() {
-	// hardcode it
-	plan.SetPreparedPlanCache(true)
-	plan.PreparedPlanCacheCapacity = 10
-}
-
 func main() {
-	setGlobalVars()
-
-	cfg, err := config.LoadConfig(os.Args[1:])
-	switch errors.Cause(err) {
-	case nil:
-	case flag.ErrHelp:
-		os.Exit(0)
-	default:
-		fmt.Println("Failed to parse command flags: ", err)
-		os.Exit(1)
-	}
-
+	cfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
 	app := lightning.New(cfg)
 
 	sc := make(chan os.Signal, 1)
@@ -63,7 +43,14 @@ func main() {
 		app.Stop()
 	}()
 
-	err = app.Run()
+	go app.Serve()
+
+	var err error
+	if cfg.App.ServerMode {
+		err = app.RunServer()
+	} else {
+		err = app.RunOnce()
+	}
 	logger := log.L()
 	if err != nil {
 		logger.Error("tidb lightning encountered error", zap.Error(err))
