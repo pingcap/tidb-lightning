@@ -95,7 +95,6 @@ func (p *Pauser) Wait(ctx context.Context) error {
 		p.mu.Lock()
 		delete(p.waiters, waiter)
 		p.mu.Unlock()
-		close(waiter)
 		return err
 
 	case <-waiter:
