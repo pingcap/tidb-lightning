@@ -150,3 +150,31 @@ func (s *pauseSuite) BenchmarkWaitCtxCanceled(c *C) {
 		p.Wait(ctx)
 	}
 }
+
+func (s *pauseSuite) BenchmarkWaitContended(c *C) {
+	p := common.NewPauser()
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		isPaused := false
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				if isPaused {
+					p.Pause()
+				} else {
+					p.Resume()
+				}
+				isPaused = !isPaused
+			}
+		}
+	}()
+
+	ctx := context.Background()
+	for i := 0; i < c.N; i++ {
+		p.Wait(ctx)
+	}
+}
