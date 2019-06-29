@@ -1573,9 +1573,13 @@ func (cr *chunkRestore) encodeLoop(
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
-		case deliverResult := <-deliverCompleteCh:
+		case deliverResult, ok := <-deliverCompleteCh:
+			if deliverResult.err == nil && !ok {
+				deliverResult.err = ctx.Err()
+			}
 			if deliverResult.err == nil {
-				panic("unexpected: deliverCompleteCh prematurely fulfilled with no error")
+				deliverResult.err = errors.New("unexpected premature fulfillment")
+				logger.DPanic("unexpected: deliverCompleteCh prematurely fulfilled with no error", zap.Bool("chIsOpen", ok))
 			}
 			return errors.Trace(deliverResult.err)
 		}
