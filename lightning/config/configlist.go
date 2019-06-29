@@ -26,6 +26,13 @@ type ConfigList struct {
 	cond      *sync.Cond
 	taskIDMap map[int64]*list.Element
 	nodes     list.List
+
+	// lastID records the largest task ID being Push()'ed to the ConfigList.
+	// In the rare case where two Push() are executed in the same nanosecond
+	// (or the not-so-rare case where the clock's precision is lower than CPU
+	// speed), we'll need to manually force one of the task to use the ID as
+	// lastID + 1.
+	lastID int64
 }
 
 // NewConfigList creates a new ConfigList instance.
@@ -42,7 +49,11 @@ func (cl *ConfigList) Push(cfg *Config) {
 	id := time.Now().UnixNano()
 	cl.cond.L.Lock()
 	defer cl.cond.L.Unlock()
+	if id <= cl.lastID {
+		id = cl.lastID + 1
+	}
 	cfg.TaskID = id
+	cl.lastID = id
 	cl.taskIDMap[id] = cl.nodes.PushBack(cfg)
 	cl.cond.Broadcast()
 }
