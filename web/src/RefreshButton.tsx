@@ -60,7 +60,7 @@ export default class RefreshButton extends React.Component<Props, States> {
 
         clearInterval(this.autoRefreshTimer);
         this.autoRefreshTimer = (interval > 0) ?
-            setInterval(() => this.refresh(), interval * 1000) :
+            window.setInterval(() => this.refresh(), interval * 1000) :
             undefined;
     }
 

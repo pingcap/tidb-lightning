@@ -43,6 +43,12 @@ reads directly from `web/dist/` by
 make lightning_for_web
 ```
 
+Run `bin/tidb-lightning --server-mode --status-addr 127.0.0.1:8289`, then open
+`http://127.0.0.1:8289/` to use the web interface.
+
+Local development tools like `webpack-dev-server` are not yet supported, since
+we do not allow cross-origin requests yet.
+
 [vfsgen]: https://github.com/shurcooL/vfsgen
 
 Front-end
@@ -81,3 +87,7 @@ The "back-end" is Lightning itself. The API defined by Lightning is declared in
 `src/api.ts`. The corresponding server code is in `lightning/lightning.go`.
 Unless otherwise specified, all APIs return JSON and is in the form
 `{"error": "message"}` in case of error.
+
+There is also an [OpenAPI (Swagger) definition](docs/api.yaml), but this is only
+a best-effort documentation of the current API. It should not be taken as a
+normative reference.
