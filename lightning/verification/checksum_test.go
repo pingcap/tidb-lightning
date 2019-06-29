@@ -88,5 +88,5 @@ func (s *testKVChcksumSuite) TestChecksumJSON(c *C) {
 	res, err := json.Marshal(testStruct)
 
 	c.Assert(err, IsNil)
-	c.Assert(res, BytesEquals, []byte(`{"Checksum":{"cksum":7890,"size":123,"kvs":456}}`))
+	c.Assert(res, BytesEquals, []byte(`{"Checksum":{"checksum":7890,"size":123,"kvs":456}}`))
 }

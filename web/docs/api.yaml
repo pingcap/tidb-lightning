@@ -203,12 +203,12 @@ components:
                       type: object
                       description: Partial checksum
                       required:
-                        - cksum
+                        - checksum
                         - size
                         - kvs
                       additionalProperties: false
                       properties:
-                        cksum:
+                        checksum:
                           type: integer
                           format: int64
                           description: XOR-combined CRC64 checksum
@@ -226,7 +226,7 @@ components:
               Key: {Path: '/data/db1/db.tbl.01.sql', Offset: 0},
               ColumnPermutation: [],
               Chunk: {Offset: 3391, EndOffset: 450192, PrevRowIDMax: 318, RowIDMax: 40125},
-              Checksum: {cksum: 1785171221414119207, size: 9670, kvs: 1908}
+              Checksum: {checksum: 1785171221414119207, size: 9670, kvs: 1908}
             }]}
     Paused:
       type: object

@@ -82,7 +82,7 @@ export interface ChunkProgress {
         RowIDMax: number,
     }
     Checksum: {
-        cksum: number,
+        checksum: number,
         size: number,
         kvs: number,
     }
