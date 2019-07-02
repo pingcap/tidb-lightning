@@ -38,10 +38,10 @@ func (s *kvSuite) TestMarshal(c *C) {
 	err := encoder.AddArray("test", rowArrayMarshaler{types.NewStringDatum("1"), nullDatum, minNotNull, types.MaxValueDatum()})
 	c.Assert(err, IsNil)
 	c.Assert(encoder.Fields["test"], DeepEquals, []interface{}{
-		map[string]interface{}{"col": 0, "kind": "string", "val": "1"},
-		map[string]interface{}{"col": 1, "kind": "null", "val": "NULL"},
-		map[string]interface{}{"col": 2, "kind": "min", "val": "-inf"},
-		map[string]interface{}{"col": 3, "kind": "max", "val": "+inf"},
+		map[string]interface{}{"kind": "string", "val": "1"},
+		map[string]interface{}{"kind": "null", "val": "NULL"},
+		map[string]interface{}{"kind": "min", "val": "-inf"},
+		map[string]interface{}{"kind": "max", "val": "+inf"},
 	})
 
 	invalid := types.Datum{}
@@ -49,7 +49,7 @@ func (s *kvSuite) TestMarshal(c *C) {
 	err = encoder.AddArray("bad-test", rowArrayMarshaler{minNotNull, invalid})
 	c.Assert(err, ErrorMatches, "cannot convert.*")
 	c.Assert(encoder.Fields["bad-test"], DeepEquals, []interface{}{
-		map[string]interface{}{"col": 0, "kind": "min", "val": "-inf"},
+		map[string]interface{}{"kind": "min", "val": "-inf"},
 	})
 }
 
@@ -75,7 +75,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	// Strict mode
 	strictMode := NewTableKVEncoder(tbl, mysql.ModeStrictAllTables)
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1})
-	c.Assert(err, ErrorMatches, ".*overflows tinyint")
+	c.Assert(err, ErrorMatches, "failed to cast `10000000` as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint")
 	c.Assert(pairs, IsNil)
 
 	rowsWithPk := []types.Datum{
@@ -83,7 +83,7 @@ func (s *kvSuite) TestEncode(c *C) {
 		types.NewStringDatum("invalid-pk"),
 	}
 	pairs, err = strictMode.Encode(logger, rowsWithPk, 2, []int{0, 1})
-	c.Assert(err, ErrorMatches, ".*Data Truncated")
+	c.Assert(err, ErrorMatches, "failed to cast `invalid-pk` as bigint\\(20\\) for column `_tidb_rowid`.*Data Truncated")
 
 	rowsWithPk2 := []types.Datum{
 		types.NewIntDatum(1),
