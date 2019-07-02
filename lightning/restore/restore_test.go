@@ -724,6 +724,20 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 	c.Assert(kvsCh, HasLen, 0)
 }
 
+func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
+	ctx := context.Background()
+	kvsCh := make(chan deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode)
+
+	// close the chunk so reading it will result in the "file already closed" error.
+	s.cr.parser.Close()
+
+	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh)
+	c.Assert(err, ErrorMatches, `in file .*/db.table.2.sql:0 at offset 0:.*file already closed`)
+	c.Assert(kvsCh, HasLen, 0)
+}
+
 func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs)

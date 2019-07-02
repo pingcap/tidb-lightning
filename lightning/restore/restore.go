@@ -1589,7 +1589,7 @@ outside:
 		case io.EOF:
 			break outside
 		default:
-			err = errors.Trace(err)
+			err = errors.Annotatef(err, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 			return
 		}
 
@@ -1607,7 +1607,7 @@ outside:
 
 		if encodeErr != nil {
 			// error is already logged inside kvEncoder.Encode(), just propagate up directly.
-			err = encodeErr
+			err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 			return
 		}
 
