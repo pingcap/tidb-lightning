@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
@@ -98,7 +99,7 @@ func (s *restoreSuite) TestNewTableRestoreFailure(c *C) {
 }
 
 func (s *restoreSuite) TestErrorSummaries(c *C) {
-	logger, buffer := makeTestLogger()
+	logger, buffer := log.MakeTestLogger()
 
 	es := makeErrorSummaries(logger)
 	es.record("first", errors.New("a1 error"), CheckpointStatusAnalyzed)

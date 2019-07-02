@@ -9,9 +9,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 	"github.com/pingcap/tidb/types"
+	"go.uber.org/zap/zaptest"
 )
 
 var _ = Suite(&testMydumpCSVParserSuite{})
@@ -1133,4 +1135,24 @@ func (s *testMydumpCSVParserSuite) TestReadError(c *C) {
 
 	parser := mydump.NewCSVParser(&cfg, &errorReader{}, config.ReadBlockSize, s.ioWorkers)
 	c.Assert(parser.ReadRow(), ErrorMatches, "fake read error")
+}
+
+// TestSyntaxErrorLog checks that a syntax error won't dump huge strings into the log.
+func (s *testMydumpCSVParserSuite) TestSyntaxErrorLog(c *C) {
+	cfg := config.CSVConfig{
+		Separator: "\t",
+		Delimiter: "'",
+	}
+
+	tc := strings.NewReader("x'" + strings.Repeat("y", 50000))
+	parser := mydump.NewCSVParser(&cfg, tc, 50000, s.ioWorkers)
+	var buffer *zaptest.Buffer
+	parser.Logger, buffer = log.MakeTestLogger()
+	c.Assert(parser.ReadRow(), ErrorMatches, "syntax error.*")
+	c.Assert(parser.Logger.Sync(), IsNil)
+
+	c.Assert(
+		buffer.Stripped(), Equals,
+		`{"$lvl":"ERROR","$msg":"syntax error","pos":1,"content":"'`+strings.Repeat("y", 255)+`"}`,
+	)
 }
