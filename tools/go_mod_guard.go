@@ -11,4 +11,7 @@ import (
 
 	// failpoint-ctl for enabling and disabling failpoints
 	_ "github.com/pingcap/failpoint"
+
+	// vfsgen for embedding HTML resources
+	_ "github.com/shurcooL/vfsgen/cmd/vfsgendev"
 )
