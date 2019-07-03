@@ -35,7 +35,7 @@ table-concurrency = 6
 
 # logging
 level = "info"
-ile = "tidb-lightning.log"
+file = "tidb-lightning.log"
 max-size = 128 # MB
 max-days = 28
 max-backups = 14
