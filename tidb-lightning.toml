@@ -35,7 +35,7 @@ table-concurrency = 6
 
 # logging
 level = "info"
-file = "tidb-lightning.log"
+ile = "tidb-lightning.log"
 max-size = 128 # MB
 max-days = 28
 max-backups = 14
@@ -138,10 +138,11 @@ checksum-table-concurrency = 16
 # if set true, checksum will do ADMIN CHECKSUM TABLE <table> for each table.
 checksum = true
 # if set to true, compact will do level 1 compaction to tikv data.
-# if this setting is missing, the default value is also true.
+# if this setting is missing, the default value is also false.
 level-1-compact = false
 # if set true, compact will do full compaction to tikv data.
-compact = true
+# if this setting is missing, the default value is also false.
+compact = false
 # if set true, analyze will do ANALYZE TABLE <table> for each table.
 analyze = true
 
