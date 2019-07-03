@@ -138,10 +138,10 @@ checksum-table-concurrency = 16
 # if set true, checksum will do ADMIN CHECKSUM TABLE <table> for each table.
 checksum = true
 # if set to true, compact will do level 1 compaction to tikv data.
-# if this setting is missing, the default value is also false.
+# if this setting is missing, the default value is false.
 level-1-compact = false
 # if set true, compact will do full compaction to tikv data.
-# if this setting is missing, the default value is also false.
+# if this setting is missing, the default value is false.
 compact = false
 # if set true, analyze will do ANALYZE TABLE <table> for each table.
 analyze = true
