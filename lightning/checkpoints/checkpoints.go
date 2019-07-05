@@ -217,7 +217,7 @@ func (cpd *TableCheckpointDiff) String() string {
 	)
 }
 
-// Apply the diff to this checkpoint.
+// Apply the diff to the existing chunk and engine checkpoints in `cp`.
 func (cp *TableCheckpoint) Apply(cpd *TableCheckpointDiff) {
 	if cpd.hasStatus {
 		cp.Status = cpd.status

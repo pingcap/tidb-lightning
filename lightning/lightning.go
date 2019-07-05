@@ -42,7 +42,8 @@ import (
 )
 
 type Lightning struct {
-	globalCfg  *config.GlobalConfig
+	globalCfg *config.GlobalConfig
+	// taskCfgs is the list of task configurations enqueued in the server mode
 	taskCfgs   *config.ConfigList
 	ctx        context.Context
 	shutdown   context.CancelFunc
@@ -250,6 +251,8 @@ func (l *Lightning) handleTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if l.taskCfgs == nil {
+		// l.taskCfgs is non-nil only if Lightning is started with RunServer().
+		// Without the server mode this pointer is default to be nil.
 		writeJSONError(w, http.StatusNotImplemented, "server-mode not enabled", nil)
 		return
 	}
