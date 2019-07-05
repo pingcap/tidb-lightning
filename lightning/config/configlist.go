@@ -26,6 +26,13 @@ type ConfigList struct {
 	cond      *sync.Cond
 	taskIDMap map[int64]*list.Element
 	nodes     list.List
+
+	// lastID records the largest task ID being Push()'ed to the ConfigList.
+	// In the rare case where two Push() are executed in the same nanosecond
+	// (or the not-so-rare case where the clock's precision is lower than CPU
+	// speed), we'll need to manually force one of the task to use the ID as
+	// lastID + 1.
+	lastID int64
 }
 
 // NewConfigList creates a new ConfigList instance.
@@ -42,7 +49,11 @@ func (cl *ConfigList) Push(cfg *Config) {
 	id := time.Now().UnixNano()
 	cl.cond.L.Lock()
 	defer cl.cond.L.Unlock()
+	if id <= cl.lastID {
+		id = cl.lastID + 1
+	}
 	cfg.TaskID = id
+	cl.lastID = id
 	cl.taskIDMap[id] = cl.nodes.PushBack(cfg)
 	cl.cond.Broadcast()
 }
@@ -109,8 +120,34 @@ func (cl *ConfigList) AllIDs() []int64 {
 	cl.cond.L.Lock()
 	defer cl.cond.L.Unlock()
 	res := make([]int64, 0, len(cl.taskIDMap))
-	for taskID := range cl.taskIDMap {
-		res = append(res, taskID)
+	for element := cl.nodes.Front(); element != nil; element = element.Next() {
+		res = append(res, element.Value.(*Config).TaskID)
 	}
 	return res
+}
+
+// MoveToFront moves a task to the front of the list. Returns true if the task
+// is successfully moved (including no-op), false if the task ID did not exist.
+func (cl *ConfigList) MoveToFront(taskID int64) bool {
+	cl.cond.L.Lock()
+	defer cl.cond.L.Unlock()
+	element, ok := cl.taskIDMap[taskID]
+	if !ok {
+		return false
+	}
+	cl.nodes.MoveToFront(element)
+	return true
+}
+
+// MoveToBack moves a task to the back of the list. Returns true if the task is
+// successfully moved (including no-op), false if the task ID did not exist.
+func (cl *ConfigList) MoveToBack(taskID int64) bool {
+	cl.cond.L.Lock()
+	defer cl.cond.L.Unlock()
+	element, ok := cl.taskIDMap[taskID]
+	if !ok {
+		return false
+	}
+	cl.nodes.MoveToBack(element)
+	return true
 }

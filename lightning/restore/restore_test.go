@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
@@ -70,7 +71,7 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 
 		dbInfo.Tables[tc.name] = &TidbTableInfo{
 			Name: tc.name,
-			core: tableInfo,
+			Core: tableInfo,
 		}
 	}
 
@@ -86,7 +87,7 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 func (s *restoreSuite) TestNewTableRestoreFailure(c *C) {
 	tableInfo := &TidbTableInfo{
 		Name: "failure",
-		core: &model.TableInfo{},
+		Core: &model.TableInfo{},
 	}
 	dbInfo := &TidbDBInfo{Name: "mockdb", Tables: map[string]*TidbTableInfo{
 		"failure": tableInfo,
@@ -291,7 +292,7 @@ func (s *tableRestoreSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	core.State = model.StatePublic
 
-	s.tableInfo = &TidbTableInfo{Name: "table", core: core}
+	s.tableInfo = &TidbTableInfo{Name: "table", Core: core}
 	s.dbInfo = &TidbDBInfo{
 		Name:   "db",
 		Tables: map[string]*TidbTableInfo{"table": s.tableInfo},

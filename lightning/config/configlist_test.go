@@ -102,3 +102,30 @@ func (s *configListTestSuite) TestGetRemove(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(cfg, Equals, cfg3)
 }
+
+func (s *configListTestSuite) TestMoveFrontBack(c *C) {
+	cl := config.NewConfigList()
+
+	cfg1 := &config.Config{TikvImporter: config.TikvImporter{Addr: "1.1.1.1:1111"}}
+	cl.Push(cfg1)
+	cfg2 := &config.Config{TikvImporter: config.TikvImporter{Addr: "2.2.2.2:2222"}}
+	cl.Push(cfg2)
+	cfg3 := &config.Config{TikvImporter: config.TikvImporter{Addr: "3.3.3.3:3333"}}
+	cl.Push(cfg3)
+
+	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg1.TaskID, cfg2.TaskID, cfg3.TaskID})
+
+	c.Assert(cl.MoveToFront(cfg2.TaskID), IsTrue)
+	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg2.TaskID, cfg1.TaskID, cfg3.TaskID})
+	c.Assert(cl.MoveToFront(cfg2.TaskID), IsTrue)
+	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg2.TaskID, cfg1.TaskID, cfg3.TaskID})
+	c.Assert(cl.MoveToFront(123456), IsFalse)
+	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg2.TaskID, cfg1.TaskID, cfg3.TaskID})
+
+	c.Assert(cl.MoveToBack(cfg2.TaskID), IsTrue)
+	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg1.TaskID, cfg3.TaskID, cfg2.TaskID})
+	c.Assert(cl.MoveToBack(cfg2.TaskID), IsTrue)
+	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg1.TaskID, cfg3.TaskID, cfg2.TaskID})
+	c.Assert(cl.MoveToBack(123456), IsFalse)
+	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg1.TaskID, cfg3.TaskID, cfg2.TaskID})
+}
