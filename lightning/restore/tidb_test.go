@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/util/mock"
@@ -257,23 +258,23 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 
 	loaded, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "db"}})
 	c.Assert(err, IsNil)
-	c.Assert(loaded, DeepEquals, map[string]*TidbDBInfo{
+	c.Assert(loaded, DeepEquals, map[string]*checkpoints.TidbDBInfo{
 		"db": {
 			Name: "db",
-			Tables: map[string]*TidbTableInfo{
+			Tables: map[string]*checkpoints.TidbTableInfo{
 				"t1": {
 					ID:      100,
 					Name:    "t1",
 					Columns: 1,
 					Indices: 0,
-					core:    tableInfos[0],
+					Core:    tableInfos[0],
 				},
 				"t2": {
 					ID:      101,
 					Name:    "t2",
 					Columns: 2,
 					Indices: 1,
-					core:    tableInfos[1],
+					Core:    tableInfos[1],
 				},
 			},
 		},

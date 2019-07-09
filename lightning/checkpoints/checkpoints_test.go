@@ -1,9 +1,16 @@
-package restore
+package checkpoints
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
+
+func Test(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&checkpointSuite{})
 
@@ -177,5 +184,107 @@ func (s *checkpointSuite) TestRebaseCheckpoint(c *C) {
 		hasRebase: true,
 		allocBase: 10000,
 		engines:   make(map[int32]engineCheckpointDiff),
+	})
+}
+
+func (s *checkpointSuite) TestApplyDiff(c *C) {
+	cp := TableCheckpoint{
+		Status:    CheckpointStatusLoaded,
+		AllocBase: 123,
+		Engines: map[int32]*EngineCheckpoint{
+			-1: {
+				Status: CheckpointStatusLoaded,
+			},
+			0: {
+				Status: CheckpointStatusLoaded,
+				Chunks: []*ChunkCheckpoint{
+					{
+						Key: ChunkCheckpointKey{Path: "/tmp/01.sql"},
+						Chunk: mydump.Chunk{
+							Offset:       0,
+							EndOffset:    20000,
+							PrevRowIDMax: 0,
+							RowIDMax:     1000,
+						},
+					},
+					{
+						Key: ChunkCheckpointKey{Path: "/tmp/04.sql"},
+						Chunk: mydump.Chunk{
+							Offset:       0,
+							EndOffset:    15000,
+							PrevRowIDMax: 1000,
+							RowIDMax:     1300,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cpd := NewTableCheckpointDiff()
+	(&StatusCheckpointMerger{EngineID: -1, Status: CheckpointStatusImported}).MergeInto(cpd)
+	(&StatusCheckpointMerger{EngineID: WholeTableEngineID, Status: CheckpointStatusAllWritten}).MergeInto(cpd)
+	(&StatusCheckpointMerger{EngineID: 1234, Status: CheckpointStatusAnalyzeSkipped}).MergeInto(cpd)
+	(&RebaseCheckpointMerger{AllocBase: 11111}).MergeInto(cpd)
+	(&ChunkCheckpointMerger{
+		EngineID: 0,
+		Key:      ChunkCheckpointKey{Path: "/tmp/01.sql"},
+		Checksum: verification.MakeKVChecksum(3333, 4444, 5555),
+		Pos:      6666,
+		RowID:    777,
+	}).MergeInto(cpd)
+	(&ChunkCheckpointMerger{
+		EngineID: 5678,
+		Key:      ChunkCheckpointKey{Path: "/tmp/04.sql"},
+		Pos:      9999,
+		RowID:    888,
+	}).MergeInto(cpd)
+	(&ChunkCheckpointMerger{
+		EngineID: 0,
+		Key:      ChunkCheckpointKey{Path: "/tmp/03.sql"},
+		Pos:      3636,
+		RowID:    2222,
+	}).MergeInto(cpd)
+	(&ChunkCheckpointMerger{
+		EngineID: 0,
+		Key:      ChunkCheckpointKey{Path: "/tmp/10.sql"},
+		Pos:      4949,
+		RowID:    444,
+	}).MergeInto(cpd)
+
+	cp.Apply(cpd)
+
+	c.Assert(cp, DeepEquals, TableCheckpoint{
+		Status:    CheckpointStatusAllWritten,
+		AllocBase: 11111,
+		Engines: map[int32]*EngineCheckpoint{
+			-1: {
+				Status: CheckpointStatusImported,
+			},
+			0: {
+				Status: CheckpointStatusLoaded,
+				Chunks: []*ChunkCheckpoint{
+					{
+						Key: ChunkCheckpointKey{Path: "/tmp/01.sql"},
+						Chunk: mydump.Chunk{
+							Offset:       6666,
+							EndOffset:    20000,
+							PrevRowIDMax: 777,
+							RowIDMax:     1000,
+						},
+						Checksum: verification.MakeKVChecksum(3333, 4444, 5555),
+					},
+					{
+						Key: ChunkCheckpointKey{Path: "/tmp/04.sql"},
+						Chunk: mydump.Chunk{
+							Offset:       0,
+							EndOffset:    15000,
+							PrevRowIDMax: 1000,
+							RowIDMax:     1300,
+						},
+					},
+				},
+			},
+		},
 	})
 }

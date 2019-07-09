@@ -77,32 +77,38 @@ func (s *lightningSuite) TestRun(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *lightningSuite) TestRunServer(c *C) {
+var _ = Suite(&lightningServerSuite{})
+
+type lightningServerSuite struct {
+	lightning *Lightning
+	taskCfgCh chan *config.Config
+}
+
+func (s *lightningServerSuite) SetUpTest(c *C) {
 	cfg := config.NewGlobalConfig()
 	cfg.TiDB.Host = "test.invalid"
 	cfg.TiDB.Port = 4000
 	cfg.TiDB.PdAddr = "test.invalid:2379"
 	cfg.App.ServerMode = true
-	cfg.App.StatusAddr = "127.0.0.1:45678"
+	cfg.App.StatusAddr = "127.0.0.1:0"
 
-	lightning := New(cfg)
-	go lightning.Serve()
-	defer lightning.Stop()
+	s.lightning = New(cfg)
+	s.taskCfgCh = make(chan *config.Config)
+	s.lightning.ctx = context.WithValue(s.lightning.ctx, &taskCfgRecorderKey, s.taskCfgCh)
+	s.lightning.GoServe()
 
-	url := "http://127.0.0.1:45678/tasks"
+	failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/SkipRunTask", "return")
+}
 
-	// Wait a bit until the server is really listening.
-	time.Sleep(500 * time.Millisecond)
+func (s *lightningServerSuite) TearDownTest(c *C) {
+	failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/SkipRunTask")
+	s.lightning.Stop()
+}
 
-	req, err := http.NewRequest(http.MethodPut, url, nil)
-	c.Assert(err, IsNil)
-	resp, err := http.DefaultClient.Do(req)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusMethodNotAllowed)
-	c.Assert(resp.Header.Get("Allow"), Equals, http.MethodGet+", "+http.MethodPost)
-	resp.Body.Close()
+func (s *lightningServerSuite) TestRunServer(c *C) {
+	url := "http://" + s.lightning.serverAddr.String() + "/tasks"
 
-	resp, err = http.Post(url, "application/toml", strings.NewReader("????"))
+	resp, err := http.Post(url, "application/toml", strings.NewReader("????"))
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusNotImplemented)
 	var data map[string]string
@@ -112,7 +118,15 @@ func (s *lightningSuite) TestRunServer(c *C) {
 	c.Assert(data["error"], Equals, "server-mode not enabled")
 	resp.Body.Close()
 
-	go lightning.RunServer()
+	go s.lightning.RunServer()
+
+	req, err := http.NewRequest(http.MethodPut, url, nil)
+	c.Assert(err, IsNil)
+	resp, err = http.DefaultClient.Do(req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusMethodNotAllowed)
+	c.Assert(resp.Header.Get("Allow"), Matches, ".*"+http.MethodPost+".*")
+	resp.Body.Close()
 
 	resp, err = http.Post(url, "application/toml", strings.NewReader("????"))
 	c.Assert(err, IsNil)
@@ -132,11 +146,6 @@ func (s *lightningSuite) TestRunServer(c *C) {
 	c.Assert(data["error"], Matches, "invalid task configuration:.*")
 	resp.Body.Close()
 
-	taskCfgCh := make(chan *config.Config)
-	lightning.ctx = context.WithValue(lightning.ctx, &taskCfgRecorderKey, taskCfgCh)
-	failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/SkipRunTask", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/SkipRunTask")
-
 	for i := 0; i < 20; i++ {
 		resp, err = http.Post(url, "application/toml", strings.NewReader(fmt.Sprintf(`
 			[mydumper]
@@ -148,12 +157,12 @@ func (s *lightningSuite) TestRunServer(c *C) {
 		c.Assert(resp.StatusCode, Equals, http.StatusOK)
 		var result map[string]int
 		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
 		c.Assert(err, IsNil)
 		c.Assert(result, HasKey, "id")
-		resp.Body.Close()
 
 		select {
-		case taskCfg := <-taskCfgCh:
+		case taskCfg := <-s.taskCfgCh:
 			c.Assert(taskCfg.TiDB.Host, Equals, "test.invalid")
 			c.Assert(taskCfg.Mydumper.SourceDir, Equals, fmt.Sprintf("demo-path-%d", i))
 			c.Assert(taskCfg.Mydumper.CSV.Separator, Equals, "/")
@@ -161,4 +170,154 @@ func (s *lightningSuite) TestRunServer(c *C) {
 			c.Fatalf("task is not queued after 500ms (i = %d)", i)
 		}
 	}
+}
+
+func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
+	url := "http://" + s.lightning.serverAddr.String() + "/tasks"
+
+	type getAllResultType struct {
+		Current int64
+		Queue   []int64
+	}
+
+	getAllTasks := func() (result getAllResultType) {
+		resp, err := http.Get(url)
+		c.Assert(err, IsNil)
+		c.Assert(resp.StatusCode, Equals, http.StatusOK)
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		c.Assert(err, IsNil)
+		return
+	}
+
+	postTask := func(i int) int64 {
+		resp, err := http.Post(url, "application/toml", strings.NewReader(fmt.Sprintf(`
+			[mydumper]
+			data-source-dir = 'demo-path-%d'
+		`, i)))
+		c.Assert(err, IsNil)
+		c.Assert(resp.StatusCode, Equals, http.StatusOK)
+		var result struct{ ID int64 }
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		c.Assert(err, IsNil)
+		return result.ID
+	}
+
+	go s.lightning.RunServer()
+
+	// Check `GET /tasks` without any active tasks
+
+	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
+		Current: 0,
+		Queue:   []int64{},
+	})
+
+	first := postTask(1)
+	second := postTask(2)
+	third := postTask(3)
+
+	c.Assert(first, Not(Equals), 123456)
+	c.Assert(second, Not(Equals), 123456)
+	c.Assert(third, Not(Equals), 123456)
+
+	// Check `GET /tasks` returns all tasks currently running
+
+	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
+		Current: first,
+		Queue:   []int64{second, third},
+	})
+
+	// Check `GET /tasks/abcdef` returns error
+
+	resp, err := http.Get(url + "/abcdef")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	resp.Body.Close()
+
+	// Check `GET /tasks/123456` returns not found
+
+	resp, err = http.Get(url + "/123456")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+	resp.Body.Close()
+
+	// Check `GET /tasks/1` returns the desired cfg
+
+	var resCfg config.Config
+
+	resp, err = http.Get(fmt.Sprintf("%s/%d", url, second))
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	err = json.NewDecoder(resp.Body).Decode(&resCfg)
+	resp.Body.Close()
+	c.Assert(err, IsNil)
+	c.Assert(resCfg.Mydumper.SourceDir, Equals, "demo-path-2")
+
+	resp, err = http.Get(fmt.Sprintf("%s/%d", url, first))
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	err = json.NewDecoder(resp.Body).Decode(&resCfg)
+	resp.Body.Close()
+	c.Assert(err, IsNil)
+	c.Assert(resCfg.Mydumper.SourceDir, Equals, "demo-path-1")
+
+	// Check `DELETE /tasks` returns error.
+
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	c.Assert(err, IsNil)
+	resp, err = http.DefaultClient.Do(req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	resp.Body.Close()
+
+	// Check `DELETE /tasks/` returns error.
+
+	req.URL.Path = "/tasks/"
+	resp, err = http.DefaultClient.Do(req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	resp.Body.Close()
+
+	// Check `DELETE /tasks/(not a number)` returns error.
+
+	req.URL.Path = "/tasks/abcdef"
+	resp, err = http.DefaultClient.Do(req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	resp.Body.Close()
+
+	// Check `DELETE /tasks/123456` returns not found
+
+	req.URL.Path = "/tasks/123456"
+	resp, err = http.DefaultClient.Do(req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+	resp.Body.Close()
+
+	// Cancel a queued task, then verify the task list.
+
+	req.URL.Path = fmt.Sprintf("/tasks/%d", second)
+	resp, err = http.DefaultClient.Do(req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	resp.Body.Close()
+
+	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
+		Current: first,
+		Queue:   []int64{third},
+	})
+
+	// Cancel a running task, then verify the task list.
+
+	req.URL.Path = fmt.Sprintf("/tasks/%d", first)
+	resp, err = http.DefaultClient.Do(req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	resp.Body.Close()
+
+	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
+		Current: third,
+		Queue:   []int64{},
+	})
 }

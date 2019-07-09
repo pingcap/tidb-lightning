@@ -15,7 +15,6 @@ package main
 
 import (
 	"fmt"
-	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -43,15 +42,19 @@ func main() {
 		app.Stop()
 	}()
 
-	go app.Serve()
+	logger := log.L()
 
-	var err error
+	err := app.GoServe()
+	if err != nil {
+		logger.Error("failed to start HTTP server", zap.Error(err))
+		return
+	}
+
 	if cfg.App.ServerMode {
 		err = app.RunServer()
 	} else {
 		err = app.RunOnce()
 	}
-	logger := log.L()
 	if err != nil {
 		logger.Error("tidb lightning encountered error", zap.Error(err))
 	} else {
