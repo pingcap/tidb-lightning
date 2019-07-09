@@ -28,7 +28,7 @@ verify_checkpoint_noop() {
     run_sql 'SELECT count(i), sum(i) FROM cpch_tsr.tbl;'
     check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
     check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
-    run_sql "SELECT count(*) FROM tidb_lightning_checkpoint_test_cpch.table_v4 WHERE status >= 200"
+    run_sql "SELECT count(*) FROM tidb_lightning_checkpoint_test_cpch.table_v5 WHERE status >= 200"
     check_contains "count(*): 1"
 }
 
@@ -116,4 +116,4 @@ run_lightning file
 run_sql 'SELECT count(i), sum(i) FROM cpch_tsr.tbl;'
 check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
 check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
-[ -f "$TEST_DIR/cpch.pb" ]
+[ ! -e "$TEST_DIR/cpch.pb" ]

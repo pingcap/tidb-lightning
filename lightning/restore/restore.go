@@ -200,7 +200,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema)
+		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema, cfg.TaskID)
 		if err != nil {
 			db.Close()
 			return nil, errors.Trace(err)
