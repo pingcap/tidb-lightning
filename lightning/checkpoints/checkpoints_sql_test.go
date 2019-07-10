@@ -445,3 +445,23 @@ func (s *cpSQLSuite) TestDump(c *C) {
 			"1555555555,`db1`.`t2`,0,90,132861,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
 	)
 }
+
+func (s *cpSQLSuite) TestMoveCheckpoints(c *C) {
+	ctx := context.Background()
+
+	s.mock.
+		ExpectExec("CREATE SCHEMA IF NOT EXISTS `mock-schema\\.12345678\\.bak`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mock.
+		ExpectExec("RENAME TABLE `mock-schema`\\.chunk_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.chunk_v\\d+").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.
+		ExpectExec("RENAME TABLE `mock-schema`\\.engine_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.engine_v\\d+").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.
+		ExpectExec("RENAME TABLE `mock-schema`\\.table_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.table_v\\d+").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.cpdb.MoveCheckpoints(ctx, 12345678)
+	c.Assert(err, IsNil)
+}

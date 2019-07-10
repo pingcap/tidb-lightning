@@ -327,6 +327,9 @@ type CheckpointsDB interface {
 	Update(checkpointDiffs map[string]*TableCheckpointDiff)
 
 	RemoveCheckpoint(ctx context.Context, tableName string) error
+	// MoveCheckpoints renames the checkpoint schema to include a suffix
+	// including the taskID (e.g. `tidb_lightning_checkpoints.1234567890.bak`).
+	MoveCheckpoints(ctx context.Context, taskID int64) error
 	IgnoreErrorCheckpoint(ctx context.Context, tableName string) error
 	DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error)
 	DumpTables(ctx context.Context, csv io.Writer) error
@@ -913,6 +916,9 @@ var cannotManageNullDB = errors.New("cannot perform this function while checkpoi
 func (*NullCheckpointsDB) RemoveCheckpoint(context.Context, string) error {
 	return errors.Trace(cannotManageNullDB)
 }
+func (*NullCheckpointsDB) MoveCheckpoints(context.Context, int64) error {
+	return errors.Trace(cannotManageNullDB)
+}
 func (*NullCheckpointsDB) IgnoreErrorCheckpoint(context.Context, string) error {
 	return errors.Trace(cannotManageNullDB)
 }
@@ -955,6 +961,33 @@ func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName 
 		}
 		return nil
 	})
+}
+
+func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) error {
+	newSchema := fmt.Sprintf("`%s.%d.bak`", cpdb.schema[1:len(cpdb.schema)-1], taskID)
+	s := common.SQLWithRetry{
+		DB:     cpdb.db,
+		Logger: log.With(zap.Int64("taskID", taskID)),
+	}
+
+	createSchemaQuery := "CREATE SCHEMA IF NOT EXISTS " + newSchema
+	moveChunkQuery := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, checkpointTableNameChunk)
+	moveEngineQuery := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, checkpointTableNameEngine)
+	moveTableQuery := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, checkpointTableNameTable)
+
+	if e := s.Exec(ctx, "create backup checkpoints schema", createSchemaQuery); e != nil {
+		return e
+	}
+	if e := s.Exec(ctx, "move chunk checkpoints table", moveChunkQuery); e != nil {
+		return e
+	}
+	if e := s.Exec(ctx, "move engine checkpoints table", moveEngineQuery); e != nil {
+		return e
+	}
+	if e := s.Exec(ctx, "move table checkpoints table", moveTableQuery); e != nil {
+		return e
+	}
+	return nil
 }
 
 func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
@@ -1138,6 +1171,14 @@ func (cpdb *FileCheckpointsDB) RemoveCheckpoint(_ context.Context, tableName str
 
 	delete(cpdb.checkpoints.Checkpoints, tableName)
 	return errors.Trace(cpdb.save())
+}
+
+func (cpdb *FileCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) error {
+	cpdb.lock.Lock()
+	defer cpdb.lock.Unlock()
+
+	newPath := fmt.Sprintf("%s.%d.bak", cpdb.path, taskID)
+	return errors.Trace(os.Rename(cpdb.path, newPath))
 }
 
 func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTableName string) error {
