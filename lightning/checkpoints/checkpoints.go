@@ -742,7 +742,7 @@ func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
 	if err == nil {
 		cpdb.checkpoints.Unmarshal(content)
 	} else {
-		log.L().Warn("open checkpoint file failed, going to create a new one",
+		log.L().Info("open checkpoint file failed, going to create a new one",
 			zap.String("path", path),
 			log.ShortError(err),
 		)

@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/log"
+	"go.uber.org/zap"
 )
 
 func TestLog(t *testing.T) {
@@ -37,4 +38,13 @@ func (s *logSuite) TestConfigAdjust(c *C) {
 	err := log.InitLogger(cfg, "info")
 	c.Assert(err, ErrorMatches, "can't use directory as log file name")
 	log.L().Named("xx")
+}
+
+func (s *logSuite) TestTestLogger(c *C) {
+	logger, buffer := log.MakeTestLogger()
+	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
+	c.Assert(
+		buffer.Stripped(), Equals,
+		`{"$lvl":"WARN","$msg":"the message","number":123456,"array":[7,8,9]}`,
+	)
 }

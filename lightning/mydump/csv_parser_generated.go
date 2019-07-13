@@ -13,17 +13,15 @@ package mydump
 import (
 	"io"
 
-	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
 )
 
 
-//.... lightning/mydump/csv_parser.rl:59
+//.... lightning/mydump/csv_parser.rl:57
 
 
 
-//.... tmp_parser.go:26
+//.... tmp_parser.go:24
 const csv_parser_start int = 8
 const csv_parser_first_final int = 8
 const csv_parser_error int = 0
@@ -31,7 +29,7 @@ const csv_parser_error int = 0
 const csv_parser_en_main int = 8
 
 
-//.... lightning/mydump/csv_parser.rl:62
+//.... lightning/mydump/csv_parser.rl:60
 
 func (parser *CSVParser) lex() (csvToken, []byte, error) {
 	var delim byte
@@ -42,7 +40,7 @@ func (parser *CSVParser) lex() (csvToken, []byte, error) {
 
 	var cs, ts, te, act, p int
 	
-//.... tmp_parser.go:45
+//.... tmp_parser.go:43
 	{
 	cs = csv_parser_start
 	ts = 0
@@ -50,7 +48,7 @@ func (parser *CSVParser) lex() (csvToken, []byte, error) {
 	act = 0
 	}
 
-//.... lightning/mydump/csv_parser.rl:72
+//.... lightning/mydump/csv_parser.rl:70
 
 	for {
 		data := parser.buf
@@ -62,7 +60,7 @@ func (parser *CSVParser) lex() (csvToken, []byte, error) {
 		}
 
 		
-//.... tmp_parser.go:65
+//.... tmp_parser.go:63
 	{
 	var _widec int16
 	if p == pe {
@@ -142,7 +140,7 @@ tr0:
 	
 	goto st8
 tr14:
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 p = (te) - 1
 {
 		consumedToken = csvTokField
@@ -150,7 +148,7 @@ p = (te) - 1
 	}
 	goto st8
 tr17:
-//.... lightning/mydump/csv_parser.rl:42
+//.... lightning/mydump/csv_parser.rl:40
 te = p+1
 {
 		consumedToken = csvTokSep
@@ -158,7 +156,7 @@ te = p+1
 	}
 	goto st8
 tr23:
-//.... lightning/mydump/csv_parser.rl:52
+//.... lightning/mydump/csv_parser.rl:50
 te = p
 p--
 {
@@ -167,7 +165,7 @@ p--
 	}
 	goto st8
 tr24:
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 te = p
 p--
 {
@@ -176,7 +174,7 @@ p--
 	}
 	goto st8
 tr25:
-//.... lightning/mydump/csv_parser.rl:42
+//.... lightning/mydump/csv_parser.rl:40
 te = p
 p--
 {
@@ -198,7 +196,7 @@ act = 0
 //.... NONE:1
 ts = p
 
-//.... tmp_parser.go:201
+//.... tmp_parser.go:199
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 14:
@@ -369,7 +367,7 @@ tr1:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 act = 2;
 	goto st10
 	st10:
@@ -377,7 +375,7 @@ act = 2;
 			goto _test_eof10
 		}
 	st_case_10:
-//.... tmp_parser.go:380
+//.... tmp_parser.go:378
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 14:
@@ -629,7 +627,7 @@ tr3:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 act = 2;
 	goto st11
 	st11:
@@ -637,7 +635,7 @@ act = 2;
 			goto _test_eof11
 		}
 	st_case_11:
-//.... tmp_parser.go:640
+//.... tmp_parser.go:638
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 11:
@@ -677,7 +675,7 @@ tr4:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 act = 2;
 	goto st12
 	st12:
@@ -685,7 +683,7 @@ act = 2;
 			goto _test_eof12
 		}
 	st_case_12:
-//.... tmp_parser.go:688
+//.... tmp_parser.go:686
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 14:
@@ -846,7 +844,7 @@ tr8:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 act = 2;
 	goto st13
 	st13:
@@ -854,7 +852,7 @@ act = 2;
 			goto _test_eof13
 		}
 	st_case_13:
-//.... tmp_parser.go:857
+//.... tmp_parser.go:855
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 14:
@@ -1164,7 +1162,7 @@ tr6:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 act = 2;
 	goto st14
 	st14:
@@ -1172,7 +1170,7 @@ act = 2;
 			goto _test_eof14
 		}
 	st_case_14:
-//.... tmp_parser.go:1175
+//.... tmp_parser.go:1173
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 11:
@@ -1228,7 +1226,7 @@ tr18:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:42
+//.... lightning/mydump/csv_parser.rl:40
 act = 1;
 	goto st15
 	st15:
@@ -1236,7 +1234,7 @@ act = 1;
 			goto _test_eof15
 		}
 	st_case_15:
-//.... tmp_parser.go:1239
+//.... tmp_parser.go:1237
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 14:
@@ -1546,7 +1544,7 @@ tr9:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 act = 2;
 	goto st16
 	st16:
@@ -1554,7 +1552,7 @@ act = 2;
 			goto _test_eof16
 		}
 	st_case_16:
-//.... tmp_parser.go:1557
+//.... tmp_parser.go:1555
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 14:
@@ -1926,7 +1924,7 @@ tr11:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 act = 2;
 	goto st18
 	st18:
@@ -1934,7 +1932,7 @@ act = 2;
 			goto _test_eof18
 		}
 	st_case_18:
-//.... tmp_parser.go:1937
+//.... tmp_parser.go:1935
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 14:
@@ -2244,7 +2242,7 @@ tr13:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 act = 2;
 	goto st20
 	st20:
@@ -2252,7 +2250,7 @@ act = 2;
 			goto _test_eof20
 		}
 	st_case_20:
-//.... tmp_parser.go:2255
+//.... tmp_parser.go:2253
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 14:
@@ -2407,7 +2405,7 @@ tr10:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 act = 2;
 	goto st21
 	st21:
@@ -2415,7 +2413,7 @@ act = 2;
 			goto _test_eof21
 		}
 	st_case_21:
-//.... tmp_parser.go:2418
+//.... tmp_parser.go:2416
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 14:
@@ -2547,7 +2545,7 @@ tr12:
 //.... NONE:1
 te = p+1
 
-//.... lightning/mydump/csv_parser.rl:47
+//.... lightning/mydump/csv_parser.rl:45
 act = 2;
 	goto st22
 	st22:
@@ -2555,7 +2553,7 @@ act = 2;
 			goto _test_eof22
 		}
 	st_case_22:
-//.... tmp_parser.go:2558
+//.... tmp_parser.go:2556
 		_widec = int16(data[p])
 		switch {
 		case data[p] < 14:
@@ -2939,13 +2937,10 @@ act = 2;
 	_out: {}
 	}
 
-//.... lightning/mydump/csv_parser.rl:83
+//.... lightning/mydump/csv_parser.rl:81
 
 		if cs == 0 {
-			log.L().Error("syntax error",
-				zap.Int64("pos", parser.pos),
-				zap.ByteString("content", data),
-			)
+			parser.logSyntaxError()
 			return csvTokNil, nil, errors.New("syntax error")
 		}
 
