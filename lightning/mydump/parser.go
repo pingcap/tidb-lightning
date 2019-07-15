@@ -102,6 +102,9 @@ type Parser interface {
 	Close() error
 	ReadRow() error
 	LastRow() Row
+
+	// Columns returns the _lower-case_ column names corresponding to values in
+	// the LastRow.
 	Columns() []string
 }
 
@@ -412,7 +415,7 @@ func (parser *ChunkParser) ReadRow() error {
 			case tokRowEnd:
 				st = stateValues
 			case tokUnquoted, tokDoubleQuoted, tokBackQuoted:
-				columnName := parser.unescapeString(string(content))
+				columnName := strings.ToLower(parser.unescapeString(string(content)))
 				parser.columns = append(parser.columns, columnName)
 			default:
 				return errors.Errorf(
