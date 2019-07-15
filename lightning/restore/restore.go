@@ -1228,7 +1228,7 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 	} else {
 		columnMap := make(map[string]int)
 		for i, column := range columns {
-			columnMap[column] = i
+			columnMap[strings.ToLower(column)] = i
 		}
 		for _, colInfo := range t.tableInfo.Core.Columns {
 			if i, ok := columnMap[colInfo.Name.L]; ok {
