@@ -395,7 +395,8 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 			status tinyint unsigned DEFAULT 30,
 			alloc_base bigint NOT NULL DEFAULT 0,
 			create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			INDEX(task_id)
 		);
 	`, schema, checkpointTableNameTable))
 	if err != nil {
@@ -964,6 +965,9 @@ func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName 
 }
 
 func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) error {
+	// The "cpdb.schema" is an escaped schema name of the form "`foo`".
+	// We use "x[1:len(x)-1]" instead of unescaping it to keep the
+	// double-backquotes (if any) intact.
 	newSchema := fmt.Sprintf("`%s.%d.bak`", cpdb.schema[1:len(cpdb.schema)-1], taskID)
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
@@ -993,6 +997,8 @@ func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int6
 func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
 	var colName string
 	if tableName == "all" {
+		// This will expand to `WHERE 'all' = 'all'` and effectively allowing
+		// all tables to be included.
 		colName = "'all'"
 	} else {
 		colName = "table_name"
@@ -1025,6 +1031,8 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	var colName, aliasedColName string
 
 	if tableName == "all" {
+		// These will expand to `WHERE 'all' = 'all'` and effectively allowing
+		// all tables to be included.
 		colName = "'all'"
 		aliasedColName = "'all'"
 	} else {
