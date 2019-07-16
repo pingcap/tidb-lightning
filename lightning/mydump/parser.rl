@@ -23,9 +23,7 @@ package mydump
 import (
 	"io"
 
-	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
 )
 
 %%{
@@ -156,10 +154,7 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 		%% write exec;
 
 		if cs == %%{ write error; }%% {
-			log.L().Error("syntax error",
-				zap.Int64("pos", parser.pos),
-				zap.ByteString("content", data),
-			)
+			parser.logSyntaxError()
 			return tokNil, nil, errors.New("syntax error")
 		}
 

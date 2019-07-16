@@ -21,7 +21,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"testing"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -34,10 +33,6 @@ import (
 )
 
 type utilSuite struct{}
-
-func TestUtil(t *testing.T) {
-	TestingT(t)
-}
 
 var _ = Suite(&utilSuite{})
 

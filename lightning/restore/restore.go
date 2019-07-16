@@ -18,7 +18,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"path"
@@ -41,6 +40,7 @@ import (
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
+	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
+	"github.com/pingcap/tidb-lightning/lightning/web"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
@@ -61,8 +62,7 @@ const (
 )
 
 const (
-	indexEngineID      = -1
-	WholeTableEngineID = math.MaxInt32
+	indexEngineID = -1
 )
 
 const (
@@ -75,6 +75,9 @@ var (
 	requiredPDVersion   = *semver.New("2.1.0")
 	requiredTiKVVersion = *semver.New("2.1.0")
 )
+
+// DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
+var DeliverPauser = common.NewPauser()
 
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
@@ -343,6 +346,7 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 	coalesed := make(map[string]*TableCheckpointDiff)
 
 	hasCheckpoint := make(chan struct{}, 1)
+	defer close(hasCheckpoint)
 
 	go func() {
 		for range hasCheckpoint {
@@ -353,6 +357,7 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 
 			if len(cpd) > 0 {
 				rc.checkpointsDB.Update(cpd)
+				web.BroadcastCheckpointDiff(cpd)
 			}
 			rc.checkpointsWg.Done()
 		}
@@ -489,8 +494,10 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
+				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 				err := task.tr.restoreTable(ctx, rc, task.cp)
 				tableLogTask.End(zap.ErrorLevel, err)
+				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
 				restoreErr.Set(err)
 				wg.Done()
@@ -546,6 +553,12 @@ func (t *TableRestore) restoreTable(
 ) error {
 	// 1. Load the table info.
 
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	// no need to do anything if the chunks are already populated
 	if len(cp.Engines) > 0 {
 		t.logger.Info("reusing engines and files info from checkpoint",
@@ -559,9 +572,10 @@ func (t *TableRestore) restoreTable(
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, t.tableName, cp.Engines); err != nil {
 			return errors.Trace(err)
 		}
+		web.BroadcastTableCheckpoint(t.tableName, cp)
 
 		// rebase the allocator so it exceeds the number of rows.
-		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.core.AutoIncID)
+		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoIncID)
 		for _, engine := range cp.Engines {
 			for _, chunk := range engine.Chunks {
 				cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, chunk.Chunk.RowIDMax)
@@ -1125,7 +1139,7 @@ func NewTableRestore(
 	cp *TableCheckpoint,
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocator(cp.AllocBase)
-	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.core)
+	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
@@ -1190,12 +1204,12 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 //
 // The column permutation of (d, b, a) is set to be [2, 1, -1, 0].
 func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
-	colPerm := make([]int, 0, len(t.tableInfo.core.Columns)+1)
-	shouldIncludeRowID := !t.tableInfo.core.PKIsHandle
+	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
+	shouldIncludeRowID := !t.tableInfo.Core.PKIsHandle
 
 	if len(columns) == 0 {
 		// no provided columns, so use identity permutation.
-		for i := range t.tableInfo.core.Columns {
+		for i := range t.tableInfo.Core.Columns {
 			colPerm = append(colPerm, i)
 		}
 		if shouldIncludeRowID {
@@ -1204,9 +1218,9 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 	} else {
 		columnMap := make(map[string]int)
 		for i, column := range columns {
-			columnMap[column] = i
+			columnMap[strings.ToLower(column)] = i
 		}
-		for _, colInfo := range t.tableInfo.core.Columns {
+		for _, colInfo := range t.tableInfo.Core.Columns {
 			if i, ok := columnMap[colInfo.Name.L]; ok {
 				colPerm = append(colPerm, i)
 			} else {
@@ -1559,9 +1573,13 @@ func (cr *chunkRestore) encodeLoop(
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
-		case deliverResult := <-deliverCompleteCh:
+		case deliverResult, ok := <-deliverCompleteCh:
+			if deliverResult.err == nil && !ok {
+				deliverResult.err = ctx.Err()
+			}
 			if deliverResult.err == nil {
-				panic("unexpected: deliverCompleteCh prematurely fulfilled with no error")
+				deliverResult.err = errors.New("unexpected premature fulfillment")
+				logger.DPanic("unexpected: deliverCompleteCh prematurely fulfilled with no error", zap.Bool("chIsOpen", ok))
 			}
 			return errors.Trace(deliverResult.err)
 		}
@@ -1570,6 +1588,10 @@ func (cr *chunkRestore) encodeLoop(
 	initializedColumns := false
 outside:
 	for {
+		if err = DeliverPauser.Wait(ctx); err != nil {
+			return
+		}
+
 		offset, _ := cr.parser.Pos()
 		if offset >= cr.chunk.Chunk.EndOffset {
 			break
@@ -1589,7 +1611,7 @@ outside:
 		case io.EOF:
 			break outside
 		default:
-			err = errors.Trace(err)
+			err = errors.Annotatef(err, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 			return
 		}
 
@@ -1607,7 +1629,7 @@ outside:
 
 		if encodeErr != nil {
 			// error is already logged inside kvEncoder.Encode(), just propagate up directly.
-			err = encodeErr
+			err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 			return
 		}
 
@@ -1647,7 +1669,10 @@ func (cr *chunkRestore) restore(
 	go func() {
 		defer close(deliverCompleteCh)
 		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
-		deliverCompleteCh <- deliverResult{dur, err}
+		select {
+		case <-ctx.Done():
+		case deliverCompleteCh <- deliverResult{dur, err}:
+		}
 	}()
 
 	logTask := t.logger.With(

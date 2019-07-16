@@ -76,8 +76,7 @@ var kindStr = [...]string{
 
 // MarshalLogArray implements the zapcore.ArrayMarshaler interface
 func (row rowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
-	for i, datum := range row {
-		index := i
+	for _, datum := range row {
 		kind := datum.Kind()
 		var str string
 		var err error
@@ -95,7 +94,6 @@ func (row rowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error
 			}
 		}
 		encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
-			enc.AddInt("col", index)
 			enc.AddString("kind", kindStr[kind])
 			enc.AddString("val", str)
 			return nil
@@ -104,13 +102,25 @@ func (row rowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error
 	return nil
 }
 
-func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *model.ColumnInfo, err error) {
+func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *model.ColumnInfo, err error) error {
+	var original types.Datum
+	if j < len(row) {
+		original = row[j]
+		row = row[j : j+1]
+	}
+
 	logger.Error("kv convert failed",
-		zap.Array("originalRow", rowArrayMarshaler(row)),
+		zap.Array("original", rowArrayMarshaler(row)),
 		zap.Int("originalCol", j),
 		zap.String("colName", colInfo.Name.O),
 		zap.Stringer("colType", &colInfo.FieldType),
 		log.ShortError(err),
+	)
+
+	return errors.Annotatef(
+		err,
+		"failed to cast `%v` as %s for column `%s` (#%d)",
+		original.GetValue(), &colInfo.FieldType, colInfo.Name.O, j+1,
 	)
 }
 
@@ -150,8 +160,7 @@ func (kvcodec *TableKVEncoder) Encode(
 			value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 		}
 		if err != nil {
-			logKVConvertFailed(logger, row, j, col.ToInfo(), err)
-			return nil, errors.Trace(err)
+			return nil, logKVConvertFailed(logger, row, j, col.ToInfo(), err)
 		}
 		record = append(record, value)
 	}
@@ -164,8 +173,7 @@ func (kvcodec *TableKVEncoder) Encode(
 			value, err = types.NewIntDatum(rowID), nil
 		}
 		if err != nil {
-			logKVConvertFailed(logger, row, j, extraHandleColumnInfo, err)
-			return nil, errors.Trace(err)
+			return nil, logKVConvertFailed(logger, row, j, extraHandleColumnInfo, err)
 		}
 		record = append(record, value)
 	}

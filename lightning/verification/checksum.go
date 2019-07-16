@@ -14,6 +14,7 @@
 package verification
 
 import (
+	"fmt"
 	"hash/crc64"
 
 	kvec "github.com/pingcap/tidb/util/kvencoder"
@@ -96,4 +97,10 @@ func (c *KVChecksum) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
 	encoder.AddUint64("size", c.bytes)
 	encoder.AddUint64("kvs", c.kvs)
 	return nil
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+func (c KVChecksum) MarshalJSON() ([]byte, error) {
+	result := fmt.Sprintf(`{"checksum":%d,"size":%d,"kvs":%d}`, c.checksum, c.bytes, c.kvs)
+	return []byte(result), nil
 }

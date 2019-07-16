@@ -1,43 +1,48 @@
-package restore_test
+package checkpoints_test
 
 import (
 	"context"
 	"path"
 	"sort"
+	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
-	"github.com/pingcap/tidb-lightning/lightning/restore"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
+
+func Test(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&cpFileSuite{})
 
 type cpFileSuite struct {
 	path string
-	cpdb *restore.FileCheckpointsDB
+	cpdb *checkpoints.FileCheckpointsDB
 }
 
 func (s *cpFileSuite) SetUpTest(c *C) {
 	dir := c.MkDir()
-	s.cpdb = restore.NewFileCheckpointsDB(path.Join(dir, "cp.pb"))
+	s.cpdb = checkpoints.NewFileCheckpointsDB(path.Join(dir, "cp.pb"))
 
 	ctx := context.Background()
 	cpdb := s.cpdb
 
 	// 2. initialize with checkpoint data.
 
-	err := cpdb.Initialize(ctx, map[string]*restore.TidbDBInfo{
+	err := cpdb.Initialize(ctx, map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",
-			Tables: map[string]*restore.TidbTableInfo{
+			Tables: map[string]*checkpoints.TidbTableInfo{
 				"t1": {Name: "t1"},
 				"t2": {Name: "t2"},
 			},
 		},
 		"db2": {
 			Name: "db2",
-			Tables: map[string]*restore.TidbTableInfo{
+			Tables: map[string]*checkpoints.TidbTableInfo{
 				"t3": {Name: "t3"},
 			},
 		},
@@ -46,11 +51,11 @@ func (s *cpFileSuite) SetUpTest(c *C) {
 
 	// 3. set some checkpoints
 
-	err = cpdb.InsertEngineCheckpoints(ctx, "`db1`.`t2`", map[int32]*restore.EngineCheckpoint{
+	err = cpdb.InsertEngineCheckpoints(ctx, "`db1`.`t2`", map[int32]*checkpoints.EngineCheckpoint{
 		0: {
-			Status: restore.CheckpointStatusLoaded,
-			Chunks: []*restore.ChunkCheckpoint{{
-				Key: restore.ChunkCheckpointKey{
+			Status: checkpoints.CheckpointStatusLoaded,
+			Chunks: []*checkpoints.ChunkCheckpoint{{
+				Key: checkpoints.ChunkCheckpointKey{
 					Path:   "/tmp/path/1.sql",
 					Offset: 0,
 				},
@@ -63,15 +68,15 @@ func (s *cpFileSuite) SetUpTest(c *C) {
 			}},
 		},
 		-1: {
-			Status: restore.CheckpointStatusLoaded,
+			Status: checkpoints.CheckpointStatusLoaded,
 			Chunks: nil,
 		},
 	})
 	c.Assert(err, IsNil)
 
-	err = cpdb.InsertEngineCheckpoints(ctx, "`db2`.`t3`", map[int32]*restore.EngineCheckpoint{
+	err = cpdb.InsertEngineCheckpoints(ctx, "`db2`.`t3`", map[int32]*checkpoints.EngineCheckpoint{
 		-1: {
-			Status: restore.CheckpointStatusLoaded,
+			Status: checkpoints.CheckpointStatusLoaded,
 			Chunks: nil,
 		},
 	})
@@ -79,31 +84,31 @@ func (s *cpFileSuite) SetUpTest(c *C) {
 
 	// 4. update some checkpoints
 
-	cpd := restore.NewTableCheckpointDiff()
-	scm := restore.StatusCheckpointMerger{
+	cpd := checkpoints.NewTableCheckpointDiff()
+	scm := checkpoints.StatusCheckpointMerger{
 		EngineID: 0,
-		Status:   restore.CheckpointStatusImported,
+		Status:   checkpoints.CheckpointStatusImported,
 	}
 	scm.MergeInto(cpd)
-	scm = restore.StatusCheckpointMerger{
-		EngineID: restore.WholeTableEngineID,
-		Status:   restore.CheckpointStatusAllWritten,
+	scm = checkpoints.StatusCheckpointMerger{
+		EngineID: checkpoints.WholeTableEngineID,
+		Status:   checkpoints.CheckpointStatusAllWritten,
 	}
 	scm.MergeInto(cpd)
-	rcm := restore.RebaseCheckpointMerger{
+	rcm := checkpoints.RebaseCheckpointMerger{
 		AllocBase: 132861,
 	}
 	rcm.MergeInto(cpd)
-	ccm := restore.ChunkCheckpointMerger{
+	ccm := checkpoints.ChunkCheckpointMerger{
 		EngineID: 0,
-		Key:      restore.ChunkCheckpointKey{Path: "/tmp/path/1.sql", Offset: 0},
+		Key:      checkpoints.ChunkCheckpointKey{Path: "/tmp/path/1.sql", Offset: 0},
 		Checksum: verification.MakeKVChecksum(4491, 586, 486070148917),
 		Pos:      55904,
 		RowID:    681,
 	}
 	ccm.MergeInto(cpd)
 
-	cpdb.Update(map[string]*restore.TableCheckpointDiff{"`db1`.`t2`": cpd})
+	cpdb.Update(map[string]*checkpoints.TableCheckpointDiff{"`db1`.`t2`": cpd})
 }
 
 func (s *cpFileSuite) TearDownTest(c *C) {
@@ -111,15 +116,15 @@ func (s *cpFileSuite) TearDownTest(c *C) {
 }
 
 func (s *cpFileSuite) setInvalidStatus() {
-	cpd := restore.NewTableCheckpointDiff()
-	scm := restore.StatusCheckpointMerger{
+	cpd := checkpoints.NewTableCheckpointDiff()
+	scm := checkpoints.StatusCheckpointMerger{
 		EngineID: -1,
-		Status:   restore.CheckpointStatusAllWritten,
+		Status:   checkpoints.CheckpointStatusAllWritten,
 	}
 	scm.SetInvalid()
 	scm.MergeInto(cpd)
 
-	s.cpdb.Update(map[string]*restore.TableCheckpointDiff{
+	s.cpdb.Update(map[string]*checkpoints.TableCheckpointDiff{
 		"`db1`.`t2`": cpd,
 		"`db2`.`t3`": cpd,
 	})
@@ -132,18 +137,18 @@ func (s *cpFileSuite) TestGet(c *C) {
 
 	cp, err := s.cpdb.Get(ctx, "`db1`.`t2`")
 	c.Assert(err, IsNil)
-	c.Assert(cp, DeepEquals, &restore.TableCheckpoint{
-		Status:    restore.CheckpointStatusAllWritten,
+	c.Assert(cp, DeepEquals, &checkpoints.TableCheckpoint{
+		Status:    checkpoints.CheckpointStatusAllWritten,
 		AllocBase: 132861,
-		Engines: map[int32]*restore.EngineCheckpoint{
+		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {
-				Status: restore.CheckpointStatusLoaded,
-				Chunks: []*restore.ChunkCheckpoint{},
+				Status: checkpoints.CheckpointStatusLoaded,
+				Chunks: []*checkpoints.ChunkCheckpoint{},
 			},
 			0: {
-				Status: restore.CheckpointStatusImported,
-				Chunks: []*restore.ChunkCheckpoint{{
-					Key: restore.ChunkCheckpointKey{
+				Status: checkpoints.CheckpointStatusImported,
+				Chunks: []*checkpoints.ChunkCheckpoint{{
+					Key: checkpoints.ChunkCheckpointKey{
 						Path:   "/tmp/path/1.sql",
 						Offset: 0,
 					},
@@ -162,20 +167,20 @@ func (s *cpFileSuite) TestGet(c *C) {
 
 	cp, err = s.cpdb.Get(ctx, "`db2`.`t3`")
 	c.Assert(err, IsNil)
-	c.Assert(cp, DeepEquals, &restore.TableCheckpoint{
-		Status: restore.CheckpointStatusLoaded,
-		Engines: map[int32]*restore.EngineCheckpoint{
+	c.Assert(cp, DeepEquals, &checkpoints.TableCheckpoint{
+		Status: checkpoints.CheckpointStatusLoaded,
+		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {
-				Status: restore.CheckpointStatusLoaded,
-				Chunks: []*restore.ChunkCheckpoint{},
+				Status: checkpoints.CheckpointStatusLoaded,
+				Chunks: []*checkpoints.ChunkCheckpoint{},
 			},
 		},
 	})
 
 	cp, err = s.cpdb.Get(ctx, "`db3`.`not-exists`")
 	c.Assert(err, IsNil)
-	c.Assert(cp, DeepEquals, &restore.TableCheckpoint{
-		Engines: make(map[int32]*restore.EngineCheckpoint),
+	c.Assert(cp, DeepEquals, &checkpoints.TableCheckpoint{
+		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
 	})
 }
 
@@ -187,11 +192,11 @@ func (s *cpFileSuite) TestRemoveAllCheckpoints(c *C) {
 
 	cp, err := s.cpdb.Get(ctx, "`db1`.`t2`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusMissing)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusMissing)
 
 	cp, err = s.cpdb.Get(ctx, "`db2`.`t3`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusMissing)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusMissing)
 }
 
 func (s *cpFileSuite) TestRemoveOneCheckpoint(c *C) {
@@ -202,11 +207,11 @@ func (s *cpFileSuite) TestRemoveOneCheckpoint(c *C) {
 
 	cp, err := s.cpdb.Get(ctx, "`db1`.`t2`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusMissing)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusMissing)
 
 	cp, err = s.cpdb.Get(ctx, "`db2`.`t3`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusLoaded)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusLoaded)
 }
 
 func (s *cpFileSuite) TestIgnoreAllErrorCheckpoints(c *C) {
@@ -219,11 +224,11 @@ func (s *cpFileSuite) TestIgnoreAllErrorCheckpoints(c *C) {
 
 	cp, err := s.cpdb.Get(ctx, "`db1`.`t2`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusLoaded)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusLoaded)
 
 	cp, err = s.cpdb.Get(ctx, "`db2`.`t3`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusLoaded)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusLoaded)
 }
 
 func (s *cpFileSuite) TestIgnoreOneErrorCheckpoints(c *C) {
@@ -236,11 +241,11 @@ func (s *cpFileSuite) TestIgnoreOneErrorCheckpoints(c *C) {
 
 	cp, err := s.cpdb.Get(ctx, "`db1`.`t2`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusLoaded)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusLoaded)
 
 	cp, err = s.cpdb.Get(ctx, "`db2`.`t3`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusAllWritten/10)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusAllWritten/10)
 }
 
 func (s *cpFileSuite) TestDestroyAllErrorCheckpoints(c *C) {
@@ -251,7 +256,7 @@ func (s *cpFileSuite) TestDestroyAllErrorCheckpoints(c *C) {
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(ctx, "all")
 	c.Assert(err, IsNil)
 	sort.Slice(dtc, func(i, j int) bool { return dtc[i].TableName < dtc[j].TableName })
-	c.Assert(dtc, DeepEquals, []restore.DestroyedTableCheckpoint{
+	c.Assert(dtc, DeepEquals, []checkpoints.DestroyedTableCheckpoint{
 		{
 			TableName:   "`db1`.`t2`",
 			MinEngineID: -1,
@@ -266,11 +271,11 @@ func (s *cpFileSuite) TestDestroyAllErrorCheckpoints(c *C) {
 
 	cp, err := s.cpdb.Get(ctx, "`db1`.`t2`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusMissing)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusMissing)
 
 	cp, err = s.cpdb.Get(ctx, "`db2`.`t3`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusMissing)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusMissing)
 }
 
 func (s *cpFileSuite) TestDestroyOneErrorCheckpoint(c *C) {
@@ -280,7 +285,7 @@ func (s *cpFileSuite) TestDestroyOneErrorCheckpoint(c *C) {
 
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(ctx, "`db1`.`t2`")
 	c.Assert(err, IsNil)
-	c.Assert(dtc, DeepEquals, []restore.DestroyedTableCheckpoint{
+	c.Assert(dtc, DeepEquals, []checkpoints.DestroyedTableCheckpoint{
 		{
 			TableName:   "`db1`.`t2`",
 			MinEngineID: -1,
@@ -290,9 +295,9 @@ func (s *cpFileSuite) TestDestroyOneErrorCheckpoint(c *C) {
 
 	cp, err := s.cpdb.Get(ctx, "`db1`.`t2`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusMissing)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusMissing)
 
 	cp, err = s.cpdb.Get(ctx, "`db2`.`t3`")
 	c.Assert(err, IsNil)
-	c.Assert(cp.Status, Equals, restore.CheckpointStatusAllWritten/10)
+	c.Assert(cp.Status, Equals, checkpoints.CheckpointStatusAllWritten/10)
 }
