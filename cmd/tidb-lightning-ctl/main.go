@@ -251,7 +251,7 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	return nil
 }
 
-func unsafeCloseEngine(ctx context.Context, importer *kv.Importer, engine string) (*kv.ClosedEngine, error) {
+func unsafeCloseEngine(ctx context.Context, importer kv.Backend, engine string) (*kv.ClosedEngine, error) {
 	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
 		tableName := engine[:index]
 		engineID, err := strconv.Atoi(engine[index+1:])
