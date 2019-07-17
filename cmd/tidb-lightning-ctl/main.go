@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path"
 	"strconv"
@@ -102,17 +103,15 @@ func run() error {
 }
 
 func compactCluster(ctx context.Context, cfg *config.Config) error {
-	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer importer.Close()
-
-	if err := importer.Compact(ctx, restore.FullLevelCompact); err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
+	return kv.ForAllStores(
+		ctx,
+		&http.Client{},
+		cfg.TiDB.PdAddr,
+		kv.StoreStateOffline,
+		func(c context.Context, store *kv.Store) error {
+			return kv.Compact(c, store.Address, restore.FullLevelCompact)
+		},
+	)
 }
 
 func switchMode(ctx context.Context, cfg *config.Config, mode string) error {
@@ -126,16 +125,15 @@ func switchMode(ctx context.Context, cfg *config.Config, mode string) error {
 		return errors.Errorf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
 	}
 
-	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer importer.Close()
-
-	if err := importer.SwitchMode(ctx, m); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return kv.ForAllStores(
+		ctx,
+		&http.Client{},
+		cfg.TiDB.PdAddr,
+		kv.StoreStateOffline,
+		func(c context.Context, store *kv.Store) error {
+			return kv.SwitchMode(c, store.Address, m)
+		},
+	)
 }
 
 func checkpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {

@@ -933,7 +933,15 @@ func (rc *RestoreController) fullCompact(ctx context.Context) error {
 }
 
 func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
-	return errors.Trace(rc.importer.Compact(ctx, level))
+	return kv.ForAllStores(
+		ctx,
+		&http.Client{},
+		rc.cfg.TiDB.PdAddr,
+		kv.StoreStateUp,
+		func(c context.Context, store *kv.Store) error {
+			return kv.Compact(c, store.Address, level)
+		},
+	)
 }
 
 func (rc *RestoreController) switchToImportMode(ctx context.Context) {
@@ -947,8 +955,16 @@ func (rc *RestoreController) switchToNormalMode(ctx context.Context) error {
 
 func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
 	// we ignore switch mode failure since it is not fatal.
-	// no need log the error, it is done in (*Importer).SwitchMode already.
-	rc.importer.SwitchMode(ctx, mode)
+	// no need log the error, it is done in kv.SwitchMode already.
+	_ = kv.ForAllStores(
+		ctx,
+		&http.Client{},
+		rc.cfg.TiDB.PdAddr,
+		kv.StoreStateUp,
+		func(c context.Context, store *kv.Store) error {
+			return kv.SwitchMode(c, store.Address, mode)
+		},
+	)
 }
 
 func (rc *RestoreController) checkRequirements(_ context.Context) error {
@@ -1027,33 +1043,20 @@ func (rc *RestoreController) checkPDVersion(client *http.Client) error {
 }
 
 func (rc *RestoreController) checkTiKVVersion(client *http.Client) error {
-	url := fmt.Sprintf("http://%s/pd/api/v1/stores", rc.cfg.TiDB.PdAddr)
-
-	var stores struct {
-		Stores []struct {
-			Store struct {
-				Address string
-				Version string
+	return kv.ForAllStores(
+		context.Background(),
+		client,
+		rc.cfg.TiDB.PdAddr,
+		kv.StoreStateOffline,
+		func(c context.Context, store *kv.Store) error {
+			component := fmt.Sprintf("TiKV (at %s)", store.Address)
+			version, err := semver.NewVersion(store.Version)
+			if err != nil {
+				return errors.Annotate(err, component)
 			}
-		}
-	}
-	err := common.GetJSON(client, url, &stores)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, store := range stores.Stores {
-		version, err := semver.NewVersion(store.Store.Version)
-		if err != nil {
-			return errors.Annotate(err, store.Store.Address)
-		}
-		component := fmt.Sprintf("TiKV (at %s)", store.Store.Address)
-		err = checkVersion(component, requiredTiKVVersion, *version)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+			return checkVersion(component, requiredTiKVVersion, *version)
+		},
+	)
 }
 
 func checkVersion(component string, expected, actual semver.Version) error {
