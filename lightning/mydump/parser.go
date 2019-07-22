@@ -25,9 +25,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 	"github.com/pingcap/tidb/types"
+	"go.uber.org/zap"
 )
 
 type blockParser struct {
@@ -48,6 +50,9 @@ type blockParser struct {
 	remainBuf *bytes.Buffer
 	appendBuf *bytes.Buffer
 	ioWorkers *worker.Pool
+
+	// the Logger associated with this parser for reporting failure
+	Logger log.Logger
 }
 
 func makeBlockParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.Pool) blockParser {
@@ -57,6 +62,7 @@ func makeBlockParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.Poo
 		remainBuf: &bytes.Buffer{},
 		appendBuf: &bytes.Buffer{},
 		ioWorkers: ioWorkers,
+		Logger:    log.L(),
 	}
 }
 
@@ -96,6 +102,9 @@ type Parser interface {
 	Close() error
 	ReadRow() error
 	LastRow() Row
+
+	// Columns returns the _lower-case_ column names corresponding to values in
+	// the LastRow.
 	Columns() []string
 }
 
@@ -142,6 +151,17 @@ func (parser *blockParser) Close() error {
 
 func (parser *blockParser) Columns() []string {
 	return parser.columns
+}
+
+func (parser *blockParser) logSyntaxError() {
+	content := parser.buf
+	if len(content) > 256 {
+		content = content[:256]
+	}
+	parser.Logger.Error("syntax error",
+		zap.Int64("pos", parser.pos),
+		zap.ByteString("content", content),
+	)
 }
 
 type token byte
@@ -395,7 +415,7 @@ func (parser *ChunkParser) ReadRow() error {
 			case tokRowEnd:
 				st = stateValues
 			case tokUnquoted, tokDoubleQuoted, tokBackQuoted:
-				columnName := parser.unescapeString(string(content))
+				columnName := strings.ToLower(parser.unescapeString(string(content)))
 				parser.columns = append(parser.columns, columnName)
 			default:
 				return errors.Errorf(

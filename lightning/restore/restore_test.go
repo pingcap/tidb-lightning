@@ -30,9 +30,11 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/kv"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
@@ -70,7 +72,7 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 
 		dbInfo.Tables[tc.name] = &TidbTableInfo{
 			Name: tc.name,
-			core: tableInfo,
+			Core: tableInfo,
 		}
 	}
 
@@ -86,7 +88,7 @@ func (s *restoreSuite) TestNewTableRestore(c *C) {
 func (s *restoreSuite) TestNewTableRestoreFailure(c *C) {
 	tableInfo := &TidbTableInfo{
 		Name: "failure",
-		core: &model.TableInfo{},
+		Core: &model.TableInfo{},
 	}
 	dbInfo := &TidbDBInfo{Name: "mockdb", Tables: map[string]*TidbTableInfo{
 		"failure": tableInfo,
@@ -98,7 +100,7 @@ func (s *restoreSuite) TestNewTableRestoreFailure(c *C) {
 }
 
 func (s *restoreSuite) TestErrorSummaries(c *C) {
-	logger, buffer := makeTestLogger()
+	logger, buffer := log.MakeTestLogger()
 
 	es := makeErrorSummaries(logger)
 	es.record("first", errors.New("a1 error"), CheckpointStatusAnalyzed)
@@ -291,7 +293,7 @@ func (s *tableRestoreSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	core.State = model.StatePublic
 
-	s.tableInfo = &TidbTableInfo{Name: "table", core: core}
+	s.tableInfo = &TidbTableInfo{Name: "table", Core: core}
 	s.dbInfo = &TidbDBInfo{
 		Name:   "db",
 		Tables: map[string]*TidbTableInfo{"table": s.tableInfo},
@@ -720,6 +722,20 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 	go cancel()
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
+	c.Assert(kvsCh, HasLen, 0)
+}
+
+func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
+	ctx := context.Background()
+	kvsCh := make(chan deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode)
+
+	// close the chunk so reading it will result in the "file already closed" error.
+	s.cr.parser.Close()
+
+	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh)
+	c.Assert(err, ErrorMatches, `in file .*/db.table.2.sql:0 at offset 0:.*file already closed`)
 	c.Assert(kvsCh, HasLen, 0)
 }
 
