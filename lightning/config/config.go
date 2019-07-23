@@ -16,6 +16,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 	"net/http"
 	"runtime"
 	"strings"
@@ -204,8 +205,58 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 }
 
 // LoadFromTOML overwrites the current configuration by the TOML data
+// If data contains toml items not in Config and GlobalConfig, return an error
+// If data contains toml items not in Config, thus won't take effect, warn user
 func (cfg *Config) LoadFromTOML(data []byte) error {
-	return errors.Trace(toml.Unmarshal(data, cfg))
+	// warn legal toml items but won't effect
+	var warnItems []string
+	dataStr := string(data)
+	metaData, err := toml.Decode(dataStr, cfg)
+
+	// Here's a warning that we haven't check err before use metaData,
+	// but metaData will always return a valid struct and we check err in next line
+	undecoded := metaData.Undecoded()
+	if len(undecoded) > 0 && err == nil {
+		var undecodedItems []string
+		// Key type returned by metadata.Undecoded doesn't have a equality comparison,
+		// we convert them to string type instead, and this conversion is identical
+		undecodedKeyStr := make([]string, len(undecoded))
+		for i, key := range undecoded {
+			undecodedKeyStr[i] = key.String()
+		}
+
+		globalCfgDummy := NewGlobalConfig()
+		metaDataGlobal, errTmp := toml.Decode(dataStr, &globalCfgDummy)
+		if errTmp != nil {
+			return errors.Trace(errTmp)
+		}
+		undecodedGlobal := metaDataGlobal.Undecoded()
+		undecodedGlobalSet := make(map[string]struct{})
+		for _, key := range undecodedGlobal {
+			undecodedGlobalSet[key.String()] = struct{}{}
+		}
+
+		for _, item := range undecodedKeyStr {
+			if _, stillNot := undecodedGlobalSet[item]; stillNot {
+				undecodedItems = append(undecodedItems, item)
+			} else {
+				warnItems = append(warnItems, item)
+			}
+		}
+
+		if len(undecodedItems) > 0 {
+			err = errors.New(fmt.Sprintf("config file contained unknown configuration options: %s",
+				strings.Join(undecodedItems, ", ")))
+		}
+	}
+
+	// Warn that some field of config file won't be overwrite, such as lightning.file
+	if len(warnItems) > 0 {
+		log.L().Warn("these fields of config file have seen twice but could not be overwritten, it's ok if user was not intended to change them",
+			zap.String("content", strings.Join(warnItems, ", ")))
+	}
+
+	return errors.Trace(err)
 }
 
 // Adjust fixes the invalid or unspecified settings to reasonable valid values.
