@@ -490,12 +490,17 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	}
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
+	oriGCLifeTime, err := ObtainGCLifeTime(ctx, rc.tidbMgr.db)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx2 := context.WithValue(ctx, "tikv_gc_life_time", oriGCLifeTime)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
-				err := task.tr.restoreTable(ctx, rc, task.cp)
+				err := task.tr.restoreTable(ctx2, rc, task.cp)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
@@ -541,7 +546,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	wg.Wait()
 	stopPeriodicActions <- struct{}{}
 
-	err := restoreErr.Get()
+	err = restoreErr.Get()
 	logTask.End(zap.ErrorLevel, err)
 	return err
 }
@@ -1356,9 +1361,15 @@ func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum,
 func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, err error) {
 	// checksum command usually takes a long time to execute,
 	// so here need to increase the gcLifeTime for single transaction.
-	oriGCLifeTime, err = ObtainGCLifeTime(ctx, db)
-	if err != nil {
-		return "", errors.Trace(err)
+	// try to get gcLifeTime from context first.
+	gcLifeTime, ok := ctx.Value("tikv_gc_life_time").(string)
+	if !ok {
+		oriGCLifeTime, err = ObtainGCLifeTime(ctx, db)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+	} else {
+		oriGCLifeTime = gcLifeTime
 	}
 
 	var increaseGCLifeTime bool
@@ -1380,6 +1391,8 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 			return "", errors.Trace(err)
 		}
 	}
+
+	failpoint.Inject("IncreaseGCUpdateDuration", nil)
 
 	return oriGCLifeTime, nil
 }
