@@ -104,7 +104,7 @@ func (row rowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error
 
 func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *model.ColumnInfo, err error) error {
 	var original types.Datum
-	if j < len(row) {
+	if 0 <= j && j < len(row) {
 		original = row[j]
 		row = row[j : j+1]
 	}
