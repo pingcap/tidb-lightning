@@ -1204,6 +1204,8 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 // - column `d` is at position 0
 //
 // The column permutation of (d, b, a) is set to be [2, 1, -1, 0].
+//
+// The argument `columns` _must_ be in lower case.
 func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
 	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
 	shouldIncludeRowID := !t.tableInfo.Core.PKIsHandle
@@ -1219,7 +1221,7 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 	} else {
 		columnMap := make(map[string]int)
 		for i, column := range columns {
-			columnMap[strings.ToLower(column)] = i
+			columnMap[column] = i
 		}
 		for _, colInfo := range t.tableInfo.Core.Columns {
 			if i, ok := columnMap[colInfo.Name.L]; ok {
