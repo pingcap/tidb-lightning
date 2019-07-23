@@ -17,7 +17,6 @@ addr = "127.0.0.1:8808"
 [mydumper]
 data-source-dir = "/tmp/lightning_test_result/cppk.mydump"
 read-block-size = 1
-region-min-size = 1
 
 [tidb]
 host = "127.0.0.1"
