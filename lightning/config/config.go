@@ -208,8 +208,11 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 // If data contains toml items not in Config and GlobalConfig, return an error
 // If data contains toml items not in Config, thus won't take effect, warn user
 func (cfg *Config) LoadFromTOML(data []byte) error {
+	// bothUnused saves toml items not belong to Config nor GlobalConfig
+	var bothUnused []string
 	// warnItems saves legal toml items but won't effect
 	var warnItems []string
+
 	dataStr := string(data)
 
 	// Here we load toml into cfg, and rest logic is check unused keys
@@ -226,27 +229,21 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 
 	// Now we deal with potential both-unused keys of Config and GlobalConfig struct
 
-	var bothUnused []string
+	metaDataGlobal, err := toml.Decode(dataStr, &GlobalConfig{})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// Key type returned by metadata.Undecoded doesn't have a equality comparison,
 	// we convert them to string type instead, and this conversion is identical
-	unusedConfigKeyStrs := make([]string, len(unusedConfigKeys))
-	for i, key := range unusedConfigKeys {
-		unusedConfigKeyStrs[i] = key.String()
-	}
-
-	globalCfgDummy := NewGlobalConfig()
-	metaDataGlobal, errTmp := toml.Decode(dataStr, &globalCfgDummy)
-	if errTmp != nil {
-		return errors.Trace(errTmp)
-	}
-
 	unusedGlobalKeys := metaDataGlobal.Undecoded()
 	unusedGlobalKeyStrs := make(map[string]struct{})
 	for _, key := range unusedGlobalKeys {
 		unusedGlobalKeyStrs[key.String()] = struct{}{}
 	}
 
-	for _, keyStr := range unusedConfigKeyStrs {
+	for _, key := range unusedConfigKeys {
+		keyStr := key.String()
 		if _, found := unusedGlobalKeyStrs[keyStr]; found {
 			bothUnused = append(bothUnused, keyStr)
 		} else {
@@ -255,15 +252,14 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 	}
 
 	if len(bothUnused) > 0 {
-		err = errors.New(fmt.Sprintf("config file contained unknown configuration options: %s",
-			strings.Join(bothUnused, ", ")))
-		return errors.Trace(err)
+		return errors.Errorf("config file contained unknown configuration options: %s",
+			strings.Join(bothUnused, ", "))
 	}
 
 	// Warn that some legal field of config file won't be overwritten, such as lightning.file
 	if len(warnItems) > 0 {
-		log.L().Warn("these fields of config file have seen more than once but could not be overwritten, it's ok if user was not intended to change them",
-			zap.String("content", strings.Join(warnItems, ", ")))
+		log.L().Warn("currently only per-task configuration can be applied, global configuration changes can only be made on startup",
+			zap.String("global config changes", strings.Join(warnItems, ", ")))
 	}
 
 	return nil
