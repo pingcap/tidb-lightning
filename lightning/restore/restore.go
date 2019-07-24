@@ -79,6 +79,8 @@ var (
 // DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
 var DeliverPauser = common.NewPauser()
 
+var gcLifeTimeKey struct{}
+
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
@@ -492,9 +494,9 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	defer close(taskCh)
 	oriGCLifeTime, err := ObtainGCLifeTime(ctx, rc.tidbMgr.db)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	ctx2 := context.WithValue(ctx, "tikv_gc_life_time", oriGCLifeTime)
+	ctx2 := context.WithValue(ctx, gcLifeTimeKey, oriGCLifeTime)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
@@ -1362,11 +1364,11 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 	// checksum command usually takes a long time to execute,
 	// so here need to increase the gcLifeTime for single transaction.
 	// try to get gcLifeTime from context first.
-	gcLifeTime, ok := ctx.Value("tikv_gc_life_time").(string)
+	gcLifeTime, ok := ctx.Value(gcLifeTimeKey).(string)
 	if !ok {
 		oriGCLifeTime, err = ObtainGCLifeTime(ctx, db)
 		if err != nil {
-			return "", errors.Trace(err)
+			return "", err
 		}
 	} else {
 		oriGCLifeTime = gcLifeTime

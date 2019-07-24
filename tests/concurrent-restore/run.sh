@@ -17,7 +17,7 @@ set -eu
 
 # Populate the mydumper source
 DBPATH="$TEST_DIR/restore.mydump"
-TABLE_COUNT=20
+TABLE_COUNT=8
 
 mkdir -p $DBPATH
 echo 'CREATE DATABASE restore_conc;' > "$DBPATH/restore_conc-schema-create.sql"
@@ -29,7 +29,6 @@ done
 run_sql 'select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME = "tikv_gc_life_time"';
 ORIGINAL_TIKV_GC_LIFE_TIME=$(tail -n 1 "$TEST_DIR/sql_res.$TEST_NAME.txt" | awk '{print $(NF)}')
 
-# Count OpenEngine and CloseEngine events.
 # add a delay after increasing tikv_gc_life_time, in order to increase confilct possibility
 export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/IncreaseGCUpdateDuration=sleep(200)'
 
