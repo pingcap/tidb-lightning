@@ -58,7 +58,7 @@ Usual workflow:
 
 		e. Cleanup via `engine.Cleanup()`
 
-3. Close the connection via `importer.Close()`
+3. Close the connection via `backend.Close()`
 
 */
 
