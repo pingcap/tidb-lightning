@@ -119,6 +119,7 @@ func (s *lightningServerSuite) TestRunServer(c *C) {
 	resp.Body.Close()
 
 	go s.lightning.RunServer()
+	time.Sleep(100 * time.Millisecond)
 
 	req, err := http.NewRequest(http.MethodPut, url, nil)
 	c.Assert(err, IsNil)
@@ -205,6 +206,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 	}
 
 	go s.lightning.RunServer()
+	time.Sleep(100 * time.Millisecond)
 
 	// Check `GET /tasks` without any active tasks
 
