@@ -16,7 +16,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"go.uber.org/zap"
 	"net/http"
 	"runtime"
 	"strings"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb-tools/pkg/filter"
 	"github.com/pingcap/tidb-tools/pkg/table-router"
 	tidbcfg "github.com/pingcap/tidb/config"
+	"go.uber.org/zap"
 )
 
 const (
@@ -208,55 +208,65 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 // If data contains toml items not in Config and GlobalConfig, return an error
 // If data contains toml items not in Config, thus won't take effect, warn user
 func (cfg *Config) LoadFromTOML(data []byte) error {
-	// warn legal toml items but won't effect
+	// warnItems saves legal toml items but won't effect
 	var warnItems []string
 	dataStr := string(data)
+
+	// Here we load toml into cfg, and rest logic is check unused keys
 	metaData, err := toml.Decode(dataStr, cfg)
 
-	// Here's a warning that we haven't check err before use metaData,
-	// but metaData will always return a valid struct and we check err in next line
-	undecoded := metaData.Undecoded()
-	if len(undecoded) > 0 && err == nil {
-		var undecodedItems []string
-		// Key type returned by metadata.Undecoded doesn't have a equality comparison,
-		// we convert them to string type instead, and this conversion is identical
-		undecodedKeyStr := make([]string, len(undecoded))
-		for i, key := range undecoded {
-			undecodedKeyStr[i] = key.String()
-		}
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-		globalCfgDummy := NewGlobalConfig()
-		metaDataGlobal, errTmp := toml.Decode(dataStr, &globalCfgDummy)
-		if errTmp != nil {
-			return errors.Trace(errTmp)
-		}
-		undecodedGlobal := metaDataGlobal.Undecoded()
-		undecodedGlobalSet := make(map[string]struct{})
-		for _, key := range undecodedGlobal {
-			undecodedGlobalSet[key.String()] = struct{}{}
-		}
+	unusedConfigKeys := metaData.Undecoded()
+	if len(unusedConfigKeys) == 0 {
+		return nil
+	}
 
-		for _, item := range undecodedKeyStr {
-			if _, stillNot := undecodedGlobalSet[item]; stillNot {
-				undecodedItems = append(undecodedItems, item)
-			} else {
-				warnItems = append(warnItems, item)
-			}
-		}
+	// Now we deal with potential both-unused keys of Config and GlobalConfig struct
 
-		if len(undecodedItems) > 0 {
-			err = errors.New(fmt.Sprintf("config file contained unknown configuration options: %s",
-				strings.Join(undecodedItems, ", ")))
+	var bothUnused []string
+	// Key type returned by metadata.Undecoded doesn't have a equality comparison,
+	// we convert them to string type instead, and this conversion is identical
+	unusedConfigKeyStrs := make([]string, len(unusedConfigKeys))
+	for i, key := range unusedConfigKeys {
+		unusedConfigKeyStrs[i] = key.String()
+	}
+
+	globalCfgDummy := NewGlobalConfig()
+	metaDataGlobal, errTmp := toml.Decode(dataStr, &globalCfgDummy)
+	if errTmp != nil {
+		return errors.Trace(errTmp)
+	}
+
+	unusedGlobalKeys := metaDataGlobal.Undecoded()
+	unusedGlobalKeyStrs := make(map[string]struct{})
+	for _, key := range unusedGlobalKeys {
+		unusedGlobalKeyStrs[key.String()] = struct{}{}
+	}
+
+	for _, keyStr := range unusedConfigKeyStrs {
+		if _, found := unusedGlobalKeyStrs[keyStr]; found {
+			bothUnused = append(bothUnused, keyStr)
+		} else {
+			warnItems = append(warnItems, keyStr)
 		}
 	}
 
-	// Warn that some field of config file won't be overwrite, such as lightning.file
+	if len(bothUnused) > 0 {
+		err = errors.New(fmt.Sprintf("config file contained unknown configuration options: %s",
+			strings.Join(bothUnused, ", ")))
+		return errors.Trace(err)
+	}
+
+	// Warn that some legal field of config file won't be overwritten, such as lightning.file
 	if len(warnItems) > 0 {
-		log.L().Warn("these fields of config file have seen twice but could not be overwritten, it's ok if user was not intended to change them",
+		log.L().Warn("these fields of config file have seen more than once but could not be overwritten, it's ok if user was not intended to change them",
 			zap.String("content", strings.Join(warnItems, ", ")))
 	}
 
-	return errors.Trace(err)
+	return nil
 }
 
 // Adjust fixes the invalid or unspecified settings to reasonable valid values.
