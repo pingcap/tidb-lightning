@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -130,6 +131,10 @@ func (l *Lightning) RunOnce() error {
 	if err := cfg.Adjust(); err != nil {
 		return err
 	}
+	cfg.TaskID = time.Now().UnixNano()
+	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
+		cfg.TaskID = int64(val.(int))
+	})
 	return l.run(cfg)
 }
 

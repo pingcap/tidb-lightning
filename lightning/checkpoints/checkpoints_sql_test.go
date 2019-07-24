@@ -8,8 +8,8 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
 
@@ -42,7 +42,7 @@ func (s *cpSQLSuite) SetUpTest(c *C) {
 		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.chunk_v\\d+ .+").
 		WillReturnResult(sqlmock.NewResult(4, 1))
 
-	cpdb, err := checkpoints.NewMySQLCheckpointsDB(context.Background(), s.db, "mock-schema")
+	cpdb, err := checkpoints.NewMySQLCheckpointsDB(context.Background(), s.db, "mock-schema", 1234)
 	c.Assert(err, IsNil)
 	c.Assert(s.mock.ExpectationsWereMet(), IsNil)
 	s.cpdb = cpdb
@@ -64,13 +64,13 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 	initializeStmt := s.mock.
 		ExpectPrepare("INSERT INTO `mock-schema`\\.table_v\\d+")
 	initializeStmt.ExpectExec().
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "`db1`.`t1`", sqlmock.AnyArg()).
+		WithArgs(1234, "`db1`.`t1`", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(5, 1))
 	initializeStmt.ExpectExec().
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "`db1`.`t2`", sqlmock.AnyArg()).
+		WithArgs(1234, "`db1`.`t2`", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	initializeStmt.ExpectExec().
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "`db2`.`t3`", sqlmock.AnyArg()).
+		WithArgs(1234, "`db2`.`t3`", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	s.mock.ExpectCommit()
 
@@ -263,20 +263,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 }
 
 func (s *cpSQLSuite) TestRemoveAllCheckpoints(c *C) {
-	s.mock.ExpectBegin()
-	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.chunk_v\\d+ WHERE table_name IN").
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(0, 5))
-	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.engine_v\\d+ WHERE table_name IN").
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(0, 3))
-	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.table_v\\d+ WHERE node_id = \\?").
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(0, 2))
-	s.mock.ExpectCommit()
+	s.mock.ExpectExec("DROP SCHEMA `mock-schema`").WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.cpdb.RemoveCheckpoint(context.Background(), "all")
 	c.Assert(err, IsNil)
@@ -305,11 +292,11 @@ func (s *cpSQLSuite) TestRemoveOneCheckpoint(c *C) {
 func (s *cpSQLSuite) TestIgnoreAllErrorCheckpoints(c *C) {
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.engine_v\\d+ SET status = 30 WHERE node_id = \\? AND status <= 25").
+		ExpectExec("UPDATE `mock-schema`\\.engine_v\\d+ SET status = 30 WHERE 'all' = \\? AND status <= 25").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(5, 3))
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.table_v\\d+ SET status = 30 WHERE node_id = \\? AND status <= 25").
+		ExpectExec("UPDATE `mock-schema`\\.table_v\\d+ SET status = 30 WHERE 'all' = \\? AND status <= 25").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(6, 2))
 	s.mock.ExpectCommit()
@@ -337,22 +324,22 @@ func (s *cpSQLSuite) TestIgnoreOneErrorCheckpoint(c *C) {
 func (s *cpSQLSuite) TestDestroyAllErrorCheckpoints(c *C) {
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectQuery("SELECT (?s:.+)node_id = \\?").
+		ExpectQuery("SELECT (?s:.+)'all' = \\?").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(
 			sqlmock.NewRows([]string{"table_name", "__min__", "__max__"}).
 				AddRow("`db1`.`t2`", -1, 0),
 		)
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.chunk_v\\d+ WHERE table_name IN .+ node_id = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.chunk_v\\d+ WHERE table_name IN .+ 'all' = \\?").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 5))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.engine_v\\d+ WHERE table_name IN .+ node_id = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.engine_v\\d+ WHERE table_name IN .+ 'all' = \\?").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 3))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.table_v\\d+ WHERE node_id = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.table_v\\d+ WHERE 'all' = \\?").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.ExpectCommit()
@@ -446,15 +433,35 @@ func (s *cpSQLSuite) TestDump(c *C) {
 	s.mock.
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
 		WillReturnRows(
-			sqlmock.NewRows([]string{"node_id", "session", "table_name", "hash", "status", "alloc_base", "create_time", "update_time"}).
-				AddRow(0, 1555555555, "`db1`.`t2`", 0, 90, 132861, t, t),
+			sqlmock.NewRows([]string{"task_id", "table_name", "hash", "status", "alloc_base", "create_time", "update_time"}).
+				AddRow(1555555555, "`db1`.`t2`", 0, 90, 132861, t, t),
 		)
 
 	csvBuilder.Reset()
 	err = s.cpdb.DumpTables(ctx, &csvBuilder)
 	c.Assert(err, IsNil)
 	c.Assert(csvBuilder.String(), Equals,
-		"node_id,session,table_name,hash,status,alloc_base,create_time,update_time\n"+
-			"0,1555555555,`db1`.`t2`,0,90,132861,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
+		"task_id,table_name,hash,status,alloc_base,create_time,update_time\n"+
+			"1555555555,`db1`.`t2`,0,90,132861,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
 	)
+}
+
+func (s *cpSQLSuite) TestMoveCheckpoints(c *C) {
+	ctx := context.Background()
+
+	s.mock.
+		ExpectExec("CREATE SCHEMA IF NOT EXISTS `mock-schema\\.12345678\\.bak`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mock.
+		ExpectExec("RENAME TABLE `mock-schema`\\.chunk_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.chunk_v\\d+").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.
+		ExpectExec("RENAME TABLE `mock-schema`\\.engine_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.engine_v\\d+").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.
+		ExpectExec("RENAME TABLE `mock-schema`\\.table_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.table_v\\d+").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.cpdb.MoveCheckpoints(ctx, 12345678)
+	c.Assert(err, IsNil)
 }

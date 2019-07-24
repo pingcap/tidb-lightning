@@ -200,7 +200,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema)
+		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema, cfg.TaskID)
 		if err != nil {
 			db.Close()
 			return nil, errors.Trace(err)
@@ -1069,12 +1069,22 @@ func checkVersion(component string, expected, actual semver.Version) error {
 }
 
 func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
-	if !rc.cfg.Checkpoint.Enable || rc.cfg.Checkpoint.KeepAfterSuccess {
-		log.L().Info("skip clean checkpoints")
+	if !rc.cfg.Checkpoint.Enable {
 		return nil
 	}
-	task := log.L().Begin(zap.InfoLevel, "clean checkpoints")
-	err := rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
+
+	logger := log.With(
+		zap.Bool("keepAfterSuccess", rc.cfg.Checkpoint.KeepAfterSuccess),
+		zap.Int64("taskID", rc.cfg.TaskID),
+	)
+
+	task := logger.Begin(zap.InfoLevel, "clean checkpoints")
+	var err error
+	if rc.cfg.Checkpoint.KeepAfterSuccess {
+		err = rc.checkpointsDB.MoveCheckpoints(ctx, rc.cfg.TaskID)
+	} else {
+		err = rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
+	}
 	task.End(zap.ErrorLevel, err)
 	return errors.Trace(err)
 }
