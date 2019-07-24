@@ -16,7 +16,7 @@
 set -eu
 
 # Populate the mydumper source
-DBPATH="$TEST_DIR/restore.mydump"
+DBPATH="$TEST_DIR/restore_conc.mydump"
 TABLE_COUNT=8
 
 mkdir -p $DBPATH
