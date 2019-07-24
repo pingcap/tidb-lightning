@@ -496,7 +496,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ctx2 := context.WithValue(ctx, gcLifeTimeKey, oriGCLifeTime)
+	ctx2 := context.WithValue(ctx, &gcLifeTimeKey, oriGCLifeTime)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
@@ -1364,7 +1364,7 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 	// checksum command usually takes a long time to execute,
 	// so here need to increase the gcLifeTime for single transaction.
 	// try to get gcLifeTime from context first.
-	gcLifeTime, ok := ctx.Value(gcLifeTimeKey).(string)
+	gcLifeTime, ok := ctx.Value(&gcLifeTimeKey).(string)
 	if !ok {
 		oriGCLifeTime, err = ObtainGCLifeTime(ctx, db)
 		if err != nil {
