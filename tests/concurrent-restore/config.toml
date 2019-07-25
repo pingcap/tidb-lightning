@@ -9,7 +9,7 @@ level = "info"
 addr = "127.0.0.1:8808"
 
 [mydumper]
-data-source-dir = "/tmp/lightning_test_result/restore.mydump"
+data-source-dir = "/tmp/lightning_test_result/restore_conc.mydump"
 
 [tidb]
 host = "127.0.0.1"
