@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb-tools/pkg/filter"
 	"github.com/pingcap/tidb-tools/pkg/table-router"
 	tidbcfg "github.com/pingcap/tidb/config"
+	"go.uber.org/zap"
 )
 
 const (
@@ -204,8 +205,64 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 }
 
 // LoadFromTOML overwrites the current configuration by the TOML data
+// If data contains toml items not in Config and GlobalConfig, return an error
+// If data contains toml items not in Config, thus won't take effect, warn user
 func (cfg *Config) LoadFromTOML(data []byte) error {
-	return errors.Trace(toml.Unmarshal(data, cfg))
+	// bothUnused saves toml items not belong to Config nor GlobalConfig
+	var bothUnused []string
+	// warnItems saves legal toml items but won't effect
+	var warnItems []string
+
+	dataStr := string(data)
+
+	// Here we load toml into cfg, and rest logic is check unused keys
+	metaData, err := toml.Decode(dataStr, cfg)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	unusedConfigKeys := metaData.Undecoded()
+	if len(unusedConfigKeys) == 0 {
+		return nil
+	}
+
+	// Now we deal with potential both-unused keys of Config and GlobalConfig struct
+
+	metaDataGlobal, err := toml.Decode(dataStr, &GlobalConfig{})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Key type returned by metadata.Undecoded doesn't have a equality comparison,
+	// we convert them to string type instead, and this conversion is identical
+	unusedGlobalKeys := metaDataGlobal.Undecoded()
+	unusedGlobalKeyStrs := make(map[string]struct{})
+	for _, key := range unusedGlobalKeys {
+		unusedGlobalKeyStrs[key.String()] = struct{}{}
+	}
+
+	for _, key := range unusedConfigKeys {
+		keyStr := key.String()
+		if _, found := unusedGlobalKeyStrs[keyStr]; found {
+			bothUnused = append(bothUnused, keyStr)
+		} else {
+			warnItems = append(warnItems, keyStr)
+		}
+	}
+
+	if len(bothUnused) > 0 {
+		return errors.Errorf("config file contained unknown configuration options: %s",
+			strings.Join(bothUnused, ", "))
+	}
+
+	// Warn that some legal field of config file won't be overwritten, such as lightning.file
+	if len(warnItems) > 0 {
+		log.L().Warn("currently only per-task configuration can be applied, global configuration changes can only be made on startup",
+			zap.Strings("global config changes", warnItems))
+	}
+
+	return nil
 }
 
 // Adjust fixes the invalid or unspecified settings to reasonable valid values.
