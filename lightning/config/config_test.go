@@ -308,6 +308,15 @@ func (s *configTestSuite) TestInvalidTOML(c *C) {
 	c.Assert(err, ErrorMatches, regexp.QuoteMeta("Near line 0 (last key parsed ''): bare keys cannot contain '['"))
 }
 
+func (s *configTestSuite) TestTOMLUnusedKeys(c *C) {
+	cfg := &config.Config{}
+	err := cfg.LoadFromTOML([]byte(`
+		[lightning]
+		typo = 123
+	`))
+	c.Assert(err, ErrorMatches, regexp.QuoteMeta("config file contained unknown configuration options: lightning.typo"))
+}
+
 func (s *configTestSuite) TestDurationUnmarshal(c *C) {
 	duration := config.Duration{}
 	err := duration.UnmarshalText([]byte("13m20s"))

@@ -37,14 +37,11 @@ ifeq ("$(WITH_RACE)", "1")
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
-.PHONY: all build clean lightning lightning-ctl test lightning_for_integration_test \
+.PHONY: all clean lightning lightning-ctl test lightning_for_integration_test \
 	integration_test coverage update ensure_failpoint_ctl failpoint_enable failpoint_disable \
 	check vet fmt revive web
 
 default: clean lightning lightning-ctl checksuccess
-
-build:
-	$(GOBUILD)
 
 clean:
 	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN) $(FAILPOINT_CTL_BIN) $(REVIVE_BIN) $(VFSGENDEV_BIN)
