@@ -1,0 +1,21 @@
+[typo-1]
+
+[lightning]
+file = "/tmp/lightning_test_result/lightning-unused-config-keys.log"
+typo-2 = "unused test"
+
+[tikv-importer]
+addr = "127.0.0.1:8808"
+
+[mydumper]
+data-source-dir = "tests/unused_config_keys/data"
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+log-level = "error"
+
+[[typo-3]]
