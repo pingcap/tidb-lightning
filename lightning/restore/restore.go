@@ -935,7 +935,7 @@ func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
 		ctx,
 		&http.Client{},
 		rc.cfg.TiDB.PdAddr,
-		kv.StoreStateUp,
+		kv.StoreStateOffline,
 		func(c context.Context, store *kv.Store) error {
 			return kv.Compact(c, store.Address, level)
 		},
@@ -958,7 +958,7 @@ func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.Swit
 		ctx,
 		&http.Client{},
 		rc.cfg.TiDB.PdAddr,
-		kv.StoreStateUp,
+		kv.StoreStateOffline,
 		func(c context.Context, store *kv.Store) error {
 			return kv.SwitchMode(c, store.Address, mode)
 		},
@@ -1045,7 +1045,7 @@ func (rc *RestoreController) checkTiKVVersion(client *http.Client) error {
 		context.Background(),
 		client,
 		rc.cfg.TiDB.PdAddr,
-		kv.StoreStateOffline,
+		kv.StoreStateDown,
 		func(c context.Context, store *kv.Store) error {
 			component := fmt.Sprintf("TiKV (at %s)", store.Address)
 			version, err := semver.NewVersion(store.Version)
@@ -1403,10 +1403,10 @@ const (
 )
 
 type deliveredKVs struct {
-	kvs    kv.Row // if kvs is nil, this indicated we've got the last message.
+	kvs     kv.Row // if kvs is nil, this indicated we've got the last message.
 	columns []string
-	offset int64
-	rowID  int64
+	offset  int64
+	rowID   int64
 }
 
 type deliverResult struct {

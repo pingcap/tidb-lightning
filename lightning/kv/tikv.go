@@ -77,6 +77,9 @@ type Store struct {
 }
 
 func withTiKVConnection(ctx context.Context, tikvAddr string, action func(import_sstpb.ImportSSTClient) error) error {
+	// Connect to the ImportSST service on the given TiKV node.
+	// The connection is needed for executing `action` and will be tear down
+	// when this function exits.
 	conn, err := grpc.DialContext(ctx, tikvAddr, grpc.WithInsecure())
 	if err != nil {
 		return errors.Trace(err)
