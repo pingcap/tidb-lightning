@@ -259,7 +259,7 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 	// Warn that some legal field of config file won't be overwritten, such as lightning.file
 	if len(warnItems) > 0 {
 		log.L().Warn("currently only per-task configuration can be applied, global configuration changes can only be made on startup",
-			zap.String("global config changes", strings.Join(warnItems, ", ")))
+			zap.Strings("global config changes", warnItems))
 	}
 
 	return nil
