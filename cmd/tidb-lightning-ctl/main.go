@@ -107,7 +107,7 @@ func compactCluster(ctx context.Context, cfg *config.Config) error {
 		ctx,
 		&http.Client{},
 		cfg.TiDB.PdAddr,
-		kv.StoreStateOffline,
+		kv.StoreStateDisconnected,
 		func(c context.Context, store *kv.Store) error {
 			return kv.Compact(c, store.Address, restore.FullLevelCompact)
 		},
@@ -129,7 +129,7 @@ func switchMode(ctx context.Context, cfg *config.Config, mode string) error {
 		ctx,
 		&http.Client{},
 		cfg.TiDB.PdAddr,
-		kv.StoreStateOffline,
+		kv.StoreStateDisconnected,
 		func(c context.Context, store *kv.Store) error {
 			return kv.SwitchMode(c, store.Address, m)
 		},

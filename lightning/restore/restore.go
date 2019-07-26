@@ -942,7 +942,7 @@ func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
 		ctx,
 		&http.Client{},
 		rc.cfg.TiDB.PdAddr,
-		kv.StoreStateOffline,
+		kv.StoreStateDisconnected,
 		func(c context.Context, store *kv.Store) error {
 			return kv.Compact(c, store.Address, level)
 		},
@@ -959,13 +959,24 @@ func (rc *RestoreController) switchToNormalMode(ctx context.Context) error {
 }
 
 func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
+	// It is fine if we miss some stores which did not switch to Import mode,
+	// since we're running it periodically, so we exclude disconnected stores.
+	// But it is essential all stores be switched back to Normal mode to allow
+	// normal operation.
+	var minState kv.StoreState
+	if mode == sstpb.SwitchMode_Import {
+		minState = kv.StoreStateOffline
+	} else {
+		minState = kv.StoreStateDisconnected
+	}
+
 	// we ignore switch mode failure since it is not fatal.
 	// no need log the error, it is done in kv.SwitchMode already.
 	_ = kv.ForAllStores(
 		ctx,
 		&http.Client{},
 		rc.cfg.TiDB.PdAddr,
-		kv.StoreStateOffline,
+		minState,
 		func(c context.Context, store *kv.Store) error {
 			return kv.SwitchMode(c, store.Address, mode)
 		},
