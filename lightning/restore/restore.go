@@ -1381,7 +1381,7 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 		}
 	}
 
-	failpoint.Inject("IncreaseGCUpdateDuration", nil)
+	failpoint.Inject("IncreaseGCUpdateDuration", func() {})
 
 	return oriGCLifeTime, nil
 }
