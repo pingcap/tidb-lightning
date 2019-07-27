@@ -74,6 +74,8 @@ var (
 	requiredTiKVVersion = *semver.New("2.1.0")
 )
 
+var gcLifeTimeKey struct{}
+
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
@@ -462,10 +464,15 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	}
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
+	oriGCLifeTime, err := ObtainGCLifeTime(ctx, rc.tidbMgr.db)
+	if err != nil {
+		return err
+	}
+	ctx2 := context.WithValue(ctx, &gcLifeTimeKey, oriGCLifeTime)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
-				err := task.tr.restoreTable(ctx, rc, task.cp)
+				err := task.tr.restoreTable(ctx2, rc, task.cp)
 				metric.RecordTableCount("completed", err)
 				restoreErr.Set(task.tr.tableName, err)
 				wg.Done()
@@ -1343,9 +1350,15 @@ func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum,
 func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, err error) {
 	// checksum command usually takes a long time to execute,
 	// so here need to increase the gcLifeTime for single transaction.
-	oriGCLifeTime, err = ObtainGCLifeTime(ctx, db)
-	if err != nil {
-		return "", errors.Trace(err)
+	// try to get gcLifeTime from context first.
+	gcLifeTime, ok := ctx.Value(&gcLifeTimeKey).(string)
+	if !ok {
+		oriGCLifeTime, err = ObtainGCLifeTime(ctx, db)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		oriGCLifeTime = gcLifeTime
 	}
 
 	var increaseGCLifeTime bool
@@ -1367,6 +1380,8 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 			return "", errors.Trace(err)
 		}
 	}
+
+	failpoint.Inject("IncreaseGCUpdateDuration", nil)
 
 	return oriGCLifeTime, nil
 }
