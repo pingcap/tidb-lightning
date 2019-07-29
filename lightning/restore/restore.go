@@ -79,6 +79,11 @@ var (
 // DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
 var DeliverPauser = common.NewPauser()
 
+var (
+	runningChecksumJobs int32
+	oriGCLifeTime string
+)
+
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
@@ -1325,19 +1330,26 @@ func setSessionConcurrencyVars(ctx context.Context, db *sql.DB, dsn config.DBSto
 // DoChecksum do checksum for tables.
 // table should be in <db>.<table>, format.  e.g. foo.bar
 func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum, error) {
-	ori, err := increaseGCLifeTime(ctx, db)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var err error
+
+	if atomic.AddInt32(&runningChecksumJobs, 1) == 1 {
+		oriGCLifeTime, err = increaseGCLifeTime(ctx, db)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
+
 	// set it back finally
 	defer func() {
-		err := UpdateGCLifeTime(ctx, db, ori)
-		if err != nil {
-			query := fmt.Sprintf("UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'", ori)
-			log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
-				zap.String("query", query),
-				log.ShortError(err),
-			)
+		if atomic.AddInt32(&runningChecksumJobs, -1) == 0 {
+			err := UpdateGCLifeTime(ctx, db, oriGCLifeTime)
+			if err != nil {
+				query := fmt.Sprintf("UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'", oriGCLifeTime)
+				log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
+					zap.String("query", query),
+					log.ShortError(err),
+				)
+			}
 		}
 	}()
 

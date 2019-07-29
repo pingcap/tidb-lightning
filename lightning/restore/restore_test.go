@@ -15,6 +15,9 @@ package restore
 
 import (
 	"context"
+	"sync"
+	"time"
+
 	// "encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -146,6 +149,53 @@ func (s *restoreSuite) TestDoChecksum(c *C) {
 		TotalKVs:   7296873,
 		TotalBytes: 357601387,
 	})
+}
+
+func (s *restoreSuite) TestDoChecksumParallel(c *C) {
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	defer db.Close()
+
+	mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
+	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
+		WithArgs("100h0m0s").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	for i := 0; i < 5; i++ {
+		mock.ExpectQuery("\\QADMIN CHECKSUM TABLE `test`.`t`\\E").
+			WillDelayFor(100 * time.Millisecond).
+			WillReturnRows(
+				sqlmock.NewRows([]string{"Db_name", "Table_name", "Checksum_crc64_xor", "Total_kvs", "Total_bytes"}).
+					AddRow("test", "t", 8520875019404689597, 7296873, 357601387),
+			)
+	}
+	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
+		WithArgs("10m").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	mock.ExpectClose()
+
+	var wg sync.WaitGroup
+	ctx := context.Background()
+	wg.Add(5)
+	mock.MatchExpectationsInOrder(false)
+	for i := 0; i < 5; i++ {
+		go func() {
+			checksum, err := DoChecksum(ctx, db, "`test`.`t`")
+			c.Assert(err, IsNil)
+			c.Assert(*checksum, DeepEquals, RemoteChecksum{
+				Schema:     "test",
+				Table:      "t",
+				Checksum:   8520875019404689597,
+				TotalKVs:   7296873,
+				TotalBytes: 357601387,
+			})
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+	mock.MatchExpectationsInOrder(true)
+	err = mock.ExpectationsWereMet()
+	c.Assert(err, IsNil)
 }
 
 func (s *restoreSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
