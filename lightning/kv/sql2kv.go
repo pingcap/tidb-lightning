@@ -17,36 +17,36 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	kvec "github.com/pingcap/tidb/util/kvencoder"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/pingcap/tidb-lightning/lightning/log"
+	"github.com/pingcap/tidb-lightning/lightning/metric"
+	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
 
 var extraHandleColumnInfo = model.NewExtraHandleColInfo()
 
-type TableKVEncoder struct {
+type tableKVEncoder struct {
 	tbl         table.Table
 	se          *session
 	recordCache []types.Datum
 }
 
-func NewTableKVEncoder(
-	tbl table.Table,
-	sqlMode mysql.SQLMode,
-) *TableKVEncoder {
+func NewTableKVEncoder(tbl table.Table, sqlMode mysql.SQLMode) Encoder {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
 
-	return &TableKVEncoder{
+	return &tableKVEncoder{
 		tbl: tbl,
 		se:  newSession(sqlMode),
 	}
 }
 
-func (kvcodec *TableKVEncoder) Close() {
+func (kvcodec *tableKVEncoder) Close() {
 	metric.KvEncoderCounter.WithLabelValues("closed").Inc()
 }
 
@@ -124,16 +124,32 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 	)
 }
 
+type kvPairs []kvec.KvPair
+
+// MakeRowsFromKvPairs converts a KvPair slice into a Rows instance. This is
+// mainly used for testing only. The resulting Rows instance should only be used
+// for the importer backend.
+func MakeRowsFromKvPairs(pairs []kvec.KvPair) Rows {
+	return kvPairs(pairs)
+}
+
+// MakeRowFromKvPairs converts a KvPair slice into a Row instance. This is
+// mainly used for testing only. The resulting Row instance should only be used
+// for the importer backend.
+func MakeRowFromKvPairs(pairs []kvec.KvPair) Row {
+	return kvPairs(pairs)
+}
+
 // Encode a row of data into KV pairs.
 //
 // See comments in `(*TableRestore).initializeColumns` for the meaning of the
 // `columnPermutation` parameter.
-func (kvcodec *TableKVEncoder) Encode(
+func (kvcodec *tableKVEncoder) Encode(
 	logger log.Logger,
 	row []types.Datum,
 	rowID int64,
 	columnPermutation []int,
-) ([]kvec.KvPair, error) {
+) (Row, error) {
 	cols := kvcodec.tbl.Cols()
 
 	var value types.Datum
@@ -191,5 +207,54 @@ func (kvcodec *TableKVEncoder) Encode(
 	pairs := kvcodec.se.takeKvPairs()
 	kvcodec.recordCache = record[:0]
 
-	return pairs, nil
+	return kvPairs(pairs), nil
+}
+
+func (kvs kvPairs) ClassifyAndAppend(
+	data *Rows,
+	dataChecksum *verification.KVChecksum,
+	indices *Rows,
+	indexChecksum *verification.KVChecksum,
+) {
+	dataKVs := (*data).(kvPairs)
+	indexKVs := (*indices).(kvPairs)
+
+	for _, kv := range kvs {
+		if kv.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
+			dataKVs = append(dataKVs, kv)
+			dataChecksum.UpdateOne(kv)
+		} else {
+			indexKVs = append(indexKVs, kv)
+			indexChecksum.UpdateOne(kv)
+		}
+	}
+
+	*data = dataKVs
+	*indices = indexKVs
+}
+
+func (totalKVs kvPairs) SplitIntoChunks(splitSize int) []Rows {
+	if len(totalKVs) == 0 {
+		return nil
+	}
+
+	res := make([]Rows, 0, 1)
+	i := 0
+	cumSize := 0
+
+	for j, pair := range totalKVs {
+		size := len(pair.Key) + len(pair.Val)
+		if i < j && cumSize+size > splitSize {
+			res = append(res, kvPairs(totalKVs[i:j]))
+			i = j
+			cumSize = 0
+		}
+		cumSize += size
+	}
+
+	return append(res, kvPairs(totalKVs[i:]))
+}
+
+func (kvs kvPairs) Clear() Rows {
+	return kvPairs(kvs[:0])
 }

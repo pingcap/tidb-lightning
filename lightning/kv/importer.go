@@ -15,98 +15,60 @@ package kv
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	kv "github.com/pingcap/kvproto/pkg/import_kvpb"
-	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
-	kvec "github.com/pingcap/tidb/util/kvencoder"
-	"github.com/satori/go.uuid"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/table"
+	uuid "github.com/satori/go.uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
-	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/pingcap/tidb-lightning/lightning/metric"
 )
 
 const (
-	maxRetryTimes           = 3 // tikv-importer has done retry internally. so we don't retry many times.
 	defaultRetryBackoffTime = time.Second * 3
 )
 
-/*
-
-Usual workflow:
-
-1. Create an `Importer` for the whole process.
-
-2. For each table,
-
-	i. Split into multiple "batches" consisting of data files with roughly equal total size.
-
-	ii. For each batch,
-
-		a. Create an `OpenedEngine` via `importer.OpenEngine()`
-
-		b. For each chunk,
-
-			i. Create a `WriteStream` via `engine.NewWriteStream()`
-			ii. Deliver data into the stream via `stream.Put()`
-			iii. Close the stream via `stream.Close()`
-
-		c. When all chunks are written, obtain a `ClosedEngine` via `engine.CloseEngine()`
-
-		d. Import data via `engine.Import()`
-
-		e. Cleanup via `engine.Cleanup()`
-
-3. Close the connection via `importer.Close()`
-
-*/
-
-// Importer represents a gRPC connection to tikv-importer. This type is
+// importer represents a gRPC connection to tikv-importer. This type is
 // goroutine safe: you can share this instance and execute any method anywhere.
-type Importer struct {
-	conn             *grpc.ClientConn
-	cli              kv.ImportKVClient
-	pdAddr           string
-	retryBackoffTime time.Duration
+type importer struct {
+	conn   *grpc.ClientConn
+	cli    kv.ImportKVClient
+	pdAddr string
 }
 
 // NewImporter creates a new connection to tikv-importer. A single connection
 // per tidb-lightning instance is enough.
-func NewImporter(ctx context.Context, importServerAddr string, pdAddr string) (*Importer, error) {
+func NewImporter(ctx context.Context, importServerAddr string, pdAddr string) (Backend, error) {
 	conn, err := grpc.DialContext(ctx, importServerAddr, grpc.WithInsecure())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return MakeBackend(nil), errors.Trace(err)
 	}
 
-	return &Importer{
-		conn:             conn,
-		cli:              kv.NewImportKVClient(conn),
-		pdAddr:           pdAddr,
-		retryBackoffTime: defaultRetryBackoffTime,
-	}, nil
+	return MakeBackend(&importer{
+		conn:   conn,
+		cli:    kv.NewImportKVClient(conn),
+		pdAddr: pdAddr,
+	}), nil
 }
 
 // NewMockImporter creates an *unconnected* importer based on a custom
 // ImportKVClient. This is provided for testing only. Do not use this function
 // outside of tests.
-func NewMockImporter(cli kv.ImportKVClient, pdAddr string) *Importer {
-	return &Importer{
-		conn:             nil,
-		cli:              cli,
-		pdAddr:           pdAddr,
-		retryBackoffTime: 0,
-	}
+func NewMockImporter(cli kv.ImportKVClient, pdAddr string) Backend {
+	return MakeBackend(&importer{
+		conn:   nil,
+		cli:    cli,
+		pdAddr: pdAddr,
+	})
 }
 
 // Close the importer connection.
-func (importer *Importer) Close() {
+func (importer *importer) Close() {
 	if importer.conn != nil {
 		if err := importer.conn.Close(); err != nil {
 			log.L().Warn("close importer gRPC connection failed", zap.Error(err))
@@ -114,44 +76,13 @@ func (importer *Importer) Close() {
 	}
 }
 
-// SwitchMode switches the TiKV cluster to another operation mode.
-func (importer *Importer) SwitchMode(ctx context.Context, mode sst.SwitchMode) error {
-	req := &kv.SwitchModeRequest{
-		PdAddr: importer.pdAddr,
-		Request: &sst.SwitchModeRequest{
-			Mode: mode,
-		},
-	}
-
-	task := log.With(zap.Stringer("mode", mode)).Begin(zap.DebugLevel, "switch mode")
-	_, err := importer.cli.SwitchMode(ctx, req)
-	task.End(zap.WarnLevel, err)
-	return errors.Trace(err)
+func (*importer) RetryImportDelay() time.Duration {
+	return defaultRetryBackoffTime
 }
 
-// Compact the target cluster for better performance.
-func (importer *Importer) Compact(ctx context.Context, level int32) error {
-	req := &kv.CompactClusterRequest{
-		PdAddr: importer.pdAddr,
-		Request: &sst.CompactRequest{
-			// No need to set Range here.
-			OutputLevel: level,
-		},
-	}
-
-	task := log.With(zap.Int32("level", level)).Begin(zap.InfoLevel, "compact cluster")
-	_, err := importer.cli.CompactCluster(ctx, req)
-	task.End(zap.ErrorLevel, err)
-	return errors.Trace(err)
-}
-
-// OpenedEngine is an opened importer engine file, allowing data to be written
-// to it via WriteStream instances.
-type OpenedEngine struct {
-	importer *Importer
-	logger   log.Logger
-	uuid     uuid.UUID
-	ts       uint64
+func (*importer) MaxChunkSize() int {
+	// 31 MB. hardcoded by importer, so do we
+	return 31 << 10
 }
 
 // isIgnorableOpenCloseEngineError checks if the error from
@@ -166,98 +97,92 @@ func isIgnorableOpenCloseEngineError(err error) bool {
 	return err == nil || strings.Contains(err.Error(), "FileExists")
 }
 
-func makeTag(tableName string, engineID int32) string {
-	return fmt.Sprintf("%s:%d", tableName, engineID)
-}
-
-func makeLogger(tag string, engineUUID uuid.UUID) log.Logger {
-	return log.With(
-		zap.String("engineTag", tag),
-		zap.Stringer("engineUUID", engineUUID),
-	)
-}
-
-var engineNamespace = uuid.Must(uuid.FromString("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf"))
-
-// OpenEngine opens an engine with the given table name and engine ID. This type
-// is goroutine safe: you can share this instance and execute any method anywhere.
-func (importer *Importer) OpenEngine(
-	ctx context.Context,
-	tableName string,
-	engineID int32,
-) (*OpenedEngine, error) {
-	tag := makeTag(tableName, engineID)
-	engineUUID := uuid.NewV5(engineNamespace, tag)
+func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	req := &kv.OpenEngineRequest{
 		Uuid: engineUUID.Bytes(),
 	}
+
 	_, err := importer.cli.OpenEngine(ctx, req)
 	if !isIgnorableOpenCloseEngineError(err) {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (importer *importer) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error {
+	req := &kv.CloseEngineRequest{
+		Uuid: engineUUID.Bytes(),
 	}
 
-	openCounter := metric.ImporterEngineCounter.WithLabelValues("open")
-	openCounter.Inc()
-
-	logger := makeLogger(tag, engineUUID)
-	logger.Info("open engine")
-
-	failpoint.Inject("FailIfEngineCountExceeds", func(val failpoint.Value) {
-		closedCounter := metric.ImporterEngineCounter.WithLabelValues("closed")
-		openCount := metric.ReadCounter(openCounter)
-		closedCount := metric.ReadCounter(closedCounter)
-		if injectValue := val.(int); openCount-closedCount > float64(injectValue) {
-			panic(fmt.Sprintf("forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d", openCount, closedCount, injectValue))
-		}
-	})
-
-	return &OpenedEngine{
-		importer: importer,
-		logger:   logger,
-		ts:       uint64(time.Now().Unix()), // TODO ... set outside ? from pd ?
-		uuid:     engineUUID,
-	}, nil
+	_, err := importer.cli.CloseEngine(ctx, req)
+	if !isIgnorableOpenCloseEngineError(err) {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
-// WriteStream is a single write stream into an opened engine. This type is
-// **NOT** goroutine safe, all operations must be executed in the same
-// goroutine.
-type WriteStream struct {
-	engine  *OpenedEngine
-	wstream kv.ImportKV_WriteEngineClient
+func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
+	req := &kv.ImportEngineRequest{
+		Uuid:   engineUUID.Bytes(),
+		PdAddr: importer.pdAddr,
+	}
+
+	_, err := importer.cli.ImportEngine(ctx, req)
+	return errors.Trace(err)
 }
 
-// NewWriteStream creates a new write engine associated with
-func (engine *OpenedEngine) NewWriteStream(ctx context.Context) (*WriteStream, error) {
-	wstream, err := engine.importer.cli.WriteEngine(ctx)
+func (importer *importer) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
+	req := &kv.CleanupEngineRequest{
+		Uuid: engineUUID.Bytes(),
+	}
+
+	_, err := importer.cli.CleanupEngine(ctx, req)
+	return errors.Trace(err)
+}
+
+func (importer *importer) WriteRows(
+	ctx context.Context,
+	engineUUID uuid.UUID,
+	tableName string,
+	columnNames []string,
+	ts uint64,
+	rows Rows,
+) (finalErr error) {
+	kvs := rows.(kvPairs)
+	if len(kvs) == 0 {
+		return nil
+	}
+
+	wstream, err := importer.cli.WriteEngine(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
+
+	logger := log.With(zap.Stringer("engineUUID", engineUUID))
+
+	defer func() {
+		if _, closeErr := wstream.CloseAndRecv(); closeErr != nil {
+			if finalErr == nil {
+				finalErr = errors.Trace(closeErr)
+			} else {
+				// just log the close error, we need to propagate the earlier error instead
+				logger.Warn("close write stream failed", log.ShortError(closeErr))
+			}
+		}
+	}()
 
 	// Bind uuid for this write request
 	req := &kv.WriteEngineRequest{
 		Chunk: &kv.WriteEngineRequest_Head{
 			Head: &kv.WriteHead{
-				Uuid: engine.uuid.Bytes(),
+				Uuid: engineUUID.Bytes(),
 			},
 		},
 	}
-	if err = wstream.Send(req); err != nil {
-		if _, closeErr := wstream.CloseAndRecv(); closeErr != nil {
-			// just log the close error, we need to propagate the send error instead
-			engine.logger.Warn("close write stream failed", log.ShortError(closeErr))
-		}
-		return nil, errors.Trace(err)
+	if err := wstream.Send(req); err != nil {
+		return errors.Trace(err)
 	}
 
-	return &WriteStream{
-		engine:  engine,
-		wstream: wstream,
-	}, nil
-}
-
-// Put delivers some KV pairs to importer via this write stream.
-func (stream *WriteStream) Put(kvs []kvec.KvPair) error {
 	// Send kv paris as write request content
 	mutations := make([]*kv.Mutation, len(kvs))
 	for i, pair := range kvs {
@@ -268,130 +193,25 @@ func (stream *WriteStream) Put(kvs []kvec.KvPair) error {
 		}
 	}
 
-	req := &kv.WriteEngineRequest{
-		Chunk: &kv.WriteEngineRequest_Batch{
-			Batch: &kv.WriteBatch{
-				CommitTs:  stream.engine.ts,
-				Mutations: mutations,
-			},
+	req.Reset()
+	req.Chunk = &kv.WriteEngineRequest_Batch{
+		Batch: &kv.WriteBatch{
+			CommitTs:  ts,
+			Mutations: mutations,
 		},
 	}
 
-	var sendErr error
-	for i := 0; i < maxRetryTimes; i++ {
-		sendErr = stream.wstream.Send(req)
-		if !common.IsRetryableError(sendErr) {
-			break
-		}
-		stream.engine.logger.Error("send write stream failed", log.ShortError(sendErr))
-		time.Sleep(stream.engine.importer.retryBackoffTime)
-	}
-	return errors.Trace(sendErr)
-}
-
-// Close the write stream.
-func (stream *WriteStream) Close() error {
-	if _, err := stream.wstream.CloseAndRecv(); err != nil {
-		stream.engine.logger.Error("close write stream failed", log.ShortError(err))
+	if err := wstream.Send(req); err != nil {
 		return errors.Trace(err)
 	}
+
 	return nil
 }
 
-// ClosedEngine is a closed importer engine file, allowing ingestion into TiKV.
-// This type is goroutine safe: you can share this instance and execute any
-// method anywhere.
-type ClosedEngine struct {
-	importer *Importer
-	logger   log.Logger
-	uuid     uuid.UUID
+func (*importer) MakeEmptyRows() Rows {
+	return kvPairs(nil)
 }
 
-// Close the opened engine to prepare it for importing. This method will return
-// error if any associated WriteStream is still not closed.
-func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
-	closedEngine, err := engine.importer.rawUnsafeCloseEngine(ctx, engine.logger, engine.uuid)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	metric.ImporterEngineCounter.WithLabelValues("closed").Inc()
-	return closedEngine, nil
-}
-
-// UnsafeCloseEngine closes the engine without first opening it. This method is
-// "unsafe" as it does not follow the normal operation sequence
-// (Open -> Write -> Close -> Import). This method should only be used when one
-// knows via other ways that the engine has already been opened, e.g. when
-// resuming from a checkpoint.
-func (importer *Importer) UnsafeCloseEngine(ctx context.Context, tableName string, engineID int32) (*ClosedEngine, error) {
-	tag := makeTag(tableName, engineID)
-	engineUUID := uuid.NewV5(engineNamespace, tag)
-	return importer.UnsafeCloseEngineWithUUID(ctx, tag, engineUUID)
-}
-
-// UnsafeCloseEngineWithUUID closes the engine using the UUID alone.
-func (importer *Importer) UnsafeCloseEngineWithUUID(ctx context.Context, tag string, engineUUID uuid.UUID) (*ClosedEngine, error) {
-	logger := makeLogger(tag, engineUUID)
-	return importer.rawUnsafeCloseEngine(ctx, logger, engineUUID)
-}
-
-func (importer *Importer) rawUnsafeCloseEngine(ctx context.Context, logger log.Logger, engineUUID uuid.UUID) (*ClosedEngine, error) {
-	req := &kv.CloseEngineRequest{
-		Uuid: engineUUID.Bytes(),
-	}
-	task := logger.Begin(zap.InfoLevel, "engine close")
-	_, err := importer.cli.CloseEngine(ctx, req)
-	if isIgnorableOpenCloseEngineError(err) {
-		err = nil
-	}
-	task.End(zap.ErrorLevel, err)
-
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return &ClosedEngine{
-		importer: importer,
-		logger:   logger,
-		uuid:     engineUUID,
-	}, nil
-}
-
-// Import the data into the TiKV cluster via SST ingestion.
-func (engine *ClosedEngine) Import(ctx context.Context) error {
-	var err error
-
-	for i := 0; i < maxRetryTimes; i++ {
-		req := &kv.ImportEngineRequest{
-			Uuid:   engine.uuid.Bytes(),
-			PdAddr: engine.importer.pdAddr,
-		}
-
-		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
-		_, err = engine.importer.cli.ImportEngine(ctx, req)
-		if !common.IsRetryableError(err) {
-			task.End(zap.ErrorLevel, err)
-			return errors.Trace(err)
-		}
-		task.Warn("import spuriously failed, going to retry again", log.ShortError(err))
-		time.Sleep(engine.importer.retryBackoffTime)
-	}
-
-	return errors.Annotatef(err, "[%s] import reach max retry %d and still failed", engine.uuid, maxRetryTimes)
-}
-
-// Cleanup deletes the imported data from importer.
-func (engine *ClosedEngine) Cleanup(ctx context.Context) error {
-	req := &kv.CleanupEngineRequest{
-		Uuid: engine.uuid.Bytes(),
-	}
-	task := engine.logger.Begin(zap.InfoLevel, "cleanup")
-	_, err := engine.importer.cli.CleanupEngine(ctx, req)
-	task.End(zap.WarnLevel, err)
-	return errors.Trace(err)
-}
-
-// Logger returns the logger used including contextual fields to identify this engine
-func (engine *ClosedEngine) Logger() log.Logger {
-	return engine.logger
+func (*importer) NewEncoder(tbl table.Table, sqlMode mysql.SQLMode) Encoder {
+	return NewTableKVEncoder(tbl, sqlMode)
 }
