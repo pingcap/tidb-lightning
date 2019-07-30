@@ -35,8 +35,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/kvencoder"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
@@ -78,11 +76,6 @@ var (
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
 var DeliverPauser = common.NewPauser()
-
-var (
-	runningChecksumJobs int32
-	oriGCLifeTime string
-)
 
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
@@ -144,7 +137,7 @@ type RestoreController struct {
 	indexWorkers    *worker.Pool
 	regionWorkers   *worker.Pool
 	ioWorkers       *worker.Pool
-	importer        *kv.Importer
+	backend         kv.Backend
 	tidbMgr         *TiDBManager
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 	alterTableLock  sync.Mutex
@@ -160,7 +153,7 @@ type RestoreController struct {
 }
 
 func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
-	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+	backend, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -182,7 +175,7 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 		indexWorkers:  worker.NewPool(ctx, cfg.App.IndexConcurrency, "index"),
 		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
-		importer:      importer,
+		backend:       backend,
 		tidbMgr:       tidbMgr,
 
 		errorSummaries:    makeErrorSummaries(log.L()),
@@ -226,7 +219,7 @@ func (rc *RestoreController) Wait() {
 }
 
 func (rc *RestoreController) Close() {
-	rc.importer.Close()
+	rc.backend.Close()
 	rc.tidbMgr.Close()
 }
 
@@ -479,6 +472,18 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 	}
 }
 
+type gcLifeTimeHelper struct {
+	increaseGCLock *sync.Mutex
+	runningJobs *int32
+	oriGCLifeTime string
+}
+
+var (
+	gcLifeTimeKey struct{}
+	// in case there're multiple `restoreTables` jobs on one TiDB, one TiDB requires one lock
+	gcLifeTimeLock sync.Mutex
+)
+
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 
@@ -495,12 +500,23 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	}
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
+	oriGCLifeTime, err := ObtainGCLifeTime(ctx, rc.tidbMgr.db)
+	if err != nil {
+		return err
+	}
+	var runningJobs int32
+	helper := gcLifeTimeHelper{
+		&gcLifeTimeLock,
+		&runningJobs,
+		oriGCLifeTime,
+	}
+	ctx2 := context.WithValue(ctx, &gcLifeTimeKey, helper)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
-				err := task.tr.restoreTable(ctx, rc, task.cp)
+				err := task.tr.restoreTable(ctx2, rc, task.cp)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
@@ -546,7 +562,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	wg.Wait()
 	stopPeriodicActions <- struct{}{}
 
-	err := restoreErr.Get()
+	err = restoreErr.Get()
 	logTask.End(zap.ErrorLevel, err)
 	return err
 }
@@ -622,7 +638,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 	if indexEngineCp.Status < CheckpointStatusImported && cp.Status < CheckpointStatusIndexImported {
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
-		indexEngine, err := rc.importer.OpenEngine(ctx, t.tableName, indexEngineID)
+		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, indexEngineID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -691,7 +707,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		// If index engine file has been closed but not imported only if context cancel occurred
 		// when `importKV()` execution, so `UnsafeCloseEngine` and continue import it.
 		if indexEngineCp.Status == CheckpointStatusClosed {
-			closedIndexEngine, err = rc.importer.UnsafeCloseEngine(ctx, t.tableName, indexEngineID)
+			closedIndexEngine, err = rc.backend.UnsafeCloseEngine(ctx, t.tableName, indexEngineID)
 		} else {
 			closedIndexEngine, err = indexEngine.Close(ctx)
 			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusClosed)
@@ -732,7 +748,7 @@ func (t *TableRestore) restoreEngine(
 ) (*kv.ClosedEngine, *worker.Worker, error) {
 	if cp.Status >= CheckpointStatusClosed {
 		w := rc.closedEngineLimit.Apply()
-		closedEngine, err := rc.importer.UnsafeCloseEngine(ctx, t.tableName, engineID)
+		closedEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
 			rc.closedEngineLimit.Recycle(w)
@@ -743,7 +759,7 @@ func (t *TableRestore) restoreEngine(
 
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 
-	dataEngine, err := rc.importer.OpenEngine(ctx, t.tableName, engineID)
+	dataEngine, err := rc.backend.OpenEngine(ctx, t.tableName, engineID)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -938,7 +954,15 @@ func (rc *RestoreController) fullCompact(ctx context.Context) error {
 }
 
 func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
-	return errors.Trace(rc.importer.Compact(ctx, level))
+	return kv.ForAllStores(
+		ctx,
+		&http.Client{},
+		rc.cfg.TiDB.PdAddr,
+		kv.StoreStateDisconnected,
+		func(c context.Context, store *kv.Store) error {
+			return kv.Compact(c, store.Address, level)
+		},
+	)
 }
 
 func (rc *RestoreController) switchToImportMode(ctx context.Context) {
@@ -951,9 +975,28 @@ func (rc *RestoreController) switchToNormalMode(ctx context.Context) error {
 }
 
 func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
+	// It is fine if we miss some stores which did not switch to Import mode,
+	// since we're running it periodically, so we exclude disconnected stores.
+	// But it is essential all stores be switched back to Normal mode to allow
+	// normal operation.
+	var minState kv.StoreState
+	if mode == sstpb.SwitchMode_Import {
+		minState = kv.StoreStateOffline
+	} else {
+		minState = kv.StoreStateDisconnected
+	}
+
 	// we ignore switch mode failure since it is not fatal.
-	// no need log the error, it is done in (*Importer).SwitchMode already.
-	rc.importer.SwitchMode(ctx, mode)
+	// no need log the error, it is done in kv.SwitchMode already.
+	_ = kv.ForAllStores(
+		ctx,
+		&http.Client{},
+		rc.cfg.TiDB.PdAddr,
+		minState,
+		func(c context.Context, store *kv.Store) error {
+			return kv.SwitchMode(c, store.Address, mode)
+		},
+	)
 }
 
 func (rc *RestoreController) checkRequirements(_ context.Context) error {
@@ -1032,33 +1075,20 @@ func (rc *RestoreController) checkPDVersion(client *http.Client) error {
 }
 
 func (rc *RestoreController) checkTiKVVersion(client *http.Client) error {
-	url := fmt.Sprintf("http://%s/pd/api/v1/stores", rc.cfg.TiDB.PdAddr)
-
-	var stores struct {
-		Stores []struct {
-			Store struct {
-				Address string
-				Version string
+	return kv.ForAllStores(
+		context.Background(),
+		client,
+		rc.cfg.TiDB.PdAddr,
+		kv.StoreStateDown,
+		func(c context.Context, store *kv.Store) error {
+			component := fmt.Sprintf("TiKV (at %s)", store.Address)
+			version, err := semver.NewVersion(store.Version)
+			if err != nil {
+				return errors.Annotate(err, component)
 			}
-		}
-	}
-	err := common.GetJSON(client, url, &stores)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, store := range stores.Stores {
-		version, err := semver.NewVersion(store.Store.Version)
-		if err != nil {
-			return errors.Annotate(err, store.Store.Address)
-		}
-		component := fmt.Sprintf("TiKV (at %s)", store.Store.Address)
-		err = checkVersion(component, requiredTiKVVersion, *version)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+			return checkVersion(component, requiredTiKVVersion, *version)
+		},
+	)
 }
 
 func checkVersion(component string, expected, actual semver.Version) error {
@@ -1331,20 +1361,31 @@ func setSessionConcurrencyVars(ctx context.Context, db *sql.DB, dsn config.DBSto
 // table should be in <db>.<table>, format.  e.g. foo.bar
 func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum, error) {
 	var err error
+	helper, ok := ctx.Value(&gcLifeTimeKey).(gcLifeTimeHelper)
+	if !ok {
+		return nil, errors.Errorf("No gcLifeTimeHelper found in context, check context initialization")
+	}
 
-	if atomic.AddInt32(&runningChecksumJobs, 1) == 1 {
-		oriGCLifeTime, err = increaseGCLifeTime(ctx, db)
+	helper.increaseGCLock.Lock()
+	*(helper.runningJobs) += 1
+	if *(helper.runningJobs) == 1 {
+		err = increaseGCLifeTime(ctx, db)
 		if err != nil {
+			helper.increaseGCLock.Unlock()
 			return nil, errors.Trace(err)
 		}
 	}
+	helper.increaseGCLock.Unlock()
 
 	// set it back finally
 	defer func() {
-		if atomic.AddInt32(&runningChecksumJobs, -1) == 0 {
-			err := UpdateGCLifeTime(ctx, db, oriGCLifeTime)
+		if atomic.AddInt32(helper.runningJobs, -1) == 0 {
+			err := UpdateGCLifeTime(ctx, db, helper.oriGCLifeTime)
 			if err != nil {
-				query := fmt.Sprintf("UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'", oriGCLifeTime)
+				query := fmt.Sprintf(
+					"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
+					helper.oriGCLifeTime,
+				)
 				log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
 					zap.String("query", query),
 					log.ShortError(err),
@@ -1375,19 +1416,20 @@ func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum,
 	return &cs, nil
 }
 
-func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, err error) {
+func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
 	// checksum command usually takes a long time to execute,
 	// so here need to increase the gcLifeTime for single transaction.
-	oriGCLifeTime, err = ObtainGCLifeTime(ctx, db)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
+
+	// try to get gcLifeTimeHelper from context first.
+	// DoChecksum has assure this getting action success.
+	helper, _ := ctx.Value(&gcLifeTimeKey).(gcLifeTimeHelper)
+	oriGCLifeTime := helper.oriGCLifeTime
 
 	var increaseGCLifeTime bool
 	if oriGCLifeTime != "" {
 		ori, err := time.ParseDuration(oriGCLifeTime)
 		if err != nil {
-			return "", errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if ori < defaultGCLifeTime {
 			increaseGCLifeTime = true
@@ -1399,73 +1441,27 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (oriGCLifeTime string, 
 	if increaseGCLifeTime {
 		err = UpdateGCLifeTime(ctx, db, defaultGCLifeTime.String())
 		if err != nil {
-			return "", errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 
-	return oriGCLifeTime, nil
+	failpoint.Inject("IncreaseGCUpdateDuration", nil)
+
+	return nil
 }
 
 ////////////////////////////////////////////////////////////////
 
 const (
-	maxKVQueueSize  = 128      // Cache at most this number of rows before blocking the encode loop
-	maxDeliverBytes = 31 << 20 // 31 MB. hardcoded by importer, so do we
-	minDeliverBytes = 65536    // 64 KB. batch at least this amount of bytes to reduce number of messages
+	maxKVQueueSize  = 128   // Cache at most this number of rows before blocking the encode loop
+	minDeliverBytes = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
 )
 
-func splitIntoDeliveryStreams(totalKVs []kvenc.KvPair, splitSize int) [][]kvenc.KvPair {
-	res := make([][]kvenc.KvPair, 0, 1)
-	i := 0
-	cumSize := 0
-
-	for j, pair := range totalKVs {
-		size := len(pair.Key) + len(pair.Val)
-		if i < j && cumSize+size > splitSize {
-			res = append(res, totalKVs[i:j])
-			i = j
-			cumSize = 0
-		}
-		cumSize += size
-	}
-
-	return append(res, totalKVs[i:])
-}
-
-func writeToEngine(ctx context.Context, engine *kv.OpenedEngine, totalKVs []kvenc.KvPair) error {
-	if len(totalKVs) == 0 {
-		return nil
-	}
-
-	stream, err := engine.NewWriteStream(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	var putError error
-	for _, kvs := range splitIntoDeliveryStreams(totalKVs, maxDeliverBytes) {
-		for i := 0; i < 5; i++ {
-			putError = stream.Put(kvs)
-			if putError == nil {
-				break
-			}
-		}
-		// retry still failed
-		if putError != nil {
-			break
-		}
-	}
-
-	if err := stream.Close(); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(putError)
-}
-
 type deliveredKVs struct {
-	kvs    []kvenc.KvPair // if kvs is empty, this indicated we've got the last message.
-	offset int64
-	rowID  int64
+	kvs     kv.Row // if kvs is nil, this indicated we've got the last message.
+	columns []string
+	offset  int64
+	rowID   int64
 }
 
 type deliverResult struct {
@@ -1482,7 +1478,8 @@ func (cr *chunkRestore) deliverLoop(
 	rc *RestoreController,
 ) (deliverTotalDur time.Duration, err error) {
 	var channelClosed bool
-	var dataKVs, indexKVs []kvenc.KvPair
+	dataKVs := rc.backend.MakeEmptyRows()
+	indexKVs := rc.backend.MakeEmptyRows()
 
 	deliverLogger := t.logger.With(
 		zap.Int32("engineNumber", engineID),
@@ -1494,26 +1491,20 @@ func (cr *chunkRestore) deliverLoop(
 	for !channelClosed {
 		var dataChecksum, indexChecksum verify.KVChecksum
 		var offset, rowID int64
+		var columns []string
 
 		// Fetch enough KV pairs from the source.
 	populate:
 		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
 			select {
 			case d := <-kvsCh:
-				if len(d.kvs) == 0 {
+				if d.kvs == nil {
 					channelClosed = true
 					break populate
 				}
 
-				for _, kv := range d.kvs {
-					if kv.Key[tablecodec.TableSplitKeyLen+1] == 'r' {
-						dataKVs = append(dataKVs, kv)
-						dataChecksum.UpdateOne(kv)
-					} else {
-						indexKVs = append(indexKVs, kv)
-						indexChecksum.UpdateOne(kv)
-					}
-				}
+				d.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
+				columns = d.columns
 				offset = d.offset
 				rowID = d.rowID
 			case <-ctx.Done():
@@ -1525,11 +1516,11 @@ func (cr *chunkRestore) deliverLoop(
 		// Write KVs into the engine
 		start := time.Now()
 
-		if err = writeToEngine(ctx, dataEngine, dataKVs); err != nil {
+		if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
 			deliverLogger.Error("write to data engine failed", log.ShortError(err))
 			return
 		}
-		if err = writeToEngine(ctx, indexEngine, indexKVs); err != nil {
+		if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
 			deliverLogger.Error("write to index engine failed", log.ShortError(err))
 			return
 		}
@@ -1542,8 +1533,8 @@ func (cr *chunkRestore) deliverLoop(
 		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
 		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
 
-		dataKVs = dataKVs[:0]
-		indexKVs = indexKVs[:0]
+		dataKVs = dataKVs.Clear()
+		indexKVs = indexKVs.Clear()
 
 		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)
@@ -1588,7 +1579,7 @@ func (cr *chunkRestore) encodeLoop(
 	kvsCh chan<- deliveredKVs,
 	t *TableRestore,
 	logger log.Logger,
-	kvEncoder *kv.TableKVEncoder,
+	kvEncoder kv.Encoder,
 	deliverCompleteCh <-chan deliverResult,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
 	send := func(kvs deliveredKVs) error {
@@ -1624,11 +1615,12 @@ outside:
 		start := time.Now()
 		err = cr.parser.ReadRow()
 		newOffset, rowID := cr.parser.Pos()
+		columnNames := cr.parser.Columns()
 		switch errors.Cause(err) {
 		case nil:
 			if !initializedColumns {
 				if len(cr.chunk.ColumnPermutation) == 0 {
-					t.initializeColumns(cr.parser.Columns(), cr.chunk)
+					t.initializeColumns(columnNames, cr.chunk)
 				}
 				initializedColumns = true
 			}
@@ -1658,14 +1650,13 @@ outside:
 		}
 
 		deliverKvStart := time.Now()
-		if err = send(deliveredKVs{kvs: kvs, offset: newOffset, rowID: rowID}); err != nil {
+		if err = send(deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID}); err != nil {
 			return
 		}
 		metric.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
 	}
 
-	lastOffset, lastRowID := cr.parser.Pos()
-	err = send(deliveredKVs{kvs: nil, offset: lastOffset, rowID: lastRowID})
+	err = send(deliveredKVs{kvs: nil})
 	return
 }
 
@@ -1677,10 +1668,7 @@ func (cr *chunkRestore) restore(
 	rc *RestoreController,
 ) error {
 	// Create the encoder.
-	kvEncoder := kv.NewTableKVEncoder(
-		t.encTable,
-		rc.cfg.TiDB.SQLMode,
-	)
+	kvEncoder := rc.backend.NewEncoder(t.encTable, rc.cfg.TiDB.SQLMode)
 	kvsCh := make(chan deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
 

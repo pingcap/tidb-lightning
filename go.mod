@@ -23,6 +23,7 @@ require (
 	github.com/satori/go.uuid v1.2.0
 	github.com/shurcooL/httpgzip v0.0.0-20190516014818-1c7afaae1203
 	go.uber.org/zap v1.10.0
+	golang.org/x/sync v0.0.0-20190423024810-112230192c58
 	golang.org/x/text v0.3.2
 	google.golang.org/grpc v1.21.1
 	modernc.org/mathutil v1.0.0

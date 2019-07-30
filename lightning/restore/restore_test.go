@@ -15,6 +15,7 @@ package restore
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 	"time"
 
@@ -119,6 +120,21 @@ func (s *restoreSuite) TestErrorSummaries(c *C) {
 	})
 }
 
+func MockDoChecksumCtx(c *C, db *sql.DB) (context.Context) {
+	ctx := context.Background()
+	var gcLifeTimeLock sync.Mutex
+	var runningJobs int32
+	oriGCLifeTime, err := ObtainGCLifeTime(ctx, db)
+	c.Assert(err, IsNil)
+
+	helper := gcLifeTimeHelper{
+		&gcLifeTimeLock, // from restore.go
+		&runningJobs,
+		oriGCLifeTime,
+	}
+	return context.WithValue(ctx, &gcLifeTimeKey, helper)
+}
+
 func (s *restoreSuite) TestDoChecksum(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
@@ -139,7 +155,7 @@ func (s *restoreSuite) TestDoChecksum(c *C) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := context.Background()
+	ctx := MockDoChecksumCtx(c, db)
 	checksum, err := DoChecksum(ctx, db, "`test`.`t`")
 	c.Assert(err, IsNil)
 	c.Assert(*checksum, DeepEquals, RemoteChecksum{
@@ -174,10 +190,10 @@ func (s *restoreSuite) TestDoChecksumParallel(c *C) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
+	ctx := MockDoChecksumCtx(c, db)
+
 	var wg sync.WaitGroup
-	ctx := context.Background()
 	wg.Add(5)
-	mock.MatchExpectationsInOrder(false)
 	for i := 0; i < 5; i++ {
 		go func() {
 			checksum, err := DoChecksum(ctx, db, "`test`.`t`")
@@ -193,7 +209,7 @@ func (s *restoreSuite) TestDoChecksumParallel(c *C) {
 		}()
 	}
 	wg.Wait()
-	mock.MatchExpectationsInOrder(true)
+	db.Close()
 	err = mock.ExpectationsWereMet()
 	c.Assert(err, IsNil)
 }
@@ -211,7 +227,7 @@ func (s *restoreSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
 		WithArgs("300h").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	ctx := context.Background()
+	ctx := MockDoChecksumCtx(c, db)
 	_, err = DoChecksum(ctx, db, "`test`.`t`")
 	c.Assert(err, ErrorMatches, "compute remote checksum failed: mock syntax error.*")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
@@ -242,75 +258,6 @@ func (s *restoreSuite) TestSetSessionConcurrencyVars(c *C) {
 
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 	mock.ExpectClose()
-}
-
-func (s *restoreSuite) TestWriteToEngineWithNothing(c *C) {
-	controller := gomock.NewController(c)
-	defer controller.Finish()
-	mockClient := mock.NewMockImportKVClient(controller)
-	importer := kv.NewMockImporter(mockClient, "127.0.0.1:2379")
-
-	ctx := context.Background()
-
-	mockClient.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil, nil)
-
-	engine, err := importer.OpenEngine(ctx, "`db`.`table`", -1)
-	c.Assert(err, IsNil)
-
-	err = writeToEngine(ctx, engine, []kvenc.KvPair{})
-	c.Assert(err, IsNil)
-}
-
-func (s *restoreSuite) TestWriteToEngine(c *C) {
-	controller := gomock.NewController(c)
-	defer controller.Finish()
-	mockClient := mock.NewMockImportKVClient(controller)
-	importer := kv.NewMockImporter(mockClient, "127.0.0.1:2379")
-	mockWriteStream := mock.NewMockImportKV_WriteEngineClient(controller)
-
-	ctx := context.Background()
-
-	// The expected API call to the importer
-
-	mockClient.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil, nil)
-	mockClient.EXPECT().WriteEngine(ctx, gomock.Any()).Return(mockWriteStream, nil)
-	mockWriteStream.EXPECT().
-		Send(gomock.Any()).
-		DoAndReturn(func(req *import_kvpb.WriteEngineRequest) error {
-			c.Assert(req.GetHead(), NotNil)
-			return nil
-		})
-	mockWriteStream.EXPECT().
-		Send(gomock.Any()).
-		DoAndReturn(func(req *import_kvpb.WriteEngineRequest) error {
-			batch := req.GetBatch()
-			c.Assert(batch, NotNil)
-			c.Assert(batch.Mutations, DeepEquals, []*import_kvpb.Mutation{
-				{
-					Op:    import_kvpb.Mutation_Put,
-					Key:   []byte("k1"),
-					Value: []byte("v1"),
-				},
-				{
-					Op:    import_kvpb.Mutation_Put,
-					Key:   []byte("k2"),
-					Value: []byte("v2"),
-				},
-			})
-			return nil
-		})
-	mockWriteStream.EXPECT().CloseAndRecv().Return(nil, nil)
-
-	// Actually run the test function
-
-	engine, err := importer.OpenEngine(ctx, "`db`.`table`", -1)
-	c.Assert(err, IsNil)
-
-	err = writeToEngine(ctx, engine, []kvenc.KvPair{
-		{Key: []byte("k1"), Val: []byte("v1")},
-		{Key: []byte("k2"), Val: []byte("v2")},
-	})
-	c.Assert(err, IsNil)
 }
 
 var _ = Suite(&tableRestoreSuite{})
@@ -498,7 +445,7 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 
-	ctx := context.Background()
+	ctx := MockDoChecksumCtx(c, db)
 	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(1234567, 12345, 1234567890))
 	c.Assert(err, IsNil)
 
@@ -525,7 +472,7 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure(c *C) {
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 
-	ctx := context.Background()
+	ctx := MockDoChecksumCtx(c, db)
 	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(9876543, 54321, 1357924680))
 	c.Assert(err, ErrorMatches, "checksum mismatched.*")
 
@@ -552,21 +499,21 @@ func (s *tableRestoreSuite) TestAnalyzeTable(c *C) {
 func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	controller := gomock.NewController(c)
 	defer controller.Finish()
-	mockClient := mock.NewMockImportKVClient(controller)
-	importer := kv.NewMockImporter(mockClient, "127.0.0.1:2379")
+	mockBackend := mock.NewMockBackend(controller)
+	importer := kv.MakeBackend(mockBackend)
 
 	ctx := context.Background()
 	engineUUID := uuid.NewV4()
 
-	mockClient.EXPECT().
-		CloseEngine(ctx, &import_kvpb.CloseEngineRequest{Uuid: engineUUID.Bytes()}).
-		Return(nil, nil)
-	mockClient.EXPECT().
-		ImportEngine(ctx, &import_kvpb.ImportEngineRequest{Uuid: engineUUID.Bytes(), PdAddr: "127.0.0.1:2379"}).
-		Return(nil, nil)
-	mockClient.EXPECT().
-		CleanupEngine(ctx, &import_kvpb.CleanupEngineRequest{Uuid: engineUUID.Bytes()}).
-		Return(nil, nil)
+	mockBackend.EXPECT().
+		CloseEngine(ctx, engineUUID).
+		Return(nil)
+	mockBackend.EXPECT().
+		ImportEngine(ctx, engineUUID).
+		Return(nil)
+	mockBackend.EXPECT().
+		CleanupEngine(ctx, engineUUID).
+		Return(nil)
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, "tag", engineUUID)
 	c.Assert(err, IsNil)
@@ -577,18 +524,18 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	controller := gomock.NewController(c)
 	defer controller.Finish()
-	mockClient := mock.NewMockImportKVClient(controller)
-	importer := kv.NewMockImporter(mockClient, "127.0.0.1:2379")
+	mockBackend := mock.NewMockBackend(controller)
+	importer := kv.MakeBackend(mockBackend)
 
 	ctx := context.Background()
 	engineUUID := uuid.NewV4()
 
-	mockClient.EXPECT().
-		CloseEngine(ctx, &import_kvpb.CloseEngineRequest{Uuid: engineUUID.Bytes()}).
-		Return(nil, nil)
-	mockClient.EXPECT().
-		ImportEngine(ctx, &import_kvpb.ImportEngineRequest{Uuid: engineUUID.Bytes(), PdAddr: "127.0.0.1:2379"}).
-		Return(nil, errors.Annotate(context.Canceled, "fake import error"))
+	mockBackend.EXPECT().
+		CloseEngine(ctx, engineUUID).
+		Return(nil)
+	mockBackend.EXPECT().
+		ImportEngine(ctx, engineUUID).
+		Return(errors.Annotate(context.Canceled, "fake import error"))
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, "tag", engineUUID)
 	c.Assert(err, IsNil)
@@ -629,36 +576,59 @@ func (s *chunkRestoreSuite) TearDownTest(c *C) {
 }
 
 func (s *chunkRestoreSuite) TestDeliverLoopCancel(c *C) {
+	rc := &RestoreController{backend: kv.NewMockImporter(nil, "")}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan deliveredKVs)
 	go cancel()
-	_, err := s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, nil, nil, nil)
+	_, err := s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, nil, nil, rc)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 }
 
 func (s *chunkRestoreSuite) TestDeliverLoopEmptyData(c *C) {
 	ctx := context.Background()
+
+	// Open two mock engines.
+
+	controller := gomock.NewController(c)
+	defer controller.Finish()
+	mockBackend := mock.NewMockBackend(controller)
+	importer := kv.MakeBackend(mockBackend)
+
+	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil).Times(2)
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+	mockBackend.EXPECT().MaxChunkSize().Return(10000).AnyTimes()
+
+	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0)
+	c.Assert(err, IsNil)
+	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1)
+	c.Assert(err, IsNil)
+
+	// Deliver nothing.
+
+	rc := &RestoreController{backend: importer}
+
 	kvsCh := make(chan deliveredKVs, 1)
 	kvsCh <- deliveredKVs{}
-	_, err := s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, nil, nil, nil)
+	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataEngine, indexEngine, rc)
 	c.Assert(err, IsNil)
 }
 
 func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs)
+	mockCols := []string{"c1", "c2"}
 
 	// Open two mock engines.
 
 	controller := gomock.NewController(c)
 	defer controller.Finish()
-	mockClient := mock.NewMockImportKVClient(controller)
-	mockDataWriter := mock.NewMockImportKV_WriteEngineClient(controller)
-	mockIndexWriter := mock.NewMockImportKV_WriteEngineClient(controller)
-	importer := kv.NewMockImporter(mockClient, "127.0.0.1:2379")
+	mockBackend := mock.NewMockBackend(controller)
+	importer := kv.MakeBackend(mockBackend)
 
-	mockClient.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil, nil)
-	mockClient.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil, nil)
+	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil).Times(2)
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+	mockBackend.EXPECT().MaxChunkSize().Return(10000).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0)
 	c.Assert(err, IsNil)
@@ -667,53 +637,38 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 
 	// Set up the expected API calls to the data engine...
 
-	mockClient.EXPECT().WriteEngine(ctx).Return(mockDataWriter, nil)
-	mockDataWriter.EXPECT().Send(gomock.Any()).Return(nil) // skip check write head
-	mockDataWriter.EXPECT().Send(gomock.Any()).DoAndReturn(func(req *import_kvpb.WriteEngineRequest) error {
-		batch := req.GetBatch()
-		c.Assert(batch, NotNil)
-		c.Assert(batch.Mutations, DeepEquals, []*import_kvpb.Mutation{
+	mockBackend.EXPECT().
+		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]kvenc.KvPair{
 			{
-				Op:    import_kvpb.Mutation_Put,
-				Key:   []byte("txxxxxxxx_ryyyyyyyy"),
-				Value: []byte("value1"),
+				Key: []byte("txxxxxxxx_ryyyyyyyy"),
+				Val: []byte("value1"),
 			},
 			{
-				Op:    import_kvpb.Mutation_Put,
-				Key:   []byte("txxxxxxxx_rwwwwwwww"),
-				Value: []byte("value2"),
+				Key: []byte("txxxxxxxx_rwwwwwwww"),
+				Val: []byte("value2"),
 			},
-		})
-		return nil
-	})
-	mockDataWriter.EXPECT().CloseAndRecv().Return(nil, nil)
+		})).
+		Return(nil)
 
 	// ... and the index engine.
 	//
 	// Note: This test assumes data engine is written before the index engine.
 
-	mockClient.EXPECT().WriteEngine(ctx).Return(mockIndexWriter, nil)
-	mockIndexWriter.EXPECT().Send(gomock.Any()).Return(nil)
-	mockIndexWriter.EXPECT().Send(gomock.Any()).DoAndReturn(func(req *import_kvpb.WriteEngineRequest) error {
-		batch := req.GetBatch()
-		c.Assert(batch, NotNil)
-		c.Assert(batch.Mutations, DeepEquals, []*import_kvpb.Mutation{
+	mockBackend.EXPECT().
+		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]kvenc.KvPair{
 			{
-				Op:    import_kvpb.Mutation_Put,
-				Key:   []byte("txxxxxxxx_izzzzzzzz"),
-				Value: []byte("index1"),
+				Key: []byte("txxxxxxxx_izzzzzzzz"),
+				Val: []byte("index1"),
 			},
-		})
-		return nil
-	})
-	mockIndexWriter.EXPECT().CloseAndRecv().Return(nil, nil)
+		})).
+		Return(nil)
 
 	// Now actually start the delivery loop.
 
 	saveCpCh := make(chan saveCp, 2)
 	go func() {
 		kvsCh <- deliveredKVs{
-			kvs: []kvenc.KvPair{
+			kvs: kv.MakeRowFromKvPairs([]kvenc.KvPair{
 				{
 					Key: []byte("txxxxxxxx_ryyyyyyyy"),
 					Val: []byte("value1"),
@@ -726,7 +681,8 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 					Key: []byte("txxxxxxxx_izzzzzzzz"),
 					Val: []byte("index1"),
 				},
-			},
+			}),
+			columns: mockCols,
 			offset: 12,
 			rowID:  76,
 		}
@@ -734,7 +690,9 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 		close(kvsCh)
 	}()
 
-	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataEngine, indexEngine, &RestoreController{saveCpCh: saveCpCh})
+	rc := &RestoreController{saveCpCh: saveCpCh, backend: importer}
+
+	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataEngine, indexEngine, rc)
 	c.Assert(err, IsNil)
 	c.Assert(saveCpCh, HasLen, 2)
 	c.Assert(s.cr.chunk.Chunk.Offset, Equals, int64(12))
@@ -758,9 +716,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	c.Assert(firstKVs.offset, Equals, int64(36))
 
 	secondKVs := <-kvsCh
-	c.Assert(secondKVs.kvs, HasLen, 0)
-	c.Assert(secondKVs.rowID, Equals, int64(19))
-	c.Assert(secondKVs.offset, Equals, int64(36))
+	c.Assert(secondKVs.kvs, IsNil)
 }
 
 func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
@@ -850,6 +806,7 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 	err = s.cr.restore(ctx, s.tr, 0, dataEngine, indexEngine, &RestoreController{
 		cfg:      s.cfg,
 		saveCpCh: saveCpCh,
+		backend: importer,
 	})
 	c.Assert(err, IsNil)
 	c.Assert(saveCpCh, HasLen, 2)
