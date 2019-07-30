@@ -155,11 +155,6 @@ type RestoreController struct {
 }
 
 func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
-	backend, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	cpdb, err := OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -168,6 +163,20 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 	tidbMgr, err := NewTiDBManager(cfg.TiDB)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	var backend kv.Backend
+	switch cfg.TikvImporter.Backend {
+	case "importer":
+		var err error
+		backend, err = kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+		if err != nil {
+			return nil, err
+		}
+	case "mysql":
+		backend = kv.NewMySQLBackend(tidbMgr.db)
+	default:
+		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
 	}
 
 	rc := &RestoreController{
@@ -868,6 +877,12 @@ func (t *TableRestore) importEngine(
 }
 
 func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
+	if !rc.backend.ShouldPostProcess() {
+		t.logger.Debug("skip post-processing, not supported by backend")
+		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
+		return nil
+	}
+
 	setSessionConcurrencyVars(ctx, rc.tidbMgr.db, rc.cfg.TiDB)
 
 	// 3. alter table set auto_increment

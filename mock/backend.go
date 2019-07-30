@@ -149,6 +149,18 @@ func (mr *MockBackendMockRecorder) RetryImportDelay() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryImportDelay", reflect.TypeOf((*MockBackend)(nil).RetryImportDelay))
 }
 
+// ShouldPostProcess mocks base method
+func (m *MockBackend) ShouldPostProcess() bool {
+	ret := m.ctrl.Call(m, "ShouldPostProcess")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// ShouldPostProcess indicates an expected call of ShouldPostProcess
+func (mr *MockBackendMockRecorder) ShouldPostProcess() *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ShouldPostProcess", reflect.TypeOf((*MockBackend)(nil).ShouldPostProcess))
+}
+
 // WriteRows mocks base method
 func (m *MockBackend) WriteRows(arg0 context.Context, arg1 go_uuid.UUID, arg2 string, arg3 []string, arg4 uint64, arg5 kv.Rows) error {
 	ret := m.ctrl.Call(m, "WriteRows", arg0, arg1, arg2, arg3, arg4, arg5)

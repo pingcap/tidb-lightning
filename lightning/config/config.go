@@ -119,7 +119,8 @@ type MydumperRuntime struct {
 }
 
 type TikvImporter struct {
-	Addr string `toml:"addr" json:"addr"`
+	Addr    string `toml:"addr" json:"addr"`
+	Backend string `toml:"backend" json:"backend"`
 }
 
 type Checkpoint struct {
@@ -181,6 +182,9 @@ func NewConfig() *Config {
 				Delimiter: `"`,
 			},
 		},
+		TikvImporter: TikvImporter{
+			Backend: "importer",
+		},
 		PostRestore: PostRestore{
 			Checksum: true,
 		},
@@ -200,6 +204,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.TiDB.PdAddr = global.TiDB.PdAddr
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
 	cfg.TikvImporter.Addr = global.TikvImporter.Addr
+	cfg.TikvImporter.Backend = global.TikvImporter.Backend
 
 	return nil
 }
@@ -290,6 +295,13 @@ func (cfg *Config) Adjust() error {
 		}
 	}
 
+	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
+	switch cfg.TikvImporter.Backend {
+	case "mysql", "importer":
+	default:
+		return errors.New("invalid config: unsupported `tikv-importer.backend`")
+	}
+
 	var err error
 	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
 	if err != nil {
@@ -358,7 +370,7 @@ func (cfg *Config) Adjust() error {
 	if len(cfg.Checkpoint.DSN) == 0 {
 		switch cfg.Checkpoint.Driver {
 		case "mysql":
-			cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw)
+			cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw, mysql.DefaultSQLMode)
 		case "file":
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}

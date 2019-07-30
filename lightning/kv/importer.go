@@ -85,6 +85,10 @@ func (*importer) MaxChunkSize() int {
 	return 31 << 10
 }
 
+func (*importer) ShouldPostProcess() bool {
+	return true
+}
+
 // isIgnorableOpenCloseEngineError checks if the error from
 // OpenEngine/CloseEngine can be safely ignored.
 func isIgnorableOpenCloseEngineError(err error) bool {

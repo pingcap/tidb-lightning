@@ -92,6 +92,11 @@ type AbstractBackend interface {
 	// value will be used in `Rows.SplitIntoChunks`.
 	MaxChunkSize() int
 
+	// ShouldPostProcess returns whether KV-specific post-processing should be
+	// performed for this backend. Post-processing includes checksum, adjusting
+	// auto-increment ID, and analyze.
+	ShouldPostProcess() bool
+
 	// NewEncoder creates an encoder of a TiDB table.
 	NewEncoder(tbl table.Table, sqlMode mysql.SQLMode) Encoder
 
@@ -160,6 +165,10 @@ func (be Backend) MakeEmptyRows() Rows {
 
 func (be Backend) NewEncoder(tbl table.Table, sqlMode mysql.SQLMode) Encoder {
 	return be.abstract.NewEncoder(tbl, sqlMode)
+}
+
+func (be Backend) ShouldPostProcess() bool {
+	return be.abstract.ShouldPostProcess()
 }
 
 // OpenEngine opens an engine with the given table name and engine ID.
