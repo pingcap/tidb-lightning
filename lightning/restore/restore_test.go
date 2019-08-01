@@ -121,16 +121,8 @@ func (s *restoreSuite) TestErrorSummaries(c *C) {
 
 func MockDoChecksumCtx() context.Context {
 	ctx := context.Background()
-	var gcLifeTimeLock sync.Mutex
-	var runningJobs int32
-	var oriGCLifeTime string
-
-	helper := gcLifeTimeManager{
-		&gcLifeTimeLock,
-		&runningJobs,
-		&oriGCLifeTime,
-	}
-	return context.WithValue(ctx, &gcLifeTimeKey, helper)
+	manager := newManager()
+	return context.WithValue(ctx, &gcLifeTimeKey, manager)
 }
 
 func (s *restoreSuite) TestDoChecksum(c *C) {

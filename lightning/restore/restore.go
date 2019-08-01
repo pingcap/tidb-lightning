@@ -473,35 +473,27 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 }
 
 type gcLifeTimeManager struct {
-	runningJobsLock *sync.Mutex
-	runningJobs     *int32
-	oriGCLifeTime   *string
+	runningJobsLock sync.Mutex
+	runningJobs     int
+	oriGCLifeTime   string
 }
 
-func newManager() gcLifeTimeManager {
-	var (
-		gcLifeTimeLock sync.Mutex
-		runningJobs int32
-		oriGCLifeTime string
-	)
-	return gcLifeTimeManager{
-		&gcLifeTimeLock,
-		&runningJobs,
-		&oriGCLifeTime,
-	}
+func newManager() *gcLifeTimeManager {
+	// Default values of three member are enough to initialize this struct
+	return &gcLifeTimeManager{}
 }
 
-func (m gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
+func (m *gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
 	m.runningJobsLock.Lock()
 	defer m.runningJobsLock.Unlock()
 
-	*m.runningJobs += 1
-	if *m.runningJobs == 1 {
+	m.runningJobs += 1
+	if m.runningJobs == 1 {
 		oriGCLifeTime, err := ObtainGCLifeTime(ctx, db)
 		if err != nil {
 			return err
 		}
-		*m.oriGCLifeTime = oriGCLifeTime
+		m.oriGCLifeTime = oriGCLifeTime
 		err = increaseGCLifeTime(ctx, db)
 		if err != nil {
 			return err
@@ -510,17 +502,17 @@ func (m gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func (m gcLifeTimeManager) removeOneJob(ctx context.Context, db *sql.DB) {
+func (m *gcLifeTimeManager) removeOneJob(ctx context.Context, db *sql.DB) {
 	m.runningJobsLock.Lock()
 	defer m.runningJobsLock.Unlock()
 
-	*m.runningJobs -= 1
-	if *m.runningJobs == 0 {
-		err := UpdateGCLifeTime(ctx, db, *m.oriGCLifeTime)
+	m.runningJobs -= 1
+	if m.runningJobs == 0 {
+		err := UpdateGCLifeTime(ctx, db, m.oriGCLifeTime)
 		if err != nil {
 			query := fmt.Sprintf(
 				"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-				*m.oriGCLifeTime,
+				m.oriGCLifeTime,
 			)
 			log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
 				zap.String("query", query),
@@ -1401,7 +1393,7 @@ func setSessionConcurrencyVars(ctx context.Context, db *sql.DB, dsn config.DBSto
 // table should be in <db>.<table>, format.  e.g. foo.bar
 func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum, error) {
 	var err error
-	manager, ok := ctx.Value(&gcLifeTimeKey).(gcLifeTimeManager)
+	manager, ok := ctx.Value(&gcLifeTimeKey).(*gcLifeTimeManager)
 	if !ok {
 		return nil, errors.New("No gcLifeTimeManager found in context, check context initialization")
 	}
@@ -1441,12 +1433,11 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
 
 	// try to get gcLifeTimeManager from context first.
 	// DoChecksum has assure this getting action success.
-	manager, _ := ctx.Value(&gcLifeTimeKey).(gcLifeTimeManager)
-	oriGCLifeTime := *manager.oriGCLifeTime
+	manager, _ := ctx.Value(&gcLifeTimeKey).(*gcLifeTimeManager)
 
 	var increaseGCLifeTime bool
-	if oriGCLifeTime != "" {
-		ori, err := time.ParseDuration(oriGCLifeTime)
+	if manager.oriGCLifeTime != "" {
+		ori, err := time.ParseDuration(manager.oriGCLifeTime)
 		if err != nil {
 			return errors.Trace(err)
 		}
