@@ -475,7 +475,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 type gcLifeTimeHelper struct {
 	runningJobsLock *sync.Mutex
 	runningJobs     *int32
-	oriGCLifeTime   string
+	oriGCLifeTime   *string
 }
 
 var gcLifeTimeKey struct{}
@@ -496,19 +496,16 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	}
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
-	oriGCLifeTime, err := ObtainGCLifeTime(ctx, rc.tidbMgr.db)
-	if err != nil {
-		return err
-	}
 
 	var (
 		gcLifeTimeLock sync.Mutex
 		runningJobs int32
+		oriGCLifeTime string
 	)
 	helper := gcLifeTimeHelper{
 		&gcLifeTimeLock,
 		&runningJobs,
-		oriGCLifeTime,
+		&oriGCLifeTime,
 	}
 	ctx2 := context.WithValue(ctx, &gcLifeTimeKey, helper)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
@@ -562,7 +559,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	wg.Wait()
 	stopPeriodicActions <- struct{}{}
 
-	err = restoreErr.Get()
+	err := restoreErr.Get()
 	logTask.End(zap.ErrorLevel, err)
 	return err
 }
@@ -1369,6 +1366,12 @@ func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum,
 	helper.runningJobsLock.Lock()
 	*(helper.runningJobs) += 1
 	if *(helper.runningJobs) == 1 {
+		oriGCLifeTime, err := ObtainGCLifeTime(ctx, db)
+		if err != nil {
+			helper.runningJobsLock.Unlock()
+			return nil, err
+		}
+		*helper.oriGCLifeTime = oriGCLifeTime
 		err = increaseGCLifeTime(ctx, db)
 		if err != nil {
 			helper.runningJobsLock.Unlock()
@@ -1384,11 +1387,11 @@ func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum,
 
 		*(helper.runningJobs) -= 1
 		if *(helper.runningJobs) == 0 {
-			err := UpdateGCLifeTime(ctx, db, helper.oriGCLifeTime)
+			err := UpdateGCLifeTime(ctx, db, *helper.oriGCLifeTime)
 			if err != nil {
 				query := fmt.Sprintf(
 					"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-					helper.oriGCLifeTime,
+					*helper.oriGCLifeTime,
 				)
 				log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
 					zap.String("query", query),
@@ -1427,7 +1430,7 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
 	// try to get gcLifeTimeHelper from context first.
 	// DoChecksum has assure this getting action success.
 	helper, _ := ctx.Value(&gcLifeTimeKey).(gcLifeTimeHelper)
-	oriGCLifeTime := helper.oriGCLifeTime
+	oriGCLifeTime := *helper.oriGCLifeTime
 
 	var increaseGCLifeTime bool
 	if oriGCLifeTime != "" {

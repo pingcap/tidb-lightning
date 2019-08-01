@@ -15,7 +15,6 @@ package restore
 
 import (
 	"context"
-	"database/sql"
 	"sync"
 	"time"
 
@@ -120,17 +119,16 @@ func (s *restoreSuite) TestErrorSummaries(c *C) {
 	})
 }
 
-func MockDoChecksumCtx(c *C, db *sql.DB) (context.Context) {
+func MockDoChecksumCtx() context.Context {
 	ctx := context.Background()
 	var gcLifeTimeLock sync.Mutex
 	var runningJobs int32
-	oriGCLifeTime, err := ObtainGCLifeTime(ctx, db)
-	c.Assert(err, IsNil)
+	var oriGCLifeTime string
 
 	helper := gcLifeTimeHelper{
-		&gcLifeTimeLock, // from restore.go
+		&gcLifeTimeLock,
 		&runningJobs,
-		oriGCLifeTime,
+		&oriGCLifeTime,
 	}
 	return context.WithValue(ctx, &gcLifeTimeKey, helper)
 }
@@ -155,7 +153,7 @@ func (s *restoreSuite) TestDoChecksum(c *C) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx(c, db)
+	ctx := MockDoChecksumCtx()
 	checksum, err := DoChecksum(ctx, db, "`test`.`t`")
 	c.Assert(err, IsNil)
 	c.Assert(*checksum, DeepEquals, RemoteChecksum{
@@ -190,7 +188,7 @@ func (s *restoreSuite) TestDoChecksumParallel(c *C) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx(c, db)
+	ctx := MockDoChecksumCtx()
 
 	var wg sync.WaitGroup
 	wg.Add(5)
@@ -227,7 +225,7 @@ func (s *restoreSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
 		WithArgs("300h").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	ctx := MockDoChecksumCtx(c, db)
+	ctx := MockDoChecksumCtx()
 	_, err = DoChecksum(ctx, db, "`test`.`t`")
 	c.Assert(err, ErrorMatches, "compute remote checksum failed: mock syntax error.*")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
@@ -445,7 +443,7 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 
-	ctx := MockDoChecksumCtx(c, db)
+	ctx := MockDoChecksumCtx()
 	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(1234567, 12345, 1234567890))
 	c.Assert(err, IsNil)
 
@@ -472,7 +470,7 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure(c *C) {
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 
-	ctx := MockDoChecksumCtx(c, db)
+	ctx := MockDoChecksumCtx()
 	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(9876543, 54321, 1357924680))
 	c.Assert(err, ErrorMatches, "checksum mismatched.*")
 
