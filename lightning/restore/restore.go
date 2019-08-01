@@ -472,10 +472,62 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 	}
 }
 
-type gcLifeTimeHelper struct {
+type gcLifeTimeManager struct {
 	runningJobsLock *sync.Mutex
 	runningJobs     *int32
 	oriGCLifeTime   *string
+}
+
+func newManager() gcLifeTimeManager {
+	var (
+		gcLifeTimeLock sync.Mutex
+		runningJobs int32
+		oriGCLifeTime string
+	)
+	return gcLifeTimeManager{
+		&gcLifeTimeLock,
+		&runningJobs,
+		&oriGCLifeTime,
+	}
+}
+
+func (m gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
+	m.runningJobsLock.Lock()
+	defer m.runningJobsLock.Unlock()
+
+	*m.runningJobs += 1
+	if *m.runningJobs == 1 {
+		oriGCLifeTime, err := ObtainGCLifeTime(ctx, db)
+		if err != nil {
+			return err
+		}
+		*m.oriGCLifeTime = oriGCLifeTime
+		err = increaseGCLifeTime(ctx, db)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m gcLifeTimeManager) removeOneJob(ctx context.Context, db *sql.DB) {
+	m.runningJobsLock.Lock()
+	defer m.runningJobsLock.Unlock()
+
+	*m.runningJobs -= 1
+	if *m.runningJobs == 0 {
+		err := UpdateGCLifeTime(ctx, db, *m.oriGCLifeTime)
+		if err != nil {
+			query := fmt.Sprintf(
+				"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
+				*m.oriGCLifeTime,
+			)
+			log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
+				zap.String("query", query),
+				log.ShortError(err),
+			)
+		}
+	}
 }
 
 var gcLifeTimeKey struct{}
@@ -497,17 +549,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	var (
-		gcLifeTimeLock sync.Mutex
-		runningJobs int32
-		oriGCLifeTime string
-	)
-	helper := gcLifeTimeHelper{
-		&gcLifeTimeLock,
-		&runningJobs,
-		&oriGCLifeTime,
-	}
-	ctx2 := context.WithValue(ctx, &gcLifeTimeKey, helper)
+	manager := newManager()
+	ctx2 := context.WithValue(ctx, &gcLifeTimeKey, manager)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
@@ -1358,48 +1401,17 @@ func setSessionConcurrencyVars(ctx context.Context, db *sql.DB, dsn config.DBSto
 // table should be in <db>.<table>, format.  e.g. foo.bar
 func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum, error) {
 	var err error
-	helper, ok := ctx.Value(&gcLifeTimeKey).(gcLifeTimeHelper)
+	manager, ok := ctx.Value(&gcLifeTimeKey).(gcLifeTimeManager)
 	if !ok {
-		return nil, errors.New("No gcLifeTimeHelper found in context, check context initialization")
+		return nil, errors.New("No gcLifeTimeManager found in context, check context initialization")
 	}
 
-	helper.runningJobsLock.Lock()
-	*(helper.runningJobs) += 1
-	if *(helper.runningJobs) == 1 {
-		oriGCLifeTime, err := ObtainGCLifeTime(ctx, db)
-		if err != nil {
-			helper.runningJobsLock.Unlock()
-			return nil, err
-		}
-		*helper.oriGCLifeTime = oriGCLifeTime
-		err = increaseGCLifeTime(ctx, db)
-		if err != nil {
-			helper.runningJobsLock.Unlock()
-			return nil, err
-		}
+	if err = manager.addOneJob(ctx, db); err != nil {
+		return nil, err
 	}
-	helper.runningJobsLock.Unlock()
 
 	// set it back finally
-	defer func() {
-		helper.runningJobsLock.Lock()
-		defer helper.runningJobsLock.Unlock()
-
-		*(helper.runningJobs) -= 1
-		if *(helper.runningJobs) == 0 {
-			err := UpdateGCLifeTime(ctx, db, *helper.oriGCLifeTime)
-			if err != nil {
-				query := fmt.Sprintf(
-					"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-					*helper.oriGCLifeTime,
-				)
-				log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
-					zap.String("query", query),
-					log.ShortError(err),
-				)
-			}
-		}
-	}()
+	defer manager.removeOneJob(ctx, db)
 
 	task := log.With(zap.String("table", table)).Begin(zap.InfoLevel, "remote checksum")
 
@@ -1427,10 +1439,10 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
 	// checksum command usually takes a long time to execute,
 	// so here need to increase the gcLifeTime for single transaction.
 
-	// try to get gcLifeTimeHelper from context first.
+	// try to get gcLifeTimeManager from context first.
 	// DoChecksum has assure this getting action success.
-	helper, _ := ctx.Value(&gcLifeTimeKey).(gcLifeTimeHelper)
-	oriGCLifeTime := *helper.oriGCLifeTime
+	manager, _ := ctx.Value(&gcLifeTimeKey).(gcLifeTimeManager)
+	oriGCLifeTime := *manager.oriGCLifeTime
 
 	var increaseGCLifeTime bool
 	if oriGCLifeTime != "" {

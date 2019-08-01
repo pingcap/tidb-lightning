@@ -125,7 +125,7 @@ func MockDoChecksumCtx() context.Context {
 	var runningJobs int32
 	var oriGCLifeTime string
 
-	helper := gcLifeTimeHelper{
+	helper := gcLifeTimeManager{
 		&gcLifeTimeLock,
 		&runningJobs,
 		&oriGCLifeTime,
