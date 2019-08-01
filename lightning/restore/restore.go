@@ -1363,7 +1363,7 @@ func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum,
 	var err error
 	helper, ok := ctx.Value(&gcLifeTimeKey).(gcLifeTimeHelper)
 	if !ok {
-		return nil, errors.Errorf("No gcLifeTimeHelper found in context, check context initialization")
+		return nil, errors.New("No gcLifeTimeHelper found in context, check context initialization")
 	}
 
 	helper.increaseGCLock.Lock()
