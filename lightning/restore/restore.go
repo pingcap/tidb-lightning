@@ -1372,7 +1372,7 @@ func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum,
 		err = increaseGCLifeTime(ctx, db)
 		if err != nil {
 			helper.increaseGCLock.Unlock()
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	helper.increaseGCLock.Unlock()
