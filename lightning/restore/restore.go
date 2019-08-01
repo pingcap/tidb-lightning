@@ -473,16 +473,12 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 }
 
 type gcLifeTimeHelper struct {
-	increaseGCLock *sync.Mutex
-	runningJobs *int32
-	oriGCLifeTime string
+	runningJobsLock *sync.Mutex
+	runningJobs     *int32
+	oriGCLifeTime   string
 }
 
-var (
-	gcLifeTimeKey struct{}
-	// in case there're multiple `restoreTables` jobs on one TiDB, one TiDB requires one lock
-	gcLifeTimeLock sync.Mutex
-)
+var gcLifeTimeKey struct{}
 
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
@@ -504,7 +500,11 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var runningJobs int32
+
+	var (
+		gcLifeTimeLock sync.Mutex
+		runningJobs int32
+	)
 	helper := gcLifeTimeHelper{
 		&gcLifeTimeLock,
 		&runningJobs,
@@ -1366,20 +1366,24 @@ func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum,
 		return nil, errors.New("No gcLifeTimeHelper found in context, check context initialization")
 	}
 
-	helper.increaseGCLock.Lock()
+	helper.runningJobsLock.Lock()
 	*(helper.runningJobs) += 1
 	if *(helper.runningJobs) == 1 {
 		err = increaseGCLifeTime(ctx, db)
 		if err != nil {
-			helper.increaseGCLock.Unlock()
+			helper.runningJobsLock.Unlock()
 			return nil, err
 		}
 	}
-	helper.increaseGCLock.Unlock()
+	helper.runningJobsLock.Unlock()
 
 	// set it back finally
 	defer func() {
-		if atomic.AddInt32(helper.runningJobs, -1) == 0 {
+		helper.runningJobsLock.Lock()
+		defer helper.runningJobsLock.Unlock()
+
+		*(helper.runningJobs) -= 1
+		if *(helper.runningJobs) == 0 {
 			err := UpdateGCLifeTime(ctx, db, helper.oriGCLifeTime)
 			if err != nil {
 				query := fmt.Sprintf(
