@@ -1441,7 +1441,7 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
 	if increaseGCLifeTime {
 		err = UpdateGCLifeTime(ctx, db, defaultGCLifeTime.String())
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
