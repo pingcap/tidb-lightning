@@ -178,7 +178,6 @@ func (s *restoreSuite) TestDoChecksumParallel(c *C) {
 	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
-	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx()
 
@@ -199,9 +198,45 @@ func (s *restoreSuite) TestDoChecksumParallel(c *C) {
 		}()
 	}
 	wg.Wait()
-	db.Close()
-	err = mock.ExpectationsWereMet()
+
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	mock.ExpectClose()
+}
+
+func (s *restoreSuite) TestIncreaseGCLifeTimeFail(c *C) {
+	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
+	defer db.Close()
+
+	for i := 0; i < 5; i++ {
+		mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
+			WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
+		mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
+			WithArgs("100h0m0s").
+			WillReturnError(errors.Annotate(context.Canceled, "update gc error"))
+	}
+	// This recover GC Life Time SQL should not be executed
+	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
+		WithArgs("10m").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	ctx := MockDoChecksumCtx()
+	var wg sync.WaitGroup
+	wg.Add(5)
+	for i := 0; i < 5; i++ {
+		go func() {
+			_, err = DoChecksum(ctx, db, "`test`.`t`")
+			c.Assert(err, ErrorMatches, "update GC lifetime failed: update gc error: context canceled")
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+
+	// validate no more redundant GC recover
+	err = mock.ExpectationsWereMet()
+	c.Assert(err, ErrorMatches, "there is a remaining expectation.*\n.*\n.*\n.*\n.*\n.*\n.*")
+
+	mock.ExpectClose()
 }
 
 func (s *restoreSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {

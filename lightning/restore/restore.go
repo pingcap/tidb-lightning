@@ -483,12 +483,15 @@ func newManager() *gcLifeTimeManager {
 	return &gcLifeTimeManager{}
 }
 
+// Pre- and post-condition:
+// if m.runningJobs == 0, GC life time has not been increased.
+// if m.runningJobs > 0, GC life time has been increased.
+// m.runningJobs won't be negative(overflow) since index concurrency is relatively small
 func (m *gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
 	m.runningJobsLock.Lock()
 	defer m.runningJobsLock.Unlock()
 
-	m.runningJobs += 1
-	if m.runningJobs == 1 {
+	if m.runningJobs == 0 {
 		oriGCLifeTime, err := ObtainGCLifeTime(ctx, db)
 		if err != nil {
 			return err
@@ -499,9 +502,14 @@ func (m *gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
+	m.runningJobs += 1
 	return nil
 }
 
+// Pre- and post-condition:
+// if m.runningJobs == 0, GC life time has been tried to recovered. If this try fails, a warning will be printed.
+// if m.runningJobs > 0, GC life time has not been recovered.
+// m.runningJobs won't minus to negative since removeOneJob follows a successful addOneJob.
 func (m *gcLifeTimeManager) removeOneJob(ctx context.Context, db *sql.DB) {
 	m.runningJobsLock.Lock()
 	defer m.runningJobsLock.Unlock()
