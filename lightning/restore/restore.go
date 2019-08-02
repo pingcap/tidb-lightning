@@ -549,7 +549,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	manager := newManager()
+	manager := newGCLifeTimeManager()
 	ctx2 := context.WithValue(ctx, &gcLifeTimeKey, manager)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
