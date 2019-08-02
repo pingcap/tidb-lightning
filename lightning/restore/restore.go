@@ -478,7 +478,7 @@ type gcLifeTimeManager struct {
 	oriGCLifeTime   string
 }
 
-func newManager() *gcLifeTimeManager {
+func newGCLifeTimeManager() *gcLifeTimeManager {
 	// Default values of three member are enough to initialize this struct
 	return &gcLifeTimeManager{}
 }
