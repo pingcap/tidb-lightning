@@ -240,7 +240,7 @@ func (s *restoreSuite) TestIncreaseGCLifeTimeFail(c *C) {
 	c.Assert(err, IsNil)
 
 	c.Assert(db.Close(), IsNil)
-	err = mock.ExpectationsWereMet()
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
 
 func (s *restoreSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
