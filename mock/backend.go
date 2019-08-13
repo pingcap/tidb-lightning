@@ -10,7 +10,7 @@ import (
 	context "context"
 	gomock "github.com/golang/mock/gomock"
 	mysql "github.com/pingcap/parser/mysql"
-	kv "github.com/pingcap/tidb-lightning/lightning/kv"
+	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	log "github.com/pingcap/tidb-lightning/lightning/log"
 	verification "github.com/pingcap/tidb-lightning/lightning/verification"
 	table "github.com/pingcap/tidb/table"
