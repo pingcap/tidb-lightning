@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	uuid "github.com/satori/go.uuid"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -135,16 +136,19 @@ func (enc mysqlEncoder) appendSQL(sb *strings.Builder, datum *types.Datum) error
 		sb.WriteString("MAXVALUE")
 
 	case types.KindInt64:
+		// longest int64 = -9223372036854775808 which has 20 characters
 		var buffer [20]byte
 		value := strconv.AppendInt(buffer[:0], datum.GetInt64(), 10)
 		sb.Write(value)
 
 	case types.KindUint64, types.KindMysqlEnum, types.KindMysqlSet:
+		// longest uint64 = 18446744073709551615 which has 20 characters
 		var buffer [20]byte
 		value := strconv.AppendUint(buffer[:0], datum.GetUint64(), 10)
 		sb.Write(value)
 
 	case types.KindFloat32, types.KindFloat64:
+		// float64 has 16 digits of precision, so a buffer size of 32 is more than enough...
 		var buffer [32]byte
 		value := strconv.AppendFloat(buffer[:0], datum.GetFloat64(), 'g', -1, 64)
 		sb.Write(value)
@@ -190,7 +194,7 @@ func (enc mysqlEncoder) appendSQL(sb *strings.Builder, datum *types.Datum) error
 
 func (mysqlEncoder) Close() {}
 
-func (enc mysqlEncoder) Encode(_ log.Logger, row []types.Datum, _ int64, _ []int) (Row, error) {
+func (enc mysqlEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, _ []int) (Row, error) {
 	var encoded strings.Builder
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
@@ -199,6 +203,11 @@ func (enc mysqlEncoder) Encode(_ log.Logger, row []types.Datum, _ int64, _ []int
 			encoded.WriteByte(',')
 		}
 		if err := enc.appendSQL(&encoded, &field); err != nil {
+			logger.Error("mysql encode failed",
+				zap.Array("original", rowArrayMarshaler(row)),
+				zap.Int("originalCol", i),
+				log.ShortError(err),
+			)
 			return nil, err
 		}
 	}
