@@ -62,7 +62,7 @@ driver = "file"
 
 [tikv-importer]
 # Delivery backend, can be "importer" or "mysql".
-#backend = "importer"
+backend = "importer"
 # Address of tikv-importer when the backend is 'importer'
 addr = "127.0.0.1:8287"
 

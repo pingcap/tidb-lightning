@@ -165,13 +165,13 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 
 	var backend kv.Backend
 	switch cfg.TikvImporter.Backend {
-	case "importer":
+	case config.BackendImporter:
 		var err error
 		backend, err = kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 		if err != nil {
 			return nil, err
 		}
-	case "mysql":
+	case config.BackendMySQL:
 		backend = kv.NewMySQLBackend(tidbMgr.db)
 	default:
 		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
@@ -202,7 +202,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 	}
 
 	switch cfg.Checkpoint.Driver {
-	case "mysql":
+	case config.CheckpointDriverMySQL:
 		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -214,7 +214,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 		}
 		return cpdb, nil
 
-	case "file":
+	case config.CheckpointDriverFile:
 		return NewFileCheckpointsDB(cfg.Checkpoint.DSN), nil
 
 	default:

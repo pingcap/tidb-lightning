@@ -37,6 +37,16 @@ const (
 	ImportMode = "import"
 	// NormalMode defines mode of normal for tikv.
 	NormalMode = "normal"
+
+	// BackendMySQL is a constant for choosing the "MySQL" backend in the configuration.
+	BackendMySQL = "mysql"
+	// BackendImporter is a constant for choosing the "Importer" backend in the configuration.
+	BackendImporter = "importer"
+
+	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
+	CheckpointDriverMySQL = "mysql"
+	// CheckpointDriverFile is a constant for choosing the "File" checkpoint driver in the configuration.
+	CheckpointDriverFile = "file"
 )
 
 var defaultConfigPaths = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
@@ -183,7 +193,7 @@ func NewConfig() *Config {
 			},
 		},
 		TikvImporter: TikvImporter{
-			Backend: "importer",
+			Backend: BackendImporter,
 		},
 		PostRestore: PostRestore{
 			Checksum: true,
@@ -297,9 +307,9 @@ func (cfg *Config) Adjust() error {
 
 	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
 	switch cfg.TikvImporter.Backend {
-	case "mysql", "importer":
+	case BackendMySQL, BackendImporter:
 	default:
-		return errors.New("invalid config: unsupported `tikv-importer.backend`")
+		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
 
 	var err error
@@ -365,13 +375,13 @@ func (cfg *Config) Adjust() error {
 		cfg.Checkpoint.Schema = "tidb_lightning_checkpoint"
 	}
 	if len(cfg.Checkpoint.Driver) == 0 {
-		cfg.Checkpoint.Driver = "file"
+		cfg.Checkpoint.Driver = CheckpointDriverFile
 	}
 	if len(cfg.Checkpoint.DSN) == 0 {
 		switch cfg.Checkpoint.Driver {
-		case "mysql":
+		case CheckpointDriverMySQL:
 			cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw, mysql.DefaultSQLMode)
-		case "file":
+		case CheckpointDriverFile:
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
 	}

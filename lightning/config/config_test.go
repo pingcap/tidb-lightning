@@ -115,7 +115,7 @@ func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = "no_such_backend"
 	err := cfg.Adjust()
-	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend`")
+	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend` \\(no_such_backend\\)")
 }
 
 func (s *configTestSuite) TestDecodeError(c *C) {
@@ -387,7 +387,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	c.Assert(err, IsNil)
 
 	taskCfg.Checkpoint.DSN = ""
-	taskCfg.Checkpoint.Driver = "mysql"
+	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
 	err = taskCfg.Adjust()
 	c.Assert(err, IsNil)
 	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:@tcp(172.16.30.11:4001)/?charset=utf8&sql_mode='"+mysql.DefaultSQLMode+"'")
