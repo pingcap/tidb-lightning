@@ -17,9 +17,11 @@
 
 set -eu
 
+for BACKEND in importer mysql; do
+
 run_sql 'DROP DATABASE IF EXISTS vt;'
-run_lightning
-echo 'Import finished'
+run_lightning config --backend $BACKEND
+echo Import using $BACKEND finished
 
 run_sql 'SELECT count(pk), bin(min(pk)), bin(max(pk)) FROM vt.bit'
 check_contains 'count(pk): 16'
@@ -104,3 +106,5 @@ check_contains 'a: 18446744073709551614'
 check_contains 'b: -9223372036854775806'
 check_contains 'c: 99999999999999999999.0'
 check_contains 'd: 18446744073709551616.0'
+
+done
