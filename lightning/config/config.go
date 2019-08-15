@@ -198,6 +198,7 @@ func NewConfig() *Config {
 		PostRestore: PostRestore{
 			Checksum: true,
 		},
+		BWList: &filter.Rules{},
 	}
 }
 
@@ -317,6 +318,13 @@ func (cfg *Config) Adjust() error {
 	if err != nil {
 		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
+
+	cfg.BWList.IgnoreDBs = append(cfg.BWList.IgnoreDBs,
+		"mysql",
+		"information_schema",
+		"performance_schema",
+		"sys",
+	)
 
 	for _, rule := range cfg.Routes {
 		if !cfg.Mydumper.CaseSensitive {
