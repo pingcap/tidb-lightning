@@ -25,6 +25,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 )
 
@@ -107,6 +109,13 @@ func (s *configTestSuite) TestAdjustConnectRefused(c *C) {
 
 	err := cfg.Adjust()
 	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
+}
+
+func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
+	cfg := config.NewConfig()
+	cfg.TikvImporter.Backend = "no_such_backend"
+	err := cfg.Adjust()
+	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend` \\(no_such_backend\\)")
 }
 
 func (s *configTestSuite) TestDecodeError(c *C) {
@@ -378,10 +387,10 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	c.Assert(err, IsNil)
 
 	taskCfg.Checkpoint.DSN = ""
-	taskCfg.Checkpoint.Driver = "mysql"
+	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
 	err = taskCfg.Adjust()
 	c.Assert(err, IsNil)
-	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:@tcp(172.16.30.11:4001)/?charset=utf8")
+	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:@tcp(172.16.30.11:4001)/?charset=utf8&sql_mode='"+mysql.DefaultSQLMode+"'")
 
 	result := taskCfg.String()
 	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)
@@ -389,7 +398,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 
 func (s *configTestSuite) TestLoadFromInvalidConfig(c *C) {
 	taskCfg := config.NewConfig()
-	err := taskCfg.LoadFromGlobal(&config.GlobalConfig {
+	err := taskCfg.LoadFromGlobal(&config.GlobalConfig{
 		ConfigFileContent: []byte("invalid toml"),
 	})
 	c.Assert(err, ErrorMatches, "Near line 1.*")

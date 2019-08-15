@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package backend
 
 import (
 	"context"
@@ -83,6 +83,10 @@ func (*importer) RetryImportDelay() time.Duration {
 func (*importer) MaxChunkSize() int {
 	// 31 MB. hardcoded by importer, so do we
 	return 31 << 10
+}
+
+func (*importer) ShouldPostProcess() bool {
+	return true
 }
 
 // isIgnorableOpenCloseEngineError checks if the error from

@@ -10,7 +10,7 @@ import (
 	context "context"
 	gomock "github.com/golang/mock/gomock"
 	mysql "github.com/pingcap/parser/mysql"
-	kv "github.com/pingcap/tidb-lightning/lightning/kv"
+	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	log "github.com/pingcap/tidb-lightning/lightning/log"
 	verification "github.com/pingcap/tidb-lightning/lightning/verification"
 	table "github.com/pingcap/tidb/table"
@@ -147,6 +147,18 @@ func (m *MockBackend) RetryImportDelay() time.Duration {
 // RetryImportDelay indicates an expected call of RetryImportDelay
 func (mr *MockBackendMockRecorder) RetryImportDelay() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RetryImportDelay", reflect.TypeOf((*MockBackend)(nil).RetryImportDelay))
+}
+
+// ShouldPostProcess mocks base method
+func (m *MockBackend) ShouldPostProcess() bool {
+	ret := m.ctrl.Call(m, "ShouldPostProcess")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// ShouldPostProcess indicates an expected call of ShouldPostProcess
+func (mr *MockBackendMockRecorder) ShouldPostProcess() *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ShouldPostProcess", reflect.TypeOf((*MockBackend)(nil).ShouldPostProcess))
 }
 
 // WriteRows mocks base method
