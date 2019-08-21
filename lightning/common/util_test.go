@@ -116,3 +116,21 @@ func (s *utilSuite) TestIsRetryableError(c *C) {
 	c.Assert(common.IsRetryableError(fmt.Errorf("call to database Close was not expected")), IsFalse)
 	c.Assert(common.IsRetryableError(errors.New("call to database Close was not expected")), IsTrue)
 }
+
+func (s *utilSuite) TestToDSN(c *C) {
+	dsn := common.ToDSN("127.0.0.1", 4000, "root", "123456", "strict")
+	c.Assert(dsn, Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8&sql_mode='strict'")
+}
+
+func (s *utilSuite) TestIsContextCanceledError(c *C) {
+	c.Assert(common.IsContextCanceledError(context.Canceled), Equals, true)
+	c.Assert(common.IsContextCanceledError(io.EOF), Equals, false)
+}
+
+func (s *utilSuite) TestUniqueTable(c *C) {
+	tableName := common.UniqueTable("test", "t1")
+	c.Assert(tableName, Equals, "`test`.`t1`")
+
+	tableName = common.UniqueTable("test", "t`1")
+	c.Assert(tableName, Equals, "`test`.`t``1`")
+}
