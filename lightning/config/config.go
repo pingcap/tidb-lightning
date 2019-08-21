@@ -38,8 +38,8 @@ const (
 	// NormalMode defines mode of normal for tikv.
 	NormalMode = "normal"
 
-	// BackendMySQL is a constant for choosing the "MySQL" backend in the configuration.
-	BackendMySQL = "mysql"
+	// BackendTiDB is a constant for choosing the "TiDB" backend in the configuration.
+	BackendTiDB = "tidb"
 	// BackendImporter is a constant for choosing the "Importer" backend in the configuration.
 	BackendImporter = "importer"
 
@@ -308,7 +308,7 @@ func (cfg *Config) Adjust() error {
 
 	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
 	switch cfg.TikvImporter.Backend {
-	case BackendMySQL, BackendImporter:
+	case BackendTiDB, BackendImporter:
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
