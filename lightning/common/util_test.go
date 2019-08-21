@@ -126,7 +126,7 @@ func (s *utilSuite) TestToDSN(c *C) {
 }
 
 func (s *utilSuite) TestIsContextCanceledError(c *C) {
-	c.Assert(common.IsContextCanceledError(context.Canceled), Equals, true)
+	c.Assert(common.IsContextCanceledError(context.Canceled), IsTrue)
 	c.Assert(common.IsContextCanceledError(io.EOF), Equals, false)
 }
 
