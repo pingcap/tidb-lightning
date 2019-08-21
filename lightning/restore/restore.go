@@ -171,8 +171,8 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 		if err != nil {
 			return nil, err
 		}
-	case config.BackendMySQL:
-		backend = kv.NewMySQLBackend(tidbMgr.db)
+	case config.BackendTiDB:
+		backend = kv.NewTiDBBackend(tidbMgr.db)
 	default:
 		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
 	}
