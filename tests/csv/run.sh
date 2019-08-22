@@ -2,7 +2,7 @@
 
 set -eu
 
-for BACKEND in importer mysql; do
+for BACKEND in importer tidb; do
 
 run_sql 'DROP DATABASE IF EXISTS csv'
 
