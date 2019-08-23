@@ -2,9 +2,11 @@
 
 set -eu
 
+for BACKEND in importer tidb; do
+
 run_sql 'DROP DATABASE IF EXISTS csv'
 
-run_lightning
+run_lightning config --backend $BACKEND
 
 run_sql 'SELECT count(*), sum(PROCESSLIST_TIME), sum(THREAD_OS_ID), count(PROCESSLIST_STATE) FROM csv.threads'
 check_contains 'count(*): 43'
@@ -34,3 +36,5 @@ run_sql 'SELECT id FROM csv.empty_strings WHERE a = """"'
 check_contains 'id: 3'
 run_sql 'SELECT id FROM csv.empty_strings WHERE b <> ""'
 check_not_contains 'id:'
+
+done

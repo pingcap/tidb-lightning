@@ -46,12 +46,12 @@ const (
 	defaultMaxRetry = 3
 )
 
-func ToDSN(host string, port int, user string, psw string) string {
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8", user, psw, host, port)
+func ToDSN(host string, port int, user string, psw string, sqlMode string) string {
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8&sql_mode='%s'", user, psw, host, port, sqlMode)
 }
 
-func ConnectDB(host string, port int, user string, psw string) (*sql.DB, error) {
-	dbDSN := ToDSN(host, port, user, psw)
+func ConnectDB(host string, port int, user string, psw string, sqlMode string) (*sql.DB, error) {
+	dbDSN := ToDSN(host, port, user, psw, sqlMode)
 	db, err := sql.Open("mysql", dbDSN)
 	if err != nil {
 		return nil, errors.Trace(err)

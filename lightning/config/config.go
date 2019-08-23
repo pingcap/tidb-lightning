@@ -37,6 +37,16 @@ const (
 	ImportMode = "import"
 	// NormalMode defines mode of normal for tikv.
 	NormalMode = "normal"
+
+	// BackendTiDB is a constant for choosing the "TiDB" backend in the configuration.
+	BackendTiDB = "tidb"
+	// BackendImporter is a constant for choosing the "Importer" backend in the configuration.
+	BackendImporter = "importer"
+
+	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
+	CheckpointDriverMySQL = "mysql"
+	// CheckpointDriverFile is a constant for choosing the "File" checkpoint driver in the configuration.
+	CheckpointDriverFile = "file"
 )
 
 var defaultConfigPaths = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
@@ -119,7 +129,8 @@ type MydumperRuntime struct {
 }
 
 type TikvImporter struct {
-	Addr string `toml:"addr" json:"addr"`
+	Addr    string `toml:"addr" json:"addr"`
+	Backend string `toml:"backend" json:"backend"`
 }
 
 type Checkpoint struct {
@@ -181,9 +192,13 @@ func NewConfig() *Config {
 				Delimiter: `"`,
 			},
 		},
+		TikvImporter: TikvImporter{
+			Backend: BackendImporter,
+		},
 		PostRestore: PostRestore{
 			Checksum: true,
 		},
+		BWList: &filter.Rules{},
 	}
 }
 
@@ -200,6 +215,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.TiDB.PdAddr = global.TiDB.PdAddr
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
 	cfg.TikvImporter.Addr = global.TikvImporter.Addr
+	cfg.TikvImporter.Backend = global.TikvImporter.Backend
 
 	return nil
 }
@@ -290,11 +306,25 @@ func (cfg *Config) Adjust() error {
 		}
 	}
 
+	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
+	switch cfg.TikvImporter.Backend {
+	case BackendTiDB, BackendImporter:
+	default:
+		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
+	}
+
 	var err error
 	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
 	if err != nil {
 		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
+
+	cfg.BWList.IgnoreDBs = append(cfg.BWList.IgnoreDBs,
+		"mysql",
+		"information_schema",
+		"performance_schema",
+		"sys",
+	)
 
 	for _, rule := range cfg.Routes {
 		if !cfg.Mydumper.CaseSensitive {
@@ -353,13 +383,13 @@ func (cfg *Config) Adjust() error {
 		cfg.Checkpoint.Schema = "tidb_lightning_checkpoint"
 	}
 	if len(cfg.Checkpoint.Driver) == 0 {
-		cfg.Checkpoint.Driver = "file"
+		cfg.Checkpoint.Driver = CheckpointDriverFile
 	}
 	if len(cfg.Checkpoint.DSN) == 0 {
 		switch cfg.Checkpoint.Driver {
-		case "mysql":
-			cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw)
-		case "file":
+		case CheckpointDriverMySQL:
+			cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw, mysql.DefaultSQLMode)
+		case CheckpointDriverFile:
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
 	}

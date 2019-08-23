@@ -49,7 +49,8 @@ type GlobalMydumper struct {
 }
 
 type GlobalImporter struct {
-	Addr string `toml:"addr" json:"addr"`
+	Addr    string `toml:"addr" json:"addr"`
+	Backend string `toml:"backend" json:"backend"`
 }
 
 type GlobalConfig struct {
@@ -71,6 +72,9 @@ func NewGlobalConfig() *GlobalConfig {
 			User:       "root",
 			StatusPort: 10080,
 			LogLevel:   "error",
+		},
+		TikvImporter: GlobalImporter{
+			Backend: "importer",
 		},
 	}
 }
@@ -111,6 +115,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
 	dataSrcPath := fs.String("d", "", "Directory of the dump to import")
 	importerAddr := fs.String("importer", "", "address (host:port) to connect to tikv-importer")
+	backend := fs.String("backend", "", `delivery backend ("importer" or "mysql")`)
 
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
@@ -170,6 +175,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if *statusAddr != "" {
 		cfg.App.StatusAddr = *statusAddr
+	}
+	if *backend != "" {
+		cfg.TikvImporter.Backend = *backend
 	}
 	if cfg.App.StatusAddr == "" && cfg.App.PProfPort != 0 {
 		cfg.App.StatusAddr = fmt.Sprintf(":%d", cfg.App.PProfPort)

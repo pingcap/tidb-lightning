@@ -1,4 +1,4 @@
-package kv_test
+package backend_test
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 	. "github.com/pingcap/check"
 
-	"github.com/pingcap/tidb-lightning/lightning/kv"
+	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 )
 
 type tikvSuite struct{}
