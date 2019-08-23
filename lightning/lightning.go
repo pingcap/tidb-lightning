@@ -113,7 +113,15 @@ func (l *Lightning) GoServe() error {
 		return err
 	}
 	l.serverAddr = listener.Addr()
-	l.server.Handler = mux
+	l.server.Handler = http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
+		if l.taskCfgs == nil {
+			// l.taskCfgs is non-nil only if Lightning is started with RunServer().
+			// Without the server mode this pointer is default to be nil.
+			writeJSONError(w, http.StatusNotImplemented, "server-mode not enabled", nil)
+		} else {
+			mux.ServeHTTP(w,r)
+		}
+	})
 
 	go func() {
 		err := l.server.Serve(listener)
@@ -254,13 +262,6 @@ func parseTaskID(req *http.Request) (int64, string, error) {
 
 func (l *Lightning) handleTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-
-	if l.taskCfgs == nil {
-		// l.taskCfgs is non-nil only if Lightning is started with RunServer().
-		// Without the server mode this pointer is default to be nil.
-		writeJSONError(w, http.StatusNotImplemented, "server-mode not enabled", nil)
-		return
-	}
 
 	switch req.Method {
 	case http.MethodGet:
