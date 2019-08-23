@@ -32,34 +32,34 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
 
-type mysqlRow string
+type tidbRow string
 
-type mysqlRows []mysqlRow
+type tidbRows []tidbRow
 
-type mysqlEncoder struct {
+type tidbEncoder struct {
 	mode mysql.SQLMode
 }
 
-type mysqlBackend struct {
+type tidbBackend struct {
 	db *sql.DB
 }
 
-// NewMySQLBackend creates a new MySQL backend using the given database.
+// NewTiDBBackend creates a new TiDB backend using the given database.
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewMySQLBackend(db *sql.DB) Backend {
-	return MakeBackend(&mysqlBackend{db: db})
+func NewTiDBBackend(db *sql.DB) Backend {
+	return MakeBackend(&tidbBackend{db: db})
 }
 
-func (row mysqlRow) ClassifyAndAppend(data *Rows, checksum *verification.KVChecksum, _ *Rows, _ *verification.KVChecksum) {
-	rows := (*data).(mysqlRows)
-	*data = mysqlRows(append(rows, row))
+func (row tidbRow) ClassifyAndAppend(data *Rows, checksum *verification.KVChecksum, _ *Rows, _ *verification.KVChecksum) {
+	rows := (*data).(tidbRows)
+	*data = tidbRows(append(rows, row))
 	cs := verification.MakeKVChecksum(uint64(len(row)), 1, 0)
 	checksum.Add(&cs)
 }
 
-func (rows mysqlRows) SplitIntoChunks(splitSize int) []Rows {
+func (rows tidbRows) SplitIntoChunks(splitSize int) []Rows {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -80,11 +80,11 @@ func (rows mysqlRows) SplitIntoChunks(splitSize int) []Rows {
 	return append(res, rows[i:])
 }
 
-func (rows mysqlRows) Clear() Rows {
+func (rows tidbRows) Clear() Rows {
 	return rows[:0]
 }
 
-func (enc mysqlEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
+func (enc tidbEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
 	sb.Grow(2 + len(value))
 	sb.WriteByte('\'')
 	if enc.mode.HasNoBackslashEscapesMode() {
@@ -124,7 +124,7 @@ func (enc mysqlEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
 
 // appendSQL appends the SQL representation of the Datum into the string builder.
 // Note that we cannot use Datum.ToString since it doesn't perform SQL escaping.
-func (enc mysqlEncoder) appendSQL(sb *strings.Builder, datum *types.Datum) error {
+func (enc tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum) error {
 	switch datum.Kind() {
 	case types.KindNull:
 		sb.WriteString("NULL")
@@ -192,9 +192,9 @@ func (enc mysqlEncoder) appendSQL(sb *strings.Builder, datum *types.Datum) error
 	return nil
 }
 
-func (mysqlEncoder) Close() {}
+func (tidbEncoder) Close() {}
 
-func (enc mysqlEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, _ []int) (Row, error) {
+func (enc tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, _ []int) (Row, error) {
 	var encoded strings.Builder
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
@@ -203,7 +203,7 @@ func (enc mysqlEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, _ 
 			encoded.WriteByte(',')
 		}
 		if err := enc.appendSQL(&encoded, &field); err != nil {
-			logger.Error("mysql encode failed",
+			logger.Error("tidb encode failed",
 				zap.Array("original", rowArrayMarshaler(row)),
 				zap.Int("originalCol", i),
 				log.ShortError(err),
@@ -212,52 +212,52 @@ func (enc mysqlEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, _ 
 		}
 	}
 	encoded.WriteByte(')')
-	return mysqlRow(encoded.String()), nil
+	return tidbRow(encoded.String()), nil
 }
 
-func (be *mysqlBackend) Close() {
+func (be *tidbBackend) Close() {
 	// *Not* going to close `be.db`. The db object is normally borrowed from a
 	// TidbManager, so we let the manager to close it.
 }
 
-func (be *mysqlBackend) MakeEmptyRows() Rows {
-	return mysqlRows(nil)
+func (be *tidbBackend) MakeEmptyRows() Rows {
+	return tidbRows(nil)
 }
 
-func (be *mysqlBackend) RetryImportDelay() time.Duration {
+func (be *tidbBackend) RetryImportDelay() time.Duration {
 	return 0
 }
 
-func (be *mysqlBackend) MaxChunkSize() int {
+func (be *tidbBackend) MaxChunkSize() int {
 	return 1048576
 }
 
-func (be *mysqlBackend) ShouldPostProcess() bool {
+func (be *tidbBackend) ShouldPostProcess() bool {
 	return false
 }
 
-func (be *mysqlBackend) NewEncoder(_ table.Table, mode mysql.SQLMode) Encoder {
-	return mysqlEncoder{mode: mode}
+func (be *tidbBackend) NewEncoder(_ table.Table, mode mysql.SQLMode) Encoder {
+	return tidbEncoder{mode: mode}
 }
 
-func (be *mysqlBackend) OpenEngine(context.Context, uuid.UUID) error {
+func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *mysqlBackend) CloseEngine(context.Context, uuid.UUID) error {
+func (be *tidbBackend) CloseEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *mysqlBackend) CleanupEngine(context.Context, uuid.UUID) error {
+func (be *tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *mysqlBackend) ImportEngine(context.Context, uuid.UUID) error {
+func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *mysqlBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, _ uint64, r Rows) error {
-	rows := r.(mysqlRows)
+func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, _ uint64, r Rows) error {
+	rows := r.(tidbRows)
 	if len(rows) == 0 {
 		return nil
 	}

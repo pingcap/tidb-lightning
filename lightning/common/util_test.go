@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"time"
 
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -30,6 +31,8 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
 type utilSuite struct{}
@@ -115,4 +118,64 @@ func (s *utilSuite) TestIsRetryableError(c *C) {
 	// sqlmock errors
 	c.Assert(common.IsRetryableError(fmt.Errorf("call to database Close was not expected")), IsFalse)
 	c.Assert(common.IsRetryableError(errors.New("call to database Close was not expected")), IsTrue)
+}
+
+func (s *utilSuite) TestToDSN(c *C) {
+	dsn := common.ToDSN("127.0.0.1", 4000, "root", "123456", "strict")
+	c.Assert(dsn, Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8&sql_mode='strict'")
+}
+
+func (s *utilSuite) TestIsContextCanceledError(c *C) {
+	c.Assert(common.IsContextCanceledError(context.Canceled), IsTrue)
+	c.Assert(common.IsContextCanceledError(io.EOF), IsFalse)
+}
+
+func (s *utilSuite) TestUniqueTable(c *C) {
+	tableName := common.UniqueTable("test", "t1")
+	c.Assert(tableName, Equals, "`test`.`t1`")
+
+	tableName = common.UniqueTable("test", "t`1")
+	c.Assert(tableName, Equals, "`test`.`t``1`")
+}
+
+func (s *utilSuite) TestSQLWithRetry(c *C) {
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+
+	sqlWithRetry := &common.SQLWithRetry{
+		DB:     db,
+		Logger: log.L(),
+	}
+	aValue := new(int)
+
+	// retry defaultMaxRetry times and still failed
+	for i := 0; i < 3; i++ {
+		mock.ExpectQuery("select a from test.t1").WillReturnError(errors.New("mock error"))
+	}
+	err = sqlWithRetry.QueryRow(context.Background(), "", "select a from test.t1", aValue)
+	c.Assert(err, ErrorMatches, ".*mock error")
+
+	// meet unretryable error and will return directly
+	mock.ExpectQuery("select a from test.t1").WillReturnError(context.Canceled)
+	err = sqlWithRetry.QueryRow(context.Background(), "", "select a from test.t1", aValue)
+	c.Assert(err, ErrorMatches, ".*context canceled")
+
+	// query success
+	rows := sqlmock.NewRows([]string{"a"}).AddRow("1")
+	mock.ExpectQuery("select a from test.t1").WillReturnRows(rows)
+
+	err = sqlWithRetry.QueryRow(context.Background(), "", "select a from test.t1", aValue)
+	c.Assert(err, IsNil)
+	c.Assert(*aValue, Equals, 1)
+
+	// test Exec
+	mock.ExpectExec("delete from").WillReturnError(context.Canceled)
+	err = sqlWithRetry.Exec(context.Background(), "", "delete from test.t1 where id = ?", 2)
+	c.Assert(err, ErrorMatches, ".*context canceled")
+
+	mock.ExpectExec("delete from").WillReturnResult(sqlmock.NewResult(0, 1))
+	err = sqlWithRetry.Exec(context.Background(), "", "delete from test.t1 where id = ?", 2)
+	c.Assert(err, IsNil)
+
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }

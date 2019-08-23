@@ -38,8 +38,8 @@ const (
 	// NormalMode defines mode of normal for tikv.
 	NormalMode = "normal"
 
-	// BackendMySQL is a constant for choosing the "MySQL" backend in the configuration.
-	BackendMySQL = "mysql"
+	// BackendTiDB is a constant for choosing the "TiDB" backend in the configuration.
+	BackendTiDB = "tidb"
 	// BackendImporter is a constant for choosing the "Importer" backend in the configuration.
 	BackendImporter = "importer"
 
@@ -198,6 +198,7 @@ func NewConfig() *Config {
 		PostRestore: PostRestore{
 			Checksum: true,
 		},
+		BWList: &filter.Rules{},
 	}
 }
 
@@ -307,7 +308,7 @@ func (cfg *Config) Adjust() error {
 
 	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
 	switch cfg.TikvImporter.Backend {
-	case BackendMySQL, BackendImporter:
+	case BackendTiDB, BackendImporter:
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
@@ -317,6 +318,13 @@ func (cfg *Config) Adjust() error {
 	if err != nil {
 		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
+
+	cfg.BWList.IgnoreDBs = append(cfg.BWList.IgnoreDBs,
+		"mysql",
+		"information_schema",
+		"performance_schema",
+		"sys",
+	)
 
 	for _, rule := range cfg.Routes {
 		if !cfg.Mydumper.CaseSensitive {
