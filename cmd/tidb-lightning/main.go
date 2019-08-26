@@ -66,7 +66,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sync log failed", syncErr)
 	}
 
-	if err != nil || syncErr != nil {
+	if err != nil {
 		os.Exit(1)
 	}
 }
