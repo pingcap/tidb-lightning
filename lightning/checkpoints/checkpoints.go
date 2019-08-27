@@ -114,6 +114,7 @@ type ChunkCheckpoint struct {
 	ColumnPermutation []int
 	Chunk             mydump.Chunk
 	Checksum          verify.KVChecksum
+	Timestamp         int64
 }
 
 func (ccp *ChunkCheckpoint) DeepCopy() *ChunkCheckpoint {
@@ -124,6 +125,7 @@ func (ccp *ChunkCheckpoint) DeepCopy() *ChunkCheckpoint {
 		ColumnPermutation: colPerm,
 		Chunk:             ccp.Chunk,
 		Checksum:          ccp.Checksum,
+		Timestamp:         ccp.Timestamp,
 	}
 }
 
@@ -537,7 +539,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 			SELECT
 				engine_id, path, offset, columns,
 				pos, end_offset, prev_rowid_max, rowid_max,
-				kvc_bytes, kvc_kvs, kvc_checksum
+				kvc_bytes, kvc_kvs, kvc_checksum, unix_timestamp(create_time)
 			FROM %s.%s WHERE table_name = ?
 			ORDER BY engine_id, path, offset;
 		`, cpdb.schema, checkpointTableNameChunk)
@@ -558,7 +560,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 			if err := chunkRows.Scan(
 				&engineID, &value.Key.Path, &value.Key.Offset, &colPerm,
 				&value.Chunk.Offset, &value.Chunk.EndOffset, &value.Chunk.PrevRowIDMax, &value.Chunk.RowIDMax,
-				&kvcBytes, &kvcKVs, &kvcChecksum,
+				&kvcBytes, &kvcKVs, &kvcChecksum, &value.Timestamp,
 			); err != nil {
 				return errors.Trace(err)
 			}
@@ -612,12 +614,12 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 				table_name, engine_id,
 				path, offset, columns, should_include_row_id,
 				pos, end_offset, prev_rowid_max, rowid_max,
-				kvc_bytes, kvc_kvs, kvc_checksum
+				kvc_bytes, kvc_kvs, kvc_checksum, create_time
 			) VALUES (
 				?, ?,
 				?, ?, '[]', FALSE,
 				?, ?, ?, ?,
-				0, 0, 0
+				0, 0, 0, from_unixtime(?)
 			);
 		`, cpdb.schema, checkpointTableNameChunk))
 		if err != nil {
@@ -635,6 +637,7 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 					c, tableName, engineID,
 					value.Key.Path, value.Key.Offset,
 					value.Chunk.Offset, value.Chunk.EndOffset, value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax,
+					value.Timestamp,
 				)
 				if err != nil {
 					return errors.Trace(err)
@@ -849,7 +852,8 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 					PrevRowIDMax: chunkModel.PrevRowidMax,
 					RowIDMax:     chunkModel.RowidMax,
 				},
-				Checksum: verify.MakeKVChecksum(chunkModel.KvcBytes, chunkModel.KvcKvs, chunkModel.KvcChecksum),
+				Checksum:  verify.MakeKVChecksum(chunkModel.KvcBytes, chunkModel.KvcKvs, chunkModel.KvcChecksum),
+				Timestamp: chunkModel.Timestamp,
 			})
 		}
 
@@ -887,6 +891,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			chunk.EndOffset = value.Chunk.EndOffset
 			chunk.PrevRowidMax = value.Chunk.PrevRowIDMax
 			chunk.RowidMax = value.Chunk.RowIDMax
+			chunk.Timestamp = value.Timestamp
 		}
 		tableModel.Engines[engineID] = engineModel
 	}

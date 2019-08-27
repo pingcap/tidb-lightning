@@ -76,7 +76,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	}
 
 	// Strict mode
-	strictMode := NewTableKVEncoder(tbl, mysql.ModeStrictAllTables)
+	strictMode := NewTableKVEncoder(tbl, mysql.ModeStrictAllTables, 1234567890)
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1})
 	c.Assert(err, ErrorMatches, "failed to cast `10000000` as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint")
 	c.Assert(pairs, IsNil)
@@ -103,18 +103,48 @@ func (s *kvSuite) TestEncode(c *C) {
 
 	// Mock add record error
 	mockTbl := &mockTable{Table: tbl}
-	mockMode := NewTableKVEncoder(mockTbl, mysql.ModeStrictAllTables)
+	mockMode := NewTableKVEncoder(mockTbl, mysql.ModeStrictAllTables, 1234567891)
 	pairs, err = mockMode.Encode(logger, rowsWithPk2, 2, []int{0, 1})
 	c.Assert(err, ErrorMatches, "mock error")
 
 	// Non-strict mode
-	noneMode := NewTableKVEncoder(tbl, mysql.ModeNone)
+	noneMode := NewTableKVEncoder(tbl, mysql.ModeNone, 1234567892)
 	pairs, err = noneMode.Encode(logger, rows, 1, []int{0, 1})
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
 		{
 			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 			Val: []uint8{0x8, 0x2, 0x8, 0xfe, 0x1},
+		},
+	}))
+}
+
+func (s *kvSuite) TestEncodeTimestamp(c *C) {
+	ty := *types.NewFieldType(mysql.TypeDatetime)
+	ty.Flag |= mysql.NotNullFlag
+	c1 := &model.ColumnInfo{
+		ID:           1,
+		Name:         model.NewCIStr("c1"),
+		State:        model.StatePublic,
+		Offset:       0,
+		FieldType:    ty,
+		DefaultValue: "CURRENT_TIMESTAMP",
+		Version:      1,
+	}
+	cols := []*model.ColumnInfo{c1}
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
+	tbl, err := tables.TableFromMeta(NewPanickingAllocator(0), tblInfo)
+	c.Assert(err, IsNil)
+
+	logger := log.Logger{Logger: zap.NewNop()}
+
+	encoder := NewTableKVEncoder(tbl, mysql.ModeStrictAllTables, 1234567893)
+	pairs, err := encoder.Encode(logger, nil, 70, []int{-1, 1})
+	c.Assert(err, IsNil)
+	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
+		{
+			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
+			Val: []uint8{0x8, 0x2, 0x9, 0x80, 0x80, 0x80, 0xf0, 0xfd, 0x8e, 0xf7, 0xc0, 0x19},
 		},
 	}))
 }
@@ -208,4 +238,3 @@ func (s *kvSuite) TestClassifyAndAppend(c *C) {
 	c.Assert(dataChecksum.SumKVS(), Equals, uint64(2))
 	c.Assert(indexChecksum.SumKVS(), Equals, uint64(1))
 }
-

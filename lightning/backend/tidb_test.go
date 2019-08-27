@@ -61,7 +61,7 @@ func (s *mysqlSuite) TestWriteRows(c *C) {
 	indexRows := s.backend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder := s.backend.NewEncoder(nil, 0)
+	encoder := s.backend.NewEncoder(nil, 0, 1234567890)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewUintDatum(18446744073709551615),
 		types.NewIntDatum(-9223372036854775808),

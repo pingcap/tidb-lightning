@@ -28,15 +28,16 @@ import (
 	"github.com/golang/mock/gomock"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
@@ -361,6 +362,9 @@ func (s *tableRestoreSuite) SetUpTest(c *C) {
 }
 
 func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/restore/PopulateChunkTimestamp", "return(1234567897)")
+	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/restore/PopulateChunkTimestamp")
+
 	cp := &TableCheckpoint{
 		Engines: make(map[int32]*EngineCheckpoint),
 	}
@@ -382,6 +386,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 						PrevRowIDMax: 0,
 						RowIDMax:     18,
 					},
+					Timestamp: 1234567897,
 				},
 				{
 					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1], Offset: 0},
@@ -391,6 +396,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 						PrevRowIDMax: 18,
 						RowIDMax:     36,
 					},
+					Timestamp: 1234567897,
 				},
 				{
 					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[2], Offset: 0},
@@ -400,6 +406,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 						PrevRowIDMax: 36,
 						RowIDMax:     54,
 					},
+					Timestamp: 1234567897,
 				},
 			},
 		},
@@ -414,6 +421,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 						PrevRowIDMax: 54,
 						RowIDMax:     72,
 					},
+					Timestamp: 1234567897,
 				},
 				{
 					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[4], Offset: 0},
@@ -423,6 +431,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 						PrevRowIDMax: 72,
 						RowIDMax:     90,
 					},
+					Timestamp: 1234567897,
 				},
 				{
 					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[5], Offset: 0},
@@ -432,6 +441,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 						PrevRowIDMax: 90,
 						RowIDMax:     108,
 					},
+					Timestamp: 1234567897,
 				},
 			},
 		},
@@ -714,8 +724,8 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 				},
 			}),
 			columns: mockCols,
-			offset: 12,
-			rowID:  76,
+			offset:  12,
+			rowID:   76,
 		}
 		kvsCh <- deliveredKVs{}
 		close(kvsCh)
@@ -735,7 +745,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567895)
 
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh)
 	c.Assert(err, IsNil)
@@ -754,7 +764,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567896)
 
 	go cancel()
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh)
@@ -766,7 +776,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567897)
 
 	// close the chunk so reading it will result in the "file already closed" error.
 	s.cr.parser.Close()
@@ -780,7 +790,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567898)
 
 	go func() {
 		deliverCompleteCh <- deliverResult{
@@ -837,7 +847,7 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 	err = s.cr.restore(ctx, s.tr, 0, dataEngine, indexEngine, &RestoreController{
 		cfg:      s.cfg,
 		saveCpCh: saveCpCh,
-		backend: importer,
+		backend:  importer,
 	})
 	c.Assert(err, IsNil)
 	c.Assert(saveCpCh, HasLen, 2)

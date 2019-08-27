@@ -14,6 +14,8 @@
 package backend
 
 import (
+	"strconv"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -55,7 +57,7 @@ type session struct {
 	vars *variable.SessionVars
 }
 
-func newSession(sqlMode mysql.SQLMode) *session {
+func newSession(sqlMode mysql.SQLMode, timestamp int64) *session {
 	vars := variable.NewSessionVars()
 	vars.LightningMode = true
 	vars.SkipUTF8Check = true
@@ -66,6 +68,7 @@ func newSession(sqlMode mysql.SQLMode) *session {
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.TimeZone = vars.Location()
+	vars.SetSystemVar("timestamp", strconv.FormatInt(timestamp, 10))
 	return &session{
 		txn:  transaction{},
 		vars: vars,

@@ -216,6 +216,6 @@ func (*importer) MakeEmptyRows() Rows {
 	return kvPairs(nil)
 }
 
-func (*importer) NewEncoder(tbl table.Table, sqlMode mysql.SQLMode) Encoder {
-	return NewTableKVEncoder(tbl, sqlMode)
+func (*importer) NewEncoder(tbl table.Table, sqlMode mysql.SQLMode, timestamp int64) Encoder {
+	return NewTableKVEncoder(tbl, sqlMode, timestamp)
 }

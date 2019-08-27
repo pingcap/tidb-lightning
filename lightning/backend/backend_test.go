@@ -321,7 +321,7 @@ func (s *backendSuite) TestNewEncoder(c *C) {
 	defer s.tearDownTest()
 
 	encoder := mock.NewMockEncoder(s.controller)
-	s.mockBackend.EXPECT().NewEncoder(nil, mysql.ModeANSIQuotes).Return(encoder)
+	s.mockBackend.EXPECT().NewEncoder(nil, mysql.ModeANSIQuotes, int64(1234567890)).Return(encoder)
 
-	c.Assert(s.mockBackend.NewEncoder(nil, mysql.ModeANSIQuotes), Equals, encoder)
+	c.Assert(s.mockBackend.NewEncoder(nil, mysql.ModeANSIQuotes, 1234567890), Equals, encoder)
 }
