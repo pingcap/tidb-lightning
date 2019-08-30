@@ -38,10 +38,10 @@ import (
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
+	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
@@ -646,11 +646,6 @@ func (t *TableRestore) restoreTable(
 
 		// rebase the allocator so it exceeds the number of rows.
 		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoIncID)
-		for _, engine := range cp.Engines {
-			for _, chunk := range engine.Chunks {
-				cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, chunk.Chunk.RowIDMax)
-			}
-		}
 		t.alloc.Rebase(t.tableInfo.ID, cp.AllocBase, false)
 		rc.saveCpCh <- saveCp{
 			tableName: t.tableName,
