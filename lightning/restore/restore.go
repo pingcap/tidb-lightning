@@ -687,7 +687,15 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 	if indexEngineCp.Status < CheckpointStatusImported && cp.Status < CheckpointStatusIndexImported {
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
-		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, indexEngineID)
+
+		// 11 represents len(tablePrefix)+8+len(indexPrefixSep) in TiDB's tablecodec.go
+		keyPrefix := make([]byte, 0, 11)
+		// For non-partition table, we get key prefix and specify in OpenEngine.
+		// For partition table we don't strip prefix so omit this field.
+		if t.tableInfo.Core.GetPartitionInfo() == nil {
+			keyPrefix = append(keyPrefix, t.encTable.IndexPrefix()...)
+		}
+		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, indexEngineID, keyPrefix)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -696,7 +704,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		// that index engine checkpoint status less than `CheckpointStatusImported`.
 		// So the index engine must be found in above process
 		if indexEngine == nil {
-			return errors.Errorf("table checkpoint status %v incompitable with index engine checkpoint status %v",
+			return errors.Errorf("table checkpoint status %v incompatible with index engine checkpoint status %v",
 				cp.Status, indexEngineCp.Status)
 		}
 
@@ -808,7 +816,14 @@ func (t *TableRestore) restoreEngine(
 
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 
-	dataEngine, err := rc.backend.OpenEngine(ctx, t.tableName, engineID)
+	// 11 represents len(tablePrefix)+8+len(recordPrefixSep) in TiDB's tablecodec.go
+	keyPrefix := make([]byte, 0, 11)
+	// For non-partition table, we get key prefix and specify in OpenEngine.
+	// For partition table we don't strip prefix so omit this field.
+	if t.tableInfo.Core.GetPartitionInfo() == nil {
+		keyPrefix = append(keyPrefix, t.encTable.RecordPrefix()...)
+	}
+	dataEngine, err := rc.backend.OpenEngine(ctx, t.tableName, engineID, keyPrefix)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1239,6 +1254,7 @@ func NewTableRestore(
 	cp *TableCheckpoint,
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocator(cp.AllocBase)
+	// TODO: here is encTable.AddRecord, also return if Partitioned table
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
@@ -1536,6 +1552,7 @@ func (cr *chunkRestore) deliverLoop(
 					break populate
 				}
 
+				// TODO: could we strip key prefix earlier and fill prefix checksum accordingly?
 				d.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 				columns = d.columns
 				offset = d.offset
@@ -1546,14 +1563,19 @@ func (cr *chunkRestore) deliverLoop(
 			}
 		}
 
+		stripPrefix := false
+		if t.tableInfo.Core.GetPartitionInfo() == nil {
+			stripPrefix = true
+		}
+
 		// Write KVs into the engine
 		start := time.Now()
 
-		if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
+		if err = dataEngine.WriteRows(ctx, columns, dataKVs, stripPrefix); err != nil {
 			deliverLogger.Error("write to data engine failed", log.ShortError(err))
 			return
 		}
-		if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
+		if err = indexEngine.WriteRows(ctx, columns, indexKVs, stripPrefix); err != nil {
 			deliverLogger.Error("write to index engine failed", log.ShortError(err))
 			return
 		}

@@ -16,7 +16,7 @@ import (
 
 type backendSuite struct {
 	controller  *gomock.Controller
-	mockBackend *mock.MockBackend
+	mockBackend *mock.MockAbstractBackend
 	backend     kv.Backend
 }
 
@@ -27,7 +27,7 @@ var _ = Suite(&backendSuite{})
 
 func (s *backendSuite) setUpTest(c *C) {
 	s.controller = gomock.NewController(c)
-	s.mockBackend = mock.NewMockBackend(s.controller)
+	s.mockBackend = mock.NewMockAbstractBackend(s.controller)
 	s.backend = kv.MakeBackend(s.mockBackend)
 }
 
@@ -43,7 +43,7 @@ func (s *backendSuite) TestOpenCloseImportCleanUpEngine(c *C) {
 	engineUUID := uuid.FromStringOrNil("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
 
 	openCall := s.mockBackend.EXPECT().
-		OpenEngine(ctx, engineUUID).
+		OpenEngine(ctx, engineUUID, []byte{}).
 		Return(nil)
 	closeCall := s.mockBackend.EXPECT().
 		CloseEngine(ctx, engineUUID).
@@ -58,7 +58,7 @@ func (s *backendSuite) TestOpenCloseImportCleanUpEngine(c *C) {
 		Return(nil).
 		After(importCall)
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1, []byte{})
 	c.Assert(err, IsNil)
 	closedEngine, err := engine.Close(ctx)
 	c.Assert(err, IsNil)
@@ -122,13 +122,13 @@ func (s *backendSuite) TestWriteEngine(c *C) {
 	rows2 := mock.NewMockRows(s.controller)
 
 	s.mockBackend.EXPECT().
-		OpenEngine(ctx, engineUUID).
+		OpenEngine(ctx, engineUUID, []byte{}).
 		Return(nil)
 	s.mockBackend.EXPECT().
 		MaxChunkSize().
 		Return(654321)
 	rows0.EXPECT().
-		SplitIntoChunks(654321).
+		SplitIntoChunks(654321, false).
 		Return([]kv.Rows{rows1, rows2})
 	s.mockBackend.EXPECT().
 		WriteRows(ctx, engineUUID, "`db`.`table`", []string{"c1", "c2"}, gomock.Any(), rows1).
@@ -137,9 +137,9 @@ func (s *backendSuite) TestWriteEngine(c *C) {
 		WriteRows(ctx, engineUUID, "`db`.`table`", []string{"c1", "c2"}, gomock.Any(), rows2).
 		Return(nil)
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1, []byte{})
 	c.Assert(err, IsNil)
-	err = engine.WriteRows(ctx, []string{"c1", "c2"}, rows0)
+	err = engine.WriteRows(ctx, []string{"c1", "c2"}, rows0, false)
 	c.Assert(err, IsNil)
 }
 
@@ -150,13 +150,13 @@ func (s *backendSuite) TestWriteToEngineWithNothing(c *C) {
 	ctx := context.Background()
 	emptyRows := mock.NewMockRows(s.controller)
 
-	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
+	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), []byte{}).Return(nil)
 	s.mockBackend.EXPECT().MaxChunkSize().Return(654321)
-	emptyRows.EXPECT().SplitIntoChunks(654321).Return([]kv.Rows{})
+	emptyRows.EXPECT().SplitIntoChunks(654321, false).Return([]kv.Rows{})
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1, []byte{})
 	c.Assert(err, IsNil)
-	err = engine.WriteRows(ctx, nil, emptyRows)
+	err = engine.WriteRows(ctx, nil, emptyRows, false)
 	c.Assert(err, IsNil)
 }
 
@@ -166,10 +166,10 @@ func (s *backendSuite) TestOpenEngineFailed(c *C) {
 
 	ctx := context.Background()
 
-	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).
+	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), []byte{}).
 		Return(errors.New("fake unrecoverable open error"))
 
-	_, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	_, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1, []byte{})
 	c.Assert(err, ErrorMatches, "fake unrecoverable open error")
 }
 
@@ -180,17 +180,17 @@ func (s *backendSuite) TestWriteEngineFailed(c *C) {
 	ctx := context.Background()
 	rows := mock.NewMockRows(s.controller)
 
-	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
+	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), []byte{}).Return(nil)
 	s.mockBackend.EXPECT().MaxChunkSize().Return(123)
-	rows.EXPECT().SplitIntoChunks(123).Return([]kv.Rows{rows})
+	rows.EXPECT().SplitIntoChunks(123, false).Return([]kv.Rows{rows})
 
 	s.mockBackend.EXPECT().
 		WriteRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable write error"))
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1, []byte{})
 	c.Assert(err, IsNil)
-	err = engine.WriteRows(ctx, nil, rows)
+	err = engine.WriteRows(ctx, nil, rows, false)
 	c.Assert(err, ErrorMatches, "fake unrecoverable write error.*")
 }
 
@@ -201,18 +201,18 @@ func (s *backendSuite) TestWriteBatchSendFailedWithRetry(c *C) {
 	ctx := context.Background()
 	rows := mock.NewMockRows(s.controller)
 
-	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
+	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), []byte{}).Return(nil)
 	s.mockBackend.EXPECT().MaxChunkSize().Return(123)
-	rows.EXPECT().SplitIntoChunks(123).Return([]kv.Rows{rows})
+	rows.EXPECT().SplitIntoChunks(123, false).Return([]kv.Rows{rows})
 
 	s.mockBackend.EXPECT().
 		WriteRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.New("fake recoverable write batch error")).
 		MinTimes(2)
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1, []byte{})
 	c.Assert(err, IsNil)
-	err = engine.WriteRows(ctx, nil, rows)
+	err = engine.WriteRows(ctx, nil, rows, false)
 	c.Assert(err, ErrorMatches, ".*fake recoverable write batch error")
 }
 
@@ -223,9 +223,9 @@ func (s *backendSuite) TestWriteBatchSendRecovered(c *C) {
 	ctx := context.Background()
 	rows := mock.NewMockRows(s.controller)
 
-	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
+	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), []byte{}).Return(nil)
 	s.mockBackend.EXPECT().MaxChunkSize().Return(123)
-	rows.EXPECT().SplitIntoChunks(123).Return([]kv.Rows{rows})
+	rows.EXPECT().SplitIntoChunks(123, false).Return([]kv.Rows{rows})
 
 	s.mockBackend.EXPECT().
 		WriteRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), rows).
@@ -234,9 +234,9 @@ func (s *backendSuite) TestWriteBatchSendRecovered(c *C) {
 		WriteRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(nil)
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1, []byte{})
 	c.Assert(err, IsNil)
-	err = engine.WriteRows(ctx, nil, rows)
+	err = engine.WriteRows(ctx, nil, rows, false)
 	c.Assert(err, IsNil)
 }
 

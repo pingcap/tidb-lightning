@@ -100,7 +100,7 @@ type AbstractBackend interface {
 	// NewEncoder creates an encoder of a TiDB table.
 	NewEncoder(tbl table.Table, sqlMode mysql.SQLMode) Encoder
 
-	OpenEngine(ctx context.Context, engineUUID uuid.UUID) error
+	OpenEngine(ctx context.Context, engineUUID uuid.UUID, keyPrefix []byte) error
 
 	WriteRows(
 		ctx context.Context,
@@ -171,13 +171,13 @@ func (be Backend) ShouldPostProcess() bool {
 	return be.abstract.ShouldPostProcess()
 }
 
-// OpenEngine opens an engine with the given table name and engine ID.
-func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int32) (*OpenedEngine, error) {
+// OpenEngine opens an engine with the given table name, engine ID and key prefix.
+func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int32, keyPrefix []byte) (*OpenedEngine, error) {
 	tag := makeTag(tableName, engineID)
 	engineUUID := uuid.NewV5(engineNamespace, tag)
 	logger := makeLogger(tag, engineUUID)
 
-	if err := be.abstract.OpenEngine(ctx, engineUUID); err != nil {
+	if err := be.abstract.OpenEngine(ctx, engineUUID, keyPrefix); err != nil {
 		return nil, err
 	}
 
@@ -216,11 +216,11 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 }
 
 // WriteRows writes a collection of encoded rows into the engine.
-func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
+func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string, rows Rows, stripPrefix bool) error {
 	var err error
 
 outside:
-	for _, r := range rows.SplitIntoChunks(engine.backend.MaxChunkSize()) {
+	for _, r := range rows.SplitIntoChunks(engine.backend.MaxChunkSize(), stripPrefix) {
 		for i := 0; i < maxRetryTimes; i++ {
 			err = engine.backend.WriteRows(ctx, engine.uuid, engine.tableName, columnNames, engine.ts, r)
 			switch {
@@ -335,7 +335,9 @@ type Rows interface {
 	// SplitIntoChunks splits the rows into multiple consecutive parts, each
 	// part having total byte size less than `splitSize`. The meaning of "byte
 	// size" should be consistent with the value used in `Row.ClassifyAndAppend`.
-	SplitIntoChunks(splitSize int) []Rows
+	// If `stripPrefix` is true, prefix (which is tablePrefix + tableID +
+	// recordPrefixSep or indexPrefixSep) will be stripped before writing chunks
+	SplitIntoChunks(splitSize int, stripPrefix bool) []Rows
 
 	// Clear returns a new collection with empty content. It may share the
 	// capacity with the current instance. The typical usage is `x = x.Clear()`.

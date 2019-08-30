@@ -13,7 +13,7 @@ require (
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190625133747-1e06cae5fa56
-	github.com/pingcap/kvproto v0.0.0-20190822223029-2fc6229ed609
+	github.com/pingcap/kvproto v0.0.0-20190829050249-bfd2ccdaea1f
 	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
 	github.com/pingcap/parser v0.0.0-20190613045206-37cc370a20a4
 	github.com/pingcap/tidb v0.0.0-20190625145607-60965b006877

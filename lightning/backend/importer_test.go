@@ -51,11 +51,11 @@ func (s *importerSuite) setUpTest(c *C) {
 	})
 
 	s.mockClient.EXPECT().
-		OpenEngine(s.ctx, &import_kvpb.OpenEngineRequest{Uuid: s.engineUUID}).
+		OpenEngine(s.ctx, &import_kvpb.OpenEngineRequest{Uuid: s.engineUUID, KeyPrefix:[]byte{}}).
 		Return(nil, nil)
 
 	var err error
-	s.engine, err = importer.OpenEngine(s.ctx, "`db`.`table`", -1)
+	s.engine, err = importer.OpenEngine(s.ctx, "`db`.`table`", -1, []byte{})
 	c.Assert(err, IsNil)
 }
 
@@ -91,7 +91,7 @@ func (s *importerSuite) TestWriteRows(c *C) {
 		Return(nil, nil).
 		After(batchSendCall)
 
-	err := s.engine.WriteRows(s.ctx, nil, s.kvPairs)
+	err := s.engine.WriteRows(s.ctx, nil, s.kvPairs, false)
 	c.Assert(err, IsNil)
 }
 
@@ -112,7 +112,7 @@ func (s *importerSuite) TestWriteHeadSendFailed(c *C) {
 		Return(nil, errors.Annotate(context.Canceled, "fake unrecoverable close stream error")).
 		After(headSendCall)
 
-	err := s.engine.WriteRows(s.ctx, nil, s.kvPairs)
+	err := s.engine.WriteRows(s.ctx, nil, s.kvPairs, false)
 	c.Assert(err, ErrorMatches, "fake unrecoverable write head error.*")
 }
 
@@ -140,7 +140,7 @@ func (s *importerSuite) TestWriteBatchSendFailed(c *C) {
 		Return(nil, errors.Annotate(context.Canceled, "fake unrecoverable close stream error")).
 		After(batchSendCall)
 
-	err := s.engine.WriteRows(s.ctx, nil, s.kvPairs)
+	err := s.engine.WriteRows(s.ctx, nil, s.kvPairs, false)
 	c.Assert(err, ErrorMatches, "fake unrecoverable write batch error.*")
 }
 
@@ -168,7 +168,7 @@ func (s *importerSuite) TestWriteCloseFailed(c *C) {
 		Return(nil, errors.Annotate(context.Canceled, "fake unrecoverable close stream error")).
 		After(batchSendCall)
 
-	err := s.engine.WriteRows(s.ctx, nil, s.kvPairs)
+	err := s.engine.WriteRows(s.ctx, nil, s.kvPairs, false)
 	c.Assert(err, ErrorMatches, "fake unrecoverable close stream error.*")
 }
 

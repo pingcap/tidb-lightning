@@ -53,7 +53,7 @@ func (s *mysqlSuite) TestWriteRows(c *C) {
 	ctx := context.Background()
 	logger := log.L()
 
-	engine, err := s.backend.OpenEngine(ctx, "`foo`.`bar`", 1)
+	engine, err := s.backend.OpenEngine(ctx, "`foo`.`bar`", 1, []byte{})
 	c.Assert(err, IsNil)
 
 	dataRows := s.backend.MakeEmptyRows()
@@ -80,6 +80,6 @@ func (s *mysqlSuite) TestWriteRows(c *C) {
 	c.Assert(err, IsNil)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	err = engine.WriteRows(ctx, []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
+	err = engine.WriteRows(ctx, []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows, false)
 	c.Assert(err, IsNil)
 }

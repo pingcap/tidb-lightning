@@ -207,6 +207,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	pairs := kvcodec.se.takeKvPairs()
 	kvcodec.recordCache = record[:0]
 
+	// TODO: strip prefix here?
 	return kvPairs(pairs), nil
 }
 
@@ -233,7 +234,7 @@ func (kvs kvPairs) ClassifyAndAppend(
 	*indices = indexKVs
 }
 
-func (totalKVs kvPairs) SplitIntoChunks(splitSize int) []Rows {
+func (totalKVs kvPairs) SplitIntoChunks(splitSize int, stripPrefix bool) []Rows {
 	if len(totalKVs) == 0 {
 		return nil
 	}
@@ -243,6 +244,10 @@ func (totalKVs kvPairs) SplitIntoChunks(splitSize int) []Rows {
 	cumSize := 0
 
 	for j, pair := range totalKVs {
+		if stripPrefix {
+			// 11 is prefixLen in TiDB's tablecodec.go
+			pair.Key = pair.Key[11:]
+		}
 		size := len(pair.Key) + len(pair.Val)
 		if i < j && cumSize+size > splitSize {
 			res = append(res, kvPairs(totalKVs[i:j]))

@@ -138,25 +138,25 @@ func (s *kvSuite) TestSplitIntoChunks(c *C) {
 		},
 	}
 
-	splitBy10 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(10)
+	splitBy10 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(10, false)
 	c.Assert(splitBy10, DeepEquals, []Rows{
 		MakeRowsFromKvPairs(pairs[0:2]),
 		MakeRowsFromKvPairs(pairs[2:3]),
 		MakeRowsFromKvPairs(pairs[3:4]),
 	})
 
-	splitBy12 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(12)
+	splitBy12 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(12, false)
 	c.Assert(splitBy12, DeepEquals, []Rows{
 		MakeRowsFromKvPairs(pairs[0:2]),
 		MakeRowsFromKvPairs(pairs[2:4]),
 	})
 
-	splitBy1000 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(1000)
+	splitBy1000 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(1000, false)
 	c.Assert(splitBy1000, DeepEquals, []Rows{
 		MakeRowsFromKvPairs(pairs[0:4]),
 	})
 
-	splitBy1 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(1)
+	splitBy1 := MakeRowsFromKvPairs(pairs).SplitIntoChunks(1, false)
 	c.Assert(splitBy1, DeepEquals, []Rows{
 		MakeRowsFromKvPairs(pairs[0:1]),
 		MakeRowsFromKvPairs(pairs[1:2]),

@@ -101,9 +101,10 @@ func isIgnorableOpenCloseEngineError(err error) bool {
 	return err == nil || strings.Contains(err.Error(), "FileExists")
 }
 
-func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID, keyPrefix []byte) error {
 	req := &kv.OpenEngineRequest{
 		Uuid: engineUUID.Bytes(),
+		KeyPrefix: keyPrefix,
 	}
 
 	_, err := importer.cli.OpenEngine(ctx, req)
@@ -192,7 +193,7 @@ func (importer *importer) WriteRows(
 	for i, pair := range kvs {
 		mutations[i] = &kv.Mutation{
 			Op:    kv.Mutation_Put,
-			Key:   pair.Key,
+			Key:   pair.Key, // TODO: last chance!
 			Value: pair.Val,
 		}
 	}

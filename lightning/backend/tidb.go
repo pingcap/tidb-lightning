@@ -59,7 +59,7 @@ func (row tidbRow) ClassifyAndAppend(data *Rows, checksum *verification.KVChecks
 	checksum.Add(&cs)
 }
 
-func (rows tidbRows) SplitIntoChunks(splitSize int) []Rows {
+func (rows tidbRows) SplitIntoChunks(splitSize int, stripPrefix bool) []Rows {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -240,7 +240,7 @@ func (be *tidbBackend) NewEncoder(_ table.Table, mode mysql.SQLMode) Encoder {
 	return tidbEncoder{mode: mode}
 }
 
-func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID) error {
+func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID, []byte) error {
 	return nil
 }
 
