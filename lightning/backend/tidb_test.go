@@ -37,7 +37,7 @@ func (s *mysqlSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 
 	s.mockDB = mock
-	s.backend = kv.NewMySQLBackend(db)
+	s.backend = kv.NewTiDBBackend(db)
 }
 
 func (s *mysqlSuite) TearDownTest(c *C) {
