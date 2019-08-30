@@ -688,12 +688,11 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
 
-		// 11 represents len(tablePrefix)+8+len(indexPrefixSep) in TiDB's tablecodec.go
-		keyPrefix := make([]byte, 0, 11)
+		var keyPrefix []byte
 		// For non-partition table, we get key prefix and specify in OpenEngine.
 		// For partition table we don't strip prefix so omit this field.
 		if t.tableInfo.Core.GetPartitionInfo() == nil {
-			keyPrefix = append(keyPrefix, t.encTable.IndexPrefix()...)
+			keyPrefix = t.encTable.IndexPrefix()
 		}
 		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, indexEngineID, keyPrefix)
 		if err != nil {
@@ -816,12 +815,11 @@ func (t *TableRestore) restoreEngine(
 
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 
-	// 11 represents len(tablePrefix)+8+len(recordPrefixSep) in TiDB's tablecodec.go
-	keyPrefix := make([]byte, 0, 11)
+	var keyPrefix []byte
 	// For non-partition table, we get key prefix and specify in OpenEngine.
 	// For partition table we don't strip prefix so omit this field.
 	if t.tableInfo.Core.GetPartitionInfo() == nil {
-		keyPrefix = append(keyPrefix, t.encTable.RecordPrefix()...)
+		keyPrefix = t.encTable.RecordPrefix()
 	}
 	dataEngine, err := rc.backend.OpenEngine(ctx, t.tableName, engineID, keyPrefix)
 	if err != nil {
@@ -1254,7 +1252,6 @@ func NewTableRestore(
 	cp *TableCheckpoint,
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocator(cp.AllocBase)
-	// TODO: here is encTable.AddRecord, also return if Partitioned table
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)

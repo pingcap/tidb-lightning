@@ -193,7 +193,7 @@ func (importer *importer) WriteRows(
 	for i, pair := range kvs {
 		mutations[i] = &kv.Mutation{
 			Op:    kv.Mutation_Put,
-			Key:   pair.Key, // TODO: last chance!
+			Key:   pair.Key,
 			Value: pair.Val,
 		}
 	}
