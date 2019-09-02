@@ -66,8 +66,9 @@ func (mockTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*tab
 func (s *kvSuite) TestEncode(c *C) {
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
-	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false}
-	tbl := tables.MockTableFromMeta(tblInfo)
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
+	tbl, err := tables.TableFromMeta(NewPanickingAllocator(0), tblInfo)
+	c.Assert(err, IsNil)
 
 	logger := log.Logger{Logger: zap.NewNop()}
 	rows := []types.Datum{
