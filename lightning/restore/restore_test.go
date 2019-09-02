@@ -657,13 +657,14 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	mockBackend := mock.NewMockAbstractBackend(controller)
 	importer := kv.MakeBackend(mockBackend)
 
-	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), []byte{}).Return(nil).Times(2)
+	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), []byte("txxxxxxxx_r")).Return(nil)
+	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), []byte("txxxxxxxx_i")).Return(nil)
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 	mockBackend.EXPECT().MaxChunkSize().Return(10000).AnyTimes()
 
-	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0, []byte{})
+	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0, []byte("txxxxxxxx_r"))
 	c.Assert(err, IsNil)
-	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1, []byte{})
+	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1, []byte("txxxxxxxx_i"))
 	c.Assert(err, IsNil)
 
 	// Set up the expected API calls to the data engine...
@@ -671,11 +672,11 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	mockBackend.EXPECT().
 		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]kvenc.KvPair{
 			{
-				Key: []byte("txxxxxxxx_ryyyyyyyy"),
+				Key: []byte("yyyyyyyy"),
 				Val: []byte("value1"),
 			},
 			{
-				Key: []byte("txxxxxxxx_rwwwwwwww"),
+				Key: []byte("wwwwwwww"),
 				Val: []byte("value2"),
 			},
 		})).
@@ -688,7 +689,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	mockBackend.EXPECT().
 		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]kvenc.KvPair{
 			{
-				Key: []byte("txxxxxxxx_izzzzzzzz"),
+				Key: []byte("zzzzzzzz"),
 				Val: []byte("index1"),
 			},
 		})).

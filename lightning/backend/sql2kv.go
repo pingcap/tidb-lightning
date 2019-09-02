@@ -243,12 +243,12 @@ func (totalKVs kvPairs) SplitIntoChunks(splitSize int, stripPrefix bool) []Rows 
 	i := 0
 	cumSize := 0
 
-	for j, pair := range totalKVs {
+	for j := range totalKVs {
 		if stripPrefix {
 			// 11 is prefixLen in TiDB's tablecodec.go
-			pair.Key = pair.Key[11:]
+			totalKVs[j].Key = totalKVs[j].Key[11:]
 		}
-		size := len(pair.Key) + len(pair.Val)
+		size := len(totalKVs[j].Key) + len(totalKVs[j].Val)
 		if i < j && cumSize+size > splitSize {
 			res = append(res, kvPairs(totalKVs[i:j]))
 			i = j

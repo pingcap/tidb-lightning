@@ -165,6 +165,42 @@ func (s *kvSuite) TestSplitIntoChunks(c *C) {
 	})
 }
 
+func (s *kvSuite) TestStripKeyPrefix(c *C) {
+	originalKvs := MakeRowsFromKvPairs([]kvenc.KvPair{
+		{
+			Key: []byte("txxxxxxxx_ryyyyyyyy"),
+			Val: []byte("value1"),
+		},
+		{
+			Key: []byte("txxxxxxxx_rwwwwwwww"),
+			Val: []byte("value2"),
+		},
+		{
+			Key: []byte("txxxxxxxx_izzzzzzzz"),
+			Val: []byte("index1"),
+		},
+	})
+	stripped := originalKvs.SplitIntoChunks(28, true)
+	targetPairs := []kvenc.KvPair{
+		{
+			Key: []byte("yyyyyyyy"),
+			Val: []byte("value1"),
+		},
+		{
+			Key: []byte("wwwwwwww"),
+			Val: []byte("value2"),
+		},
+		{
+			Key: []byte("zzzzzzzz"),
+			Val: []byte("index1"),
+		},
+	}
+	c.Assert(stripped, DeepEquals, []Rows{
+		MakeRowsFromKvPairs(targetPairs[0:2]),
+		MakeRowsFromKvPairs(targetPairs[2:3]),
+	})
+}
+
 func (s *kvSuite) TestClassifyAndAppend(c *C) {
 	kvs := MakeRowFromKvPairs([]kvenc.KvPair{
 		{
