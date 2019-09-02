@@ -212,7 +212,6 @@ func (kvcodec *tableKVEncoder) Encode(
 	pairs := kvcodec.se.takeKvPairs()
 	kvcodec.recordCache = record[:0]
 
-	// TODO: strip prefix here?
 	return kvPairs(pairs), nil
 }
 

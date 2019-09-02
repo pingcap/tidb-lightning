@@ -1544,7 +1544,6 @@ func (cr *chunkRestore) deliverLoop(
 					break populate
 				}
 
-				// TODO: could we strip key prefix earlier and fill prefix checksum accordingly?
 				d.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 				columns = d.columns
 				offset = d.offset
