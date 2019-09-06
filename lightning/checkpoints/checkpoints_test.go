@@ -1,6 +1,7 @@
 package checkpoints
 
 import (
+	"path/filepath"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -290,7 +291,7 @@ func (s *checkpointSuite) TestApplyDiff(c *C) {
 }
 
 func (s *checkpointSuite) TestCheckpointMarshallUnmarshall(c *C) {
-	path := "/tmp/test-chkp"
+	path := filepath.Join(c.MkDir(), "filecheckpoint")
 	fileChkp := NewFileCheckpointsDB(path)
 	fileChkp.checkpoints.Checkpoints["a"] = &TableCheckpointModel{
 		Status:  uint32(CheckpointStatusLoaded),
