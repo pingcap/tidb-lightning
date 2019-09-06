@@ -654,7 +654,10 @@ func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
 	// ignore all errors -- file maybe not created yet (and it is fine).
 	content, err := ioutil.ReadFile(path)
 	if err == nil {
-		cpdb.checkpoints.Unmarshal(content)
+		err2 := cpdb.checkpoints.Unmarshal(content)
+		if err2 != nil {
+			common.AppLogger.Errorf("PCG!!! broken checkpoint file %s, error: %v", path, err)
+		}
 	} else {
 		common.AppLogger.Warnf("failed to open checkpoint file %s, going to create a new one: %v", path, err)
 	}
@@ -689,6 +692,7 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, dbInfo map[string
 					Engines: map[int32]*EngineCheckpointModel{},
 				}
 			}
+			common.AppLogger.Warnf("PCG!!! print Checkpoints[%v]: %v", tableName, cpdb.checkpoints.Checkpoints[tableName])
 			// TODO check if hash matches
 		}
 	}
@@ -756,6 +760,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
+	common.AppLogger.Warnf("PCG!!! will get tableModel %v from Checkpoints: %v", tableName, cpdb.checkpoints.Checkpoints)
 	tableModel := cpdb.checkpoints.Checkpoints[tableName]
 	for engineID, engine := range checkpoints {
 		engineModel := &EngineCheckpointModel{
@@ -777,6 +782,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			chunk.PrevRowidMax = value.Chunk.PrevRowIDMax
 			chunk.RowidMax = value.Chunk.RowIDMax
 		}
+		common.AppLogger.Warnf("PCG!!! print tableModel: %v", tableModel)
 		tableModel.Engines[engineID] = engineModel
 	}
 
