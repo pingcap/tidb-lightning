@@ -2,6 +2,7 @@ package restore
 
 import (
 	. "github.com/pingcap/check"
+	"path/filepath"
 )
 
 var _ = Suite(&checkpointSuite{})
@@ -9,7 +10,7 @@ var _ = Suite(&checkpointSuite{})
 type checkpointSuite struct{}
 
 func (s *splitKVSuite) TestCheckpointMarshallUnmarshall(c *C) {
-	path := "/tmp/test-chkp"
+	path := filepath.Join(c.MkDir(), "filecheckpoint")
 	fileChkp := NewFileCheckpointsDB(path)
 	fileChkp.checkpoints.Checkpoints["a"] = &TableCheckpointModel{
 		Status:  uint32(CheckpointStatusLoaded),

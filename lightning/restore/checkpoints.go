@@ -664,12 +664,12 @@ func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
 			cpdb.checkpoints.Checkpoints = map[string]*TableCheckpointModel{}
 		}
 		for _, table := range cpdb.checkpoints.Checkpoints {
-			if (*table).Engines == nil {
-				(*table).Engines = map[int32]*EngineCheckpointModel{}
+			if table.Engines == nil {
+				table.Engines = map[int32]*EngineCheckpointModel{}
 			}
-			for _, engine := range (*table).Engines {
-				if (*engine).Chunks == nil {
-					(*engine).Chunks = map[string]*ChunkCheckpointModel{}
+			for _, engine := range table.Engines {
+				if engine.Chunks == nil {
+					engine.Chunks = map[string]*ChunkCheckpointModel{}
 				}
 			}
 		}
