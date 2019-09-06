@@ -741,7 +741,25 @@ func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
 	// ignore all errors -- file maybe not created yet (and it is fine).
 	content, err := ioutil.ReadFile(path)
 	if err == nil {
-		cpdb.checkpoints.Unmarshal(content)
+		err2 := cpdb.checkpoints.Unmarshal(content)
+		if err2 != nil {
+			log.L().Error("checkpoint file is broken", zap.String("path", path), zap.Error(err2))
+		}
+		// FIXME: patch for empty map may need initialize manually, because currently
+		// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go
+		if cpdb.checkpoints.Checkpoints == nil {
+			cpdb.checkpoints.Checkpoints = map[string]*TableCheckpointModel{}
+		}
+		for _, table := range cpdb.checkpoints.Checkpoints {
+			if table.Engines == nil {
+				table.Engines = map[int32]*EngineCheckpointModel{}
+			}
+			for _, engine := range table.Engines {
+				if engine.Chunks == nil {
+					engine.Chunks = map[string]*ChunkCheckpointModel{}
+				}
+			}
+		}
 	} else {
 		log.L().Info("open checkpoint file failed, going to create a new one",
 			zap.String("path", path),
