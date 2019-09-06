@@ -658,6 +658,21 @@ func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
 		if err2 != nil {
 			common.AppLogger.Errorf("PCG!!! checkpoint file is broken %s, error: %v", path, err)
 		}
+		// FIXME: patch for empty map may need initialize manually, because currently
+		// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go
+		if cpdb.checkpoints.Checkpoints == nil {
+			cpdb.checkpoints.Checkpoints = map[string]*TableCheckpointModel{}
+		}
+		for _, table := range cpdb.checkpoints.Checkpoints {
+			if (*table).Engines == nil {
+				(*table).Engines = map[int32]*EngineCheckpointModel{}
+			}
+			for _, engine := range (*table).Engines {
+				if (*engine).Chunks == nil {
+					(*engine).Chunks = map[string]*ChunkCheckpointModel{}
+				}
+			}
+		}
 	} else {
 		common.AppLogger.Warnf("failed to open checkpoint file %s, going to create a new one: %v", path, err)
 	}
@@ -783,15 +798,6 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			chunk.RowidMax = value.Chunk.RowIDMax
 		}
 		common.AppLogger.Warnf("PCG!!! will insert engineCheckpointModel into here: %v", tableModel)
-		// FIXME: patch to prevent `tableModel.Engines[engineID]` panic on nil map access
-		if tableModel == nil {
-			*tableModel = TableCheckpointModel{
-				Status:  uint32(CheckpointStatusLoaded),
-				Engines: map[int32]*EngineCheckpointModel{},
-			}
-		} else if tableModel.Engines == nil {
-			tableModel.Engines = map[int32]*EngineCheckpointModel{}
-		}
 		tableModel.Engines[engineID] = engineModel
 	}
 
