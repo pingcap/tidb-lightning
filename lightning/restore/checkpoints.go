@@ -656,7 +656,7 @@ func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
 	if err == nil {
 		err2 := cpdb.checkpoints.Unmarshal(content)
 		if err2 != nil {
-			common.AppLogger.Errorf("PCG!!! broken checkpoint file %s, error: %v", path, err)
+			common.AppLogger.Errorf("PCG!!! checkpoint file is broken %s, error: %v", path, err)
 		}
 	} else {
 		common.AppLogger.Warnf("failed to open checkpoint file %s, going to create a new one: %v", path, err)
@@ -692,7 +692,7 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, dbInfo map[string
 					Engines: map[int32]*EngineCheckpointModel{},
 				}
 			}
-			common.AppLogger.Warnf("PCG!!! print Checkpoints[%v]: %v", tableName, cpdb.checkpoints.Checkpoints[tableName])
+			common.AppLogger.Warnf("PCG!!! print Checkpoints[%v], it should be initialized: %v", tableName, cpdb.checkpoints.Checkpoints[tableName])
 			// TODO check if hash matches
 		}
 	}
@@ -760,7 +760,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	common.AppLogger.Warnf("PCG!!! will get tableModel %v from Checkpoints: %v", tableName, cpdb.checkpoints.Checkpoints)
+	common.AppLogger.Warnf("PCG!!! will get tableCheckpointModel, map of all: %v, key is %v", cpdb.checkpoints.Checkpoints, tableName)
 	tableModel := cpdb.checkpoints.Checkpoints[tableName]
 	for engineID, engine := range checkpoints {
 		engineModel := &EngineCheckpointModel{
@@ -782,7 +782,16 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			chunk.PrevRowidMax = value.Chunk.PrevRowIDMax
 			chunk.RowidMax = value.Chunk.RowIDMax
 		}
-		common.AppLogger.Warnf("PCG!!! print tableModel: %v", tableModel)
+		common.AppLogger.Warnf("PCG!!! will insert engineCheckpointModel into here: %v", tableModel)
+		// FIXME: patch to prevent `tableModel.Engines[engineID]` panic on nil map access
+		if tableModel == nil {
+			*tableModel = TableCheckpointModel{
+				Status:  uint32(CheckpointStatusLoaded),
+				Engines: map[int32]*EngineCheckpointModel{},
+			}
+		} else if tableModel.Engines == nil {
+			tableModel.Engines = map[int32]*EngineCheckpointModel{}
+		}
 		tableModel.Engines[engineID] = engineModel
 	}
 
