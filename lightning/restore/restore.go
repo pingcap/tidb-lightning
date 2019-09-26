@@ -908,10 +908,10 @@ func (t *TableRestore) importEngine(
 	rc.postProcessLock.Lock()
 	err := t.importKV(ctx, closedEngine)
 	rc.postProcessLock.Unlock()
-	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 
 	// 2. perform a level-1 compact if idling.
 	if rc.cfg.PostRestore.Level1Compact &&
