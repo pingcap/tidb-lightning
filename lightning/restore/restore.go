@@ -680,6 +680,8 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 	// table checkpoint status.
 	var closedIndexEngine *kv.ClosedEngine
 	if indexEngineCp.Status < CheckpointStatusImported && cp.Status < CheckpointStatusIndexImported {
+		indexWorker := rc.indexWorkers.Apply()
+		defer rc.indexWorkers.Recycle(indexWorker)
 		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, indexEngineID)
 		if err != nil {
 			return errors.Trace(err)
@@ -761,9 +763,6 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 
 	if cp.Status < CheckpointStatusIndexImported {
 		var err error
-		indexWorker := rc.indexWorkers.Apply()
-		defer rc.indexWorkers.Recycle(indexWorker)
-
 		if indexEngineCp.Status < CheckpointStatusImported {
 			// the lock ensures the import() step will not be concurrent.
 			rc.postProcessLock.Lock()
