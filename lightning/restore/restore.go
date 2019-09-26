@@ -173,6 +173,18 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 		}
 	case config.BackendTiDB:
 		backend = kv.NewTiDBBackend(tidbMgr.db)
+		// in TiDBBackend, indexConcurrency and tableConcurrency has few effect but only limit regionConcurrency when
+		// table/engine has a few chunks. So we here increase two concurrency if user not specify.
+		tableNum := 0
+		for _, dbMeta := range dbMetas {
+			tableNum += len(dbMeta.Tables)
+		}
+		if cfg.App.IndexConcurrency == config.DefaultIndexConcurrency {
+			cfg.App.IndexConcurrency = tableNum
+		}
+		if cfg.App.TableConcurrency == config.DefaultTableConcurrency {
+			cfg.App.TableConcurrency = tableNum
+		}
 	default:
 		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
 	}

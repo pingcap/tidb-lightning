@@ -47,6 +47,10 @@ const (
 	CheckpointDriverMySQL = "mysql"
 	// CheckpointDriverFile is a constant for choosing the "File" checkpoint driver in the configuration.
 	CheckpointDriverFile = "file"
+
+	DefaultTableConcurrency = 6
+	DefaultIndexConcurrency = 2
+	DefaultIOConcurrency    = 5
 )
 
 var defaultConfigPaths = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
@@ -166,9 +170,9 @@ func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
 			RegionConcurrency: runtime.NumCPU(),
-			TableConcurrency:  6,
-			IndexConcurrency:  2,
-			IOConcurrency:     5,
+			TableConcurrency:  DefaultTableConcurrency,
+			IndexConcurrency:  DefaultIndexConcurrency,
+			IOConcurrency:     DefaultIOConcurrency,
 			CheckRequirements: true,
 		},
 		TiDB: DBStore{
