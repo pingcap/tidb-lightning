@@ -263,7 +263,7 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	}
 
 	var insertStmt strings.Builder
-	insertStmt.WriteString("INSERT INTO ")
+	insertStmt.WriteString("REPLACE INTO ")
 	insertStmt.WriteString(tableName)
 	if len(columnNames) > 0 {
 		insertStmt.WriteByte('(')
