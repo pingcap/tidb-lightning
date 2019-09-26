@@ -129,8 +129,9 @@ type MydumperRuntime struct {
 }
 
 type TikvImporter struct {
-	Addr    string `toml:"addr" json:"addr"`
-	Backend string `toml:"backend" json:"backend"`
+	Addr         string `toml:"addr" json:"addr"`
+	Backend      string `toml:"backend" json:"backend"`
+	ReplaceOnDup bool `toml:"replace-on-duplicate" json:"replace-on-duplicate"`
 }
 
 type Checkpoint struct {
@@ -194,6 +195,7 @@ func NewConfig() *Config {
 		},
 		TikvImporter: TikvImporter{
 			Backend: BackendImporter,
+			ReplaceOnDup: true,
 		},
 		PostRestore: PostRestore{
 			Checksum: true,

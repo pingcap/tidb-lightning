@@ -15,6 +15,7 @@ package backend_test
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
@@ -28,16 +29,18 @@ import (
 var _ = Suite(&mysqlSuite{})
 
 type mysqlSuite struct {
-	mockDB  sqlmock.Sqlmock
-	backend kv.Backend
+	dbHandle *sql.DB
+	mockDB   sqlmock.Sqlmock
+	backend  kv.Backend
 }
 
 func (s *mysqlSuite) SetUpTest(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 
+	s.dbHandle = db
 	s.mockDB = mock
-	s.backend = kv.NewTiDBBackend(db)
+	s.backend = kv.NewTiDBBackend(db, true)
 }
 
 func (s *mysqlSuite) TearDownTest(c *C) {
@@ -81,5 +84,33 @@ func (s *mysqlSuite) TestWriteRows(c *C) {
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	err = engine.WriteRows(ctx, []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
+	c.Assert(err, IsNil)
+}
+
+func (s *mysqlSuite) TestWriteRowsIgnore(c *C) {
+	s.mockDB.
+		ExpectExec("\\QINSERT IGNORE INTO `foo`.`bar`(`a`) VALUES(1)\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	ctx := context.Background()
+	logger := log.L()
+
+	ignoreBackend := kv.NewTiDBBackend(s.dbHandle, false)
+	engine, err := ignoreBackend.OpenEngine(ctx, "`foo`.`bar`", 1)
+	c.Assert(err, IsNil)
+
+	dataRows := ignoreBackend.MakeEmptyRows()
+	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
+	indexRows := ignoreBackend.MakeEmptyRows()
+	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
+
+	encoder := ignoreBackend.NewEncoder(nil, 0)
+	row, err := encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(1),
+	}, 1, nil)
+	c.Assert(err, IsNil)
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	err = engine.WriteRows(ctx, []string{"a"}, dataRows)
 	c.Assert(err, IsNil)
 }

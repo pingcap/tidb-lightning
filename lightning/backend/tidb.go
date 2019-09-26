@@ -42,14 +42,15 @@ type tidbEncoder struct {
 
 type tidbBackend struct {
 	db *sql.DB
+	replaceOnDup bool
 }
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewTiDBBackend(db *sql.DB) Backend {
-	return MakeBackend(&tidbBackend{db: db})
+func NewTiDBBackend(db *sql.DB, replaceOnDup bool) Backend {
+	return MakeBackend(&tidbBackend{db: db, replaceOnDup: replaceOnDup})
 }
 
 func (row tidbRow) ClassifyAndAppend(data *Rows, checksum *verification.KVChecksum, _ *Rows, _ *verification.KVChecksum) {
@@ -263,7 +264,11 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	}
 
 	var insertStmt strings.Builder
-	insertStmt.WriteString("REPLACE INTO ")
+	if be.replaceOnDup {
+		insertStmt.WriteString("REPLACE INTO ")
+	} else {
+		insertStmt.WriteString("INSERT IGNORE INTO ")
+	}
 	insertStmt.WriteString(tableName)
 	if len(columnNames) > 0 {
 		insertStmt.WriteByte('(')
