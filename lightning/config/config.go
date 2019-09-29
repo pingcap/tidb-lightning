@@ -167,8 +167,8 @@ func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
 			RegionConcurrency: runtime.NumCPU(),
-			TableConcurrency:  6,
-			IndexConcurrency:  2,
+			TableConcurrency:  0,
+			IndexConcurrency:  0,
 			IOConcurrency:     5,
 			CheckRequirements: true,
 		},
@@ -310,7 +310,20 @@ func (cfg *Config) Adjust() error {
 
 	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
 	switch cfg.TikvImporter.Backend {
-	case BackendTiDB, BackendImporter:
+	case BackendTiDB:
+		if cfg.App.IndexConcurrency == 0 {
+			cfg.App.IndexConcurrency = cfg.App.RegionConcurrency
+		}
+		if cfg.App.TableConcurrency == 0 {
+			cfg.App.TableConcurrency = cfg.App.RegionConcurrency
+		}
+	case BackendImporter:
+		if cfg.App.IndexConcurrency == 0 {
+			cfg.App.IndexConcurrency = 2
+		}
+		if cfg.App.TableConcurrency == 0 {
+			cfg.App.TableConcurrency = 6
+		}
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
