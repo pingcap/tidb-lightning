@@ -54,6 +54,13 @@ func startMockServer(c *C, statusCode int, content string) (*httptest.Server, st
 	return ts, host, port
 }
 
+func assignMinimalLegalValue(cfg *config.Config) {
+	cfg.TiDB.Host = "123.45.67.89"
+	cfg.TiDB.Port = 4567
+	cfg.TiDB.StatusPort = 8901
+	cfg.TiDB.PdAddr = "234.56.78.90:12345"
+}
+
 func (s *configTestSuite) TestAdjustPdAddrAndPort(c *C) {
 	ts, host, port := startMockServer(c, http.StatusOK,
 		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
@@ -156,10 +163,7 @@ func (s *configTestSuite) TestInvalidPDAddr(c *C) {
 
 func (s *configTestSuite) TestAdjustWillNotContactServerIfEverythingIsDefined(c *C) {
 	cfg := config.NewConfig()
-	cfg.TiDB.Host = "123.45.67.89"
-	cfg.TiDB.Port = 4567
-	cfg.TiDB.StatusPort = 8901
-	cfg.TiDB.PdAddr = "234.56.78.90:12345"
+	assignMinimalLegalValue(cfg)
 
 	err := cfg.Adjust()
 	c.Assert(err, IsNil)
@@ -169,10 +173,7 @@ func (s *configTestSuite) TestAdjustWillNotContactServerIfEverythingIsDefined(c 
 
 func (s *configTestSuite) TestAdjustWillBatchImportRatioInvalid(c *C) {
 	cfg := config.NewConfig()
-	cfg.TiDB.Host = "123.45.67.89"
-	cfg.TiDB.Port = 4567
-	cfg.TiDB.StatusPort = 8901
-	cfg.TiDB.PdAddr = "234.56.78.90:12345"
+	assignMinimalLegalValue(cfg)
 	cfg.Mydumper.BatchImportRatio = -1
 	err := cfg.Adjust()
 	c.Assert(err, IsNil)
@@ -394,6 +395,39 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 
 	result := taskCfg.String()
 	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)
+}
+
+func (s *configTestSuite) TestDefaultImporterBackendValue(c *C) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	cfg.TikvImporter.Backend = "importer"
+	err := cfg.Adjust()
+	c.Assert(err, IsNil)
+	c.Assert(cfg.App.IndexConcurrency, Equals, 2)
+	c.Assert(cfg.App.TableConcurrency, Equals, 6)
+}
+
+func (s *configTestSuite) TestDefaultTidbBackendValue(c *C) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	cfg.TikvImporter.Backend = "tidb"
+	cfg.App.RegionConcurrency = 123
+	err := cfg.Adjust()
+	c.Assert(err, IsNil)
+	c.Assert(cfg.App.IndexConcurrency, Equals, 123)
+	c.Assert(cfg.App.TableConcurrency, Equals, 123)
+}
+
+func (s *configTestSuite) TestDefaultCouldBeOverwritten(c *C) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	cfg.TikvImporter.Backend = "importer"
+	cfg.App.IndexConcurrency = 20
+	cfg.App.TableConcurrency = 60
+	err := cfg.Adjust()
+	c.Assert(err, IsNil)
+	c.Assert(cfg.App.IndexConcurrency, Equals, 20)
+	c.Assert(cfg.App.TableConcurrency, Equals, 60)
 }
 
 func (s *configTestSuite) TestLoadFromInvalidConfig(c *C) {
