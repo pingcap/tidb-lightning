@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"strconv"
 	"strings"
 	"time"
@@ -42,15 +43,15 @@ type tidbEncoder struct {
 
 type tidbBackend struct {
 	db *sql.DB
-	replaceOnDup bool
+	OnDuplicate string
 }
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewTiDBBackend(db *sql.DB, replaceOnDup bool) Backend {
-	return MakeBackend(&tidbBackend{db: db, replaceOnDup: replaceOnDup})
+func NewTiDBBackend(db *sql.DB, OnDuplicate string) Backend {
+	return MakeBackend(&tidbBackend{db: db, OnDuplicate: OnDuplicate})
 }
 
 func (row tidbRow) ClassifyAndAppend(data *Rows, checksum *verification.KVChecksum, _ *Rows, _ *verification.KVChecksum) {
@@ -264,11 +265,15 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	}
 
 	var insertStmt strings.Builder
-	if be.replaceOnDup {
+	switch be.OnDuplicate {
+	case config.RepalceOnDup:
 		insertStmt.WriteString("REPLACE INTO ")
-	} else {
+	case config.IgnoreOnDup:
 		insertStmt.WriteString("INSERT IGNORE INTO ")
+	case config.ErrorOnDup:
+		insertStmt.WriteString("INSERT INTO ")
 	}
+
 	insertStmt.WriteString(tableName)
 	if len(columnNames) > 0 {
 		insertStmt.WriteByte('(')

@@ -172,7 +172,7 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 			return nil, err
 		}
 	case config.BackendTiDB:
-		backend = kv.NewTiDBBackend(tidbMgr.db, cfg.TikvImporter.ReplaceOnDup)
+		backend = kv.NewTiDBBackend(tidbMgr.db, cfg.TikvImporter.OnDuplicate)
 	default:
 		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
 	}

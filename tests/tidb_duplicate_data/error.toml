@@ -1,11 +1,11 @@
 [lightning]
 check-requirements = false
-file = "/tmp/lightning_test_result/lightning.log"
+file = "/tmp/lightning_test_result/lightning-error-on-dup.log"
 level = "warning"
 
 [tikv-importer]
 backend = "tidb"
-on-duplicate = "replace"
+on-duplicate = "error"
 
 [mydumper]
 data-source-dir = "tests/tidb_duplicate_data/data"

@@ -28,3 +28,13 @@ run_sql 'SELECT count(*) FROM dup.dup'
 check_contains 'count(*): 1'
 run_sql 'SELECT d FROM dup.dup'
 check_contains 'd: 100'
+
+run_sql 'DROP DATABASE IF EXISTS dup;'
+set +e
+run_lightning 'error'
+ERRORCODE=$?
+set -e
+[ "$ERRORCODE" -ne 0 ]
+
+tail -20 "$TEST_DIR/lightning-error-on-dup.log" > "$TEST_DIR/lightning-error-on-dup.tail"
+grep -Fq 'Duplicate entry' "$TEST_DIR/lightning-error-on-dup.tail"
