@@ -50,7 +50,7 @@ type tidbBackend struct {
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewTiDBBackend(db *sql.DB, OnDuplicate string) Backend {
+func NewTiDBBackend(db *sql.DB, onDuplicate string) Backend {
 	return MakeBackend(&tidbBackend{db: db, OnDuplicate: OnDuplicate})
 }
 
