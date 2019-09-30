@@ -5,7 +5,6 @@ level = "warning"
 
 [tikv-importer]
 backend = "tidb"
-on-duplicate = "replace"
 
 [mydumper]
 data-source-dir = "tests/tidb_duplicate_data/data"

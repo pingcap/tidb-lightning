@@ -16,13 +16,13 @@ package backend_test
 import (
 	"context"
 	"database/sql"
-	"github.com/pingcap/tidb-lightning/lightning/config"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/types"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )

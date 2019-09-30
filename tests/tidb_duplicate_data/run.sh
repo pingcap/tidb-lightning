@@ -15,7 +15,7 @@
 
 set -eu
 
-# reset substitution if last time fails half way
+# reset substitution if last time failed half way
 # on BSD/macOS sed -i must have a following string as backup filename extension
 sed -i.bak 's/new/old/g' "tests/tidb_duplicate_data/data/dup.dup.sql" && rm tests/tidb_duplicate_data/data/dup.dup.sql.bak
 

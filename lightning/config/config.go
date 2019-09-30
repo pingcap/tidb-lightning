@@ -52,7 +52,7 @@ const (
 	ReplaceOnDup = "replace"
 	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data
 	IgnoreOnDup = "ignore"
-	// ErrorOnDup indicates using INSERT INTO to insert data, which will violate PK or UNIQUE constraint
+	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
 )
 

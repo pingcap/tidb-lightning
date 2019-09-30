@@ -17,12 +17,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb-lightning/lightning/config"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -30,6 +29,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
@@ -304,7 +304,7 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	// Retry will be done externally, so we're not going to retry here.
 	_, err := be.db.ExecContext(ctx, insertStmt.String())
 	failpoint.Inject("FailIfImportedSomeRows", func() {
-		panic("forcing failure due to FailIfImportedSomeRows, before save checkpoint")
+		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
 	})
 	return err
 }
