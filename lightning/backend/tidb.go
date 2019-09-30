@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"strconv"
 	"strings"
@@ -42,7 +43,7 @@ type tidbEncoder struct {
 }
 
 type tidbBackend struct {
-	db *sql.DB
+	db          *sql.DB
 	onDuplicate string
 }
 
@@ -51,7 +52,7 @@ type tidbBackend struct {
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
 func NewTiDBBackend(db *sql.DB, onDuplicate string) Backend {
-	return MakeBackend(&tidbBackend{db: db, OnDuplicate: OnDuplicate})
+	return MakeBackend(&tidbBackend{db: db, onDuplicate: onDuplicate})
 }
 
 func (row tidbRow) ClassifyAndAppend(data *Rows, checksum *verification.KVChecksum, _ *Rows, _ *verification.KVChecksum) {
@@ -231,6 +232,9 @@ func (be *tidbBackend) RetryImportDelay() time.Duration {
 }
 
 func (be *tidbBackend) MaxChunkSize() int {
+	failpoint.Inject("FailIfImportedSomeRows", func() {
+		failpoint.Return(1)
+	})
 	return 1048576
 }
 
@@ -265,8 +269,8 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	}
 
 	var insertStmt strings.Builder
-	switch be.OnDuplicate {
-	case config.RepalceOnDup:
+	switch be.onDuplicate {
+	case config.ReplaceOnDup:
 		insertStmt.WriteString("REPLACE INTO ")
 	case config.IgnoreOnDup:
 		insertStmt.WriteString("INSERT IGNORE INTO ")
@@ -299,5 +303,8 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 
 	// Retry will be done externally, so we're not going to retry here.
 	_, err := be.db.ExecContext(ctx, insertStmt.String())
+	failpoint.Inject("FailIfImportedSomeRows", func() {
+		panic("forcing failure due to FailIfImportedSomeRows, before save checkpoint")
+	})
 	return err
 }

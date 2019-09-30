@@ -48,7 +48,7 @@ const (
 	// CheckpointDriverFile is a constant for choosing the "File" checkpoint driver in the configuration.
 	CheckpointDriverFile = "file"
 
-	// RepalceOnDup indicates using REPLACE INTO to insert data
+	// ReplaceOnDup indicates using REPLACE INTO to insert data
 	ReplaceOnDup = "replace"
 	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data
 	IgnoreOnDup = "ignore"
@@ -202,7 +202,7 @@ func NewConfig() *Config {
 		},
 		TikvImporter: TikvImporter{
 			Backend: BackendImporter,
-			OnDuplicate: RepalceOnDup,
+			OnDuplicate: ReplaceOnDup,
 		},
 		PostRestore: PostRestore{
 			Checksum: true,
@@ -338,7 +338,7 @@ func (cfg *Config) Adjust() error {
 	if cfg.TikvImporter.Backend == BackendTiDB {
 		cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
 		switch cfg.TikvImporter.OnDuplicate {
-		case RepalceOnDup, IgnoreOnDup, ErrorOnDup:
+		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
 		default:
 			return errors.Errorf("invalid config: unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
 		}

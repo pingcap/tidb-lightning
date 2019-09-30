@@ -1,4 +1,3 @@
 insert into dup values
-(1, 100);
-insert into dup values
-(1, 200);
+(1, 'old'),
+(2, 'old');

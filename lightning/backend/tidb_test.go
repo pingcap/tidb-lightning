@@ -41,7 +41,7 @@ func (s *mysqlSuite) SetUpTest(c *C) {
 
 	s.dbHandle = db
 	s.mockDB = mock
-	s.backend = kv.NewTiDBBackend(db, config.RepalceOnDup)
+	s.backend = kv.NewTiDBBackend(db, config.ReplaceOnDup)
 }
 
 func (s *mysqlSuite) TearDownTest(c *C) {

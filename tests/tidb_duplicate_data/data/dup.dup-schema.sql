@@ -1,1 +1,1 @@
-create table dup (pk int primary key, d int);
+create table dup (pk int primary key, d varchar(3));
