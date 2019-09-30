@@ -49,7 +49,7 @@ const (
 	CheckpointDriverFile = "file"
 
 	// RepalceOnDup indicates using REPLACE INTO to insert data
-	RepalceOnDup = "replace"
+	ReplaceOnDup = "replace"
 	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data
 	IgnoreOnDup = "ignore"
 	// ErrorOnDup indicates using INSERT INTO to insert data, which will violate PK or UNIQUE constraint
