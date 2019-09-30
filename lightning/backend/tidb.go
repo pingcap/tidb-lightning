@@ -43,7 +43,7 @@ type tidbEncoder struct {
 
 type tidbBackend struct {
 	db *sql.DB
-	OnDuplicate string
+	onDuplicate string
 }
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
