@@ -52,6 +52,12 @@ type tidbBackend struct {
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
 func NewTiDBBackend(db *sql.DB, onDuplicate string) Backend {
+	switch onDuplicate {
+	case config.ReplaceOnDup, config.IgnoreOnDup, config.ErrorOnDup:
+	default:
+		log.L().Warn("unsupported action on duplicate, overwrite with `replace`")
+		onDuplicate = config.ReplaceOnDup
+	}
 	return MakeBackend(&tidbBackend{db: db, onDuplicate: onDuplicate})
 }
 
