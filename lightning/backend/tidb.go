@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -28,6 +29,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
@@ -41,15 +43,22 @@ type tidbEncoder struct {
 }
 
 type tidbBackend struct {
-	db *sql.DB
+	db          *sql.DB
+	onDuplicate string
 }
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewTiDBBackend(db *sql.DB) Backend {
-	return MakeBackend(&tidbBackend{db: db})
+func NewTiDBBackend(db *sql.DB, onDuplicate string) Backend {
+	switch onDuplicate {
+	case config.ReplaceOnDup, config.IgnoreOnDup, config.ErrorOnDup:
+	default:
+		log.L().Warn("unsupported action on duplicate, overwrite with `replace`")
+		onDuplicate = config.ReplaceOnDup
+	}
+	return MakeBackend(&tidbBackend{db: db, onDuplicate: onDuplicate})
 }
 
 func (row tidbRow) ClassifyAndAppend(data *Rows, checksum *verification.KVChecksum, _ *Rows, _ *verification.KVChecksum) {
@@ -229,6 +238,9 @@ func (be *tidbBackend) RetryImportDelay() time.Duration {
 }
 
 func (be *tidbBackend) MaxChunkSize() int {
+	failpoint.Inject("FailIfImportedSomeRows", func() {
+		failpoint.Return(1)
+	})
 	return 1048576
 }
 
@@ -263,7 +275,15 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	}
 
 	var insertStmt strings.Builder
-	insertStmt.WriteString("INSERT INTO ")
+	switch be.onDuplicate {
+	case config.ReplaceOnDup:
+		insertStmt.WriteString("REPLACE INTO ")
+	case config.IgnoreOnDup:
+		insertStmt.WriteString("INSERT IGNORE INTO ")
+	case config.ErrorOnDup:
+		insertStmt.WriteString("INSERT INTO ")
+	}
+
 	insertStmt.WriteString(tableName)
 	if len(columnNames) > 0 {
 		insertStmt.WriteByte('(')
@@ -289,5 +309,8 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 
 	// Retry will be done externally, so we're not going to retry here.
 	_, err := be.db.ExecContext(ctx, insertStmt.String())
+	failpoint.Inject("FailIfImportedSomeRows", func() {
+		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
+	})
 	return err
 }

@@ -47,6 +47,13 @@ const (
 	CheckpointDriverMySQL = "mysql"
 	// CheckpointDriverFile is a constant for choosing the "File" checkpoint driver in the configuration.
 	CheckpointDriverFile = "file"
+
+	// ReplaceOnDup indicates using REPLACE INTO to insert data
+	ReplaceOnDup = "replace"
+	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data
+	IgnoreOnDup = "ignore"
+	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
+	ErrorOnDup = "error"
 )
 
 var defaultConfigPaths = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
@@ -129,8 +136,9 @@ type MydumperRuntime struct {
 }
 
 type TikvImporter struct {
-	Addr    string `toml:"addr" json:"addr"`
-	Backend string `toml:"backend" json:"backend"`
+	Addr         string `toml:"addr" json:"addr"`
+	Backend      string `toml:"backend" json:"backend"`
+	OnDuplicate  string `toml:"on-duplicate" json:"on-duplicate"`
 }
 
 type Checkpoint struct {
@@ -194,6 +202,7 @@ func NewConfig() *Config {
 		},
 		TikvImporter: TikvImporter{
 			Backend: BackendImporter,
+			OnDuplicate: ReplaceOnDup,
 		},
 		PostRestore: PostRestore{
 			Checksum: true,
@@ -324,6 +333,15 @@ func (cfg *Config) Adjust() error {
 		}
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
+	}
+
+	if cfg.TikvImporter.Backend == BackendTiDB {
+		cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
+		switch cfg.TikvImporter.OnDuplicate {
+		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
+		default:
+			return errors.Errorf("invalid config: unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
+		}
 	}
 
 	var err error

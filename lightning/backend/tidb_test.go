@@ -15,12 +15,14 @@ package backend_test
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/types"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
@@ -28,16 +30,18 @@ import (
 var _ = Suite(&mysqlSuite{})
 
 type mysqlSuite struct {
-	mockDB  sqlmock.Sqlmock
-	backend kv.Backend
+	dbHandle *sql.DB
+	mockDB   sqlmock.Sqlmock
+	backend  kv.Backend
 }
 
 func (s *mysqlSuite) SetUpTest(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 
+	s.dbHandle = db
 	s.mockDB = mock
-	s.backend = kv.NewTiDBBackend(db)
+	s.backend = kv.NewTiDBBackend(db, config.ReplaceOnDup)
 }
 
 func (s *mysqlSuite) TearDownTest(c *C) {
@@ -45,9 +49,9 @@ func (s *mysqlSuite) TearDownTest(c *C) {
 	c.Assert(s.mockDB.ExpectationsWereMet(), IsNil)
 }
 
-func (s *mysqlSuite) TestWriteRows(c *C) {
+func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 	s.mockDB.
-		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`,`b`,`c`,`d`,`e`,`f`,`g`,`h`,`i`,`j`,`k`,`l`,`m`,`n`,`o`) VALUES(18446744073709551615,-9223372036854775808,0,NULL,7.5,5e-324,1.7976931348623157e+308,0,'甲乙丙\\r\\n\\0\\Z''\"\\\\`',0x000000abcdef,2557891634,'12.5',51)\\E").
+		ExpectExec("\\QREPLACE INTO `foo`.`bar`(`a`,`b`,`c`,`d`,`e`,`f`,`g`,`h`,`i`,`j`,`k`,`l`,`m`,`n`,`o`) VALUES(18446744073709551615,-9223372036854775808,0,NULL,7.5,5e-324,1.7976931348623157e+308,0,'甲乙丙\\r\\n\\0\\Z''\"\\\\`',0x000000abcdef,2557891634,'12.5',51)\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	ctx := context.Background()
@@ -81,5 +85,61 @@ func (s *mysqlSuite) TestWriteRows(c *C) {
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	err = engine.WriteRows(ctx, []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
+	c.Assert(err, IsNil)
+}
+
+func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
+	s.mockDB.
+		ExpectExec("\\QINSERT IGNORE INTO `foo`.`bar`(`a`) VALUES(1)\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	ctx := context.Background()
+	logger := log.L()
+
+	ignoreBackend := kv.NewTiDBBackend(s.dbHandle, config.IgnoreOnDup)
+	engine, err := ignoreBackend.OpenEngine(ctx, "`foo`.`bar`", 1)
+	c.Assert(err, IsNil)
+
+	dataRows := ignoreBackend.MakeEmptyRows()
+	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
+	indexRows := ignoreBackend.MakeEmptyRows()
+	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
+
+	encoder := ignoreBackend.NewEncoder(nil, 0)
+	row, err := encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(1),
+	}, 1, nil)
+	c.Assert(err, IsNil)
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	err = engine.WriteRows(ctx, []string{"a"}, dataRows)
+	c.Assert(err, IsNil)
+}
+
+func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	ctx := context.Background()
+	logger := log.L()
+
+	ignoreBackend := kv.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	engine, err := ignoreBackend.OpenEngine(ctx, "`foo`.`bar`", 1)
+	c.Assert(err, IsNil)
+
+	dataRows := ignoreBackend.MakeEmptyRows()
+	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
+	indexRows := ignoreBackend.MakeEmptyRows()
+	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
+
+	encoder := ignoreBackend.NewEncoder(nil, 0)
+	row, err := encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(1),
+	}, 1, nil)
+	c.Assert(err, IsNil)
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	err = engine.WriteRows(ctx, []string{"a"}, dataRows)
 	c.Assert(err, IsNil)
 }
