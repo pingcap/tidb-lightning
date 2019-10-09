@@ -105,7 +105,7 @@ func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder := ignoreBackend.NewEncoder(nil, 0)
+	encoder := ignoreBackend.NewEncoder(nil, 0, 0)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
 	}, 1, nil)
@@ -133,7 +133,7 @@ func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder := ignoreBackend.NewEncoder(nil, 0)
+	encoder := ignoreBackend.NewEncoder(nil, 0, 0)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
 	}, 1, nil)
