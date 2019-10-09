@@ -1,0 +1,30 @@
+[lightning]
+region-concurrency = 1
+file = "/tmp/lightning_test_result/lightning.log"
+level = "info"
+
+[checkpoint]
+enable = true
+schema = "tidb_lightning_checkpoint_timestamp"
+driver = "file"
+dsn = "/tmp/lightning_test_result/cpts.pb"
+
+[tikv-importer]
+addr = "127.0.0.1:8808"
+
+[mydumper]
+data-source-dir = "tests/checkpoint_timestamp/data"
+read-block-size = 1
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+log-level = "error"
+
+[post-restore]
+checksum = true
+compact = false
+analyze = false

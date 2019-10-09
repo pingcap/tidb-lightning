@@ -111,7 +111,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 		ExpectPrepare("REPLACE INTO `mock-schema`\\.chunk_v\\d+ .+")
 	insertChunkStmt.
 		ExpectExec().
-		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, 12, 102400, 1, 5000).
+		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, 12, 102400, 1, 5000, 1234567890).
 		WillReturnResult(sqlmock.NewResult(10, 1))
 	s.mock.ExpectCommit()
 
@@ -130,6 +130,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 					PrevRowIDMax: 1,
 					RowIDMax:     5000,
 				},
+				Timestamp: 1234567890,
 			}},
 		},
 		-1: {
@@ -216,12 +217,12 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 			sqlmock.NewRows([]string{
 				"engine_id", "path", "offset", "columns",
 				"pos", "end_offset", "prev_rowid_max", "rowid_max",
-				"kvc_bytes", "kvc_kvs", "kvc_checksum",
+				"kvc_bytes", "kvc_kvs", "kvc_checksum", "unix_timestamp(create_time)",
 			}).
 				AddRow(
 					0, "/tmp/path/1.sql", 0, "[]",
 					55904, 102400, 681, 5000,
-					4491, 586, 486070148917,
+					4491, 586, 486070148917, 1234567894,
 				),
 		)
 	s.mock.
@@ -254,7 +255,8 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 						PrevRowIDMax: 681,
 						RowIDMax:     5000,
 					},
-					Checksum: verification.MakeKVChecksum(4491, 586, 486070148917),
+					Checksum:  verification.MakeKVChecksum(4491, 586, 486070148917),
+					Timestamp: 1234567894,
 				}},
 			},
 		},

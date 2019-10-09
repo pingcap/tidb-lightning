@@ -98,7 +98,7 @@ type AbstractBackend interface {
 	ShouldPostProcess() bool
 
 	// NewEncoder creates an encoder of a TiDB table.
-	NewEncoder(tbl table.Table, sqlMode mysql.SQLMode) Encoder
+	NewEncoder(tbl table.Table, sqlMode mysql.SQLMode, timestamp int64) Encoder
 
 	OpenEngine(ctx context.Context, engineUUID uuid.UUID) error
 
@@ -163,8 +163,8 @@ func (be Backend) MakeEmptyRows() Rows {
 	return be.abstract.MakeEmptyRows()
 }
 
-func (be Backend) NewEncoder(tbl table.Table, sqlMode mysql.SQLMode) Encoder {
-	return be.abstract.NewEncoder(tbl, sqlMode)
+func (be Backend) NewEncoder(tbl table.Table, sqlMode mysql.SQLMode, timestamp int64) Encoder {
+	return be.abstract.NewEncoder(tbl, sqlMode, timestamp)
 }
 
 func (be Backend) ShouldPostProcess() bool {

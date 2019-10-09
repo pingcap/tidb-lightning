@@ -588,11 +588,11 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 
 			tableName := common.UniqueTable(dbInfo.Name, tableInfo.Name)
 			cp, err := rc.checkpointsDB.Get(ctx, tableName)
-			if cp.Status <= CheckpointStatusMaxInvalid {
-				return errors.Errorf("Checkpoint for %s has invalid status: %d", tableName, cp.Status)
-			}
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if cp.Status <= CheckpointStatusMaxInvalid {
+				return errors.Errorf("Checkpoint for %s has invalid status: %d", tableName, cp.Status)
 			}
 			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp)
 			if err != nil {
@@ -1259,6 +1259,10 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 	task := t.logger.Begin(zap.InfoLevel, "load engines and files")
 	chunks, err := mydump.MakeTableRegions(t.tableMeta, t.tableInfo.Columns, cfg.Mydumper.BatchSize, cfg.Mydumper.BatchImportRatio, cfg.App.TableConcurrency)
 	if err == nil {
+		timestamp := time.Now().Unix()
+		failpoint.Inject("PopulateChunkTimestamp", func(v failpoint.Value) {
+			timestamp = int64(v.(int))
+		})
 		for _, chunk := range chunks {
 			engine, found := cp.Engines[chunk.EngineID]
 			if !found {
@@ -1274,6 +1278,7 @@ func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) e
 				},
 				ColumnPermutation: nil,
 				Chunk:             chunk.Chunk,
+				Timestamp:         timestamp,
 			})
 		}
 
@@ -1696,7 +1701,7 @@ func (cr *chunkRestore) restore(
 	rc *RestoreController,
 ) error {
 	// Create the encoder.
-	kvEncoder := rc.backend.NewEncoder(t.encTable, rc.cfg.TiDB.SQLMode)
+	kvEncoder := rc.backend.NewEncoder(t.encTable, rc.cfg.TiDB.SQLMode, cr.chunk.Timestamp)
 	kvsCh := make(chan deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
 

@@ -248,7 +248,7 @@ func (be *tidbBackend) ShouldPostProcess() bool {
 	return false
 }
 
-func (be *tidbBackend) NewEncoder(_ table.Table, mode mysql.SQLMode) Encoder {
+func (be *tidbBackend) NewEncoder(_ table.Table, mode mysql.SQLMode, timestamp int64) Encoder {
 	return tidbEncoder{mode: mode}
 }
 

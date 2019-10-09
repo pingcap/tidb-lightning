@@ -30,7 +30,7 @@ func TestKV(t *testing.T) {
 }
 
 func (s *kvSuite) TestSetOption(c *C) {
-	session := newSession(mysql.ModeNone)
+	session := newSession(mysql.ModeNone, 1234567890)
 	txn, err := session.Txn(true)
 	c.Assert(err, IsNil)
 	txn.SetOption(tidbkv.Priority, tidbkv.PriorityHigh)
