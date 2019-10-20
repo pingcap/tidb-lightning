@@ -4,7 +4,9 @@ file = "/tmp/lightning_test_result/lightning-error-summary.log"
 level = "info"
 
 [checkpoint]
-enable = false
+enable = true
+schema = "tidb_lightning_checkpoint_error_summary"
+driver = "mysql"
 
 [tikv-importer]
 addr = "127.0.0.1:8808"
