@@ -233,7 +233,10 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr 
 	err := sql.Exec(ctx, "alter table auto_increment", query)
 	task.End(zap.ErrorLevel, err)
 	if err != nil {
-		task.Error("alter table auto_increment failed, please perform the query manually", zap.String("query", query))
+		task.Error(
+			"alter table auto_increment failed, please perform the query manually (this is needed no matter the table has an auto-increment column or not)",
+			zap.String("query", query),
+		)
 	}
 	return errors.Annotatef(err, "%s", query)
 }

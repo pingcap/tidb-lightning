@@ -575,6 +575,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		}()
 	}
 
+	// first collect all tables where the checkpoint is invalid
+	allInvalidCheckpoints := make(map[string]CheckpointStatus)
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo, ok := rc.dbInfos[dbMeta.Name]
 		if !ok {
@@ -592,7 +594,54 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				return errors.Trace(err)
 			}
 			if cp.Status <= CheckpointStatusMaxInvalid {
-				return errors.Errorf("Checkpoint for %s has invalid status: %d", tableName, cp.Status)
+				allInvalidCheckpoints[tableName] = cp.Status
+			}
+		}
+	}
+
+	if len(allInvalidCheckpoints) != 0 {
+		logger := log.L()
+		logger.Error(
+			"TiDB Lightning has failed last time. To prevent data loss, this run will stop now. Please resolve errors first",
+			zap.Int("count", len(allInvalidCheckpoints)),
+		)
+
+		for tableName, status := range allInvalidCheckpoints {
+			failedStep := status * 10
+			var action strings.Builder
+			action.WriteString("./tidb-lightning-ctl --checkpoint-errors-")
+			switch failedStep {
+			case CheckpointStatusAlteredAutoInc, CheckpointStatusAnalyzed:
+				action.WriteString("ignore")
+			default:
+				action.WriteString("destroy")
+			}
+			action.WriteString("='")
+			action.WriteString(tableName)
+			action.WriteString("' --config=...")
+
+			logger.Info("-",
+				zap.String("table", tableName),
+				zap.Uint8("status", uint8(status)),
+				zap.String("failedStep", failedStep.MetricName()),
+				zap.Stringer("recommendedAction", &action),
+			)
+		}
+
+		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-errors-destroy=all --config=...` to start from scratch")
+		logger.Info("For details of this failure, read the log file from the PREVIOUS run")
+
+		return errors.New("TiDB Lightning has failed last time; please resolve these errors first")
+	}
+
+	for _, dbMeta := range rc.dbMetas {
+		dbInfo := rc.dbInfos[dbMeta.Name]
+		for _, tableMeta := range dbMeta.Tables {
+			tableInfo := dbInfo.Tables[tableMeta.Name]
+			tableName := common.UniqueTable(dbInfo.Name, tableInfo.Name)
+			cp, err := rc.checkpointsDB.Get(ctx, tableName)
+			if err != nil {
+				return errors.Trace(err)
 			}
 			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp)
 			if err != nil {

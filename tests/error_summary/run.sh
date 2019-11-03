@@ -16,6 +16,7 @@
 set -eux
 
 # Check that error summary are written at the bottom of import.
+run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_error_summary;'
 
 # The easiest way to induce error is to prepopulate the target table with conflicting content.
 run_sql 'CREATE DATABASE IF NOT EXISTS error_summary;'
@@ -44,3 +45,20 @@ grep -Fq '["tables failed to be imported"] [count=2]' "$TEST_DIR/lightning-error
 grep -Fq '[-] [table=`error_summary`.`a`] [status=checksum] [error="checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
 grep -Fq '[-] [table=`error_summary`.`c`] [status=checksum] [error="checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
 ! grep -Fq '[-] [table=`error_summary`.`b`] [status=checksum] [error="checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
+
+# Now check the error log when the checkpoint is not cleaned.
+
+set +e
+run_lightning
+ERRORCODE=$?
+set -e
+
+[ "$ERRORCODE" -ne 0 ]
+
+tail -20 "$TEST_DIR/lightning-error-summary.log" > "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq '["TiDB Lightning has failed last time. To prevent data loss, this run will stop now. Please resolve errors first"] [count=2]' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq '[-] [table=`error_summary`.`a`] [status=18] [failedStep=checksum] [recommendedAction="./tidb-lightning-ctl --checkpoint-errors-destroy='"'"'`error_summary`.`a`'"'"' --config=..."]' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq '[-] [table=`error_summary`.`c`] [status=18] [failedStep=checksum] [recommendedAction="./tidb-lightning-ctl --checkpoint-errors-destroy='"'"'`error_summary`.`c`'"'"' --config=..."]' "$TEST_DIR/lightning-error-summary.tail"
+! grep -Fq '[-] [table=`error_summary`.`b`] [status=18] [failedStep=checksum]' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq '["You may also run `./tidb-lightning-ctl --checkpoint-errors-destroy=all --config=...` to start from scratch"]' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq '["For details of this failure, read the log file from the PREVIOUS run"]' "$TEST_DIR/lightning-error-summary.tail"

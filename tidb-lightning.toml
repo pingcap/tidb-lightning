@@ -65,6 +65,11 @@ driver = "file"
 backend = "importer"
 # Address of tikv-importer when the backend is 'importer'
 addr = "127.0.0.1:8287"
+# What to do on duplicated record (unique key conflict) when the backend is 'tidb'. Possible values are:
+#  - replace: replace the old record by the new record (i.e. insert rows using "REPLACE INTO")
+#  - ignore: keep the old record and ignore the new record (i.e. insert rows using "INSERT IGNORE INTO")
+#  - error: stop Lightning and report an error (i.e. insert rows using "INSERT INTO")
+#on-duplicate = "replace"
 
 [mydumper]
 # block size of file reading
