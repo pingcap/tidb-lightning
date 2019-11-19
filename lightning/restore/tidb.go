@@ -44,7 +44,7 @@ type TiDBManager struct {
 }
 
 func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
-	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw, dsn.StrSQLMode)
+	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw, dsn.StrSQLMode, dsn.MaxAllowedPacket)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

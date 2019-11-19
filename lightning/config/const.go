@@ -23,4 +23,6 @@ const (
 	MinRegionSize int64 = 256 * _M
 
 	BufferSizeScale = 5
+
+	defaultMaxAllowedPacket = 64 * 1024 * 1024
 )
