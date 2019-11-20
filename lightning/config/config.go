@@ -67,7 +67,8 @@ type DBStore struct {
 	PdAddr     string `toml:"pd-addr" json:"pd-addr"`
 	StrSQLMode string `toml:"sql-mode" json:"sql-mode"`
 
-	SQLMode mysql.SQLMode `toml:"-" json:"-"`
+	SQLMode          mysql.SQLMode `toml:"-" json:"-"`
+	MaxAllowedPacket uint64        `toml:"max-allowed-packet" json:"max-allowed-packet"`
 
 	DistSQLScanConcurrency     int `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
 	BuildStatsConcurrency      int `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
@@ -136,9 +137,9 @@ type MydumperRuntime struct {
 }
 
 type TikvImporter struct {
-	Addr         string `toml:"addr" json:"addr"`
-	Backend      string `toml:"backend" json:"backend"`
-	OnDuplicate  string `toml:"on-duplicate" json:"on-duplicate"`
+	Addr        string `toml:"addr" json:"addr"`
+	Backend     string `toml:"backend" json:"backend"`
+	OnDuplicate string `toml:"on-duplicate" json:"on-duplicate"`
 }
 
 type Checkpoint struct {
@@ -184,6 +185,7 @@ func NewConfig() *Config {
 			User:                       "root",
 			StatusPort:                 10080,
 			StrSQLMode:                 mysql.DefaultSQLMode,
+			MaxAllowedPacket:           defaultMaxAllowedPacket,
 			BuildStatsConcurrency:      20,
 			DistSQLScanConcurrency:     100,
 			IndexSerialScanConcurrency: 20,
@@ -201,7 +203,7 @@ func NewConfig() *Config {
 			},
 		},
 		TikvImporter: TikvImporter{
-			Backend: BackendImporter,
+			Backend:     BackendImporter,
 			OnDuplicate: ReplaceOnDup,
 		},
 		PostRestore: PostRestore{
@@ -419,7 +421,7 @@ func (cfg *Config) Adjust() error {
 	if len(cfg.Checkpoint.DSN) == 0 {
 		switch cfg.Checkpoint.Driver {
 		case CheckpointDriverMySQL:
-			cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw, mysql.DefaultSQLMode)
+			cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw, mysql.DefaultSQLMode, defaultMaxAllowedPacket)
 		case CheckpointDriverFile:
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}

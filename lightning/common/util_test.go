@@ -121,8 +121,8 @@ func (s *utilSuite) TestIsRetryableError(c *C) {
 }
 
 func (s *utilSuite) TestToDSN(c *C) {
-	dsn := common.ToDSN("127.0.0.1", 4000, "root", "123456", "strict")
-	c.Assert(dsn, Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8&sql_mode='strict'")
+	dsn := common.ToDSN("127.0.0.1", 4000, "root", "123456", "strict", 1234)
+	c.Assert(dsn, Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8&sql_mode='strict'&maxAllowedPacket=1234")
 }
 
 func (s *utilSuite) TestIsContextCanceledError(c *C) {
