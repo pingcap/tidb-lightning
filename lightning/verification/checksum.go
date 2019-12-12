@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"hash/crc64"
 
-	kvec "github.com/pingcap/tidb/util/kvencoder"
+	kvec "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -45,9 +45,9 @@ func MakeKVChecksum(bytes uint64, kvs uint64, checksum uint64) KVChecksum {
 
 func (c *KVChecksum) UpdateOne(kv kvec.KvPair) {
 	sum := crc64.Update(0, ecmaTable, kv.Key)
-	sum = crc64.Update(sum, ecmaTable, kv.Val)
+	sum = crc64.Update(sum, ecmaTable, kv.Value)
 
-	c.bytes += uint64(len(kv.Key) + len(kv.Val))
+	c.bytes += uint64(len(kv.Key) + len(kv.Value))
 	c.kvs++
 	c.checksum ^= sum
 }
@@ -62,10 +62,10 @@ func (c *KVChecksum) Update(kvs []kvec.KvPair) {
 
 	for _, pair := range kvs {
 		sum = crc64.Update(0, ecmaTable, pair.Key)
-		sum = crc64.Update(sum, ecmaTable, pair.Val)
+		sum = crc64.Update(sum, ecmaTable, pair.Value)
 		checksum ^= sum
 		kvNum++
-		bytes += (len(pair.Key) + len(pair.Val))
+		bytes += (len(pair.Key) + len(pair.Value))
 	}
 
 	c.bytes += uint64(bytes)

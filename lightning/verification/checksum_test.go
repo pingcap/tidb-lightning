@@ -20,7 +20,7 @@ import (
 	. "github.com/pingcap/check"
 
 	"github.com/pingcap/tidb-lightning/lightning/verification"
-	kvec "github.com/pingcap/tidb/util/kvencoder"
+	kvec "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 type testKVChcksumSuite struct{}
@@ -57,7 +57,7 @@ func (s *testKVChcksumSuite) TestChcksum(c *C) {
 		},
 		{
 			Key: []byte("Introduction"),
-			Val: []byte("Inspired by Google Spanner/F1, PingCAP develops TiDB."),
+			Value: []byte("Inspired by Google Spanner/F1, PingCAP develops TiDB."),
 		},
 	}
 
@@ -65,7 +65,7 @@ func (s *testKVChcksumSuite) TestChcksum(c *C) {
 
 	var kvBytes uint64
 	for _, kv := range kvs {
-		kvBytes += uint64(len(kv.Key) + len(kv.Val))
+		kvBytes += uint64(len(kv.Key) + len(kv.Value))
 	}
 	c.Assert(checksum.SumSize(), Equals, kvBytes)
 	c.Assert(checksum.SumKVS(), Equals, uint64(len(kvs)))

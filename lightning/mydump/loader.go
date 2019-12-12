@@ -88,10 +88,15 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 		}
 	}
 
+	flt, err := filter.New(false, cfg.BWList)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	mdl := &MDLoader{
 		dir:      cfg.Mydumper.SourceDir,
 		noSchema: cfg.Mydumper.NoSchema,
-		filter:   filter.New(false, cfg.BWList),
+		filter:   flt,
 		router:   r,
 		charSet:  cfg.Mydumper.CharacterSet,
 	}

@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	kvec "github.com/pingcap/tidb/util/kvencoder"
+	kvec "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // transaction is a trimmed down Transaction type which only supports adding a
@@ -34,7 +34,7 @@ type transaction struct {
 func (t *transaction) Set(k kv.Key, v []byte) error {
 	t.kvPairs = append(t.kvPairs, kvec.KvPair{
 		Key: k.Clone(),
-		Val: append([]byte{}, v...),
+		Value: append([]byte{}, v...),
 	})
 	return nil
 }
@@ -59,7 +59,6 @@ type session struct {
 
 func newSession(sqlMode mysql.SQLMode, timestamp int64) *session {
 	vars := variable.NewSessionVars()
-	vars.LightningMode = true
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()

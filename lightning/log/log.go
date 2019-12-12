@@ -81,7 +81,6 @@ func InitLogger(cfg *Config, tidbLoglevel string) error {
 		Level: cfg.Level,
 		File: pclog.FileLogConfig{
 			Filename:   cfg.File,
-			LogRotate:  true,
 			MaxSize:    cfg.FileMaxSize,
 			MaxDays:    cfg.FileMaxDays,
 			MaxBackups: cfg.FileMaxBackups,

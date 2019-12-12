@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	kvenc "github.com/pingcap/tidb/util/kvencoder"
+	kvenc "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -97,7 +97,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
 		{
 			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			Val: []uint8{0x8, 0x2, 0x8, 0x2},
+			Value: []uint8{0x8, 0x2, 0x8, 0x2},
 		},
 	}))
 
@@ -114,7 +114,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
 		{
 			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
-			Val: []uint8{0x8, 0x2, 0x8, 0xfe, 0x1},
+			Value: []uint8{0x8, 0x2, 0x8, 0xfe, 0x1},
 		},
 	}))
 }
@@ -144,7 +144,7 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
 		{
 			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
-			Val: []uint8{0x8, 0x2, 0x9, 0x80, 0x80, 0x80, 0xf0, 0xfd, 0x8e, 0xf7, 0xc0, 0x19},
+			Value: []uint8{0x8, 0x2, 0x9, 0x80, 0x80, 0x80, 0xf0, 0xfd, 0x8e, 0xf7, 0xc0, 0x19},
 		},
 	}))
 }
@@ -153,19 +153,19 @@ func (s *kvSuite) TestSplitIntoChunks(c *C) {
 	pairs := []kvenc.KvPair{
 		{
 			Key: []byte{1, 2, 3},
-			Val: []byte{4, 5, 6},
+			Value: []byte{4, 5, 6},
 		},
 		{
 			Key: []byte{7, 8},
-			Val: []byte{9, 0},
+			Value: []byte{9, 0},
 		},
 		{
 			Key: []byte{1, 2, 3, 4},
-			Val: []byte{5, 6, 7, 8},
+			Value: []byte{5, 6, 7, 8},
 		},
 		{
 			Key: []byte{9, 0},
-			Val: []byte{1, 2},
+			Value: []byte{1, 2},
 		},
 	}
 
@@ -200,15 +200,15 @@ func (s *kvSuite) TestClassifyAndAppend(c *C) {
 	kvs := MakeRowFromKvPairs([]kvenc.KvPair{
 		{
 			Key: []byte("txxxxxxxx_ryyyyyyyy"),
-			Val: []byte("value1"),
+			Value: []byte("value1"),
 		},
 		{
 			Key: []byte("txxxxxxxx_rwwwwwwww"),
-			Val: []byte("value2"),
+			Value: []byte("value2"),
 		},
 		{
 			Key: []byte("txxxxxxxx_izzzzzzzz"),
-			Val: []byte("index1"),
+			Value: []byte("index1"),
 		},
 	})
 
@@ -222,17 +222,17 @@ func (s *kvSuite) TestClassifyAndAppend(c *C) {
 	c.Assert(data, DeepEquals, MakeRowsFromKvPairs([]kvenc.KvPair{
 		{
 			Key: []byte("txxxxxxxx_ryyyyyyyy"),
-			Val: []byte("value1"),
+			Value: []byte("value1"),
 		},
 		{
 			Key: []byte("txxxxxxxx_rwwwwwwww"),
-			Val: []byte("value2"),
+			Value: []byte("value2"),
 		},
 	}))
 	c.Assert(indices, DeepEquals, MakeRowsFromKvPairs([]kvenc.KvPair{
 		{
 			Key: []byte("txxxxxxxx_izzzzzzzz"),
-			Val: []byte("index1"),
+			Value: []byte("index1"),
 		},
 	}))
 	c.Assert(dataChecksum.SumKVS(), Equals, uint64(2))

@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	kvec "github.com/pingcap/tidb/util/kvencoder"
+	kvec "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -248,7 +248,7 @@ func (totalKVs kvPairs) SplitIntoChunks(splitSize int) []Rows {
 	cumSize := 0
 
 	for j, pair := range totalKVs {
-		size := len(pair.Key) + len(pair.Val)
+		size := len(pair.Key) + len(pair.Value)
 		if i < j && cumSize+size > splitSize {
 			res = append(res, kvPairs(totalKVs[i:j]))
 			i = j

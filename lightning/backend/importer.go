@@ -193,7 +193,7 @@ func (importer *importer) WriteRows(
 		mutations[i] = &kv.Mutation{
 			Op:    kv.Mutation_Put,
 			Key:   pair.Key,
-			Value: pair.Val,
+			Value: pair.Value,
 		}
 	}
 
