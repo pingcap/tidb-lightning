@@ -17,13 +17,13 @@ import (
 	"errors"
 
 	. "github.com/pingcap/check"
+	kvenc "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	kvenc "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -59,7 +59,7 @@ type mockTable struct {
 	table.Table
 }
 
-func (mockTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+func (mockTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	return -1, errors.New("mock error")
 }
 
@@ -86,7 +86,7 @@ func (s *kvSuite) TestEncode(c *C) {
 		types.NewStringDatum("invalid-pk"),
 	}
 	pairs, err = strictMode.Encode(logger, rowsWithPk, 2, []int{0, 1})
-	c.Assert(err, ErrorMatches, "failed to cast `invalid-pk` as bigint\\(20\\) for column `_tidb_rowid`.*Data Truncated")
+	c.Assert(err, ErrorMatches, "failed to cast `invalid-pk` as bigint\\(20\\) for column `_tidb_rowid` \\(#2\\):.*Truncated incorrect FLOAT value: 'invalid-pk'")
 
 	rowsWithPk2 := []types.Datum{
 		types.NewIntDatum(1),
@@ -96,7 +96,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
 		{
-			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 			Value: []uint8{0x8, 0x2, 0x8, 0x2},
 		},
 	}))
@@ -113,7 +113,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
 		{
-			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 			Value: []uint8{0x8, 0x2, 0x8, 0xfe, 0x1},
 		},
 	}))
@@ -143,7 +143,7 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
 		{
-			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
+			Key:   []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
 			Value: []uint8{0x8, 0x2, 0x9, 0x80, 0x80, 0x80, 0xf0, 0xfd, 0x8e, 0xf7, 0xc0, 0x19},
 		},
 	}))
@@ -152,19 +152,19 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 func (s *kvSuite) TestSplitIntoChunks(c *C) {
 	pairs := []kvenc.KvPair{
 		{
-			Key: []byte{1, 2, 3},
+			Key:   []byte{1, 2, 3},
 			Value: []byte{4, 5, 6},
 		},
 		{
-			Key: []byte{7, 8},
+			Key:   []byte{7, 8},
 			Value: []byte{9, 0},
 		},
 		{
-			Key: []byte{1, 2, 3, 4},
+			Key:   []byte{1, 2, 3, 4},
 			Value: []byte{5, 6, 7, 8},
 		},
 		{
-			Key: []byte{9, 0},
+			Key:   []byte{9, 0},
 			Value: []byte{1, 2},
 		},
 	}
@@ -199,15 +199,15 @@ func (s *kvSuite) TestSplitIntoChunks(c *C) {
 func (s *kvSuite) TestClassifyAndAppend(c *C) {
 	kvs := MakeRowFromKvPairs([]kvenc.KvPair{
 		{
-			Key: []byte("txxxxxxxx_ryyyyyyyy"),
+			Key:   []byte("txxxxxxxx_ryyyyyyyy"),
 			Value: []byte("value1"),
 		},
 		{
-			Key: []byte("txxxxxxxx_rwwwwwwww"),
+			Key:   []byte("txxxxxxxx_rwwwwwwww"),
 			Value: []byte("value2"),
 		},
 		{
-			Key: []byte("txxxxxxxx_izzzzzzzz"),
+			Key:   []byte("txxxxxxxx_izzzzzzzz"),
 			Value: []byte("index1"),
 		},
 	})
@@ -221,17 +221,17 @@ func (s *kvSuite) TestClassifyAndAppend(c *C) {
 
 	c.Assert(data, DeepEquals, MakeRowsFromKvPairs([]kvenc.KvPair{
 		{
-			Key: []byte("txxxxxxxx_ryyyyyyyy"),
+			Key:   []byte("txxxxxxxx_ryyyyyyyy"),
 			Value: []byte("value1"),
 		},
 		{
-			Key: []byte("txxxxxxxx_rwwwwwwww"),
+			Key:   []byte("txxxxxxxx_rwwwwwwww"),
 			Value: []byte("value2"),
 		},
 	}))
 	c.Assert(indices, DeepEquals, MakeRowsFromKvPairs([]kvenc.KvPair{
 		{
-			Key: []byte("txxxxxxxx_izzzzzzzz"),
+			Key:   []byte("txxxxxxxx_izzzzzzzz"),
 			Value: []byte("index1"),
 		},
 	}))

@@ -15,12 +15,12 @@ package backend
 
 import (
 	"github.com/pingcap/errors"
+	kvec "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	kvec "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 

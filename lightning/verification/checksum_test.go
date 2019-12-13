@@ -19,8 +19,8 @@ import (
 
 	. "github.com/pingcap/check"
 
-	"github.com/pingcap/tidb-lightning/lightning/verification"
 	kvec "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
 
 type testKVChcksumSuite struct{}
@@ -53,10 +53,10 @@ func (s *testKVChcksumSuite) TestChcksum(c *C) {
 	kvs := []kvec.KvPair{
 		{
 			Key: []byte("Cop"),
-			Val: []byte("PingCAP"),
+			Value: []byte("PingCAP"),
 		},
 		{
-			Key: []byte("Introduction"),
+			Key:   []byte("Introduction"),
 			Value: []byte("Inspired by Google Spanner/F1, PingCAP develops TiDB."),
 		},
 	}

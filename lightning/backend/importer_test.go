@@ -41,11 +41,11 @@ func (s *importerSuite) setUpTest(c *C) {
 	s.engineUUID = uuid.FromStringOrNil("7e3f3a3c-67ce-506d-af34-417ec138fbcb").Bytes()
 	s.kvPairs = kv.MakeRowsFromKvPairs([]kvenc.KvPair{
 		{
-			Key: []byte("k1"),
+			Key:   []byte("k1"),
 			Value: []byte("v1"),
 		},
 		{
-			Key: []byte("k2"),
+			Key:   []byte("k2"),
 			Value: []byte("v2"),
 		},
 	})

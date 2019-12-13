@@ -16,11 +16,11 @@ package backend
 import (
 	"strconv"
 
+	kvec "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	kvec "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // transaction is a trimmed down Transaction type which only supports adding a
@@ -33,7 +33,7 @@ type transaction struct {
 // Set implements the kv.Transaction interface
 func (t *transaction) Set(k kv.Key, v []byte) error {
 	t.kvPairs = append(t.kvPairs, kvec.KvPair{
-		Key: k.Clone(),
+		Key:   k.Clone(),
 		Value: append([]byte{}, v...),
 	})
 	return nil
@@ -88,4 +88,7 @@ func (se *session) Txn(active bool) (kv.Transaction, error) {
 // GetSessionVars implements the sessionctx.Context interface
 func (se *session) GetSessionVars() *variable.SessionVars {
 	return se.vars
+}
+
+func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 }

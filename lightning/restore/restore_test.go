@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
+	kvenc "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -44,7 +45,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 	"github.com/pingcap/tidb-lightning/mock"
 	"github.com/pingcap/tidb/ddl"
-	kvenc "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/satori/go.uuid"
 )
@@ -681,11 +681,11 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	mockBackend.EXPECT().
 		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]kvenc.KvPair{
 			{
-				Key: []byte("txxxxxxxx_ryyyyyyyy"),
+				Key:   []byte("txxxxxxxx_ryyyyyyyy"),
 				Value: []byte("value1"),
 			},
 			{
-				Key: []byte("txxxxxxxx_rwwwwwwww"),
+				Key:   []byte("txxxxxxxx_rwwwwwwww"),
 				Value: []byte("value2"),
 			},
 		})).
@@ -698,7 +698,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	mockBackend.EXPECT().
 		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]kvenc.KvPair{
 			{
-				Key: []byte("txxxxxxxx_izzzzzzzz"),
+				Key:   []byte("txxxxxxxx_izzzzzzzz"),
 				Value: []byte("index1"),
 			},
 		})).
@@ -711,15 +711,15 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 		kvsCh <- deliveredKVs{
 			kvs: kv.MakeRowFromKvPairs([]kvenc.KvPair{
 				{
-					Key: []byte("txxxxxxxx_ryyyyyyyy"),
+					Key:   []byte("txxxxxxxx_ryyyyyyyy"),
 					Value: []byte("value1"),
 				},
 				{
-					Key: []byte("txxxxxxxx_rwwwwwwww"),
+					Key:   []byte("txxxxxxxx_rwwwwwwww"),
 					Value: []byte("value2"),
 				},
 				{
-					Key: []byte("txxxxxxxx_izzzzzzzz"),
+					Key:   []byte("txxxxxxxx_izzzzzzzz"),
 					Value: []byte("index1"),
 				},
 			}),
