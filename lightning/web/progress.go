@@ -184,3 +184,10 @@ func MarshalTaskProgress() ([]byte, error) {
 func MarshalTableCheckpoints(tableName string) ([]byte, error) {
 	return currentProgress.checkpoints.marshal(tableName)
 }
+
+func DisplayCheckPointStatus() bool {
+	if currentProgress.Tables == nil {
+		return true
+	}
+	return false
+}
