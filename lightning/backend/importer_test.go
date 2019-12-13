@@ -7,7 +7,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
-	kvenc "github.com/pingcap/tidb/util/kvencoder"
+	kvenc "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	uuid "github.com/satori/go.uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
@@ -42,11 +42,11 @@ func (s *importerSuite) setUpTest(c *C) {
 	s.kvPairs = kv.MakeRowsFromKvPairs([]kvenc.KvPair{
 		{
 			Key: []byte("k1"),
-			Val: []byte("v1"),
+			Value: []byte("v1"),
 		},
 		{
 			Key: []byte("k2"),
-			Val: []byte("v2"),
+			Value: []byte("v2"),
 		},
 	})
 

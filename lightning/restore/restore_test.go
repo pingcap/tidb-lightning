@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 	"github.com/pingcap/tidb-lightning/mock"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/util/kvencoder"
+	kvenc "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/satori/go.uuid"
 )
@@ -682,11 +682,11 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]kvenc.KvPair{
 			{
 				Key: []byte("txxxxxxxx_ryyyyyyyy"),
-				Val: []byte("value1"),
+				Value: []byte("value1"),
 			},
 			{
 				Key: []byte("txxxxxxxx_rwwwwwwww"),
-				Val: []byte("value2"),
+				Value: []byte("value2"),
 			},
 		})).
 		Return(nil)
@@ -699,7 +699,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]kvenc.KvPair{
 			{
 				Key: []byte("txxxxxxxx_izzzzzzzz"),
-				Val: []byte("index1"),
+				Value: []byte("index1"),
 			},
 		})).
 		Return(nil)
@@ -712,15 +712,15 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 			kvs: kv.MakeRowFromKvPairs([]kvenc.KvPair{
 				{
 					Key: []byte("txxxxxxxx_ryyyyyyyy"),
-					Val: []byte("value1"),
+					Value: []byte("value1"),
 				},
 				{
 					Key: []byte("txxxxxxxx_rwwwwwwww"),
-					Val: []byte("value2"),
+					Value: []byte("value2"),
 				},
 				{
 					Key: []byte("txxxxxxxx_izzzzzzzz"),
-					Val: []byte("index1"),
+					Value: []byte("index1"),
 				},
 			}),
 			columns: mockCols,
