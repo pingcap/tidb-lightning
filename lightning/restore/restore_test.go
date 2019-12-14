@@ -848,6 +848,7 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 		cfg:      s.cfg,
 		saveCpCh: saveCpCh,
 		backend:  importer,
+		pauser:   DeliverPauser,
 	})
 	c.Assert(err, IsNil)
 	c.Assert(saveCpCh, HasLen, 2)
