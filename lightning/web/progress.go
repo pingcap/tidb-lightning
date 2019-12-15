@@ -99,7 +99,7 @@ type tableInfo struct {
 	Message      string     `json:"m,omitempty"`
 }
 
-type taskProgress struct {
+type TaskProgress struct {
 	mu      sync.RWMutex
 	Tables  map[string]*tableInfo `json:"t"`
 	Status  taskStatus            `json:"s"`
@@ -109,7 +109,7 @@ type taskProgress struct {
 	checkpoints checkpointsMap
 }
 
-var currentProgress = taskProgress{
+var currentProgress = TaskProgress{
 	checkpoints: makeCheckpointsMap(),
 }
 
