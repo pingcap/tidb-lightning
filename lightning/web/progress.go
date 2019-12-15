@@ -87,9 +87,9 @@ func (cpm *checkpointsMap) marshal(key string) ([]byte, error) {
 type taskStatus uint8
 
 const (
-	taskStatusNotStarted taskStatus = 0
-	taskStatusRunning               = 1
-	taskStatusCompleted             = 2
+	TaskStatusNotStarted taskStatus = 0
+	TaskStatusRunning               = 1
+	TaskStatusCompleted             = 2
 )
 
 type tableInfo struct {
@@ -115,7 +115,7 @@ var currentProgress = TaskProgress{
 
 func BroadcastStartTask() {
 	currentProgress.mu.Lock()
-	currentProgress.Status = taskStatusRunning
+	currentProgress.Status = TaskStatusRunning
 	currentProgress.mu.Unlock()
 
 	currentProgress.checkpoints.clear()
@@ -125,7 +125,7 @@ func BroadcastEndTask(err error) {
 	errString := errors.ErrorStack(err)
 
 	currentProgress.mu.Lock()
-	currentProgress.Status = taskStatusCompleted
+	currentProgress.Status = TaskStatusCompleted
 	currentProgress.Message = errString
 	currentProgress.mu.Unlock()
 }
@@ -147,7 +147,7 @@ func BroadcastInitProgress(databases []*mydump.MDDatabaseMeta) {
 
 func BroadcastTableCheckpoint(tableName string, cp *checkpoints.TableCheckpoint) {
 	currentProgress.mu.Lock()
-	currentProgress.Tables[tableName].Status = taskStatusRunning
+	currentProgress.Tables[tableName].Status = TaskStatusRunning
 	currentProgress.mu.Unlock()
 
 	// create a deep copy to avoid false sharing
@@ -169,7 +169,7 @@ func BroadcastError(tableName string, err error) {
 
 	currentProgress.mu.Lock()
 	if tbl := currentProgress.Tables[tableName]; tbl != nil {
-		tbl.Status = taskStatusCompleted
+		tbl.Status = TaskStatusCompleted
 		tbl.Message = errString
 	}
 	currentProgress.mu.Unlock()
