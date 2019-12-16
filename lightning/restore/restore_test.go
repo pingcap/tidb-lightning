@@ -747,7 +747,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	deliverCompleteCh := make(chan deliverResult)
 	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567895)
 
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh)
+	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, DeliverPauser)
 	c.Assert(err, IsNil)
 	c.Assert(kvsCh, HasLen, 2)
 
@@ -767,7 +767,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567896)
 
 	go cancel()
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh)
+	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, DeliverPauser)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 	c.Assert(kvsCh, HasLen, 0)
 }
@@ -781,7 +781,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	// close the chunk so reading it will result in the "file already closed" error.
 	s.cr.parser.Close()
 
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh)
+	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, DeliverPauser)
 	c.Assert(err, ErrorMatches, `in file .*/db.table.2.sql:0 at offset 0:.*file already closed`)
 	c.Assert(kvsCh, HasLen, 0)
 }
@@ -797,7 +797,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 			err: errors.New("fake deliver error"),
 		}
 	}()
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh)
+	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, DeliverPauser)
 	c.Assert(err, ErrorMatches, "fake deliver error")
 	c.Assert(kvsCh, HasLen, 0)
 }
@@ -848,6 +848,7 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 		cfg:      s.cfg,
 		saveCpCh: saveCpCh,
 		backend:  importer,
+		pauser:   DeliverPauser,
 	})
 	c.Assert(err, IsNil)
 	c.Assert(saveCpCh, HasLen, 2)
