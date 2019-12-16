@@ -222,6 +222,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.TiDB.Host = global.TiDB.Host
 	cfg.TiDB.Port = global.TiDB.Port
 	cfg.TiDB.User = global.TiDB.User
+	cfg.TiDB.Psw  = global.TiDB.Psw
 	cfg.TiDB.StatusPort = global.TiDB.StatusPort
 	cfg.TiDB.PdAddr = global.TiDB.PdAddr
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
