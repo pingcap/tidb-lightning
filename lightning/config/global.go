@@ -39,6 +39,7 @@ type GlobalTiDB struct {
 	Host       string `toml:"host" json:"host"`
 	Port       int    `toml:"port" json:"port"`
 	User       string `toml:"user" json:"user"`
+	Psw        string `toml:"password" json:"-"`
 	StatusPort int    `toml:"status-port" json:"status-port"`
 	PdAddr     string `toml:"pd-addr" json:"pd-addr"`
 	LogLevel   string `toml:"log-level" json:"log-level"`
@@ -111,6 +112,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	tidbHost := fs.String("tidb-host", "", "TiDB server host")
 	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
 	tidbUser := fs.String("tidb-user", "", "TiDB user name to connect")
+	tidbPsw  := fs.String("tidb-password", "", "TiDB password to connect")
 	tidbStatusPort := fs.Int("tidb-status", 0, "TiDB server status port (default 10080)")
 	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
 	dataSrcPath := fs.String("d", "", "Directory of the dump to import")
@@ -160,6 +162,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if *tidbUser != "" {
 		cfg.TiDB.User = *tidbUser
+	}
+	if *tidbPsw != "" {
+		cfg.TiDB.Psw = *tidbPsw
 	}
 	if *pdAddr != "" {
 		cfg.TiDB.PdAddr = *pdAddr
