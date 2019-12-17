@@ -369,7 +369,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 		"-tidb-host", "172.16.30.11",
 		"-tidb-port", "4001",
 		"-tidb-user", "guest",
-		"-tidb-pwd", "12345",
+		"-tidb-password", "12345",
 		"-pd-urls", "172.16.30.11:2379,172.16.30.12:2379",
 		"-d", "/path/to/import",
 		"-importer", "172.16.30.11:23008",

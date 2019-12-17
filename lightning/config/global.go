@@ -112,7 +112,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	tidbHost := fs.String("tidb-host", "", "TiDB server host")
 	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
 	tidbUser := fs.String("tidb-user", "", "TiDB user name to connect")
-	tidbPsw  := fs.String("tidb-pwd", "", "TiDB password to connect")
+	tidbPsw  := fs.String("tidb-password", "", "TiDB password to connect")
 	tidbStatusPort := fs.Int("tidb-status", 0, "TiDB server status port (default 10080)")
 	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
 	dataSrcPath := fs.String("d", "", "Directory of the dump to import")
