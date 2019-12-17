@@ -137,6 +137,7 @@ type RestoreController struct {
 	indexWorkers    *worker.Pool
 	regionWorkers   *worker.Pool
 	ioWorkers       *worker.Pool
+	pauser          *common.Pauser
 	backend         kv.Backend
 	tidbMgr         *TiDBManager
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
@@ -153,6 +154,10 @@ type RestoreController struct {
 }
 
 func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
+	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, DeliverPauser)
+}
+
+func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, pauser *common.Pauser) (*RestoreController, error) {
 	cpdb, err := OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -184,6 +189,7 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 		indexWorkers:  worker.NewPool(ctx, cfg.App.IndexConcurrency, "index"),
 		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
+		pauser:        pauser,
 		backend:       backend,
 		tidbMgr:       tidbMgr,
 
@@ -1663,6 +1669,7 @@ func (cr *chunkRestore) encodeLoop(
 	logger log.Logger,
 	kvEncoder kv.Encoder,
 	deliverCompleteCh <-chan deliverResult,
+	pauser *common.Pauser,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
 	send := func(kvs deliveredKVs) error {
 		select {
@@ -1685,7 +1692,7 @@ func (cr *chunkRestore) encodeLoop(
 	initializedColumns := false
 outside:
 	for {
-		if err = DeliverPauser.Wait(ctx); err != nil {
+		if err = pauser.Wait(ctx); err != nil {
 			return
 		}
 
@@ -1775,7 +1782,7 @@ func (cr *chunkRestore) restore(
 		zap.Stringer("path", &cr.chunk.Key),
 	).Begin(zap.InfoLevel, "restore file")
 
-	readTotalDur, encodeTotalDur, err := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh)
+	readTotalDur, encodeTotalDur, err := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc.pauser)
 	if err != nil {
 		return err
 	}
