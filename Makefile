@@ -1,6 +1,6 @@
 ### Makefile for tidb-lightning
 
-LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.ReleaseVersion=$(shell git describe --tags --dirty="-dev")"
+LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.ReleaseVersion=$(shell git describe --tags --match 'v3.1.*' --dirty="-dev")"
 LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.BuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb-lightning/lightning/common.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
