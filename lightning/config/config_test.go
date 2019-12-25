@@ -369,6 +369,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 		"-tidb-host", "172.16.30.11",
 		"-tidb-port", "4001",
 		"-tidb-user", "guest",
+		"-tidb-password", "12345",
 		"-pd-urls", "172.16.30.11:2379,172.16.30.12:2379",
 		"-d", "/path/to/import",
 		"-importer", "172.16.30.11:23008",
@@ -379,6 +380,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	c.Assert(cfg.TiDB.Host, Equals, "172.16.30.11")
 	c.Assert(cfg.TiDB.Port, Equals, 4001)
 	c.Assert(cfg.TiDB.User, Equals, "guest")
+	c.Assert(cfg.TiDB.Psw, Equals, "12345")
 	c.Assert(cfg.TiDB.PdAddr, Equals, "172.16.30.11:2379,172.16.30.12:2379")
 	c.Assert(cfg.Mydumper.SourceDir, Equals, "/path/to/import")
 	c.Assert(cfg.TikvImporter.Addr, Equals, "172.16.30.11:23008")
@@ -391,7 +393,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
 	err = taskCfg.Adjust()
 	c.Assert(err, IsNil)
-	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:@tcp(172.16.30.11:4001)/?charset=utf8&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864")
+	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864")
 
 	result := taskCfg.String()
 	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)
