@@ -356,7 +356,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	c.Assert(cfg, IsNil)
 
 	cfg, err = config.LoadGlobalConfig([]string{"-config", "not-exists"}, nil)
-	c.Assert(err, ErrorMatches, ".*no such file or directory.*")
+	c.Assert(err, ErrorMatches, ".*(no such file or directory|The system cannot find the file specified).*")
 	c.Assert(cfg, IsNil)
 
 	cfg, err = config.LoadGlobalConfig([]string{"--server-mode"}, nil)
