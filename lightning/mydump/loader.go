@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-tools/pkg/filter"
-	"github.com/pingcap/tidb-tools/pkg/table-router"
+	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"go.uber.org/zap"
 )
 
@@ -88,10 +88,15 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 		}
 	}
 
+	f, err := filter.New(false, cfg.BWList)
+	if err != nil {
+		return nil, err
+	}
+
 	mdl := &MDLoader{
 		dir:      cfg.Mydumper.SourceDir,
 		noSchema: cfg.Mydumper.NoSchema,
-		filter:   filter.New(false, cfg.BWList),
+		filter:   f,
 		router:   r,
 		charSet:  cfg.Mydumper.CharacterSet,
 	}
