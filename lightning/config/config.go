@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-tools/pkg/filter"
-	"github.com/pingcap/tidb-tools/pkg/table-router"
+	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"go.uber.org/zap"
 )
@@ -180,6 +180,9 @@ func NewConfig() *Config {
 			IOConcurrency:     5,
 			CheckRequirements: true,
 		},
+		Checkpoint: Checkpoint{
+			Enable: true,
+		},
 		TiDB: DBStore{
 			Host:                       "127.0.0.1",
 			User:                       "root",
@@ -198,8 +201,13 @@ func NewConfig() *Config {
 		Mydumper: MydumperRuntime{
 			ReadBlockSize: ReadBlockSize,
 			CSV: CSVConfig{
-				Separator: ",",
-				Delimiter: `"`,
+				Separator:       ",",
+				Delimiter:       `"`,
+				Header:          true,
+				NotNull:         false,
+				Null:            `\n`,
+				BackslashEscape: true,
+				TrimLastSep:     false,
 			},
 		},
 		TikvImporter: TikvImporter{
@@ -208,6 +216,7 @@ func NewConfig() *Config {
 		},
 		PostRestore: PostRestore{
 			Checksum: true,
+			Analyze:  true,
 		},
 		BWList: &filter.Rules{},
 	}
@@ -222,12 +231,16 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.TiDB.Host = global.TiDB.Host
 	cfg.TiDB.Port = global.TiDB.Port
 	cfg.TiDB.User = global.TiDB.User
-	cfg.TiDB.Psw  = global.TiDB.Psw
+	cfg.TiDB.Psw = global.TiDB.Psw
 	cfg.TiDB.StatusPort = global.TiDB.StatusPort
 	cfg.TiDB.PdAddr = global.TiDB.PdAddr
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
+	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
 	cfg.TikvImporter.Addr = global.TikvImporter.Addr
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
+	cfg.Checkpoint.Enable = global.Checkpoint.Enable
+	cfg.PostRestore.Checksum = global.PostRestore.Checksum
+	cfg.PostRestore.Analyze = global.PostRestore.Analyze
 
 	return nil
 }
