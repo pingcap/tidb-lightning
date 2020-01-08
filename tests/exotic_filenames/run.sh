@@ -13,10 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Confirm the behavior for some exotic filenames
-# Do not enable until https://github.com/pingcap/tidb/pull/8302 is merged.
-
 set -eu
+
+# rebuild the directory and rename the files to use exotic file names.
+# (need to do it at runtime but otherwise git behaves erratically on windows)
+DBPATH="$TEST_DIR/exotic_filename.mydump"
+mkdir -p "$DBPATH"
+cp "tests/$TEST_NAME/data/zwk-schema-create.sql" "$DBPATH/中文庫-schema-create.sql"
+cp "tests/$TEST_NAME/data/zwk.zwb-schema.sql" "$DBPATH/中文庫.中文表-schema.sql"
+cp "tests/$TEST_NAME/data/zwk.zwb.sql" "$DBPATH/中文庫.中文表.sql"
+cp "tests/$TEST_NAME/data/xfn-schema-create.sql" "$DBPATH/"'x`f"n-schema-create.sql'
+cp "tests/$TEST_NAME/data/xfn.etn-schema.sql" "$DBPATH/"'x`f"n.exotic`table``name-schema.sql'
+cp "tests/$TEST_NAME/data/xfn.etn.sql" "$DBPATH/"'x`f"n.exotic`table``name.sql'
 
 run_sql 'DROP DATABASE IF EXISTS `x``f"n`;'
 run_sql 'DROP DATABASE IF EXISTS `中文庫`;'
