@@ -19,16 +19,16 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb-lightning/lightning/config"
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 )
 
 func main() {
@@ -218,21 +218,21 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 		return errors.Trace(err)
 	}
 
-	tablesFileName := path.Join(dumpFolder, "tables.csv")
+	tablesFileName := filepath.Join(dumpFolder, "tables.csv")
 	tablesFile, err := os.Create(tablesFileName)
 	if err != nil {
 		return errors.Annotatef(err, "failed to create %s", tablesFileName)
 	}
 	defer tablesFile.Close()
 
-	enginesFileName := path.Join(dumpFolder, "engines.csv")
+	enginesFileName := filepath.Join(dumpFolder, "engines.csv")
 	enginesFile, err := os.Create(tablesFileName)
 	if err != nil {
 		return errors.Annotatef(err, "failed to create %s", enginesFileName)
 	}
 	defer enginesFile.Close()
 
-	chunksFileName := path.Join(dumpFolder, "chunks.csv")
+	chunksFileName := filepath.Join(dumpFolder, "chunks.csv")
 	chunksFile, err := os.Create(chunksFileName)
 	if err != nil {
 		return errors.Annotatef(err, "failed to create %s", chunksFileName)

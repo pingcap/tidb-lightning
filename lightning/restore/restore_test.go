@@ -21,7 +21,7 @@ import (
 	// "encoding/json"
 	"fmt"
 	"io/ioutil"
-	"path"
+	"path/filepath"
 	"sort"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -44,9 +44,9 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 	"github.com/pingcap/tidb-lightning/mock"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/util/kvencoder"
+	kvenc "github.com/pingcap/tidb/util/kvencoder"
 	tmock "github.com/pingcap/tidb/util/mock"
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 )
 
 var _ = Suite(&restoreSuite{})
@@ -335,7 +335,7 @@ func (s *tableRestoreSuite) SetUpSuite(c *C) {
 	c.Assert(len(fakeDataFilesContent), Equals, 37)
 	fakeDataFiles := make([]string, 0, fakeDataFilesCount)
 	for i := 1; i <= fakeDataFilesCount; i++ {
-		fakeDataPath := path.Join(fakeDataDir, fmt.Sprintf("db.table.%d.sql", i))
+		fakeDataPath := filepath.Join(fakeDataDir, fmt.Sprintf("db.table.%d.sql", i))
 		err = ioutil.WriteFile(fakeDataPath, fakeDataFilesContent, 0644)
 		c.Assert(err, IsNil)
 		fakeDataFiles = append(fakeDataFiles, fakeDataPath)
@@ -345,7 +345,7 @@ func (s *tableRestoreSuite) SetUpSuite(c *C) {
 		DB:         "db",
 		Name:       "table",
 		TotalSize:  222,
-		SchemaFile: path.Join(fakeDataDir, "db.table-schema.sql"),
+		SchemaFile: filepath.Join(fakeDataDir, "db.table-schema.sql"),
 		DataFiles:  fakeDataFiles,
 	}
 }
@@ -782,7 +782,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	s.cr.parser.Close()
 
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, DeliverPauser)
-	c.Assert(err, ErrorMatches, `in file .*/db.table.2.sql:0 at offset 0:.*file already closed`)
+	c.Assert(err, ErrorMatches, `in file .*[/\\]db\.table\.2\.sql:0 at offset 0:.*file already closed`)
 	c.Assert(kvsCh, HasLen, 0)
 }
 

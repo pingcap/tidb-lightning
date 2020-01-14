@@ -16,13 +16,13 @@ package mydump_test
 import (
 	"io/ioutil"
 	"os"
-	"path"
+	"path/filepath"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	md "github.com/pingcap/tidb-lightning/lightning/mydump"
-	"github.com/pingcap/tidb-tools/pkg/table-router"
+	router "github.com/pingcap/tidb-tools/pkg/table-router"
 )
 
 var _ = Suite(&testMydumpLoaderSuite{})
@@ -46,14 +46,14 @@ func (s *testMydumpLoaderSuite) touch(c *C, filename ...string) string {
 	components := make([]string, len(filename)+1)
 	components = append(components, s.cfg.Mydumper.SourceDir)
 	components = append(components, filename...)
-	path := path.Join(components...)
+	path := filepath.Join(components...)
 	err := ioutil.WriteFile(path, nil, 0644)
 	c.Assert(err, IsNil)
 	return path
 }
 
 func (s *testMydumpLoaderSuite) mkdir(c *C, dirname string) {
-	path := path.Join(s.cfg.Mydumper.SourceDir, dirname)
+	path := filepath.Join(s.cfg.Mydumper.SourceDir, dirname)
 	err := os.Mkdir(path, 0755)
 	c.Assert(err, IsNil)
 }
@@ -108,7 +108,7 @@ func (s *testMydumpLoaderSuite) TestDuplicatedDB(c *C) {
 	s.touch(c, "b", "db-schema-create.sql")
 
 	_, err := md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid database schema file, duplicated item - .*/db-schema-create\.sql`)
+	c.Assert(err, ErrorMatches, `invalid database schema file, duplicated item - .*[/\\]db-schema-create\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestTableNoHostDB(c *C) {
@@ -119,13 +119,13 @@ func (s *testMydumpLoaderSuite) TestTableNoHostDB(c *C) {
 	*/
 
 	dir := s.cfg.Mydumper.SourceDir
-	err := ioutil.WriteFile(path.Join(dir, "notdb-schema-create.sql"), nil, 0644)
+	err := ioutil.WriteFile(filepath.Join(dir, "notdb-schema-create.sql"), nil, 0644)
 	c.Assert(err, IsNil)
-	err = ioutil.WriteFile(path.Join(dir, "db.tbl-schema.sql"), nil, 0644)
+	err = ioutil.WriteFile(filepath.Join(dir, "db.tbl-schema.sql"), nil, 0644)
 	c.Assert(err, IsNil)
 
 	_, err = md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid table schema file, cannot find db - .*/db.tbl-schema\.sql`)
+	c.Assert(err, ErrorMatches, `invalid table schema file, cannot find db - .*[/\\]db\.tbl-schema\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDuplicatedTable(c *C) {
@@ -145,7 +145,7 @@ func (s *testMydumpLoaderSuite) TestDuplicatedTable(c *C) {
 	s.touch(c, "b", "db.tbl-schema.sql")
 
 	_, err := md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid table schema file, duplicated item - .*/db.tbl-schema\.sql`)
+	c.Assert(err, ErrorMatches, `invalid table schema file, duplicated item - .*[/\\]db\.tbl-schema\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDataNoHostDB(c *C) {
@@ -159,7 +159,7 @@ func (s *testMydumpLoaderSuite) TestDataNoHostDB(c *C) {
 	s.touch(c, "db.tbl.sql")
 
 	_, err := md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid data file, miss host db - .*/db.tbl\.sql`)
+	c.Assert(err, ErrorMatches, `invalid data file, miss host db - .*[/\\]db\.tbl\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
@@ -173,12 +173,12 @@ func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
 	s.touch(c, "db.tbl.sql")
 
 	_, err := md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid data file, miss host table - .*/db.tbl\.sql`)
+	c.Assert(err, ErrorMatches, `invalid data file, miss host table - .*[/\\]db\.tbl\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
 	dir := s.cfg.Mydumper.SourceDir
-	p := path.Join(dir, "db.tbl.sql")
+	p := filepath.Join(dir, "db.tbl.sql")
 	err := ioutil.WriteFile(p, nil, 0644)
 	c.Assert(err, IsNil)
 

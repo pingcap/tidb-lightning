@@ -7,7 +7,7 @@ level = "warning"
 addr = "127.0.0.1:8808"
 
 [mydumper]
-data-source-dir = "tests/exotic_filenames/data"
+data-source-dir = "/tmp/lightning_test_result/exotic_filename.mydump"
 
 [tidb]
 host = "127.0.0.1"
