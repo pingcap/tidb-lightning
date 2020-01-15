@@ -323,3 +323,73 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 		Queue:   []int64{},
 	})
 }
+
+func (s *lightningServerSuite) TestHTTPAPIOutsideServerMode(c *C) {
+	s.lightning.globalCfg.App.ServerMode = false
+
+	url := "http://" + s.lightning.serverAddr.String() + "/tasks"
+
+	errCh := make(chan error)
+	go func() {
+		errCh <- s.lightning.RunOnce()
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	var curTask struct {
+		Current int64
+		Queue   []int64
+	}
+
+	// `GET /tasks` should work fine.
+	resp, err := http.Get(url)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	err = json.NewDecoder(resp.Body).Decode(&curTask)
+	resp.Body.Close()
+	c.Assert(err, IsNil)
+	c.Assert(curTask.Current, Not(Equals), 0)
+	c.Assert(curTask.Queue, HasLen, 0)
+
+	// `POST /tasks` should return 501
+	resp, err = http.Post(url, "application/toml", strings.NewReader("??????"))
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotImplemented)
+	resp.Body.Close()
+
+	// `GET /tasks/(current)` should work fine.
+	resp, err = http.Get(fmt.Sprintf("%s/%d", url, curTask.Current))
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	resp.Body.Close()
+
+	// `GET /tasks/123456` should return 404
+	resp, err = http.Get(url + "/123456")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+	resp.Body.Close()
+
+	// `PATCH /tasks/(current)/front` should return 501
+	req, err := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/%d/front", url, curTask.Current), nil)
+	c.Assert(err, IsNil)
+	resp, err = http.DefaultClient.Do(req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotImplemented)
+	resp.Body.Close()
+
+	// `DELETE /tasks/123456` should return 404
+	req.Method = http.MethodDelete
+	req.URL.Path = "/tasks/123456"
+	resp, err = http.DefaultClient.Do(req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+	resp.Body.Close()
+
+	// `DELETE /tasks/(current)` should return 200
+	req.URL.Path = fmt.Sprintf("/tasks/%d", curTask.Current)
+	resp, err = http.DefaultClient.Do(req)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+
+	// ... and the task should be canceled now.
+	c.Assert(<-errCh, Equals, context.Canceled)
+}

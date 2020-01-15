@@ -255,13 +255,6 @@ func parseTaskID(req *http.Request) (int64, string, error) {
 func (l *Lightning) handleTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	if l.taskCfgs == nil {
-		// l.taskCfgs is non-nil only if Lightning is started with RunServer().
-		// Without the server mode this pointer is default to be nil.
-		writeJSONError(w, http.StatusNotImplemented, "server-mode not enabled", nil)
-		return
-	}
-
 	switch req.Method {
 	case http.MethodGet:
 		taskID, _, err := parseTaskID(req)
@@ -290,7 +283,9 @@ func (l *Lightning) handleGetTask(w http.ResponseWriter) {
 		QueuedIDs []int64 `json:"queue"`
 	}
 
-	response.QueuedIDs = l.taskCfgs.AllIDs()
+	if l.taskCfgs != nil {
+		response.QueuedIDs = l.taskCfgs.AllIDs()
+	}
 
 	l.cancelLock.Lock()
 	if l.cancel != nil && l.curTask != nil {
@@ -312,7 +307,7 @@ func (l *Lightning) handleGetOneTask(w http.ResponseWriter, req *http.Request, t
 	}
 	l.cancelLock.Unlock()
 
-	if task == nil {
+	if task == nil && l.taskCfgs != nil {
 		task, _ = l.taskCfgs.Get(taskID)
 	}
 
@@ -332,6 +327,13 @@ func (l *Lightning) handleGetOneTask(w http.ResponseWriter, req *http.Request, t
 
 func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+
+	if l.taskCfgs == nil {
+		// l.taskCfgs is non-nil only if Lightning is started with RunServer().
+		// Without the server mode this pointer is default to be nil.
+		writeJSONError(w, http.StatusNotImplemented, "server-mode not enabled", nil)
+		return
+	}
 
 	type taskResponse struct {
 		ID int64 `json:"id"`
@@ -400,6 +402,11 @@ func (l *Lightning) handleDeleteOneTask(w http.ResponseWriter, req *http.Request
 }
 
 func (l *Lightning) handlePatchOneTask(w http.ResponseWriter, req *http.Request) {
+	if l.taskCfgs == nil {
+		writeJSONError(w, http.StatusNotImplemented, "server-mode not enabled", nil)
+		return
+	}
+
 	taskID, verb, err := parseTaskID(req)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid task ID", err)
