@@ -2,7 +2,7 @@ package checkpoints_test
 
 import (
 	"context"
-	"path"
+	"path/filepath"
 	"sort"
 	"testing"
 
@@ -25,7 +25,7 @@ type cpFileSuite struct {
 
 func (s *cpFileSuite) SetUpTest(c *C) {
 	dir := c.MkDir()
-	s.cpdb = checkpoints.NewFileCheckpointsDB(path.Join(dir, "cp.pb"))
+	s.cpdb = checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
 
 	ctx := context.Background()
 	cpdb := s.cpdb

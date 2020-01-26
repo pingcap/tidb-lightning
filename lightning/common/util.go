@@ -265,6 +265,12 @@ func GetJSON(client *http.Client, url string, v interface{}) error {
 }
 
 // KillMySelf sends sigint to current process, used in integration test only
+//
+// Only works on Unix. Signaling on Windows is not supported.
 func KillMySelf() error {
-	return errors.Trace(syscall.Kill(syscall.Getpid(), syscall.SIGINT))
+	proc, err := os.FindProcess(os.Getpid())
+	if err == nil {
+		err = proc.Signal(syscall.SIGINT)
+	}
+	return errors.Trace(err)
 }
