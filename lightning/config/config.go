@@ -241,6 +241,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.Checkpoint.Enable = global.Checkpoint.Enable
 	cfg.PostRestore.Checksum = global.PostRestore.Checksum
 	cfg.PostRestore.Analyze = global.PostRestore.Analyze
+	cfg.App.CheckRequirements = global.App.CheckRequirements
 
 	return nil
 }

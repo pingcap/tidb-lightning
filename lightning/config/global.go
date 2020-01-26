@@ -27,8 +27,9 @@ import (
 
 type GlobalLightning struct {
 	log.Config
-	StatusAddr string `toml:"status-addr" json:"status-addr"`
-	ServerMode bool   `toml:"server-mode" json:"server-mode"`
+	StatusAddr        string `toml:"status-addr" json:"status-addr"`
+	ServerMode        bool   `toml:"server-mode" json:"server-mode"`
+	CheckRequirements bool   `toml:"check-requirements" json:"check-requirements"`
 
 	// The legacy alias for setting "status-addr". The value should always the
 	// same as StatusAddr, and will not be published in the JSON encoding.
@@ -78,7 +79,8 @@ type GlobalPostRestore struct {
 func NewGlobalConfig() *GlobalConfig {
 	return &GlobalConfig{
 		App: GlobalLightning{
-			ServerMode: false,
+			ServerMode:        false,
+			CheckRequirements: true,
 		},
 		Checkpoint: GlobalCheckpoint{
 			Enable: true,
@@ -141,6 +143,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	noSchema := fs.Bool("no-schema", false, "ignore schema files, get schema directly from TiDB instead")
 	checksum := fs.Bool("checksum", true, "compare checksum after importing")
 	analyze := fs.Bool("analyze", true, "analyze table after importing")
+	checkRequirements := fs.Bool("check-requirements", true, "check cluster version before starting")
 
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
@@ -221,6 +224,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if cfg.App.StatusAddr == "" && cfg.App.PProfPort != 0 {
 		cfg.App.StatusAddr = fmt.Sprintf(":%d", cfg.App.PProfPort)
+	}
+	if !*checkRequirements {
+		cfg.App.CheckRequirements = false
 	}
 
 	if cfg.App.StatusAddr == "" && cfg.App.ServerMode {
