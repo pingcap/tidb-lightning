@@ -37,12 +37,12 @@ type tableKVEncoder struct {
 	recordCache []types.Datum
 }
 
-func NewTableKVEncoder(tbl table.Table, sqlMode mysql.SQLMode, timestamp int64) Encoder {
+func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
 
 	return &tableKVEncoder{
 		tbl: tbl,
-		se:  newSession(sqlMode, timestamp),
+		se:  newSession(options),
 	}
 }
 

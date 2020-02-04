@@ -57,7 +57,15 @@ type session struct {
 	vars *variable.SessionVars
 }
 
-func newSession(sqlMode mysql.SQLMode, timestamp int64) *session {
+// SessionOptions is the initial configuration of the session.
+type SessionOptions struct {
+	SQLMode          mysql.SQLMode
+	Timestamp        int64
+	RowFormatVersion string
+}
+
+func newSession(options *SessionOptions) *session {
+	sqlMode := options.SQLMode
 	vars := variable.NewSessionVars()
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
@@ -68,7 +76,8 @@ func newSession(sqlMode mysql.SQLMode, timestamp int64) *session {
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.TimeZone = vars.Location()
-	vars.SetSystemVar("timestamp", strconv.FormatInt(timestamp, 10))
+	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
+	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
 	return &session{
 		txn:  transaction{},
 		vars: vars,

@@ -223,6 +223,17 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 	)
 }
 
+func ObtainRowFormatVersion(ctx context.Context, db *sql.DB) (rowFormatVersion string) {
+	err := common.SQLWithRetry{DB: db, Logger: log.L()}.QueryRow(ctx, "obtain row format version",
+		"SELECT @@tidb_row_format_version",
+		&rowFormatVersion,
+	)
+	if err != nil {
+		rowFormatVersion = "1"
+	}
+	return
+}
+
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr int64) error {
 	sql := common.SQLWithRetry{
 		DB:     db,

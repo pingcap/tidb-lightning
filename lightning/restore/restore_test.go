@@ -744,7 +744,11 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567895)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:          s.cfg.TiDB.SQLMode,
+		Timestamp:        1234567895,
+		RowFormatVersion: "1",
+	})
 
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, DeliverPauser)
 	c.Assert(err, IsNil)
@@ -763,7 +767,11 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567896)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:          s.cfg.TiDB.SQLMode,
+		Timestamp:        1234567896,
+		RowFormatVersion: "1",
+	})
 
 	go cancel()
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, DeliverPauser)
@@ -775,7 +783,11 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567897)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:          s.cfg.TiDB.SQLMode,
+		Timestamp:        1234567897,
+		RowFormatVersion: "1",
+	})
 
 	// close the chunk so reading it will result in the "file already closed" error.
 	s.cr.parser.Close()
@@ -789,7 +801,11 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567898)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:          s.cfg.TiDB.SQLMode,
+		Timestamp:        1234567898,
+		RowFormatVersion: "1",
+	})
 
 	go func() {
 		deliverCompleteCh <- deliverResult{

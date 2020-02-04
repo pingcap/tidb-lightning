@@ -143,6 +143,7 @@ type RestoreController struct {
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 	alterTableLock  sync.Mutex
 	compactState    int32
+	rowFormatVer    string
 
 	errorSummaries errorSummaries
 
@@ -192,6 +193,7 @@ func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDat
 		pauser:        pauser,
 		backend:       backend,
 		tidbMgr:       tidbMgr,
+		rowFormatVer:  "1",
 
 		errorSummaries:    makeErrorSummaries(log.L()),
 		checkpointsDB:     cpdb,
@@ -313,6 +315,8 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	}
 
 	go rc.listenCheckpointUpdates()
+
+	rc.rowFormatVer = ObtainRowFormatVersion(ctx, tidbMgr.db)
 
 	// Estimate the number of chunks for progress reporting
 	rc.estimateChunkCountIntoMetrics()
@@ -1757,7 +1761,11 @@ func (cr *chunkRestore) restore(
 	rc *RestoreController,
 ) error {
 	// Create the encoder.
-	kvEncoder := rc.backend.NewEncoder(t.encTable, rc.cfg.TiDB.SQLMode, cr.chunk.Timestamp)
+	kvEncoder := rc.backend.NewEncoder(t.encTable, &kv.SessionOptions{
+		SQLMode:          rc.cfg.TiDB.SQLMode,
+		Timestamp:        cr.chunk.Timestamp,
+		RowFormatVersion: rc.rowFormatVer,
+	})
 	kvsCh := make(chan deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
 

@@ -76,7 +76,11 @@ func (s *kvSuite) TestEncode(c *C) {
 	}
 
 	// Strict mode
-	strictMode := NewTableKVEncoder(tbl, mysql.ModeStrictAllTables, 1234567890)
+	strictMode := NewTableKVEncoder(tbl, &SessionOptions{
+		SQLMode:          mysql.ModeStrictAllTables,
+		Timestamp:        1234567890,
+		RowFormatVersion: "1",
+	})
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1})
 	c.Assert(err, ErrorMatches, "failed to cast `10000000` as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint")
 	c.Assert(pairs, IsNil)
@@ -103,18 +107,64 @@ func (s *kvSuite) TestEncode(c *C) {
 
 	// Mock add record error
 	mockTbl := &mockTable{Table: tbl}
-	mockMode := NewTableKVEncoder(mockTbl, mysql.ModeStrictAllTables, 1234567891)
+	mockMode := NewTableKVEncoder(mockTbl, &SessionOptions{
+		SQLMode:          mysql.ModeStrictAllTables,
+		Timestamp:        1234567891,
+		RowFormatVersion: "1",
+	})
 	pairs, err = mockMode.Encode(logger, rowsWithPk2, 2, []int{0, 1})
 	c.Assert(err, ErrorMatches, "mock error")
 
 	// Non-strict mode
-	noneMode := NewTableKVEncoder(tbl, mysql.ModeNone, 1234567892)
+	noneMode := NewTableKVEncoder(tbl, &SessionOptions{
+		SQLMode:          mysql.ModeNone,
+		Timestamp:        1234567892,
+		RowFormatVersion: "1",
+	})
 	pairs, err = noneMode.Encode(logger, rows, 1, []int{0, 1})
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
 		{
 			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 			Val: []uint8{0x8, 0x2, 0x8, 0xfe, 0x1},
+		},
+	}))
+}
+
+func (s *kvSuite) TestEncodeRowFormatV2(c *C) {
+	// Test encoding in row format v2, as described in <https://github.com/pingcap/tidb/blob/master/docs/design/2018-07-19-row-format.md>.
+
+	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
+	cols := []*model.ColumnInfo{c1}
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	c.Assert(err, IsNil)
+
+	logger := log.Logger{Logger: zap.NewNop()}
+	rows := []types.Datum{
+		types.NewIntDatum(10000000),
+	}
+
+	noneMode := NewTableKVEncoder(tbl, &SessionOptions{
+		SQLMode:          mysql.ModeNone,
+		Timestamp:        1234567892,
+		RowFormatVersion: "2",
+	})
+	pairs, err := noneMode.Encode(logger, rows, 1, []int{0, 1})
+	c.Assert(err, IsNil)
+	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
+		{
+			// the key should be the same as TestEncode()
+			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			Val: []uint8{
+				0x80,     // version
+				0x0,      // flag = 0 = not big
+				0x1, 0x0, // number of not null columns = 1
+				0x0, 0x0, // number of null columns = 0
+				0x1,      // column IDs = [1]
+				0x1, 0x0, // not null offsets = [1]
+				0x7f, // column version = 127 (10000000 clamped to TINYINT)
+			},
 		},
 	}))
 }
@@ -138,7 +188,11 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 
 	logger := log.Logger{Logger: zap.NewNop()}
 
-	encoder := NewTableKVEncoder(tbl, mysql.ModeStrictAllTables, 1234567893)
+	encoder := NewTableKVEncoder(tbl, &SessionOptions{
+		SQLMode:          mysql.ModeStrictAllTables,
+		Timestamp:        1234567893,
+		RowFormatVersion: "1",
+	})
 	pairs, err := encoder.Encode(logger, nil, 70, []int{-1, 1})
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
