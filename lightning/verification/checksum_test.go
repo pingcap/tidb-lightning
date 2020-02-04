@@ -20,7 +20,7 @@ import (
 	. "github.com/pingcap/check"
 
 	"github.com/pingcap/tidb-lightning/lightning/verification"
-	kvec "github.com/pingcap/tidb/util/kvencoder"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 type testKVChcksumSuite struct{}
@@ -41,7 +41,7 @@ func (s *testKVChcksumSuite) TestChcksum(c *C) {
 	c.Assert(checksum.Sum(), Equals, uint64(0))
 
 	// checksum on nothing
-	checksum.Update([]kvec.KvPair{})
+	checksum.Update([]common.KvPair{})
 	c.Assert(checksum.Sum(), Equals, uint64(0))
 
 	checksum.Update(nil)
@@ -50,7 +50,7 @@ func (s *testKVChcksumSuite) TestChcksum(c *C) {
 	// checksum on real data
 	excpectChecksum := uint64(4850203904608948940)
 
-	kvs := []kvec.KvPair{
+	kvs := []common.KvPair{
 		{
 			Key: []byte("Cop"),
 			Val: []byte("PingCAP"),

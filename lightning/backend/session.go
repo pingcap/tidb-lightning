@@ -20,19 +20,19 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	kvec "github.com/pingcap/tidb/util/kvencoder"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 // transaction is a trimmed down Transaction type which only supports adding a
 // new KV pair.
 type transaction struct {
 	kv.Transaction
-	kvPairs []kvec.KvPair
+	kvPairs []common.KvPair
 }
 
 // Set implements the kv.Transaction interface
 func (t *transaction) Set(k kv.Key, v []byte) error {
-	t.kvPairs = append(t.kvPairs, kvec.KvPair{
+	t.kvPairs = append(t.kvPairs, common.KvPair{
 		Key: k.Clone(),
 		Val: append([]byte{}, v...),
 	})
@@ -75,9 +75,9 @@ func newSession(sqlMode mysql.SQLMode, timestamp int64) *session {
 	}
 }
 
-func (se *session) takeKvPairs() []kvec.KvPair {
+func (se *session) takeKvPairs() []common.KvPair {
 	pairs := se.txn.kvPairs
-	se.txn.kvPairs = make([]kvec.KvPair, 0, len(pairs))
+	se.txn.kvPairs = make([]common.KvPair, 0, len(pairs))
 	return pairs
 }
 

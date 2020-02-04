@@ -7,10 +7,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
-	kvenc "github.com/pingcap/tidb/util/kvencoder"
 	uuid "github.com/satori/go.uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/mock"
 )
 
@@ -39,7 +39,7 @@ func (s *importerSuite) setUpTest(c *C) {
 
 	s.ctx = context.Background()
 	s.engineUUID = uuid.FromStringOrNil("7e3f3a3c-67ce-506d-af34-417ec138fbcb").Bytes()
-	s.kvPairs = kv.MakeRowsFromKvPairs([]kvenc.KvPair{
+	s.kvPairs = kv.MakeRowsFromKvPairs([]common.KvPair{
 		{
 			Key: []byte("k1"),
 			Val: []byte("v1"),

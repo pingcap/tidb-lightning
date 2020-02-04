@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	kvenc "github.com/pingcap/tidb/util/kvencoder"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
@@ -94,7 +94,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	}
 	pairs, err = strictMode.Encode(logger, rowsWithPk2, 2, []int{0, 1})
 	c.Assert(err, IsNil)
-	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
+	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
 		{
 			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 			Val: []uint8{0x8, 0x2, 0x8, 0x2},
@@ -111,7 +111,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	noneMode := NewTableKVEncoder(tbl, mysql.ModeNone, 1234567892)
 	pairs, err = noneMode.Encode(logger, rows, 1, []int{0, 1})
 	c.Assert(err, IsNil)
-	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
+	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
 		{
 			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 			Val: []uint8{0x8, 0x2, 0x8, 0xfe, 0x1},
@@ -141,7 +141,7 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 	encoder := NewTableKVEncoder(tbl, mysql.ModeStrictAllTables, 1234567893)
 	pairs, err := encoder.Encode(logger, nil, 70, []int{-1, 1})
 	c.Assert(err, IsNil)
-	c.Assert(pairs, DeepEquals, kvPairs([]kvenc.KvPair{
+	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
 		{
 			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
 			Val: []uint8{0x8, 0x2, 0x9, 0x80, 0x80, 0x80, 0xf0, 0xfd, 0x8e, 0xf7, 0xc0, 0x19},
@@ -150,7 +150,7 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 }
 
 func (s *kvSuite) TestSplitIntoChunks(c *C) {
-	pairs := []kvenc.KvPair{
+	pairs := []common.KvPair{
 		{
 			Key: []byte{1, 2, 3},
 			Val: []byte{4, 5, 6},
@@ -197,7 +197,7 @@ func (s *kvSuite) TestSplitIntoChunks(c *C) {
 }
 
 func (s *kvSuite) TestClassifyAndAppend(c *C) {
-	kvs := MakeRowFromKvPairs([]kvenc.KvPair{
+	kvs := MakeRowFromKvPairs([]common.KvPair{
 		{
 			Key: []byte("txxxxxxxx_ryyyyyyyy"),
 			Val: []byte("value1"),
@@ -219,7 +219,7 @@ func (s *kvSuite) TestClassifyAndAppend(c *C) {
 
 	kvs.ClassifyAndAppend(&data, &dataChecksum, &indices, &indexChecksum)
 
-	c.Assert(data, DeepEquals, MakeRowsFromKvPairs([]kvenc.KvPair{
+	c.Assert(data, DeepEquals, MakeRowsFromKvPairs([]common.KvPair{
 		{
 			Key: []byte("txxxxxxxx_ryyyyyyyy"),
 			Val: []byte("value1"),
@@ -229,7 +229,7 @@ func (s *kvSuite) TestClassifyAndAppend(c *C) {
 			Val: []byte("value2"),
 		},
 	}))
-	c.Assert(indices, DeepEquals, MakeRowsFromKvPairs([]kvenc.KvPair{
+	c.Assert(indices, DeepEquals, MakeRowsFromKvPairs([]common.KvPair{
 		{
 			Key: []byte("txxxxxxxx_izzzzzzzz"),
 			Val: []byte("index1"),
