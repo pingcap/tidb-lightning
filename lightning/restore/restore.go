@@ -701,7 +701,7 @@ func (t *TableRestore) restoreTable(
 
 		// rebase the allocator so it exceeds the number of rows.
 		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoIncID)
-		t.alloc.Rebase(t.tableInfo.ID, cp.AllocBase, false)
+		t.alloc[0].Rebase(t.tableInfo.ID, cp.AllocBase, false)
 		rc.saveCpCh <- saveCp{
 			tableName: t.tableName,
 			merger: &RebaseCheckpointMerger{
@@ -994,7 +994,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
-		err := AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Base()+1)
+		err := AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc[0].Base()+1)
 		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
@@ -1277,7 +1277,7 @@ type TableRestore struct {
 	tableInfo *TidbTableInfo
 	tableMeta *mydump.MDTableMeta
 	encTable  table.Table
-	alloc     autoid.Allocator
+	alloc     autoid.Allocators
 	logger    log.Logger
 }
 
@@ -1288,7 +1288,7 @@ func NewTableRestore(
 	tableInfo *TidbTableInfo,
 	cp *TableCheckpoint,
 ) (*TableRestore, error) {
-	idAlloc := kv.NewPanickingAllocator(cp.AllocBase)
+	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
@@ -1647,7 +1647,7 @@ func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *Rest
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &RebaseCheckpointMerger{
-			AllocBase: t.alloc.Base() + 1,
+			AllocBase: t.alloc[0].Base() + 1,
 		},
 	}
 	rc.saveCpCh <- saveCp{

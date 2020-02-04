@@ -17,10 +17,10 @@ import (
 	"strconv"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 // transaction is a trimmed down Transaction type which only supports adding a
@@ -59,9 +59,9 @@ type session struct {
 
 func newSession(sqlMode mysql.SQLMode, timestamp int64) *session {
 	vars := variable.NewSessionVars()
-	vars.LightningMode = true
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
+	vars.StmtCtx.BatchCheck = true
 	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
@@ -90,3 +90,6 @@ func (se *session) Txn(active bool) (kv.Transaction, error) {
 func (se *session) GetSessionVars() *variable.SessionVars {
 	return se.vars
 }
+
+// StmtAddDirtyTableOP implements the sessionctx.Context interface
+func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle int64) {}

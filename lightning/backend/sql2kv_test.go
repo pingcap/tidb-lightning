@@ -59,7 +59,7 @@ type mockTable struct {
 	table.Table
 }
 
-func (mockTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+func (mockTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	return -1, errors.New("mock error")
 }
 
@@ -67,7 +67,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(NewPanickingAllocator(0), tblInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
 	c.Assert(err, IsNil)
 
 	logger := log.Logger{Logger: zap.NewNop()}
@@ -86,7 +86,7 @@ func (s *kvSuite) TestEncode(c *C) {
 		types.NewStringDatum("invalid-pk"),
 	}
 	pairs, err = strictMode.Encode(logger, rowsWithPk, 2, []int{0, 1})
-	c.Assert(err, ErrorMatches, "failed to cast `invalid-pk` as bigint\\(20\\) for column `_tidb_rowid`.*Data Truncated")
+	c.Assert(err, ErrorMatches, "failed to cast `invalid-pk` as bigint\\(20\\) for column `_tidb_rowid`.*Truncated.*")
 
 	rowsWithPk2 := []types.Datum{
 		types.NewIntDatum(1),
@@ -133,7 +133,7 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 	}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(NewPanickingAllocator(0), tblInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
 	c.Assert(err, IsNil)
 
 	logger := log.Logger{Logger: zap.NewNop()}
