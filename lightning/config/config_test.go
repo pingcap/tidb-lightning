@@ -203,6 +203,7 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 			input: `
 				[mydumper.csv]
 				separator = '\'
+				backslash-escape = false
 			`,
 			err: "",
 		},
@@ -231,6 +232,7 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 			input: `
 				[mydumper.csv]
 				delimiter = '\'
+				backslash-escape = false
 			`,
 			err: "",
 		},
@@ -373,6 +375,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 		"-pd-urls", "172.16.30.11:2379,172.16.30.12:2379",
 		"-d", "/path/to/import",
 		"-importer", "172.16.30.11:23008",
+		"-checksum=false",
 	}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(cfg.App.Config.Level, Equals, "debug")
@@ -384,10 +387,14 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	c.Assert(cfg.TiDB.PdAddr, Equals, "172.16.30.11:2379,172.16.30.12:2379")
 	c.Assert(cfg.Mydumper.SourceDir, Equals, "/path/to/import")
 	c.Assert(cfg.TikvImporter.Addr, Equals, "172.16.30.11:23008")
+	c.Assert(cfg.PostRestore.Checksum, IsFalse)
+	c.Assert(cfg.PostRestore.Analyze, IsTrue)
 
 	taskCfg := config.NewConfig()
 	err = taskCfg.LoadFromGlobal(cfg)
 	c.Assert(err, IsNil)
+	c.Assert(taskCfg.PostRestore.Checksum, IsFalse)
+	c.Assert(taskCfg.PostRestore.Analyze, IsTrue)
 
 	taskCfg.Checkpoint.DSN = ""
 	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL

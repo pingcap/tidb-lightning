@@ -27,8 +27,9 @@ import (
 
 type GlobalLightning struct {
 	log.Config
-	StatusAddr string `toml:"status-addr" json:"status-addr"`
-	ServerMode bool   `toml:"server-mode" json:"server-mode"`
+	StatusAddr        string `toml:"status-addr" json:"status-addr"`
+	ServerMode        bool   `toml:"server-mode" json:"server-mode"`
+	CheckRequirements bool   `toml:"check-requirements" json:"check-requirements"`
 
 	// The legacy alias for setting "status-addr". The value should always the
 	// same as StatusAddr, and will not be published in the JSON encoding.
@@ -47,6 +48,7 @@ type GlobalTiDB struct {
 
 type GlobalMydumper struct {
 	SourceDir string `toml:"data-source-dir" json:"data-source-dir"`
+	NoSchema  bool   `toml:"no-schema" json:"no-schema"`
 }
 
 type GlobalImporter struct {
@@ -55,18 +57,33 @@ type GlobalImporter struct {
 }
 
 type GlobalConfig struct {
-	App          GlobalLightning `toml:"lightning" json:"lightning"`
-	TiDB         GlobalTiDB      `toml:"tidb" json:"tidb"`
-	Mydumper     GlobalMydumper  `toml:"mydumper" json:"mydumper"`
-	TikvImporter GlobalImporter  `toml:"tikv-importer" json:"tikv-importer"`
+	App          GlobalLightning   `toml:"lightning" json:"lightning"`
+	Checkpoint   GlobalCheckpoint  `toml:"checkpoint" json:"checkpoint"`
+	TiDB         GlobalTiDB        `toml:"tidb" json:"tidb"`
+	Mydumper     GlobalMydumper    `toml:"mydumper" json:"mydumper"`
+	TikvImporter GlobalImporter    `toml:"tikv-importer" json:"tikv-importer"`
+	PostRestore  GlobalPostRestore `toml:"post-restore" json:"post-restore"`
 
 	ConfigFileContent []byte
+}
+
+type GlobalCheckpoint struct {
+	Enable bool `toml:"enable" json:"enable"`
+}
+
+type GlobalPostRestore struct {
+	Checksum bool `toml:"checksum" json:"checksum"`
+	Analyze  bool `toml:"analyze" json:"analyze"`
 }
 
 func NewGlobalConfig() *GlobalConfig {
 	return &GlobalConfig{
 		App: GlobalLightning{
-			ServerMode: false,
+			ServerMode:        false,
+			CheckRequirements: true,
+		},
+		Checkpoint: GlobalCheckpoint{
+			Enable: true,
 		},
 		TiDB: GlobalTiDB{
 			Host:       "127.0.0.1",
@@ -76,6 +93,10 @@ func NewGlobalConfig() *GlobalConfig {
 		},
 		TikvImporter: GlobalImporter{
 			Backend: "importer",
+		},
+		PostRestore: GlobalPostRestore{
+			Checksum: true,
+			Analyze:  true,
 		},
 	}
 }
@@ -112,12 +133,17 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	tidbHost := fs.String("tidb-host", "", "TiDB server host")
 	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
 	tidbUser := fs.String("tidb-user", "", "TiDB user name to connect")
-	tidbPsw  := fs.String("tidb-password", "", "TiDB password to connect")
+	tidbPsw := fs.String("tidb-password", "", "TiDB password to connect")
 	tidbStatusPort := fs.Int("tidb-status", 0, "TiDB server status port (default 10080)")
 	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
 	dataSrcPath := fs.String("d", "", "Directory of the dump to import")
 	importerAddr := fs.String("importer", "", "address (host:port) to connect to tikv-importer")
 	backend := fs.String("backend", "", `delivery backend ("importer" or "tidb")`)
+	enableCheckpoint := fs.Bool("enable-checkpoint", true, "whether to enable checkpoints")
+	noSchema := fs.Bool("no-schema", false, "ignore schema files, get schema directly from TiDB instead")
+	checksum := fs.Bool("checksum", true, "compare checksum after importing")
+	analyze := fs.Bool("analyze", true, "analyze table after importing")
+	checkRequirements := fs.Bool("check-requirements", true, "check cluster version before starting")
 
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
@@ -184,8 +210,23 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	if *backend != "" {
 		cfg.TikvImporter.Backend = *backend
 	}
+	if !*enableCheckpoint {
+		cfg.Checkpoint.Enable = false
+	}
+	if *noSchema {
+		cfg.Mydumper.NoSchema = true
+	}
+	if !*checksum {
+		cfg.PostRestore.Checksum = false
+	}
+	if !*analyze {
+		cfg.PostRestore.Analyze = false
+	}
 	if cfg.App.StatusAddr == "" && cfg.App.PProfPort != 0 {
 		cfg.App.StatusAddr = fmt.Sprintf(":%d", cfg.App.PProfPort)
+	}
+	if !*checkRequirements {
+		cfg.App.CheckRequirements = false
 	}
 
 	if cfg.App.StatusAddr == "" && cfg.App.ServerMode {
