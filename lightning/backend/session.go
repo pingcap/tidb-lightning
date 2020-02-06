@@ -14,6 +14,7 @@
 package backend
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/pingcap/parser/mysql"
@@ -28,6 +29,11 @@ import (
 type transaction struct {
 	kv.Transaction
 	kvPairs []common.KvPair
+}
+
+// Get implements the kv.Transaction interface
+func (t *transaction) Get(ctx context.Context, key kv.Key) ([]byte, error) {
+	return nil, kv.ErrNotExist
 }
 
 // Set implements the kv.Transaction interface
