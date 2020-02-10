@@ -16,6 +16,7 @@ package restore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -332,4 +333,30 @@ func (s *tidbSuite) TestAlterAutoInc(c *C) {
 
 	err := AlterAutoIncrement(ctx, s.timgr.db, "`db`.`table`", 12345)
 	c.Assert(err, IsNil)
+}
+
+func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
+	ctx := context.Background()
+
+	s.mockDB.
+		ExpectQuery("\\QSELECT @@tidb_row_format_version\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"@@tidb_row_format_version"}).AddRow("2"))
+	s.mockDB.
+		ExpectClose()
+
+	version := ObtainRowFormatVersion(ctx, s.timgr.db)
+	c.Assert(version, Equals, "2")
+}
+
+func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
+	ctx := context.Background()
+
+	s.mockDB.
+		ExpectQuery("\\QSELECT @@tidb_row_format_version\\E").
+		WillReturnError(errors.New("ERROR 1193 (HY000): Unknown system variable 'tidb_row_format_version'"))
+	s.mockDB.
+		ExpectClose()
+
+	version := ObtainRowFormatVersion(ctx, s.timgr.db)
+	c.Assert(version, Equals, "1")
 }

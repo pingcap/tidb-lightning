@@ -19,26 +19,32 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 )
 
-// PanickingAllocator is an ID allocator which panics on all operations except Rebase
-type PanickingAllocator struct {
+// panickingAllocator is an ID allocator which panics on all operations except Rebase
+type panickingAllocator struct {
 	autoid.Allocator
-	base int64
+	base *int64
+	ty   autoid.AllocatorType
 }
 
-// NewPanickingAllocator creates a new PanickingAllocator.
-func NewPanickingAllocator(base int64) *PanickingAllocator {
-	return &PanickingAllocator{base: base}
+// NewPanickingAllocator creates a PanickingAllocator shared by all allocation types.
+func NewPanickingAllocators(base int64) autoid.Allocators {
+	sharedBase := &base
+	return autoid.NewAllocators(
+		&panickingAllocator{base: sharedBase, ty: autoid.RowIDAllocType},
+		&panickingAllocator{base: sharedBase, ty: autoid.AutoIncrementType},
+		&panickingAllocator{base: sharedBase, ty: autoid.AutoRandomType},
+	)
 }
 
 // Rebase implements the autoid.Allocator interface
-func (alloc *PanickingAllocator) Rebase(tableID, newBase int64, allocIDs bool) error {
+func (alloc *panickingAllocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 	// CAS
 	for {
-		oldBase := atomic.LoadInt64(&alloc.base)
+		oldBase := atomic.LoadInt64(alloc.base)
 		if newBase <= oldBase {
 			break
 		}
-		if atomic.CompareAndSwapInt64(&alloc.base, oldBase, newBase) {
+		if atomic.CompareAndSwapInt64(alloc.base, oldBase, newBase) {
 			break
 		}
 	}
@@ -46,6 +52,10 @@ func (alloc *PanickingAllocator) Rebase(tableID, newBase int64, allocIDs bool) e
 }
 
 // Base implements the autoid.Allocator interface
-func (alloc *PanickingAllocator) Base() int64 {
-	return atomic.LoadInt64(&alloc.base)
+func (alloc *panickingAllocator) Base() int64 {
+	return atomic.LoadInt64(alloc.base)
+}
+
+func (alloc *panickingAllocator) GetType() autoid.AllocatorType {
+	return alloc.ty
 }

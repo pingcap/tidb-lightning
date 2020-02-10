@@ -20,10 +20,10 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	kvec "github.com/pingcap/tidb/util/kvencoder"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
@@ -37,12 +37,12 @@ type tableKVEncoder struct {
 	recordCache []types.Datum
 }
 
-func NewTableKVEncoder(tbl table.Table, sqlMode mysql.SQLMode, timestamp int64) Encoder {
+func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
 
 	return &tableKVEncoder{
 		tbl: tbl,
-		se:  newSession(sqlMode, timestamp),
+		se:  newSession(options),
 	}
 }
 
@@ -124,19 +124,19 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 	)
 }
 
-type kvPairs []kvec.KvPair
+type kvPairs []common.KvPair
 
 // MakeRowsFromKvPairs converts a KvPair slice into a Rows instance. This is
 // mainly used for testing only. The resulting Rows instance should only be used
 // for the importer backend.
-func MakeRowsFromKvPairs(pairs []kvec.KvPair) Rows {
+func MakeRowsFromKvPairs(pairs []common.KvPair) Rows {
 	return kvPairs(pairs)
 }
 
 // MakeRowFromKvPairs converts a KvPair slice into a Row instance. This is
 // mainly used for testing only. The resulting Row instance should only be used
 // for the importer backend.
-func MakeRowFromKvPairs(pairs []kvec.KvPair) Row {
+func MakeRowFromKvPairs(pairs []common.KvPair) Row {
 	return kvPairs(pairs)
 }
 

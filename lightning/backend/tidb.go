@@ -248,8 +248,8 @@ func (be *tidbBackend) ShouldPostProcess() bool {
 	return false
 }
 
-func (be *tidbBackend) NewEncoder(_ table.Table, mode mysql.SQLMode, timestamp int64) Encoder {
-	return tidbEncoder{mode: mode}
+func (be *tidbBackend) NewEncoder(_ table.Table, options *SessionOptions) Encoder {
+	return tidbEncoder{mode: options.SQLMode}
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID) error {

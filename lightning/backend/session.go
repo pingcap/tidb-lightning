@@ -14,25 +14,31 @@
 package backend
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	kvec "github.com/pingcap/tidb/util/kvencoder"
 )
 
 // transaction is a trimmed down Transaction type which only supports adding a
 // new KV pair.
 type transaction struct {
 	kv.Transaction
-	kvPairs []kvec.KvPair
+	kvPairs []common.KvPair
+}
+
+// Get implements the kv.Transaction interface
+func (t *transaction) Get(ctx context.Context, key kv.Key) ([]byte, error) {
+	return nil, kv.ErrNotExist
 }
 
 // Set implements the kv.Transaction interface
 func (t *transaction) Set(k kv.Key, v []byte) error {
-	t.kvPairs = append(t.kvPairs, kvec.KvPair{
+	t.kvPairs = append(t.kvPairs, common.KvPair{
 		Key: k.Clone(),
 		Val: append([]byte{}, v...),
 	})
@@ -57,27 +63,36 @@ type session struct {
 	vars *variable.SessionVars
 }
 
-func newSession(sqlMode mysql.SQLMode, timestamp int64) *session {
+// SessionOptions is the initial configuration of the session.
+type SessionOptions struct {
+	SQLMode          mysql.SQLMode
+	Timestamp        int64
+	RowFormatVersion string
+}
+
+func newSession(options *SessionOptions) *session {
+	sqlMode := options.SQLMode
 	vars := variable.NewSessionVars()
-	vars.LightningMode = true
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
+	vars.StmtCtx.BatchCheck = true
 	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.TimeZone = vars.Location()
-	vars.SetSystemVar("timestamp", strconv.FormatInt(timestamp, 10))
+	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
+	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
 	return &session{
 		txn:  transaction{},
 		vars: vars,
 	}
 }
 
-func (se *session) takeKvPairs() []kvec.KvPair {
+func (se *session) takeKvPairs() []common.KvPair {
 	pairs := se.txn.kvPairs
-	se.txn.kvPairs = make([]kvec.KvPair, 0, len(pairs))
+	se.txn.kvPairs = make([]common.KvPair, 0, len(pairs))
 	return pairs
 }
 
@@ -90,3 +105,6 @@ func (se *session) Txn(active bool) (kv.Transaction, error) {
 func (se *session) GetSessionVars() *variable.SessionVars {
 	return se.vars
 }
+
+// StmtAddDirtyTableOP implements the sessionctx.Context interface
+func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle int64) {}

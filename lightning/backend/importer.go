@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	kv "github.com/pingcap/kvproto/pkg/import_kvpb"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	uuid "github.com/satori/go.uuid"
 	"go.uber.org/zap"
@@ -216,6 +215,6 @@ func (*importer) MakeEmptyRows() Rows {
 	return kvPairs(nil)
 }
 
-func (*importer) NewEncoder(tbl table.Table, sqlMode mysql.SQLMode, timestamp int64) Encoder {
-	return NewTableKVEncoder(tbl, sqlMode, timestamp)
+func (*importer) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
+	return NewTableKVEncoder(tbl, options)
 }

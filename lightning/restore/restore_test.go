@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 	"github.com/pingcap/tidb-lightning/mock"
 	"github.com/pingcap/tidb/ddl"
-	kvenc "github.com/pingcap/tidb/util/kvencoder"
 	tmock "github.com/pingcap/tidb/util/mock"
 	uuid "github.com/satori/go.uuid"
 )
@@ -679,7 +678,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	// Set up the expected API calls to the data engine...
 
 	mockBackend.EXPECT().
-		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]kvenc.KvPair{
+		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]common.KvPair{
 			{
 				Key: []byte("txxxxxxxx_ryyyyyyyy"),
 				Val: []byte("value1"),
@@ -696,7 +695,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	// Note: This test assumes data engine is written before the index engine.
 
 	mockBackend.EXPECT().
-		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]kvenc.KvPair{
+		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]common.KvPair{
 			{
 				Key: []byte("txxxxxxxx_izzzzzzzz"),
 				Val: []byte("index1"),
@@ -709,7 +708,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	saveCpCh := make(chan saveCp, 2)
 	go func() {
 		kvsCh <- deliveredKVs{
-			kvs: kv.MakeRowFromKvPairs([]kvenc.KvPair{
+			kvs: kv.MakeRowFromKvPairs([]common.KvPair{
 				{
 					Key: []byte("txxxxxxxx_ryyyyyyyy"),
 					Val: []byte("value1"),
@@ -745,7 +744,11 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567895)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:          s.cfg.TiDB.SQLMode,
+		Timestamp:        1234567895,
+		RowFormatVersion: "1",
+	})
 
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, DeliverPauser)
 	c.Assert(err, IsNil)
@@ -764,7 +767,11 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567896)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:          s.cfg.TiDB.SQLMode,
+		Timestamp:        1234567896,
+		RowFormatVersion: "1",
+	})
 
 	go cancel()
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, DeliverPauser)
@@ -776,7 +783,11 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567897)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:          s.cfg.TiDB.SQLMode,
+		Timestamp:        1234567897,
+		RowFormatVersion: "1",
+	})
 
 	// close the chunk so reading it will result in the "file already closed" error.
 	s.cr.parser.Close()
@@ -790,7 +801,11 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, s.cfg.TiDB.SQLMode, 1234567898)
+	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:          s.cfg.TiDB.SQLMode,
+		Timestamp:        1234567898,
+		RowFormatVersion: "1",
+	})
 
 	go func() {
 		deliverCompleteCh <- deliverResult{

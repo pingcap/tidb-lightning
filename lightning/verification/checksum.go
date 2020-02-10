@@ -17,8 +17,9 @@ import (
 	"fmt"
 	"hash/crc64"
 
-	kvec "github.com/pingcap/tidb/util/kvencoder"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 var ecmaTable = crc64.MakeTable(crc64.ECMA)
@@ -43,7 +44,7 @@ func MakeKVChecksum(bytes uint64, kvs uint64, checksum uint64) KVChecksum {
 	}
 }
 
-func (c *KVChecksum) UpdateOne(kv kvec.KvPair) {
+func (c *KVChecksum) UpdateOne(kv common.KvPair) {
 	sum := crc64.Update(0, ecmaTable, kv.Key)
 	sum = crc64.Update(sum, ecmaTable, kv.Val)
 
@@ -52,7 +53,7 @@ func (c *KVChecksum) UpdateOne(kv kvec.KvPair) {
 	c.checksum ^= sum
 }
 
-func (c *KVChecksum) Update(kvs []kvec.KvPair) {
+func (c *KVChecksum) Update(kvs []common.KvPair) {
 	var (
 		checksum uint64
 		sum      uint64

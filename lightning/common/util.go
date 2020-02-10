@@ -274,3 +274,11 @@ func KillMySelf() error {
 	}
 	return errors.Trace(err)
 }
+
+// KvPair is a pair of key and value.
+type KvPair struct {
+	// Key is the key of the KV pair
+	Key []byte
+	// Val is the value of the KV pair
+	Val []byte
+}
