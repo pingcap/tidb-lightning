@@ -28,10 +28,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb-lightning/lightning/common"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 

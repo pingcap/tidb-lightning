@@ -25,10 +25,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	uuid "github.com/satori/go.uuid"
+
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
-	uuid "github.com/satori/go.uuid"
 )
 
 func main() {

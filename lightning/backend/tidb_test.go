@@ -70,7 +70,7 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 		types.NewUintDatum(18446744073709551615),
 		types.NewIntDatum(-9223372036854775808),
 		types.NewUintDatum(0),
-		types.Datum{},
+		{},
 		types.NewFloat32Datum(7.5),
 		types.NewFloat64Datum(5e-324),
 		types.NewFloat64Datum(1.7976931348623157e+308),
