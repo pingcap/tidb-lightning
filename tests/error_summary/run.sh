@@ -28,7 +28,7 @@ run_sql 'INSERT INTO error_summary.a VALUES (2, 4), (6, 8);'
 run_sql 'INSERT INTO error_summary.c VALUES (3, 9), (27, 81);'
 
 set +e
-run_lightning
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-error-summary.log"
 ERRORCODE=$?
 set -e
 
@@ -49,7 +49,7 @@ grep -Fq '[-] [table=`error_summary`.`c`] [status=checksum] [error="checksum mis
 # Now check the error log when the checkpoint is not cleaned.
 
 set +e
-run_lightning
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-error-summary.log"
 ERRORCODE=$?
 set -e
 

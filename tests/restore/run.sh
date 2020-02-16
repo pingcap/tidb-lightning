@@ -32,7 +32,7 @@ export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/kv/FailIfEngin
 
 # Start importing
 run_sql 'DROP DATABASE IF EXISTS restore_tsr'
-run_lightning
+run_lightning -d "$DBPATH"
 echo "Import finished"
 
 # Verify all data are imported

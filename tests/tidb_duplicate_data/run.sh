@@ -24,7 +24,7 @@ for type in replace ignore error; do
 
     export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/backend/FailIfImportedSomeRows=return"
     set +e
-    run_lightning $type 2> /dev/null
+    run_lightning --config "tests/$TEST_NAME/$type.toml" 2> /dev/null
     ERRORCODE=$?
     set -e
     [ "$ERRORCODE" -ne 0 ]
@@ -36,14 +36,14 @@ for type in replace ignore error; do
 
     if [ $type = 'error' ]; then
         set +e
-        run_lightning $type
+        run_lightning --config "tests/$TEST_NAME/$type.toml" --log-file "$TEST_DIR/lightning-error-on-dup.log"
         ERRORCODE=$?
         set -e
         [ "$ERRORCODE" -ne 0 ]
         tail -20 "$TEST_DIR/lightning-error-on-dup.log" > "$TEST_DIR/lightning-error-on-dup.tail"
         grep -Fq 'Duplicate entry' "$TEST_DIR/lightning-error-on-dup.tail"
     elif [ $type = 'replace' ]; then
-        run_lightning $type
+        run_lightning --config "tests/$TEST_NAME/$type.toml"
         run_sql 'SELECT count(*) FROM dup.dup'
         check_contains 'count(*): 2'
         run_sql 'SELECT d FROM dup.dup WHERE pk = 1'
@@ -51,7 +51,7 @@ for type in replace ignore error; do
         run_sql 'SELECT d FROM dup.dup WHERE pk = 2'
         check_contains 'd: new'
     elif [ $type = 'ignore' ]; then
-        run_lightning $type
+        run_lightning --config "tests/$TEST_NAME/$type.toml"
         run_sql 'SELECT count(*) FROM dup.dup'
         check_contains 'count(*): 2'
         run_sql 'SELECT d FROM dup.dup WHERE pk = 1'

@@ -27,9 +27,13 @@ undo_rename() {
 }
 trap undo_rename EXIT
 
+do_run_lightning() {
+    run_lightning -d lightning/mydump/examples --config "tests/$TEST_NAME/$1.toml"
+}
+
 # Perform the import
 run_sql 'DROP DATABASE IF EXISTS mocker_test;'
-run_lightning 512
+do_run_lightning 512
 
 # The existing reader_test
 run_sql 'use mocker_test; select count(distinct ID) cnt from `tbl_autoid`'
@@ -78,14 +82,14 @@ check_contains 'count(*): 20'
 
 # Rest of the existing reader_test
 run_sql 'DROP DATABASE mocker_test;'
-run_lightning 1
+do_run_lightning 1
 run_sql 'use mocker_test; select count(distinct ID) cnt from `tbl_autoid`'
 check_contains 'cnt: 10000'
 run_sql 'use mocker_test; select count(distinct Name) cnt from `tbl_multi_index`'
 check_contains 'cnt: 10000'
 
 run_sql 'DROP DATABASE mocker_test;'
-run_lightning 131072
+do_run_lightning 131072
 run_sql 'use mocker_test; select count(distinct ID) cnt from `tbl_autoid`'
 check_contains 'cnt: 10000'
 run_sql 'use mocker_test; select count(distinct Name) cnt from `tbl_multi_index`'

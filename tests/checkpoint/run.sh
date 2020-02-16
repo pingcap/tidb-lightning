@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -euE
+set -euEx
 
 # Populate the mydumper source
 DBPATH="$TEST_DIR/cppk.mydump"
@@ -69,7 +69,7 @@ run_sql 'DROP DATABASE IF EXISTS `tidb_lightning_checkpoint_test_cppk.1357924680
 set +e
 for i in $(seq "$TABLE_COUNT"); do
     echo "******** Importing Table Now (step $i/$TABLE_COUNT) ********"
-    run_lightning 2> /dev/null
+    run_lightning -d "$DBPATH" --enable-checkpoint=1 2> /dev/null
     [ $? -ne 0 ] || exit 1
 done
 set -e
@@ -78,7 +78,7 @@ export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS"
 set +e
 for i in $(seq "$TABLE_COUNT"); do
     echo "******** Importing Table Now (step $i/$TABLE_COUNT) ********"
-    run_lightning 2> /dev/null
+    run_lightning -d "$DBPATH" --enable-checkpoint=1 2> /dev/null
 done
 set -e
 
@@ -92,7 +92,7 @@ export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb-lightning/lig
 set +e
 for i in $(seq "$TABLE_COUNT"); do
     echo "******** Importing Table Now (step $i/$TABLE_COUNT) ********"
-    run_lightning 2> /dev/null
+    run_lightning -d "$DBPATH" --enable-checkpoint=1 2> /dev/null
     [ $? -ne 0 ] || exit 1
 done
 set -e
@@ -100,7 +100,7 @@ set -e
 # After everything is done, there should be no longer new calls to ImportEngine
 # (and thus `kill_lightning_after_one_import` will spare this final check)
 echo "******** Verify checkpoint no-op ********"
-run_lightning
+run_lightning -d "$DBPATH" --enable-checkpoint=1
 run_sql "$PARTIAL_IMPORT_QUERY"
 check_contains "s: $(( (1000 * $CHUNK_COUNT + 1001) * $CHUNK_COUNT * $TABLE_COUNT ))"
 run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk.1357924680.bak`.table_v5 WHERE status >= 200'

@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # This test verifies if TOOL-1420 is fixed.
-# It involves column names not in lower-case.
+# It involves pre-calculated auto-inc overflowing the tinyint range.
 
 set -eu
 

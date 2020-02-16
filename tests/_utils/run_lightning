@@ -15,8 +15,18 @@
 
 set -eu
 TEST_DIR=/tmp/lightning_test_result
-CONFIG="${1-config}"
-shift || true
 
-echo "[$(date)] <<<<<< RUNNING TEST FOR: tests/$TEST_NAME/$CONFIG.toml >>>>>>" >> "$TEST_DIR/lightning.log"
-bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out" DEVEL -config "tests/$TEST_NAME/$CONFIG.toml" "$@"
+echo "[$(date)] <<<<<< RUNNING TEST FOR: tests/$TEST_NAME $@ >>>>>>" >> "$TEST_DIR/lightning.log"
+bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out" DEVEL \
+    --ca "$TEST_DIR/tls/ca.pem" \
+    --cert "$TEST_DIR/tls/lightning.pem" \
+    --key "$TEST_DIR/tls/lightning.key" \
+    --log-file "$TEST_DIR/lightning.log" \
+    --tidb-port 4000 \
+    --pd-urls '127.0.0.1:2379' \
+    --config "tests/$TEST_NAME/config.toml" \
+    -d "tests/$TEST_NAME/data" \
+    --importer '127.0.0.1:8808' \
+    --enable-checkpoint=0 \
+    --check-requirements=0 \
+    "$@"
