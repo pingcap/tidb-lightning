@@ -23,6 +23,7 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 )
 
@@ -84,7 +85,7 @@ func (s *checkReqSuite) TestCheckVersion(c *C) {
 func (s *checkReqSuite) TestCheckTiDBVersion(c *C) {
 	var version string
 
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		c.Assert(req.URL.Path, Equals, "/status")
 		w.WriteHeader(http.StatusOK)
 		err := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -96,7 +97,6 @@ func (s *checkReqSuite) TestCheckTiDBVersion(c *C) {
 	c.Assert(err, IsNil)
 	mockPort, err := strconv.Atoi(mockURL.Port())
 	c.Assert(err, IsNil)
-	mockClient := mockServer.Client()
 
 	rc := &RestoreController{
 		cfg: &config.Config{
@@ -105,19 +105,20 @@ func (s *checkReqSuite) TestCheckTiDBVersion(c *C) {
 				StatusPort: mockPort,
 			},
 		},
+		tls: common.NewTLSFromMockServer(mockServer),
 	}
 
 	version = "5.7.25-TiDB-v9999.0.0"
-	c.Assert(rc.checkTiDBVersion(mockClient), IsNil)
+	c.Assert(rc.checkTiDBVersion(), IsNil)
 
 	version = "5.7.25-TiDB-v1.0.0"
-	c.Assert(rc.checkTiDBVersion(mockClient), ErrorMatches, "TiDB version too old.*")
+	c.Assert(rc.checkTiDBVersion(), ErrorMatches, "TiDB version too old.*")
 }
 
 func (s *checkReqSuite) TestCheckPDVersion(c *C) {
 	var version string
 
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		c.Assert(req.URL.Path, Equals, "/pd/api/v1/config/cluster-version")
 		w.WriteHeader(http.StatusOK)
 		err := json.NewEncoder(w).Encode(version)
@@ -125,7 +126,6 @@ func (s *checkReqSuite) TestCheckPDVersion(c *C) {
 	}))
 	mockURL, err := url.Parse(mockServer.URL)
 	c.Assert(err, IsNil)
-	mockClient := mockServer.Client()
 
 	rc := &RestoreController{
 		cfg: &config.Config{
@@ -133,19 +133,20 @@ func (s *checkReqSuite) TestCheckPDVersion(c *C) {
 				PdAddr: mockURL.Host,
 			},
 		},
+		tls: common.NewTLSFromMockServer(mockServer),
 	}
 
 	version = "9999.0.0"
-	c.Assert(rc.checkPDVersion(mockClient), IsNil)
+	c.Assert(rc.checkPDVersion(), IsNil)
 
 	version = "1.0.0"
-	c.Assert(rc.checkPDVersion(mockClient), ErrorMatches, "PD version too old.*")
+	c.Assert(rc.checkPDVersion(), ErrorMatches, "PD version too old.*")
 }
 
 func (s *checkReqSuite) TestCheckTiKVVersion(c *C) {
 	var versions []string
 
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		c.Assert(req.URL.Path, Equals, "/pd/api/v1/stores")
 		w.WriteHeader(http.StatusOK)
 
@@ -166,7 +167,6 @@ func (s *checkReqSuite) TestCheckTiKVVersion(c *C) {
 	}))
 	mockURL, err := url.Parse(mockServer.URL)
 	c.Assert(err, IsNil)
-	mockClient := mockServer.Client()
 
 	rc := &RestoreController{
 		cfg: &config.Config{
@@ -174,11 +174,12 @@ func (s *checkReqSuite) TestCheckTiKVVersion(c *C) {
 				PdAddr: mockURL.Host,
 			},
 		},
+		tls: common.NewTLSFromMockServer(mockServer),
 	}
 
 	versions = []string{"9999.0.0", "9999.0.0"}
-	c.Assert(rc.checkTiKVVersion(mockClient), IsNil)
+	c.Assert(rc.checkTiKVVersion(), IsNil)
 
 	versions = []string{"9999.0.0", "1.0.0"}
-	c.Assert(rc.checkTiKVVersion(mockClient), ErrorMatches, `TiKV \(at tikv1\.test:20160\) version too old.*`)
+	c.Assert(rc.checkTiKVVersion(), ErrorMatches, `TiKV \(at tikv1\.test:20160\) version too old.*`)
 }

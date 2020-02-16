@@ -11,6 +11,7 @@ import (
 	. "github.com/pingcap/check"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 type tikvSuite struct{}
@@ -18,7 +19,7 @@ type tikvSuite struct{}
 var _ = Suite(&tikvSuite{})
 
 func (s *tikvSuite) TestForAllStores(c *C) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Write([]byte(`
 			{
 				"count": 5,
@@ -82,7 +83,8 @@ func (s *tikvSuite) TestForAllStores(c *C) {
 		allStoresLock sync.Mutex
 		allStores     []*kv.Store
 	)
-	err = kv.ForAllStores(ctx, server.Client(), serverURL.Host, kv.StoreStateDown, func(c2 context.Context, store *kv.Store) error {
+	tls := common.NewTLSFromMockServer(server)
+	err = kv.ForAllStores(ctx, tls, kv.StoreStateDown, func(c2 context.Context, store *kv.Store) error {
 		allStoresLock.Lock()
 		allStores = append(allStores, store)
 		allStoresLock.Unlock()

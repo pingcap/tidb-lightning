@@ -40,6 +40,15 @@ max-size = 128 # MB
 max-days = 28
 max-backups = 14
 
+[security]
+# specifies certificates and keys for TLS connections within the cluster.
+# public certificate of the CA. Leave empty to disable TLS.
+# ca-path = "/path/to/ca.pem"
+# public certificate of this service.
+# cert-path = "/path/to/lightning.pem"
+# private key of this service.
+# key-path = "/path/to/lightning.key"
+
 [checkpoint]
 # Whether to enable checkpoints.
 # While importing, Lightning will record which tables have been imported, so even if Lightning or other component
@@ -136,6 +145,14 @@ log-level = "error"
 # sets maximum packet size allowed for SQL connections.
 # set this to 0 to automatically fetch the `max_allowed_packet` variable from server on every connection.
 # max-allowed-packet = 67_108_864
+
+# whether to use TLS for SQL connections. valid values are:
+#  * ""            - force TLS (same as "cluster") if [security] section is populated, otherwise same as "false"
+#  * "false"       - disable TLS
+#  * "cluster"     - force TLS and verify the server's certificate with the CA specified in the [security] section
+#  * "skip-verify" - force TLS but do not verify the server's certificate (insecure!)
+#  * "preferred"   - same as "skip-verify", but if the server does not support TLS, fallback to unencrypted connection
+# tls = ""
 
 # set tidb session variables to speed up checksum/analyze table.
 # see https://pingcap.com/docs/sql/statistics/#control-analyze-concurrency for the meaning of each setting

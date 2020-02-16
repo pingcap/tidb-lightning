@@ -46,13 +46,25 @@ const (
 	defaultMaxRetry = 3
 )
 
-func ToDSN(host string, port int, user string, psw string, sqlMode string, maxAllowedPacket uint64) string {
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8&sql_mode='%s'&maxAllowedPacket=%d", user, psw, host, port, sqlMode, maxAllowedPacket)
+// MySQLConnectParam records the parameters needed to connect to a MySQL database.
+type MySQLConnectParam struct {
+	Host             string
+	Port             int
+	User             string
+	Password         string
+	SQLMode          string
+	MaxAllowedPacket uint64
+	TLS              string
 }
 
-func ConnectDB(host string, port int, user string, psw string, sqlMode string, maxAllowedPacket uint64) (*sql.DB, error) {
-	dbDSN := ToDSN(host, port, user, psw, sqlMode, maxAllowedPacket)
-	db, err := sql.Open("mysql", dbDSN)
+func (param *MySQLConnectParam) ToDSN() string {
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8&sql_mode='%s'&maxAllowedPacket=%d&tls=%s",
+		param.User, param.Password, param.Host, param.Port,
+		param.SQLMode, param.MaxAllowedPacket, param.TLS)
+}
+
+func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
+	db, err := sql.Open("mysql", param.ToDSN())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

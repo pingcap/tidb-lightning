@@ -18,7 +18,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -144,6 +143,7 @@ type RestoreController struct {
 	alterTableLock  sync.Mutex
 	compactState    int32
 	rowFormatVer    string
+	tls             *common.TLS
 
 	errorSummaries errorSummaries
 
@@ -159,12 +159,18 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 }
 
 func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, pauser *common.Pauser) (*RestoreController, error) {
+	tls, err := cfg.ToTLS()
+	if err != nil {
+		return nil, err
+	}
+	tls.RegisterMySQL()
+
 	cpdb, err := OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	tidbMgr, err := NewTiDBManager(cfg.TiDB)
+	tidbMgr, err := NewTiDBManager(cfg.TiDB, tls)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -173,7 +179,7 @@ func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDat
 	switch cfg.TikvImporter.Backend {
 	case config.BackendImporter:
 		var err error
-		backend, err = kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+		backend, err = kv.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 		if err != nil {
 			return nil, err
 		}
@@ -194,6 +200,7 @@ func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDat
 		backend:       backend,
 		tidbMgr:       tidbMgr,
 		rowFormatVer:  "1",
+		tls:           tls,
 
 		errorSummaries:    makeErrorSummaries(log.L()),
 		checkpointsDB:     cpdb,
@@ -278,7 +285,7 @@ outside:
 }
 
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
-	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB)
+	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB, rc.tls)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1063,13 +1070,13 @@ func (rc *RestoreController) fullCompact(ctx context.Context) error {
 }
 
 func (rc *RestoreController) doCompact(ctx context.Context, level int32) error {
+	tls := rc.tls.WithHost(rc.cfg.TiDB.PdAddr)
 	return kv.ForAllStores(
 		ctx,
-		&http.Client{},
-		rc.cfg.TiDB.PdAddr,
+		tls,
 		kv.StoreStateDisconnected,
 		func(c context.Context, store *kv.Store) error {
-			return kv.Compact(c, store.Address, level)
+			return kv.Compact(c, tls, store.Address, level)
 		},
 	)
 }
@@ -1094,16 +1101,15 @@ func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.Swit
 	} else {
 		minState = kv.StoreStateDisconnected
 	}
-
+	tls := rc.tls.WithHost(rc.cfg.TiDB.PdAddr)
 	// we ignore switch mode failure since it is not fatal.
 	// no need log the error, it is done in kv.SwitchMode already.
 	_ = kv.ForAllStores(
 		ctx,
-		&http.Client{},
-		rc.cfg.TiDB.PdAddr,
+		tls,
 		minState,
 		func(c context.Context, store *kv.Store) error {
-			return kv.SwitchMode(c, store.Address, mode)
+			return kv.SwitchMode(c, tls, store.Address, mode)
 		},
 	)
 }
@@ -1114,14 +1120,13 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 		return nil
 	}
 
-	client := &http.Client{}
-	if err := rc.checkTiDBVersion(client); err != nil {
+	if err := rc.checkTiDBVersion(); err != nil {
 		return errors.Trace(err)
 	}
-	if err := rc.checkPDVersion(client); err != nil {
+	if err := rc.checkPDVersion(); err != nil {
 		return errors.Trace(err)
 	}
-	if err := rc.checkTiKVVersion(client); err != nil {
+	if err := rc.checkTiKVVersion(); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1152,10 +1157,9 @@ func extractTiDBVersion(version string) (*semver.Version, error) {
 	return semver.NewVersion(rawVersion)
 }
 
-func (rc *RestoreController) checkTiDBVersion(client *http.Client) error {
-	url := fmt.Sprintf("http://%s:%d/status", rc.cfg.TiDB.Host, rc.cfg.TiDB.StatusPort)
+func (rc *RestoreController) checkTiDBVersion() error {
 	var status struct{ Version string }
-	err := common.GetJSON(client, url, &status)
+	err := rc.tls.GetJSON("/status", &status)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1167,10 +1171,9 @@ func (rc *RestoreController) checkTiDBVersion(client *http.Client) error {
 	return checkVersion("TiDB", requiredTiDBVersion, *version)
 }
 
-func (rc *RestoreController) checkPDVersion(client *http.Client) error {
-	url := fmt.Sprintf("http://%s/pd/api/v1/config/cluster-version", rc.cfg.TiDB.PdAddr)
+func (rc *RestoreController) checkPDVersion() error {
 	var rawVersion string
-	err := common.GetJSON(client, url, &rawVersion)
+	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON("/pd/api/v1/config/cluster-version", &rawVersion)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1183,11 +1186,10 @@ func (rc *RestoreController) checkPDVersion(client *http.Client) error {
 	return checkVersion("PD", requiredPDVersion, *version)
 }
 
-func (rc *RestoreController) checkTiKVVersion(client *http.Client) error {
+func (rc *RestoreController) checkTiKVVersion() error {
 	return kv.ForAllStores(
 		context.Background(),
-		client,
-		rc.cfg.TiDB.PdAddr,
+		rc.tls.WithHost(rc.cfg.TiDB.PdAddr),
 		kv.StoreStateDown,
 		func(c context.Context, store *kv.Store) error {
 			component := fmt.Sprintf("TiKV (at %s)", store.Address)

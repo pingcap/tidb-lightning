@@ -63,6 +63,7 @@ type GlobalConfig struct {
 	Mydumper     GlobalMydumper    `toml:"mydumper" json:"mydumper"`
 	TikvImporter GlobalImporter    `toml:"tikv-importer" json:"tikv-importer"`
 	PostRestore  GlobalPostRestore `toml:"post-restore" json:"post-restore"`
+	Security     Security          `toml:"security" json:"security"`
 
 	ConfigFileContent []byte
 }
@@ -144,6 +145,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	checksum := fs.Bool("checksum", true, "compare checksum after importing")
 	analyze := fs.Bool("analyze", true, "analyze table after importing")
 	checkRequirements := fs.Bool("check-requirements", true, "check cluster version before starting")
+	tlsCAPath := fs.String("ca", "", "CA certificate path for TLS connection")
+	tlsCertPath := fs.String("cert", "", "certificate path for TLS connection")
+	tlsKeyPath := fs.String("key", "", "private key path for TLS connection")
 
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
@@ -227,6 +231,15 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if !*checkRequirements {
 		cfg.App.CheckRequirements = false
+	}
+	if *tlsCAPath != "" {
+		cfg.Security.CAPath = *tlsCAPath
+	}
+	if *tlsCertPath != "" {
+		cfg.Security.CertPath = *tlsCertPath
+	}
+	if *tlsKeyPath != "" {
+		cfg.Security.KeyPath = *tlsKeyPath
 	}
 
 	if cfg.App.StatusAddr == "" && cfg.App.ServerMode {

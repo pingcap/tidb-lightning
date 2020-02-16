@@ -44,6 +44,7 @@ import (
 
 type Lightning struct {
 	globalCfg *config.GlobalConfig
+	globalTLS *common.TLS
 	// taskCfgs is the list of task configurations enqueued in the server mode
 	taskCfgs   *config.ConfigList
 	ctx        context.Context
@@ -66,9 +67,15 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		os.Exit(1)
 	}
 
+	tls, err := common.NewTLS(globalCfg.Security.CAPath, globalCfg.Security.CertPath, globalCfg.Security.KeyPath, globalCfg.App.StatusAddr)
+	if err != nil {
+		log.L().Fatal("failed to load TLS certificates", zap.Error(err))
+	}
+
 	ctx, shutdown := context.WithCancel(context.Background())
 	return &Lightning{
 		globalCfg: globalCfg,
+		globalTLS: tls,
 		ctx:       ctx,
 		shutdown:  shutdown,
 	}
@@ -114,6 +121,7 @@ func (l *Lightning) GoServe() error {
 	}
 	l.serverAddr = listener.Addr()
 	l.server.Handler = mux
+	listener = l.globalTLS.WrapListener(listener)
 
 	go func() {
 		err := l.server.Serve(listener)
