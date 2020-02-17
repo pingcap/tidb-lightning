@@ -219,7 +219,7 @@ func NewConfig() *Config {
 				Delimiter:       `"`,
 				Header:          true,
 				NotNull:         false,
-				Null:            `\n`,
+				Null:            `\N`,
 				BackslashEscape: true,
 				TrimLastSep:     false,
 			},
