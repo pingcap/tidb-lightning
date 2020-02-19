@@ -74,11 +74,11 @@ func NewTLS(caPath, certPath, keyPath, host string) (*TLS, error) {
 		RootCAs:      certPool,
 		NextProtos:   []string{"h2", "http/1.1"},
 	}
-	transport := *http.DefaultTransport.(*http.Transport)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = inner
 	return &TLS{
 		inner:  inner,
-		client: &http.Client{Transport: &transport},
+		client: &http.Client{Transport: transport},
 		url:    "https://" + host,
 	}, nil
 }
