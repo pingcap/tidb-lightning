@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -euEx
+set -euE
 
 # Populate the mydumper source
 DBPATH="$TEST_DIR/cpch.mydump"

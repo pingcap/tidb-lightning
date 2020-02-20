@@ -16,7 +16,7 @@
 set -eux
 
 do_run_lightning() {
-    run_lightning --enable-checkpoint=1 --config "tests/$TEST_NAME/$1.toml"
+    run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-engines.log" --config "tests/$TEST_NAME/$1.toml"
 }
 
 # First, verify that a normal operation is fine.
