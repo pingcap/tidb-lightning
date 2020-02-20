@@ -74,7 +74,7 @@ EOF
     bin/pd-server --config "$TEST_DIR/pd-config.toml" &
     # wait until PD is online...
     i=0
-    while ! curl --cacert "$TT/ca.pem" --cert "$TT/curl.pem" --key "$TT/curl.key" -o /dev/null -sf https://127.0.0.1:2379/pd/api/v1/version; do
+    while ! run_curl https://127.0.0.1:2379/pd/api/v1/version; do
         i=$((i+1))
         if [ "$i" -gt 10 ]; then
             echo 'Failed to start PD'
