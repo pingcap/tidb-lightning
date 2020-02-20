@@ -400,7 +400,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
 	err = taskCfg.Adjust()
 	c.Assert(err, IsNil)
-	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864&tls=preferred")
+	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864&tls=false")
 
 	result := taskCfg.String()
 	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)

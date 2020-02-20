@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"sort"
 	"sync"
 
@@ -75,16 +74,13 @@ func (s *tikvSuite) TestForAllStores(c *C) {
 	}))
 	defer server.Close()
 
-	serverURL, err := url.Parse(server.URL)
-	c.Assert(err, IsNil)
-
 	ctx := context.Background()
 	var (
 		allStoresLock sync.Mutex
 		allStores     []*kv.Store
 	)
 	tls := common.NewTLSFromMockServer(server)
-	err = kv.ForAllStores(ctx, tls, kv.StoreStateDown, func(c2 context.Context, store *kv.Store) error {
+	err := kv.ForAllStores(ctx, tls, kv.StoreStateDown, func(c2 context.Context, store *kv.Store) error {
 		allStoresLock.Lock()
 		allStores = append(allStores, store)
 		allStoresLock.Unlock()
