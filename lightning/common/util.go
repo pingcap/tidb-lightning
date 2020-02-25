@@ -58,7 +58,7 @@ type MySQLConnectParam struct {
 }
 
 func (param *MySQLConnectParam) ToDSN() string {
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8&sql_mode='%s'&maxAllowedPacket=%d&tls=%s",
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8mb4&sql_mode='%s'&maxAllowedPacket=%d&tls=%s",
 		param.User, param.Password, param.Host, param.Port,
 		param.SQLMode, param.MaxAllowedPacket, param.TLS)
 }

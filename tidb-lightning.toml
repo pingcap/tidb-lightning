@@ -147,9 +147,9 @@ log-level = "error"
 # max-allowed-packet = 67_108_864
 
 # whether to use TLS for SQL connections. valid values are:
-#  * ""            - force TLS (same as "cluster") if [security] section is populated, otherwise same as "false"
+#  * ""            - force TLS (same as "cluster") if [tidb.security] section is populated, otherwise same as "false"
 #  * "false"       - disable TLS
-#  * "cluster"     - force TLS and verify the server's certificate with the CA specified in the [security] section
+#  * "cluster"     - force TLS and verify the server's certificate with the CA specified in the [tidb.security] section
 #  * "skip-verify" - force TLS but do not verify the server's certificate (insecure!)
 #  * "preferred"   - same as "skip-verify", but if the server does not support TLS, fallback to unencrypted connection
 # tls = ""
@@ -160,6 +160,16 @@ build-stats-concurrency = 20
 distsql-scan-concurrency = 100
 index-serial-scan-concurrency = 20
 checksum-table-concurrency = 16
+
+# specifies certificates and keys for TLS-enabled MySQL connections.
+# defaults to a copy of the [security] section.
+#[tidb.security]
+# public certificate of the CA. Set to empty string to disable TLS.
+# ca-path = "/path/to/ca.pem"
+# public certificate of this service. Default to copy of `security.cert-path`
+# cert-path = "/path/to/lightning.pem"
+# private key of this service. Default to copy of `security.key-path`
+# key-path = "/path/to/lightning.key"
 
 # post-restore provide some options which will be executed after all kv data has been imported into the tikv cluster.
 # the execution order are(if set true): checksum -> analyze

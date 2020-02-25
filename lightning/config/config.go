@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -60,14 +61,15 @@ const (
 var defaultConfigPaths = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
 
 type DBStore struct {
-	Host       string `toml:"host" json:"host"`
-	Port       int    `toml:"port" json:"port"`
-	User       string `toml:"user" json:"user"`
-	Psw        string `toml:"password" json:"-"`
-	StatusPort int    `toml:"status-port" json:"status-port"`
-	PdAddr     string `toml:"pd-addr" json:"pd-addr"`
-	StrSQLMode string `toml:"sql-mode" json:"sql-mode"`
-	TLS        string `toml:"tls" json:"tls"`
+	Host       string    `toml:"host" json:"host"`
+	Port       int       `toml:"port" json:"port"`
+	User       string    `toml:"user" json:"user"`
+	Psw        string    `toml:"password" json:"-"`
+	StatusPort int       `toml:"status-port" json:"status-port"`
+	PdAddr     string    `toml:"pd-addr" json:"pd-addr"`
+	StrSQLMode string    `toml:"sql-mode" json:"sql-mode"`
+	TLS        string    `toml:"tls" json:"tls"`
+	Security   *Security `toml:"security" json:"security"`
 
 	SQLMode          mysql.SQLMode `toml:"-" json:"-"`
 	MaxAllowedPacket uint64        `toml:"max-allowed-packet" json:"max-allowed-packet"`
@@ -167,6 +169,25 @@ type Security struct {
 	CAPath   string `toml:"ca-path" json:"ca-path"`
 	CertPath string `toml:"cert-path" json:"cert-path"`
 	KeyPath  string `toml:"key-path" json:"key-path"`
+}
+
+// RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
+// for use in `sql.Open()`. This method is goroutine-safe.
+func (sec *Security) RegisterMySQL() error {
+	if sec == nil {
+		return nil
+	}
+	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
+	switch {
+	case err != nil:
+		return err
+	case tlsConfig != nil:
+		// error happens only when the key coincides with the built-in names.
+		_ = gomysql.RegisterTLSConfig("cluster", tlsConfig)
+	default:
+		gomysql.DeregisterTLSConfig("cluster")
+	}
+	return nil
 }
 
 // A duration which can be deserialized from a TOML string.
@@ -382,9 +403,13 @@ func (cfg *Config) Adjust() error {
 		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
 
+	if cfg.TiDB.Security == nil {
+		cfg.TiDB.Security = &cfg.Security
+	}
+
 	switch cfg.TiDB.TLS {
 	case "":
-		if len(cfg.Security.CAPath) > 0 {
+		if len(cfg.TiDB.Security.CAPath) > 0 {
 			cfg.TiDB.TLS = "cluster"
 		} else {
 			cfg.TiDB.TLS = "false"

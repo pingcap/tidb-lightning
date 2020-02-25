@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -34,17 +33,13 @@ type TLS struct {
 	url    string
 }
 
-// NewTLS constructs a new HTTP client with TLS configured with the CA,
-// certificate and key paths.
+// ToTLSConfig constructs a `*tls.Config` from the CA, certification and key
+// paths.
 //
-// If the CA path is empty, returns an instance where TLS is disabled.
-func NewTLS(caPath, certPath, keyPath, host string) (*TLS, error) {
+// If the CA path is empty, returns nil.
+func ToTLSConfig(caPath, certPath, keyPath string) (*tls.Config, error) {
 	if len(caPath) == 0 {
-		return &TLS{
-			inner:  nil,
-			client: &http.Client{},
-			url:    "http://" + host,
-		}, nil
+		return nil, nil
 	}
 
 	// Load the client certificates from disk
@@ -69,10 +64,28 @@ func NewTLS(caPath, certPath, keyPath, host string) (*TLS, error) {
 		return nil, errors.New("failed to append ca certs")
 	}
 
-	inner := &tls.Config{
+	return &tls.Config{
 		Certificates: certificates,
 		RootCAs:      certPool,
-		NextProtos:   []string{"h2", "http/1.1"},
+		NextProtos:   []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
+	}, nil
+}
+
+// NewTLS constructs a new HTTP client with TLS configured with the CA,
+// certificate and key paths.
+//
+// If the CA path is empty, returns an instance where TLS is disabled.
+func NewTLS(caPath, certPath, keyPath, host string) (*TLS, error) {
+	if len(caPath) == 0 {
+		return &TLS{
+			inner:  nil,
+			client: &http.Client{},
+			url:    "http://" + host,
+		}, nil
+	}
+	inner, err := ToTLSConfig(caPath, certPath, keyPath)
+	if err != nil {
+		return nil, err
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = inner
@@ -114,17 +127,6 @@ func (tc *TLS) ToGRPCDialOption() grpc.DialOption {
 		return grpc.WithTransportCredentials(credentials.NewTLS(tc.inner))
 	}
 	return grpc.WithInsecure()
-}
-
-// RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
-// for use in `sql.Open()`. This method is goroutine-safe.
-func (tc *TLS) RegisterMySQL() {
-	if tc.inner != nil {
-		// error happens only when the key coincides with the built-in names.
-		_ = mysql.RegisterTLSConfig("cluster", tc.inner)
-	} else {
-		mysql.DeregisterTLSConfig("cluster")
-	}
 }
 
 // WrapListener places a TLS layer on top of the existing listener.

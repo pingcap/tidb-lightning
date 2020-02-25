@@ -27,9 +27,9 @@ import (
 	uuid "github.com/satori/go.uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
-	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 func main() {
@@ -75,7 +75,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	tls.RegisterMySQL()
+	if err = cfg.TiDB.Security.RegisterMySQL(); err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 

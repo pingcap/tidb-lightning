@@ -163,7 +163,9 @@ func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDat
 	if err != nil {
 		return nil, err
 	}
-	tls.RegisterMySQL()
+	if err = cfg.TiDB.Security.RegisterMySQL(); err != nil {
+		return nil, err
+	}
 
 	cpdb, err := OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
