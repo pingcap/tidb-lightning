@@ -19,6 +19,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb-lightning/lightning/config"
+		"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
 type TableRegion struct {
@@ -135,13 +137,13 @@ func AllocateEngineIDs(
 func MakeTableRegions(
 	meta *MDTableMeta,
 	columns int,
-	batchSize int64,
-	batchImportRatio float64,
-	tableConcurrency int,
+	cfg *config.Config,
+	ioWorkers       *worker.Pool,
 ) ([]*TableRegion, error) {
 	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
 	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
+
 
 	prevRowIDMax := int64(0)
 	for _, dataFile := range meta.DataFiles {
@@ -152,8 +154,23 @@ func MakeTableRegions(
 		dataFileSize := dataFileInfo.Size()
 
 		divisor := int64(columns)
-		if strings.HasSuffix(strings.ToLower(dataFile), ".sql") {
+		isCsvFile := strings.HasSuffix(strings.ToLower(dataFile), ".csv")
+		if !isCsvFile {
 			divisor += 2
+		}
+		// If a csv file is overlarge, we need to split it into mutiple regions.
+		if isCsvFile && dataFileSize > config.MaxRegionSize { // && config.IsStrict
+			var (
+				regions []*TableRegion
+				subFileSizes []float64
+			)
+			prevRowIDMax, regions, subFileSizes, err = splitLargeFile(meta, cfg, dataFile, dataFileSize, divisor, prevRowIDMax, ioWorkers)
+			if err != nil {
+				return nil, err
+			}
+			dataFileSizes = append(dataFileSizes, subFileSizes...)
+			filesRegions = append(filesRegions, regions...)
+			continue
 		}
 		rowIDMax := prevRowIDMax + dataFileSize/divisor
 		filesRegions = append(filesRegions, &TableRegion{
@@ -171,6 +188,48 @@ func MakeTableRegions(
 		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
 	}
 
-	AllocateEngineIDs(filesRegions, dataFileSizes, float64(batchSize), batchImportRatio, float64(tableConcurrency))
+	AllocateEngineIDs(filesRegions, dataFileSizes, float64(cfg.Mydumper.BatchSize), cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
 	return filesRegions, nil
+}
+
+func splitLargeFile(meta *MDTableMeta, cfg *config.Config, dataFilePath string, dataFileSize int64, divisor int64, prevRowIdxMax int64, ioWorker *worker.Pool) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error){
+	reader, err := os.Open(dataFilePath)
+	if err != nil {
+		return 0, nil, nil,  err
+	}
+	dataFileSizes = make([]float64, 0, dataFileSize/config.MaxRegionSize)
+	parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker)
+	startOffset, endOffset := int64(0), config.MaxRegionSize
+	for ; endOffset < dataFileSize; {
+		curRegionCnt := (endOffset-startOffset)/divisor
+		rowIDMax := prevRowIdxMax + curRegionCnt
+		// rowIDMax is meaningless for this function here.
+		parser.SetPos(endOffset, rowIDMax)
+		// Get the exact pos of the last line.
+		pos, err := parser.TouchTokNewLine()
+		if err != nil {
+			return 0,nil, nil, err
+		}
+		endOffset = pos
+		regions = append(regions,
+			&TableRegion{
+				DB: meta.DB,
+				Table: meta.Name,
+				File : dataFilePath,
+				Chunk: Chunk{
+					Offset:       startOffset,
+					EndOffset:    endOffset,
+					PrevRowIDMax: prevRowIdxMax,
+					RowIDMax:     rowIDMax,
+				},
+		})
+		dataFileSizes = append(dataFileSizes, float64(endOffset - startOffset))
+		prevRowIdxMax = rowIDMax
+
+		startOffset = endOffset
+		if endOffset += config.MaxRegionSize; endOffset > dataFileSize {
+			endOffset = dataFileSize
+		}
+	}
+	return prevRowIdxMax, regions, dataFileSizes, nil
 }
