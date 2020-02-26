@@ -695,7 +695,7 @@ func (t *TableRestore) restoreTable(
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
 	} else if cp.Status < CheckpointStatusAllWritten {
-		if err := t.populateChunks(rc.cfg, cp); err != nil {
+		if err := t.populateChunks(rc, cp); err != nil {
 			return errors.Trace(err)
 		}
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, t.tableName, cp.Engines); err != nil {
@@ -1314,9 +1314,9 @@ func (tr *TableRestore) Close() {
 	tr.logger.Info("restore done")
 }
 
-func (t *TableRestore) populateChunks(cfg *config.Config, cp *TableCheckpoint) error {
+func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint) error {
 	task := t.logger.Begin(zap.InfoLevel, "load engines and files")
-	chunks, err := mydump.MakeTableRegions(t.tableMeta, t.tableInfo.Columns, cfg.Mydumper.BatchSize, cfg.Mydumper.BatchImportRatio, cfg.App.TableConcurrency)
+	chunks, err := mydump.MakeTableRegions(t.tableMeta, t.tableInfo.Columns, rc.cfg, rc.ioWorkers)
 	if err == nil {
 		timestamp := time.Now().Unix()
 		failpoint.Inject("PopulateChunkTimestamp", func(v failpoint.Value) {
