@@ -191,7 +191,15 @@ func MakeTableRegions(
 	return filesRegions, nil
 }
 
-func splitLargeFile(meta *MDTableMeta, cfg *config.Config, dataFilePath string, dataFileSize int64, divisor int64, prevRowIdxMax int64, ioWorker *worker.Pool) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
+func splitLargeFile(
+	meta *MDTableMeta,
+	cfg *config.Config,
+	dataFilePath string,
+	dataFileSize int64,
+	divisor int64,
+	prevRowIdxMax int64,
+	ioWorker *worker.Pool,
+) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
 	reader, err := os.Open(dataFilePath)
 	if err != nil {
 		return 0, nil, nil, err
