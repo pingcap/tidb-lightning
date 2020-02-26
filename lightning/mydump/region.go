@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-		"github.com/pingcap/tidb-lightning/lightning/worker"
+	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
 type TableRegion struct {
@@ -138,12 +138,11 @@ func MakeTableRegions(
 	meta *MDTableMeta,
 	columns int,
 	cfg *config.Config,
-	ioWorkers       *worker.Pool,
+	ioWorkers *worker.Pool,
 ) ([]*TableRegion, error) {
 	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
 	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
-
 
 	prevRowIDMax := int64(0)
 	for _, dataFile := range meta.DataFiles {
@@ -161,7 +160,7 @@ func MakeTableRegions(
 		// If a csv file is overlarge, we need to split it into mutiple regions.
 		if isCsvFile && dataFileSize > config.MaxRegionSize { // && config.IsStrict
 			var (
-				regions []*TableRegion
+				regions      []*TableRegion
 				subFileSizes []float64
 			)
 			prevRowIDMax, regions, subFileSizes, err = splitLargeFile(meta, cfg, dataFile, dataFileSize, divisor, prevRowIDMax, ioWorkers)
@@ -192,38 +191,38 @@ func MakeTableRegions(
 	return filesRegions, nil
 }
 
-func splitLargeFile(meta *MDTableMeta, cfg *config.Config, dataFilePath string, dataFileSize int64, divisor int64, prevRowIdxMax int64, ioWorker *worker.Pool) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error){
+func splitLargeFile(meta *MDTableMeta, cfg *config.Config, dataFilePath string, dataFileSize int64, divisor int64, prevRowIdxMax int64, ioWorker *worker.Pool) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
 	reader, err := os.Open(dataFilePath)
 	if err != nil {
-		return 0, nil, nil,  err
+		return 0, nil, nil, err
 	}
 	dataFileSizes = make([]float64, 0, dataFileSize/config.MaxRegionSize)
 	parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker)
 	startOffset, endOffset := int64(0), config.MaxRegionSize
-	for ; endOffset < dataFileSize; {
-		curRegionCnt := (endOffset-startOffset)/divisor
+	for endOffset < dataFileSize {
+		curRegionCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRegionCnt
 		// rowIDMax is meaningless for this function here.
 		parser.SetPos(endOffset, rowIDMax)
 		// Get the exact pos of the last line.
 		pos, err := parser.TouchTokNewLine()
 		if err != nil {
-			return 0,nil, nil, err
+			return 0, nil, nil, err
 		}
 		endOffset = pos
 		regions = append(regions,
 			&TableRegion{
-				DB: meta.DB,
+				DB:    meta.DB,
 				Table: meta.Name,
-				File : dataFilePath,
+				File:  dataFilePath,
 				Chunk: Chunk{
 					Offset:       startOffset,
 					EndOffset:    endOffset,
 					PrevRowIDMax: prevRowIdxMax,
 					RowIDMax:     rowIDMax,
 				},
-		})
-		dataFileSizes = append(dataFileSizes, float64(endOffset - startOffset))
+			})
+		dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))
 		prevRowIdxMax = rowIDMax
 
 		startOffset = endOffset
