@@ -14,6 +14,7 @@
 package mydump
 
 import (
+	"io"
 	"math"
 	"os"
 	"strings"
@@ -215,13 +216,16 @@ func SplitLargeFile(
 	maxRegionSize := cfg.Mydumper.CSV.MaxRegionSize
 	dataFileSizes = make([]float64, 0, dataFileSize/maxRegionSize)
 	parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker)
+	defer parser.Close()
 	startOffset, endOffset := int64(0), maxRegionSize
 	for endOffset < dataFileSize {
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
-		// rowIDMax is meaningless for this function here .
-		parser.SetPos(endOffset, rowIDMax)
-		// Get the exact pos of the last line actually.
+		parser.SetPos(endOffset, prevRowIdMax)
+		_, err := reader.Seek(endOffset, io.SeekStart)
+		if err != nil {
+			return 0, nil, nil, err
+		}
 		pos, err := parser.ReadUntilTokNewLine()
 		if err != nil {
 			return 0, nil, nil, err

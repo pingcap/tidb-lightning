@@ -215,23 +215,38 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 				Null:            "NULL",
 				BackslashEscape: true,
 				StrictFormat:    true,
-				MaxRegionSize:   8,
 			},
 		},
 	}
-	filePath := "./examples/csv.empty_strings.csv"
+	filePath := "./examples/csv.split_large_file.csv"
 	dataFileInfo, err := os.Stat(filePath)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fileSize := dataFileInfo.Size()
 	colCnt := int64(3)
-	prevRowIdxMax := int64(0)
-	ioWorker := worker.NewPool(context.Background(), 4, "io")
-	_, regions, _, _ := SplitLargeFile(meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker)
-	c.Assert(len(regions), Equals, 2)
-	c.Assert(regions[0].Chunk.Offset, Equals, int64(0))
-	c.Assert(regions[0].Chunk.EndOffset, Equals, int64(12))
-	c.Assert(regions[1].Chunk.Offset, Equals, int64(12))
-	c.Assert(regions[1].Chunk.EndOffset, Equals, int64(24))
+	for _, tc := range []struct {
+		maxRegionSize int64
+		chkCnt        int
+		offsets       [][]int64
+	}{
+		{1, 4, [][]int64{{0, 6}, {6, 12}, {12, 18}, {18, 24}}},
+		{6, 4, [][]int64{{0, 6}, {6, 12}, {12, 18}, {18, 24}}},
+		{8, 2, [][]int64{{0, 12}, {12, 24}}},
+		{12, 2, [][]int64{{0, 12}, {12, 24}}},
+		{13, 2, [][]int64{{0, 18}, {18, 24}}},
+		{18, 2, [][]int64{{0, 18}, {18, 24}}},
+		{19, 1, [][]int64{{0, 24}}},
+	} {
+		cfg.Mydumper.CSV.MaxRegionSize = tc.maxRegionSize
+		prevRowIdxMax := int64(0)
+		ioWorker := worker.NewPool(context.Background(), 4, "io")
+		_, regions, _, err := SplitLargeFile(meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker)
+		c.Assert(err, IsNil)
+		c.Assert(len(regions), Equals, tc.chkCnt)
+		for i := range tc.offsets {
+			c.Assert(regions[i].Chunk.Offset, Equals, tc.offsets[i][0])
+			c.Assert(regions[i].Chunk.EndOffset, Equals, tc.offsets[i][1])
+		}
+	}
 }
