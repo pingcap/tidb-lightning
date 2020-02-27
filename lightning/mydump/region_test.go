@@ -14,16 +14,16 @@
 package mydump_test
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-	"log"
 )
 
 var _ = Suite(&testMydumpRegionSuite{})
@@ -218,7 +218,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 			},
 		},
 	}
-	filePath := "./examples/csv.split_large_file.csv"
+	filePath := "./csv/csv.split_large_file.csv"
 	dataFileInfo, err := os.Stat(filePath)
 	if err != nil {
 		log.Fatal(err)
@@ -231,11 +231,11 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		offsets       [][]int64
 	}{
 		{1, 4, [][]int64{{0, 6}, {6, 12}, {12, 18}, {18, 24}}},
-		{6, 4, [][]int64{{0, 6}, {6, 12}, {12, 18}, {18, 24}}},
+		{6, 2, [][]int64{{0, 12}, {12, 24}}},
 		{8, 2, [][]int64{{0, 12}, {12, 24}}},
-		{12, 2, [][]int64{{0, 12}, {12, 24}}},
+		{12, 2, [][]int64{{0, 18}, {18, 24}}},
 		{13, 2, [][]int64{{0, 18}, {18, 24}}},
-		{18, 2, [][]int64{{0, 18}, {18, 24}}},
+		{18, 1, [][]int64{{0, 24}}},
 		{19, 1, [][]int64{{0, 24}}},
 	} {
 		cfg.Mydumper.CSV.MaxRegionSize = tc.maxRegionSize
