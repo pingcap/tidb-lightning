@@ -17,7 +17,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,10 +24,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	uuid "github.com/satori/go.uuid"
+
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
-	uuid "github.com/satori/go.uuid"
 )
 
 func main() {
@@ -70,19 +71,27 @@ func run() error {
 		return err
 	}
 
+	tls, err := cfg.ToTLS()
+	if err != nil {
+		return err
+	}
+	if err = cfg.TiDB.Security.RegisterMySQL(); err != nil {
+		return err
+	}
+
 	ctx := context.Background()
 
 	if *compact {
-		return errors.Trace(compactCluster(ctx, cfg))
+		return errors.Trace(compactCluster(ctx, cfg, tls))
 	}
 	if len(*mode) != 0 {
-		return errors.Trace(switchMode(ctx, cfg, *mode))
+		return errors.Trace(switchMode(ctx, cfg, tls, *mode))
 	}
 	if len(*flagImportEngine) != 0 {
-		return errors.Trace(importEngine(ctx, cfg, *flagImportEngine))
+		return errors.Trace(importEngine(ctx, cfg, tls, *flagImportEngine))
 	}
 	if len(*flagCleanupEngine) != 0 {
-		return errors.Trace(cleanupEngine(ctx, cfg, *flagCleanupEngine))
+		return errors.Trace(cleanupEngine(ctx, cfg, tls, *flagCleanupEngine))
 	}
 
 	if len(*cpRemove) != 0 {
@@ -92,7 +101,7 @@ func run() error {
 		return errors.Trace(checkpointErrorIgnore(ctx, cfg, *cpErrIgnore))
 	}
 	if len(*cpErrDestroy) != 0 {
-		return errors.Trace(checkpointErrorDestroy(ctx, cfg, *cpErrDestroy))
+		return errors.Trace(checkpointErrorDestroy(ctx, cfg, tls, *cpErrDestroy))
 	}
 	if len(*cpDump) != 0 {
 		return errors.Trace(checkpointDump(ctx, cfg, *cpDump))
@@ -102,19 +111,18 @@ func run() error {
 	return nil
 }
 
-func compactCluster(ctx context.Context, cfg *config.Config) error {
+func compactCluster(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
 	return kv.ForAllStores(
 		ctx,
-		&http.Client{},
-		cfg.TiDB.PdAddr,
+		tls.WithHost(cfg.TiDB.PdAddr),
 		kv.StoreStateDisconnected,
 		func(c context.Context, store *kv.Store) error {
-			return kv.Compact(c, store.Address, restore.FullLevelCompact)
+			return kv.Compact(c, tls, store.Address, restore.FullLevelCompact)
 		},
 	)
 }
 
-func switchMode(ctx context.Context, cfg *config.Config, mode string) error {
+func switchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
 	var m import_sstpb.SwitchMode
 	switch mode {
 	case config.ImportMode:
@@ -127,11 +135,10 @@ func switchMode(ctx context.Context, cfg *config.Config, mode string) error {
 
 	return kv.ForAllStores(
 		ctx,
-		&http.Client{},
-		cfg.TiDB.PdAddr,
+		tls.WithHost(cfg.TiDB.PdAddr),
 		kv.StoreStateDisconnected,
 		func(c context.Context, store *kv.Store) error {
-			return kv.SwitchMode(c, store.Address, m)
+			return kv.SwitchMode(c, tls, store.Address, m)
 		},
 	)
 }
@@ -156,20 +163,20 @@ func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName st
 	return errors.Trace(cpdb.IgnoreErrorCheckpoint(ctx, tableName))
 }
 
-func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tableName string) error {
+func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common.TLS, tableName string) error {
 	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cpdb.Close()
 
-	target, err := restore.NewTiDBManager(cfg.TiDB)
+	target, err := restore.NewTiDBManager(cfg.TiDB, tls)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer target.Close()
 
-	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+	importer, err := kv.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -271,8 +278,8 @@ func unsafeCloseEngine(ctx context.Context, importer kv.Backend, engine string) 
 	return ce, errors.Trace(err)
 }
 
-func importEngine(ctx context.Context, cfg *config.Config, engine string) error {
-	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+func importEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
+	importer, err := kv.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -285,8 +292,8 @@ func importEngine(ctx context.Context, cfg *config.Config, engine string) error 
 	return errors.Trace(ce.Import(ctx))
 }
 
-func cleanupEngine(ctx context.Context, cfg *config.Config, engine string) error {
-	importer, err := kv.NewImporter(ctx, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+func cleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
+	importer, err := kv.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}

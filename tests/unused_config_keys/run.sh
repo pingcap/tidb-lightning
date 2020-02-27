@@ -17,7 +17,7 @@
 # Lightning should fail to start when finds unused config keys.
 
 set +e
-run_lightning
+run_lightning --log-file "$TEST_DIR/lightning-unused-config-keys.log"
 ERRORCODE=$?
 set -e
 

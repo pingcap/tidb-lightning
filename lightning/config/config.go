@@ -16,12 +16,14 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
+	"net"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -59,13 +61,15 @@ const (
 var defaultConfigPaths = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
 
 type DBStore struct {
-	Host       string `toml:"host" json:"host"`
-	Port       int    `toml:"port" json:"port"`
-	User       string `toml:"user" json:"user"`
-	Psw        string `toml:"password" json:"-"`
-	StatusPort int    `toml:"status-port" json:"status-port"`
-	PdAddr     string `toml:"pd-addr" json:"pd-addr"`
-	StrSQLMode string `toml:"sql-mode" json:"sql-mode"`
+	Host       string    `toml:"host" json:"host"`
+	Port       int       `toml:"port" json:"port"`
+	User       string    `toml:"user" json:"user"`
+	Psw        string    `toml:"password" json:"-"`
+	StatusPort int       `toml:"status-port" json:"status-port"`
+	PdAddr     string    `toml:"pd-addr" json:"pd-addr"`
+	StrSQLMode string    `toml:"sql-mode" json:"sql-mode"`
+	TLS        string    `toml:"tls" json:"tls"`
+	Security   *Security `toml:"security" json:"security"`
 
 	SQLMode          mysql.SQLMode `toml:"-" json:"-"`
 	MaxAllowedPacket uint64        `toml:"max-allowed-packet" json:"max-allowed-packet"`
@@ -89,6 +93,7 @@ type Config struct {
 	PostRestore  PostRestore         `toml:"post-restore" json:"post-restore"`
 	Cron         Cron                `toml:"cron" json:"cron"`
 	Routes       []*router.TableRule `toml:"routes" json:"routes"`
+	Security     Security            `toml:"security" json:"security"`
 }
 
 func (c *Config) String() string {
@@ -97,6 +102,11 @@ func (c *Config) String() string {
 		log.L().Error("marshal config to json error", log.ShortError(err))
 	}
 	return string(bytes)
+}
+
+func (c *Config) ToTLS() (*common.TLS, error) {
+	hostPort := net.JoinHostPort(c.TiDB.Host, strconv.Itoa(c.TiDB.StatusPort))
+	return common.NewTLS(c.Security.CAPath, c.Security.CertPath, c.Security.KeyPath, hostPort)
 }
 
 type Lightning struct {
@@ -157,6 +167,31 @@ type Cron struct {
 	LogProgress Duration `toml:"log-progress" json:"log-progress"`
 }
 
+type Security struct {
+	CAPath   string `toml:"ca-path" json:"ca-path"`
+	CertPath string `toml:"cert-path" json:"cert-path"`
+	KeyPath  string `toml:"key-path" json:"key-path"`
+}
+
+// RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
+// for use in `sql.Open()`. This method is goroutine-safe.
+func (sec *Security) RegisterMySQL() error {
+	if sec == nil {
+		return nil
+	}
+	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
+	switch {
+	case err != nil:
+		return err
+	case tlsConfig != nil:
+		// error happens only when the key coincides with the built-in names.
+		_ = gomysql.RegisterTLSConfig("cluster", tlsConfig)
+	default:
+		gomysql.DeregisterTLSConfig("cluster")
+	}
+	return nil
+}
+
 // A duration which can be deserialized from a TOML string.
 // Implemented as https://github.com/BurntSushi/toml#using-the-encodingtextunmarshaler-interface
 type Duration struct {
@@ -207,7 +242,7 @@ func NewConfig() *Config {
 				Delimiter:       `"`,
 				Header:          true,
 				NotNull:         false,
-				Null:            `\n`,
+				Null:            `\N`,
 				BackslashEscape: true,
 				TrimLastSep:     false,
 				StrictFormat:    false,
@@ -246,6 +281,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.PostRestore.Checksum = global.PostRestore.Checksum
 	cfg.PostRestore.Analyze = global.PostRestore.Analyze
 	cfg.App.CheckRequirements = global.App.CheckRequirements
+	cfg.Security = global.Security
 
 	return nil
 }
@@ -371,6 +407,27 @@ func (cfg *Config) Adjust() error {
 		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
 
+	if cfg.TiDB.Security == nil {
+		cfg.TiDB.Security = &cfg.Security
+	}
+
+	switch cfg.TiDB.TLS {
+	case "":
+		if len(cfg.TiDB.Security.CAPath) > 0 {
+			cfg.TiDB.TLS = "cluster"
+		} else {
+			cfg.TiDB.TLS = "false"
+		}
+	case "cluster":
+		if len(cfg.Security.CAPath) == 0 {
+			return errors.New("invalid config: cannot set `tidb.tls` to 'cluster' without a [security] section")
+		}
+	case "false", "skip-verify", "preferred":
+		break
+	default:
+		return errors.Errorf("invalid config: unsupported `tidb.tls` config %s", cfg.TiDB.TLS)
+	}
+
 	cfg.BWList.IgnoreDBs = append(cfg.BWList.IgnoreDBs,
 		"mysql",
 		"information_schema",
@@ -389,18 +446,15 @@ func (cfg *Config) Adjust() error {
 
 	// automatically determine the TiDB port & PD address from TiDB settings
 	if cfg.TiDB.Port <= 0 || len(cfg.TiDB.PdAddr) == 0 {
-		resp, err := http.Get(fmt.Sprintf("http://%s:%d/settings", cfg.TiDB.Host, cfg.TiDB.StatusPort))
+		tls, err := cfg.ToTLS()
+		if err != nil {
+			return err
+		}
+
+		var settings tidbcfg.Config
+		err = tls.GetJSON("/settings", &settings)
 		if err != nil {
 			return errors.Annotate(err, "cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return errors.Errorf("TiDB settings returned %s, please manually fill in `tidb.port` and `tidb.pd-addr`", resp.Status)
-		}
-		var settings tidbcfg.Config
-		err = json.NewDecoder(resp.Body).Decode(&settings)
-		if err != nil {
-			return errors.Annotate(err, "cannot decode settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
 		}
 		if cfg.TiDB.Port <= 0 {
 			cfg.TiDB.Port = int(settings.Port)
@@ -440,7 +494,16 @@ func (cfg *Config) Adjust() error {
 	if len(cfg.Checkpoint.DSN) == 0 {
 		switch cfg.Checkpoint.Driver {
 		case CheckpointDriverMySQL:
-			cfg.Checkpoint.DSN = common.ToDSN(cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.User, cfg.TiDB.Psw, mysql.DefaultSQLMode, defaultMaxAllowedPacket)
+			param := common.MySQLConnectParam{
+				Host:             cfg.TiDB.Host,
+				Port:             cfg.TiDB.Port,
+				User:             cfg.TiDB.User,
+				Password:         cfg.TiDB.Psw,
+				SQLMode:          mysql.DefaultSQLMode,
+				MaxAllowedPacket: defaultMaxAllowedPacket,
+				TLS:              cfg.TiDB.TLS,
+			}
+			cfg.Checkpoint.DSN = param.ToDSN()
 		case CheckpointDriverFile:
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
