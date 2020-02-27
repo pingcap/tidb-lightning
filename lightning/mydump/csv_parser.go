@@ -4,7 +4,6 @@ import (
 	"io"
 	"strings"
 
-	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
@@ -170,8 +169,6 @@ func (parser *CSVParser) ReadUntilTokNewLine() (pos int64, err error) {
 		hasField = true
 		switch tok {
 		case csvTokNewLine:
-			fmt.Println("touch csvTokNewLine")
-			return parser.pos, nil
 		}
 	}
 }
