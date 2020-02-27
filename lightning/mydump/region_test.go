@@ -218,7 +218,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 			},
 		},
 	}
-	filePath := "./csv/csv.split_large_file.csv"
+	filePath := "./csv/split_large_file.csv"
 	dataFileInfo, err := os.Stat(filePath)
 	if err != nil {
 		log.Fatal(err)
