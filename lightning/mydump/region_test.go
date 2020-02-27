@@ -18,12 +18,12 @@ import (
 	"os"
 	"path/filepath"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	. "github.com/pingcap/tidb-lightning/lightning/mydump"
-	"log"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-	"context"
+	"log"
 )
 
 var _ = Suite(&testMydumpRegionSuite{})
@@ -63,8 +63,9 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabases()[0]
 
+	ioWorkers := worker.NewPool(context.Background(), 1, "io")
 	for _, meta := range dbMeta.Tables {
-		regions, err := MakeTableRegions(meta, 1, 1, 0, 1)
+		regions, err := MakeTableRegions(meta, 1, cfg, ioWorkers)
 		c.Assert(err, IsNil)
 
 		table := meta.Name
@@ -199,34 +200,38 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 	meta := &MDTableMeta{
-		DB: "csv",
+		DB:   "csv",
 		Name: "large_csv_file",
 	}
 	cfg := &config.Config{
-		Mydumper:config.MydumperRuntime{
+		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator: ",",
-				Delimiter: "",
-				Header: false,
-				TrimLastSep: false,
-				NotNull: false,
-				Null: "NULL",
+				Separator:       ",",
+				Delimiter:       "",
+				Header:          false,
+				TrimLastSep:     false,
+				NotNull:         false,
+				Null:            "NULL",
 				BackslashEscape: true,
-				StrictFormat: true,
-				MaxRegionSize: 8,
+				StrictFormat:    true,
+				MaxRegionSize:   8,
 			},
 		},
 	}
 	filePath := "./examples/csv.empty_strings.csv"
 	dataFileInfo, err := os.Stat(filePath)
-	if err != nil{
+	if err != nil {
 		log.Fatal(err)
 	}
 	fileSize := dataFileInfo.Size()
 	colCnt := int64(3)
 	prevRowIdxMax := int64(0)
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
-	SplitLargeFile(meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker)
-
+	_, regions, _, _ := SplitLargeFile(meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker)
+	c.Assert(len(regions), Equals, 2)
+	c.Assert(regions[0].Chunk.Offset, Equals, int64(0))
+	c.Assert(regions[0].Chunk.EndOffset, Equals, int64(12))
+	c.Assert(regions[1].Chunk.Offset, Equals, int64(12))
+	c.Assert(regions[1].Chunk.EndOffset, Equals, int64(23))
 }
