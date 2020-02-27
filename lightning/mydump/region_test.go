@@ -21,6 +21,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	. "github.com/pingcap/tidb-lightning/lightning/mydump"
+	"log"
+	"github.com/pingcap/tidb-lightning/lightning/worker"
+	"context"
 )
 
 var _ = Suite(&testMydumpRegionSuite{})
@@ -192,4 +195,38 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 		5: 100,
 		6: 100,
 	})
+}
+
+func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
+	meta := &MDTableMeta{
+		DB: "csv",
+		Name: "large_csv_file",
+	}
+	cfg := &config.Config{
+		Mydumper:config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			CSV: config.CSVConfig{
+				Separator: ",",
+				Delimiter: "",
+				Header: false,
+				TrimLastSep: false,
+				NotNull: false,
+				Null: "NULL",
+				BackslashEscape: true,
+				StrictFormat: true,
+				MaxRegionSize: 8,
+			},
+		},
+	}
+	filePath := "./examples/csv.empty_strings.csv"
+	dataFileInfo, err := os.Stat(filePath)
+	if err != nil{
+		log.Fatal(err)
+	}
+	fileSize := dataFileInfo.Size()
+	colCnt := int64(3)
+	prevRowIdxMax := int64(0)
+	ioWorker := worker.NewPool(context.Background(), 4, "io")
+	SplitLargeFile(meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker)
+
 }
