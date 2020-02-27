@@ -233,5 +233,5 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 	c.Assert(regions[0].Chunk.Offset, Equals, int64(0))
 	c.Assert(regions[0].Chunk.EndOffset, Equals, int64(12))
 	c.Assert(regions[1].Chunk.Offset, Equals, int64(12))
-	c.Assert(regions[1].Chunk.EndOffset, Equals, int64(23))
+	c.Assert(regions[1].Chunk.EndOffset, Equals, int64(24))
 }
