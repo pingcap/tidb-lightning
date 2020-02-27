@@ -209,28 +209,30 @@ func SplitLargeFile(
 	prevRowIdxMax int64,
 	ioWorker *worker.Pool,
 ) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
-	reader, err := os.Open(dataFilePath)
-	if err != nil {
-		return 0, nil, nil, err
-	}
 	maxRegionSize := cfg.Mydumper.CSV.MaxRegionSize
 	dataFileSizes = make([]float64, 0, dataFileSize/maxRegionSize)
-	parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker)
-	defer parser.Close()
 	startOffset, endOffset := int64(0), maxRegionSize
-	for endOffset < dataFileSize {
+	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
-		parser.SetPos(endOffset, prevRowIdMax)
-		_, err := reader.Seek(endOffset, io.SeekStart)
-		if err != nil {
-			return 0, nil, nil, err
+		if endOffset != dataFileSize {
+			reader, err := os.Open(dataFilePath)
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker)
+			parser.SetPos(endOffset, prevRowIdMax)
+			_, err = reader.Seek(endOffset, io.SeekStart)
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			pos, err := parser.ReadUntilTokNewLine()
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			endOffset = pos
+			parser.Close()
 		}
-		pos, err := parser.ReadUntilTokNewLine()
-		if err != nil {
-			return 0, nil, nil, err
-		}
-		endOffset = pos
 		regions = append(regions,
 			&TableRegion{
 				DB:    meta.DB,
@@ -245,7 +247,9 @@ func SplitLargeFile(
 			})
 		dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))
 		prevRowIdxMax = rowIDMax
-
+		if endOffset == dataFileSize {
+			break
+		}
 		startOffset = endOffset
 		if endOffset += maxRegionSize; endOffset > dataFileSize {
 			endOffset = dataFileSize
