@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright 2019 PingCAP, Inc.
+# Copyright 2020 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,19 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This test verifies if TOOL-1420 is fixed.
-# It involves pre-calculated auto-inc overflowing the tinyint range.
+# Usage: run_curl https://url '{"json":"data"}'
 
 set -eu
+TEST_DIR=/tmp/lightning_test_result
 
-run_sql 'drop database if exists EE1472;'
-run_lightning
+if [ -z "${2-}" ]; then
+    POST_ARGS=
+else
+    POST_ARGS="--post-data $2"
+fi
 
-run_sql 'insert into EE1472.pk values ();'
-run_sql 'select count(a), max(a) from EE1472.pk;'
-check_contains 'count(a): 3'
-check_contains 'max(a): 5'
-
-run_sql 'insert into EE1472.notpk (a) values (3333);'
-run_sql 'select b from EE1472.notpk where a = 3333;'
-check_contains 'b: 10'
+# FIXME: use `wget` instead of `curl` because the latter rejects ECC certs on our CI.
+# CentOS is re~~ally old.
+wget -q -O - \
+    --ca-certificate="$TEST_DIR/tls/ca.pem" \
+    --certificate="$TEST_DIR/tls/curl.pem" \
+    --private-key="$TEST_DIR/tls/curl.key" \
+    $POST_ARGS "$1"

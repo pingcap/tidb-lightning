@@ -19,7 +19,7 @@ set -eux
 
 run_sql 'DROP DATABASE IF EXISTS firstdb;'
 run_sql 'DROP DATABASE IF EXISTS seconddb;'
-run_lightning 'firstdb-only'
+run_lightning --config "tests/$TEST_NAME/firstdb-only.toml"
 run_sql 'SHOW DATABASES;'
 check_contains 'Database: firstdb'
 check_not_contains 'Database: seconddb'
@@ -31,7 +31,7 @@ check_not_contains 'Tables_in_mysql: testtable'
 
 run_sql 'DROP DATABASE IF EXISTS firstdb;'
 run_sql 'DROP DATABASE IF EXISTS seconddb;'
-run_lightning 'even-table-only'
+run_lightning --config "tests/$TEST_NAME/even-table-only.toml"
 run_sql 'SHOW DATABASES;'
 check_contains 'Database: firstdb'
 check_contains 'Database: seconddb'

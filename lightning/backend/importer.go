@@ -25,6 +25,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
@@ -42,8 +43,8 @@ type importer struct {
 
 // NewImporter creates a new connection to tikv-importer. A single connection
 // per tidb-lightning instance is enough.
-func NewImporter(ctx context.Context, importServerAddr string, pdAddr string) (Backend, error) {
-	conn, err := grpc.DialContext(ctx, importServerAddr, grpc.WithInsecure())
+func NewImporter(ctx context.Context, tls *common.TLS, importServerAddr string, pdAddr string) (Backend, error) {
+	conn, err := grpc.DialContext(ctx, importServerAddr, tls.ToGRPCDialOption())
 	if err != nil {
 		return MakeBackend(nil), errors.Trace(err)
 	}

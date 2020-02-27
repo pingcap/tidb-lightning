@@ -28,7 +28,7 @@ cp "tests/$TEST_NAME/data/xfn.etn.sql" "$DBPATH/"'x`f"n.exotic`table``name.sql'
 
 run_sql 'DROP DATABASE IF EXISTS `x``f"n`;'
 run_sql 'DROP DATABASE IF EXISTS `中文庫`;'
-run_lightning
+run_lightning -d "$DBPATH"
 echo 'Import finished'
 
 run_sql 'SELECT count(*) FROM `x``f"n`.`exotic``table````name`'

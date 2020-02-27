@@ -28,10 +28,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb-lightning/lightning/common"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
@@ -121,8 +121,16 @@ func (s *utilSuite) TestIsRetryableError(c *C) {
 }
 
 func (s *utilSuite) TestToDSN(c *C) {
-	dsn := common.ToDSN("127.0.0.1", 4000, "root", "123456", "strict", 1234)
-	c.Assert(dsn, Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8&sql_mode='strict'&maxAllowedPacket=1234")
+	param := common.MySQLConnectParam{
+		Host:             "127.0.0.1",
+		Port:             4000,
+		User:             "root",
+		Password:         "123456",
+		SQLMode:          "strict",
+		MaxAllowedPacket: 1234,
+		TLS:              "cluster",
+	}
+	c.Assert(param.ToDSN(), Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster")
 }
 
 func (s *utilSuite) TestIsContextCanceledError(c *C) {

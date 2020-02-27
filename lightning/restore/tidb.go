@@ -17,8 +17,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -37,37 +35,39 @@ import (
 )
 
 type TiDBManager struct {
-	db      *sql.DB
-	client  *http.Client
-	baseURL *url.URL
-	parser  *parser.Parser
+	db     *sql.DB
+	tls    *common.TLS
+	parser *parser.Parser
 }
 
-func NewTiDBManager(dsn config.DBStore) (*TiDBManager, error) {
-	db, err := common.ConnectDB(dsn.Host, dsn.Port, dsn.User, dsn.Psw, dsn.StrSQLMode, dsn.MaxAllowedPacket)
+func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
+	param := common.MySQLConnectParam{
+		Host:             dsn.Host,
+		Port:             dsn.Port,
+		User:             dsn.User,
+		Password:         dsn.Psw,
+		SQLMode:          dsn.StrSQLMode,
+		MaxAllowedPacket: dsn.MaxAllowedPacket,
+		TLS:              dsn.TLS,
+	}
+	db, err := param.Connect()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	u, err := url.Parse(fmt.Sprintf("http://%s:%d", dsn.Host, dsn.StatusPort))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return NewTiDBManagerWithDB(db, u, dsn.SQLMode), nil
+	return NewTiDBManagerWithDB(db, tls, dsn.SQLMode), nil
 }
 
 // NewTiDBManagerWithDB creates a new TiDB manager with an existing database
 // connection.
-func NewTiDBManagerWithDB(db *sql.DB, baseURL *url.URL, sqlMode mysql.SQLMode) *TiDBManager {
+func NewTiDBManagerWithDB(db *sql.DB, tls *common.TLS, sqlMode mysql.SQLMode) *TiDBManager {
 	parser := parser.New()
 	parser.SetSQLMode(sqlMode)
 
 	return &TiDBManager{
-		db:      db,
-		client:  &http.Client{},
-		baseURL: baseURL,
-		parser:  parser,
+		db:     db,
+		tls:    tls,
+		parser: parser,
 	}
 }
 
@@ -145,11 +145,8 @@ func (timgr *TiDBManager) createTableIfNotExistsStmt(createTable, tblName string
 }
 
 func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
-	baseURL := *timgr.baseURL
-	baseURL.Path = fmt.Sprintf("schema/%s", schema)
-
 	var tables []*model.TableInfo
-	err := common.GetJSON(timgr.client, baseURL.String(), &tables)
+	err := timgr.tls.GetJSON("/schema/"+schema, &tables)
 	if err != nil {
 		return nil, errors.Annotatef(err, "get tables for schema %s", schema)
 	}

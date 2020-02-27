@@ -6,7 +6,7 @@ for BACKEND in importer tidb; do
 
 run_sql 'DROP DATABASE IF EXISTS csv'
 
-run_lightning config --backend $BACKEND
+run_lightning --backend $BACKEND
 
 run_sql 'SELECT count(*), sum(PROCESSLIST_TIME), sum(THREAD_OS_ID), count(PROCESSLIST_STATE) FROM csv.threads'
 check_contains 'count(*): 43'

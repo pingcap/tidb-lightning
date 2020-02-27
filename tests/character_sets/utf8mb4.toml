@@ -1,6 +1,5 @@
 [lightning]
 table-concurrency = 1
-level = "warning"
 
 [mydumper]
-read-block-size = 1
+character-set = "utf8mb4"

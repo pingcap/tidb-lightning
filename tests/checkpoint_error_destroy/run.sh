@@ -13,18 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eu
+set -eux
 
 # Make sure we won't run out of table concurrency by destroying checkpoints
 
 for i in $(seq 8); do
+    ARGS="--enable-checkpoint=1 --config tests/$TEST_NAME/mysql.toml -d tests/$TEST_NAME/bad-data"
     set +e
-    run_lightning bad
+    run_lightning $ARGS
     set -e
-    run_lightning_ctl bad -checkpoint-error-destroy=all
+    run_lightning_ctl $ARGS -checkpoint-error-destroy=all
 done
 
-run_lightning good
+run_lightning --enable-checkpoint=1 --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/good-data"
 run_sql 'SELECT * FROM cped.t'
 check_contains 'x: 1999-09-09 09:09:09'
 
@@ -33,14 +34,15 @@ check_contains 'x: 1999-09-09 09:09:09'
 run_sql 'DROP DATABASE cped'
 
 for i in $(seq 8); do
+    ARGS="--enable-checkpoint=1 --config tests/$TEST_NAME/file.toml -d tests/$TEST_NAME/bad-data"
     set +e
-    run_lightning bad_file
+    run_lightning $ARGS
     set -e
     ls -la /tmp/lightning_test_result/importer/.temp/
-    run_lightning_ctl bad_file -checkpoint-error-destroy=all
+    run_lightning_ctl $ARGS -checkpoint-error-destroy=all
     ls -la /tmp/lightning_test_result/importer/.temp/
 done
 
-run_lightning good_file
+run_lightning --enable-checkpoint=1 --config "tests/$TEST_NAME/file.toml" -d "tests/$TEST_NAME/good-data"
 run_sql 'SELECT * FROM cped.t'
 check_contains 'x: 1999-09-09 09:09:09'

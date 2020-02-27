@@ -20,7 +20,7 @@ set -eu
 for BACKEND in importer tidb; do
 
 run_sql 'DROP DATABASE IF EXISTS vt;'
-run_lightning config --backend $BACKEND
+run_lightning --backend $BACKEND
 echo Import using $BACKEND finished
 
 run_sql 'SELECT count(pk), bin(min(pk)), bin(max(pk)) FROM vt.bit'

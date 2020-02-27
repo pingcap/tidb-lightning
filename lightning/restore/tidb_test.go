@@ -19,7 +19,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -28,10 +27,12 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
-	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/util/mock"
+
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
 var _ = Suite(&tidbSuite{})
@@ -52,17 +53,15 @@ func (s *tidbSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 
 	s.mockDB = mock
-	s.mockHTTP = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	s.mockHTTP = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		s.handler.ServeHTTP(w, req)
 	}))
 
 	defaultSQLMode, err := tmysql.GetSQLMode(tmysql.DefaultSQLMode)
 	c.Assert(err, IsNil)
 
-	baseURL, err := url.Parse(s.mockHTTP.URL)
-	c.Assert(err, IsNil)
-
-	s.timgr = NewTiDBManagerWithDB(db, baseURL, defaultSQLMode)
+	tls := common.NewTLSFromMockServer(s.mockHTTP)
+	s.timgr = NewTiDBManagerWithDB(db, tls, defaultSQLMode)
 }
 
 func (s *tidbSuite) TearDownTest(c *C) {

@@ -34,7 +34,7 @@ export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/Increa
 
 # Start importing
 run_sql 'DROP DATABASE IF EXISTS restore_conc'
-run_lightning
+run_lightning -d "$DBPATH"
 echo "Import finished"
 
 # Verify all data are imported

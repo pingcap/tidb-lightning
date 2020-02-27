@@ -20,11 +20,15 @@ DBPATH="$TEST_DIR/cpch.mydump"
 CHUNK_COUNT=5
 ROW_COUNT=1000
 
+do_run_lightning() {
+    run_lightning -d "$DBPATH" --enable-checkpoint=1 --config "tests/$TEST_NAME/$1.toml"
+}
+
 verify_checkpoint_noop() {
     # After everything is done, there should be no longer new calls to WriteEngine/CloseAndRecv
     # (and thus `kill_lightning_after_one_chunk` will spare this final check)
     echo "******** Verify checkpoint no-op ********"
-    run_lightning
+    do_run_lightning config
     run_sql 'SELECT count(i), sum(i) FROM cpch_tsr.tbl;'
     check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
     check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
@@ -57,7 +61,7 @@ run_sql 'DROP DATABASE IF EXISTS `tidb_lightning_checkpoint_test_cpch.1234567890
 set +e
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk Now (step $i/$CHUNK_COUNT) ********"
-    run_lightning 2> /dev/null
+    do_run_lightning config 2> /dev/null
     [ $? -ne 0 ] || exit 1
 done
 set -e
@@ -75,7 +79,7 @@ export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb-lightning/light
 
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk Now (step $i/$CHUNK_COUNT) ********"
-    run_lightning
+    do_run_lightning config
 done
 
 set +e
@@ -109,13 +113,13 @@ export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb-lightning/light
 set +e
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk using File checkpoint Now (step $i/$CHUNK_COUNT) ********"
-    run_lightning file 2> /dev/null
+    do_run_lightning file 2> /dev/null
     [ $? -ne 0 ] || exit 1
 done
 set -e
 
 echo "******** Verify File checkpoint no-op ********"
-run_lightning file
+do_run_lightning file
 run_sql 'SELECT count(i), sum(i) FROM cpch_tsr.tbl;'
 check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
 check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"

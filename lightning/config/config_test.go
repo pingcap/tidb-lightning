@@ -102,7 +102,7 @@ func (s *configTestSuite) TestAdjustPageNotFound(c *C) {
 	cfg.TiDB.StatusPort = port
 
 	err := cfg.Adjust()
-	c.Assert(err, ErrorMatches, ".*404 Not Found.*")
+	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
 }
 
 func (s *configTestSuite) TestAdjustConnectRefused(c *C) {
@@ -134,7 +134,7 @@ func (s *configTestSuite) TestDecodeError(c *C) {
 	cfg.TiDB.StatusPort = port
 
 	err := cfg.Adjust()
-	c.Assert(err, ErrorMatches, "cannot decode settings from TiDB.*")
+	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
 }
 
 func (s *configTestSuite) TestInvalidSetting(c *C) {
@@ -178,6 +178,87 @@ func (s *configTestSuite) TestAdjustWillBatchImportRatioInvalid(c *C) {
 	err := cfg.Adjust()
 	c.Assert(err, IsNil)
 	c.Assert(cfg.Mydumper.BatchImportRatio, Equals, 0.75)
+}
+
+func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
+	testCases := []struct {
+		input       string
+		expectedCA  string
+		expectedTLS string
+	}{
+		{
+			input:       ``,
+			expectedCA:  "",
+			expectedTLS: "false",
+		},
+		{
+			input: `
+				[security]
+			`,
+			expectedCA:  "",
+			expectedTLS: "false",
+		},
+		{
+			input: `
+				[security]
+				ca-path = "/path/to/ca.pem"
+			`,
+			expectedCA:  "/path/to/ca.pem",
+			expectedTLS: "cluster",
+		},
+		{
+			input: `
+				[security]
+				ca-path = "/path/to/ca.pem"
+				[tidb.security]
+			`,
+			expectedCA:  "",
+			expectedTLS: "false",
+		},
+		{
+			input: `
+				[security]
+				ca-path = "/path/to/ca.pem"
+				[tidb.security]
+				ca-path = "/path/to/ca2.pem"
+			`,
+			expectedCA:  "/path/to/ca2.pem",
+			expectedTLS: "cluster",
+		},
+		{
+			input: `
+				[security]
+				[tidb.security]
+				ca-path = "/path/to/ca2.pem"
+			`,
+			expectedCA:  "/path/to/ca2.pem",
+			expectedTLS: "cluster",
+		},
+		{
+			input: `
+				[security]
+				[tidb]
+				tls = "skip-verify"
+				[tidb.security]
+			`,
+			expectedCA:  "",
+			expectedTLS: "skip-verify",
+		},
+	}
+
+	for _, tc := range testCases {
+		comment := Commentf("input = %s", tc.input)
+
+		cfg := config.NewConfig()
+		assignMinimalLegalValue(cfg)
+		err := cfg.LoadFromTOML([]byte(tc.input))
+		c.Assert(err, IsNil, comment)
+
+		err = cfg.Adjust()
+		c.Assert(err, IsNil, comment)
+		c.Assert(cfg.TiDB.Security.CAPath, Equals, tc.expectedCA, comment)
+		c.Assert(cfg.TiDB.TLS, Equals, tc.expectedTLS, comment)
+	}
 }
 
 func (s *configTestSuite) TestInvalidCSV(c *C) {
@@ -400,7 +481,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
 	err = taskCfg.Adjust()
 	c.Assert(err, IsNil)
-	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864")
+	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864&tls=false")
 
 	result := taskCfg.String()
 	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)

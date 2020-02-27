@@ -1,0 +1,3 @@
+[checkpoint]
+enable = true
+driver = "mysql"

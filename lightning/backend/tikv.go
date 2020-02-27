@@ -15,8 +15,6 @@ package backend
 
 import (
 	"context"
-	"fmt"
-	"net/http"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -76,11 +74,11 @@ type Store struct {
 	State   StoreState `json:"state_name"`
 }
 
-func withTiKVConnection(ctx context.Context, tikvAddr string, action func(import_sstpb.ImportSSTClient) error) error {
+func withTiKVConnection(ctx context.Context, tls *common.TLS, tikvAddr string, action func(import_sstpb.ImportSSTClient) error) error {
 	// Connect to the ImportSST service on the given TiKV node.
 	// The connection is needed for executing `action` and will be tear down
 	// when this function exits.
-	conn, err := grpc.DialContext(ctx, tikvAddr, grpc.WithInsecure())
+	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -91,7 +89,7 @@ func withTiKVConnection(ctx context.Context, tikvAddr string, action func(import
 }
 
 // ForAllStores executes `action` in parallel for all TiKV stores connected to
-// the given PD server.
+// a PD server given by the HTTPS client `tls`.
 //
 // Returns the first non-nil error returned in all `action` calls. If all
 // `action` returns nil, this method would return nil as well.
@@ -100,22 +98,18 @@ func withTiKVConnection(ctx context.Context, tikvAddr string, action func(import
 // result (Tombstone < Offline < Down < Disconnected < Up).
 func ForAllStores(
 	ctx context.Context,
-	client *http.Client,
-	pdAddr string,
+	tls *common.TLS,
 	minState StoreState,
 	action func(c context.Context, store *Store) error,
 ) error {
 	// Go through the HTTP interface instead of gRPC so we don't need to keep
 	// track of the cluster ID.
-	url := fmt.Sprintf("http://%s/pd/api/v1/stores", pdAddr)
-
 	var stores struct {
 		Stores []struct {
 			Store Store
 		}
 	}
-
-	err := common.GetJSON(client, url, &stores)
+	err := tls.GetJSON("/pd/api/v1/stores", &stores)
 	if err != nil {
 		return err
 	}
@@ -131,9 +125,9 @@ func ForAllStores(
 }
 
 // SwitchMode changes the TiKV node at the given address to a particular mode.
-func SwitchMode(ctx context.Context, tikvAddr string, mode import_sstpb.SwitchMode) error {
+func SwitchMode(ctx context.Context, tls *common.TLS, tikvAddr string, mode import_sstpb.SwitchMode) error {
 	task := log.With(zap.Stringer("mode", mode)).Begin(zap.DebugLevel, "switch mode")
-	err := withTiKVConnection(ctx, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
+	err := withTiKVConnection(ctx, tls, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
 		_, err := client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
 			Mode: mode,
 		})
@@ -144,9 +138,9 @@ func SwitchMode(ctx context.Context, tikvAddr string, mode import_sstpb.SwitchMo
 }
 
 // Compact performs a leveled compaction with the given minimum level.
-func Compact(ctx context.Context, tikvAddr string, level int32) error {
+func Compact(ctx context.Context, tls *common.TLS, tikvAddr string, level int32) error {
 	task := log.With(zap.Int32("level", level)).Begin(zap.InfoLevel, "compact cluster")
-	err := withTiKVConnection(ctx, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
+	err := withTiKVConnection(ctx, tls, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
 		_, err := client.Compact(ctx, &import_sstpb.CompactRequest{
 			OutputLevel: level,
 		})

@@ -17,8 +17,8 @@ programs.
 2. The following programs must be installed:
 
     * `mysql` (the CLI client)
-    * `python2.7`
-    * `curl`
+    * `wget`
+    * `openssl`
 
 3. The user executing the tests must have permission to create the folder
     `/tmp/lightning_test_result`. All test artifacts will be written into this folder.
