@@ -151,7 +151,7 @@ func (parser *CSVParser) ReadRow() error {
 	}
 }
 
-func (parser *CSVParser) TouchTokNewLine() (pos int64, err error) {
+func (parser *CSVParser) ReadUntilTokNewLine() (pos int64, err error) {
 	hasField := false
 	for {
 		tok, _, err := parser.lex()

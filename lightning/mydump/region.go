@@ -143,7 +143,7 @@ func MakeTableRegions(
 	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
 	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
-
+	csvCfg := cfg.Mydumper.CSV
 	prevRowIDMax := int64(0)
 	for _, dataFile := range meta.DataFiles {
 		dataFileInfo, err := os.Stat(dataFile)
@@ -158,12 +158,13 @@ func MakeTableRegions(
 			divisor += 2
 		}
 		// If a csv file is overlarge, we need to split it into mutiple regions.
-		if isCsvFile && dataFileSize > config.MaxRegionSize { // && config.IsStrict
+		// Note: We can only split a csv file whose format is strict and header is empty.
+		if isCsvFile && dataFileSize > csvCfg.MaxRegionSize && csvCfg.StrictFormat && !csvCfg.Header {
 			var (
 				regions      []*TableRegion
 				subFileSizes []float64
 			)
-			prevRowIDMax, regions, subFileSizes, err = splitLargeFile(meta, cfg, dataFile, dataFileSize, divisor, prevRowIDMax, ioWorkers)
+			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(meta, cfg, dataFile, dataFileSize, divisor, prevRowIDMax, ioWorkers)
 			if err != nil {
 				return nil, err
 			}
@@ -191,7 +192,14 @@ func MakeTableRegions(
 	return filesRegions, nil
 }
 
-func splitLargeFile(
+// SplitLargeFile splits a large csv file into multiple regions, the size of
+// each regions is specified by `config.MaxRegionSize`.
+// Note: We split the file coarsely, thus the format of csv file is needed to be
+// strict.
+// e.g.
+// - CSV file with header is invalid
+// - a complete tuple split into multiple lines is invalid
+func SplitLargeFile(
 	meta *MDTableMeta,
 	cfg *config.Config,
 	dataFilePath string,
@@ -204,16 +212,17 @@ func splitLargeFile(
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	dataFileSizes = make([]float64, 0, dataFileSize/config.MaxRegionSize)
+	maxRegionSize := cfg.Mydumper.CSV.MaxRegionSize
+	dataFileSizes = make([]float64, 0, dataFileSize/maxRegionSize)
 	parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker)
-	startOffset, endOffset := int64(0), config.MaxRegionSize
+	startOffset, endOffset := int64(0), maxRegionSize
 	for endOffset < dataFileSize {
-		curRegionCnt := (endOffset - startOffset) / divisor
-		rowIDMax := prevRowIdxMax + curRegionCnt
-		// rowIDMax is meaningless for this function here.
+		curRowsCnt := (endOffset - startOffset) / divisor
+		rowIDMax := prevRowIdxMax + curRowsCnt
+		// rowIDMax is meaningless for this function here .
 		parser.SetPos(endOffset, rowIDMax)
-		// Get the exact pos of the last line.
-		pos, err := parser.TouchTokNewLine()
+		// Get the exact pos of the last line actually.
+		pos, err := parser.ReadUntilTokNewLine()
 		if err != nil {
 			return 0, nil, nil, err
 		}
@@ -234,7 +243,7 @@ func splitLargeFile(
 		prevRowIdxMax = rowIDMax
 
 		startOffset = endOffset
-		if endOffset += config.MaxRegionSize; endOffset > dataFileSize {
+		if endOffset += maxRegionSize; endOffset > dataFileSize {
 			endOffset = dataFileSize
 		}
 	}
