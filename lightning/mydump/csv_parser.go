@@ -167,8 +167,7 @@ func (parser *CSVParser) ReadUntilTokNewLine() (pos int64, err error) {
 			return parser.pos, errors.Trace(err)
 		}
 		hasField = true
-		switch tok {
-		case csvTokNewLine:
+		if tok == csvTokNewLine {
 			return parser.pos, nil
 		}
 	}
