@@ -214,8 +214,8 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 				NotNull:         false,
 				Null:            "NULL",
 				BackslashEscape: true,
-				StrictFormat:    true,
 			},
+			StrictFormat: true,
 		},
 	}
 	filePath := "./csv/split_large_file.csv"
@@ -238,7 +238,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		{18, 1, [][]int64{{0, 24}}},
 		{19, 1, [][]int64{{0, 24}}},
 	} {
-		cfg.Mydumper.CSV.MaxRegionSize = tc.maxRegionSize
+		cfg.Mydumper.MaxRegionSize = tc.maxRegionSize
 		prevRowIdxMax := int64(0)
 		ioWorker := worker.NewPool(context.Background(), 4, "io")
 		_, regions, _, err := SplitLargeFile(meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker)
