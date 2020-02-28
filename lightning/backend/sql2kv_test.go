@@ -17,12 +17,16 @@ import (
 	"errors"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -291,4 +295,90 @@ func (s *kvSuite) TestClassifyAndAppend(c *C) {
 	}))
 	c.Assert(dataChecksum.SumKVS(), Equals, uint64(2))
 	c.Assert(indexChecksum.SumKVS(), Equals, uint64(1))
+}
+
+type benchSQL2KVSuite struct {
+	row     []types.Datum
+	colPerm []int
+	encoder Encoder
+	logger  log.Logger
+}
+
+var _ = Suite(&benchSQL2KVSuite{})
+
+func (s *benchSQL2KVSuite) SetUpTest(c *C) {
+	// First, create the table info corresponding to TPC-C's "CUSTOMER" table.
+	p := parser.New()
+	se := mock.NewContext()
+	node, err := p.ParseOneStmt(`
+		create table bmsql_customer(
+			c_w_id         integer not null,
+			c_d_id         integer not null,
+			c_id           integer not null,
+			c_discount     decimal(4,4),
+			c_credit       char(2),
+			c_last         varchar(16),
+			c_first        varchar(16),
+			c_credit_lim   decimal(12,2),
+			c_balance      decimal(12,2),
+			c_ytd_payment  decimal(12,2),
+			c_payment_cnt  integer,
+			c_delivery_cnt integer,
+			c_street_1     varchar(20),
+			c_street_2     varchar(20),
+			c_city         varchar(20),
+			c_state        char(2),
+			c_zip          char(9),
+			c_phone        char(16),
+			c_since        timestamp,
+			c_middle       char(2),
+			c_data         varchar(500),
+			primary key (c_w_id, c_d_id, c_id)
+		);
+	`, "", "")
+	c.Assert(err, IsNil)
+	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 123456)
+	c.Assert(err, IsNil)
+	tableInfo.State = model.StatePublic
+
+	// Construct the corresponding KV encoder.
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tableInfo)
+	c.Assert(err, IsNil)
+	s.encoder = NewTableKVEncoder(tbl, &SessionOptions{RowFormatVersion: "2"})
+	s.logger = log.Logger{Logger: zap.NewNop()}
+
+	// Prepare the row to insert.
+	s.row = []types.Datum{
+		types.NewIntDatum(15),
+		types.NewIntDatum(10),
+		types.NewIntDatum(3000),
+		types.NewStringDatum("0.3646"),
+		types.NewStringDatum("GC"),
+		types.NewStringDatum("CALLYPRIANTI"),
+		types.NewStringDatum("Rg6mDFlVnP5yh"),
+		types.NewStringDatum("50000.0"),
+		types.NewStringDatum("-10.0"),
+		types.NewStringDatum("10.0"),
+		types.NewIntDatum(1),
+		types.NewIntDatum(0),
+		types.NewStringDatum("aJK7CuRnE0NUxNHSX"),
+		types.NewStringDatum("Q1rps77cXYoj"),
+		types.NewStringDatum("MigXbS6UoUS"),
+		types.NewStringDatum("UJ"),
+		types.NewStringDatum("638611111"),
+		types.NewStringDatum("7743262784364376"),
+		types.NewStringDatum("2020-02-05 19:29:58.903970"),
+		types.NewStringDatum("OE"),
+		types.NewStringDatum("H5p3dpjp7uu8n1l3j0o1buecfV6FngNNgftpNALDhOzJaSzMCMlrQwXuvLAFPIFg215D3wAYB62kiixIuasfbD729oq8TwgKzPPsx8kHE1b4AdhHwpCml3ELKiwuNGQl7CcBQOiq6aFEMMHzjGwQyXwGey0wutjp2KP3Nd4qj3FHtmHbsD8cJ0pH9TswNmdQBgXsFPZeJJhsG3rTimQpS9Tmn3vNeI9fFas3ClDZuQtBjqoTJlyzmBIYT8HeV3TuS93TNFDaXZpQqh8HsvlPq4uTTLOO9CguiY29zlSmIjkZYtva3iscG3YDOQVLeGpP9dtqEJwlRvJ4oe9jWkvRMlCeslSNEuzLxjUBtJBnGRFAzJF6RMlIWCkdCpIhcnIy3jUEsxTuiAU3hsZxUjLg2dnOG62h5qR"),
+	}
+	s.colPerm = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, -1}
+}
+
+// Run `go test github.com/pingcap/tidb-lightning/lightning/backend -check.b -test.v` to get benchmark result.
+func (s *benchSQL2KVSuite) BenchmarkSQL2KV(c *C) {
+	for i := 0; i < c.N; i++ {
+		rows, err := s.encoder.Encode(s.logger, s.row, 1, s.colPerm)
+		c.Assert(err, IsNil)
+		c.Assert(rows, HasLen, 2)
+	}
 }
