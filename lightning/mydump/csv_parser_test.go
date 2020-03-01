@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -1158,10 +1157,10 @@ func (s *testMydumpCSVParserSuite) TestSyntaxErrorLog(c *C) {
 
 	tc := mydump.NewStringReader("x'" + strings.Repeat("y", 50000))
 	parser := mydump.NewCSVParser(&cfg, tc, 50000, s.ioWorkers)
-	var buffer *zaptest.Buffer
-	parser.Logger, buffer = log.MakeTestLogger()
+	logger, buffer := log.MakeTestLogger()
+	parser.SetLogger(logger)
 	c.Assert(parser.ReadRow(), ErrorMatches, "syntax error.*")
-	c.Assert(parser.Logger.Sync(), IsNil)
+	c.Assert(logger.Sync(), IsNil)
 
 	c.Assert(
 		buffer.Stripped(), Equals,
@@ -1207,7 +1206,7 @@ func (s *benchCSVParserSuite) BenchmarkReadRowUsingMydumpCSVParser(c *C) {
 
 	cfg := config.CSVConfig{Separator: ","}
 	parser := mydump.NewCSVParser(&cfg, file, 65536, s.ioWorkers)
-	parser.Logger.Logger = zap.NewNop()
+	parser.SetLogger(log.Logger{Logger: zap.NewNop()})
 
 	rowsCount := 0
 	for {

@@ -104,6 +104,8 @@ type Parser interface {
 	// Columns returns the _lower-case_ column names corresponding to values in
 	// the LastRow.
 	Columns() []string
+
+	SetLogger(log.Logger)
 }
 
 // NewChunkParser creates a new parser which can read chunks out of a file.
@@ -153,6 +155,10 @@ func (parser *blockParser) logSyntaxError() {
 		zap.Int64("pos", parser.pos),
 		zap.ByteString("content", content),
 	)
+}
+
+func (parser *blockParser) SetLogger(logger log.Logger) {
+	parser.Logger = logger
 }
 
 type token byte

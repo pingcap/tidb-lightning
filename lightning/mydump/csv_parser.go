@@ -21,7 +21,7 @@ func NewCSVParser(
 	reader ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
-) *CSVParser {
+) Parser {
 	escFlavor := backslashEscapeFlavorNone
 	if cfg.BackslashEscape {
 		escFlavor = backslashEscapeFlavorMySQL
