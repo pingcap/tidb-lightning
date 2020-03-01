@@ -1,19 +1,23 @@
 package mydump_test
 
 import (
-	// "fmt"
 	"context"
+	"encoding/csv"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-	"github.com/pingcap/tidb/types"
-	"go.uber.org/zap/zaptest"
 )
 
 var _ = Suite(&testMydumpCSVParserSuite{})
@@ -1155,4 +1159,90 @@ func (s *testMydumpCSVParserSuite) TestSyntaxErrorLog(c *C) {
 		buffer.Stripped(), Equals,
 		`{"$lvl":"ERROR","$msg":"syntax error","pos":1,"content":"'`+strings.Repeat("y", 255)+`"}`,
 	)
+}
+
+// Run `go test github.com/pingcap/tidb-lightning/lightning/mydump -check.b -check.bmem -test.v` to get benchmark result.
+// Please ensure your temporary storage has (c.N / 2) KiB of free space.
+
+type benchCSVParserSuite struct {
+	csvPath   string
+	ioWorkers *worker.Pool
+}
+
+var _ = Suite(&benchCSVParserSuite{})
+
+func (s *benchCSVParserSuite) setupTest(c *C) {
+	s.ioWorkers = worker.NewPool(context.Background(), 5, "bench_csv")
+
+	dir := c.MkDir()
+	s.csvPath = filepath.Join(dir, "input.csv")
+	file, err := os.Create(s.csvPath)
+	c.Assert(err, IsNil)
+	defer func() {
+		c.Assert(file.Close(), IsNil)
+	}()
+	for i := 0; i < c.N; i++ {
+		_, err = file.WriteString("18,1,1,0.3650,GC,BARBARBAR,rw9AOV1AjoI1,50000.00,-10.00,10.00,1,1,djj3Q2XaIPoYVy1FuF,gc80Q2o82Au3C9xv,PYOolSxG3w,DI,265111111,7586538936787184,2020-02-26 20:06:00.193,OE,YCkSPBVqoJ2V5F8zWs87V5XzbaIY70aWCD4dgcB6bjUzCr5wOJCJ2TYH49J7yWyysbudJIxlTAEWSJahY7hswLtTsqyjEkrlsN8iDMAa9Poj29miJ08tnn2G8mL64IlyywvnRGbLbyGvWDdrOSF42RyUFTWVyqlDWc6Gr5wyMPYgvweKemzFDVD3kro5JsmBmJY08EK54nQoyfo2sScyb34zcM9GFo9ZQTwloINfPYQKXQm32m0XvU7jiNmYpFTFJQjdqA825SEvQqMMefG2WG4jVu9UPdhdUjRsFRd0Gw7YPKByOlcuY0eKxT7sAzMKXx2000RR6dqHNXe47oVYd\n")
+		c.Assert(err, IsNil)
+	}
+	c.ResetTimer()
+}
+
+func (s *benchCSVParserSuite) BenchmarkReadRowUsingMydumpCSVParser(c *C) {
+	s.setupTest(c)
+
+	file, err := os.Open(s.csvPath)
+	c.Assert(err, IsNil)
+	defer func() {
+		c.Assert(file.Close(), IsNil)
+	}()
+
+	cfg := config.CSVConfig{Separator: ","}
+	parser := mydump.NewCSVParser(&cfg, file, 65536, s.ioWorkers)
+	parser.Logger.Logger = zap.NewNop()
+
+	rowsCount := 0
+	for {
+		err := parser.ReadRow()
+		if err == nil {
+			rowsCount++
+			continue
+		}
+		if errors.Cause(err) == io.EOF {
+			return
+		}
+		c.Fatal(err)
+	}
+	c.Assert(rowsCount, Equals, c.N)
+}
+
+func (s *benchCSVParserSuite) BenchmarkReadRowUsingEncodingCSV(c *C) {
+	s.setupTest(c)
+
+	file, err := os.Open(s.csvPath)
+	c.Assert(err, IsNil)
+	defer func() {
+		c.Assert(file.Close(), IsNil)
+	}()
+
+	csvParser := csv.NewReader(file)
+
+	rowsCount := 0
+	for {
+		records, err := csvParser.Read()
+		if err == nil {
+			// for fair comparison, we need to include the cost of conversion to Datum.
+			datums := make([]types.Datum, 0, len(records))
+			for _, record := range records {
+				datums = append(datums, types.NewStringDatum(record))
+			}
+			rowsCount++
+			continue
+		}
+		if errors.Cause(err) == io.EOF {
+			return
+		}
+		c.Fatal(err)
+	}
+	c.Assert(rowsCount, Equals, c.N)
 }
