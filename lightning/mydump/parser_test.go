@@ -41,8 +41,9 @@ func (s *testMydumpParserSuite) runTestCases(c *C, mode mysql.SQLMode, blockBufS
 	for _, tc := range cases {
 		parser := mydump.NewChunkParser(mode, mydump.NewStringReader(tc.input), blockBufSize, s.ioWorkers)
 		for i, row := range tc.expected {
-			comment := Commentf("input = %q, row = %d", tc.input, i+1)
-			c.Assert(parser.ReadRow(), IsNil, comment)
+			e := parser.ReadRow()
+			comment := Commentf("input = %q, row = %d, err = %s", tc.input, i+1, errors.ErrorStack(e))
+			c.Assert(e, IsNil, comment)
 			c.Assert(parser.LastRow(), DeepEquals, mydump.Row{RowID: int64(i) + 1, Row: row}, comment)
 		}
 		c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF, Commentf("input = %q", tc.input))
@@ -348,6 +349,27 @@ func (s *testMydumpParserSuite) TestVariousSyntax(c *C) {
 	}
 
 	s.runTestCases(c, mysql.ModeNone, config.ReadBlockSize, testCases)
+}
+
+func (s *testMydumpParserSuite) TestContinuation(c *C) {
+	testCases := []testCase{
+		{
+			input: `
+				('FUZNtcGYegeXwnMRKtYnXtFhgnAMTzQHEBUTBehAFBQdPsnjHhRwRZhZLtEBsIDUFduzftskgxkYkPmEgvoirfIZRsARXjsdKwOc')
+			`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("FUZNtcGYegeXwnMRKtYnXtFhgnAMTzQHEBUTBehAFBQdPsnjHhRwRZhZLtEBsIDUFduzftskgxkYkPmEgvoirfIZRsARXjsdKwOc")},
+			},
+		},
+		{
+			input: "INSERT INTO `report_case_high_risk` VALUES (2,'4','6',8,10);",
+			expected: [][]types.Datum{
+				{types.NewUintDatum(2), types.NewStringDatum("4"), types.NewStringDatum("6"), types.NewUintDatum(8), types.NewUintDatum(10)},
+			},
+		},
+	}
+
+	s.runTestCases(c, mysql.ModeNone, 1, testCases)
 }
 
 func (s *testMydumpParserSuite) TestPseudoKeywords(c *C) {
