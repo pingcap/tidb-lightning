@@ -18,7 +18,7 @@ type CSVParser struct {
 
 func NewCSVParser(
 	cfg *config.CSVConfig,
-	reader io.Reader,
+	reader ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 ) *CSVParser {

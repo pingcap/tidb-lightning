@@ -16,7 +16,6 @@ package mydump_test
 import (
 	"context"
 	"io"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -40,7 +39,7 @@ func (s *testMydumpParserSuite) TearDownSuite(c *C) {}
 
 func (s *testMydumpParserSuite) runTestCases(c *C, mode mysql.SQLMode, blockBufSize int64, cases []testCase) {
 	for _, tc := range cases {
-		parser := mydump.NewChunkParser(mode, strings.NewReader(tc.input), blockBufSize, s.ioWorkers)
+		parser := mydump.NewChunkParser(mode, mydump.NewStringReader(tc.input), blockBufSize, s.ioWorkers)
 		for i, row := range tc.expected {
 			comment := Commentf("input = %q, row = %d", tc.input, i+1)
 			c.Assert(parser.ReadRow(), IsNil, comment)
@@ -52,13 +51,13 @@ func (s *testMydumpParserSuite) runTestCases(c *C, mode mysql.SQLMode, blockBufS
 
 func (s *testMydumpParserSuite) runFailingTestCases(c *C, mode mysql.SQLMode, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
-		parser := mydump.NewChunkParser(mode, strings.NewReader(tc), blockBufSize, s.ioWorkers)
+		parser := mydump.NewChunkParser(mode, mydump.NewStringReader(tc), blockBufSize, s.ioWorkers)
 		c.Assert(parser.ReadRow(), ErrorMatches, "syntax error.*", Commentf("input = %q", tc))
 	}
 }
 
 func (s *testMydumpParserSuite) TestReadRow(c *C) {
-	reader := strings.NewReader(
+	reader := mydump.NewStringReader(
 		"/* whatever pragmas */;" +
 			"INSERT INTO `namespaced`.`table` (columns, more, columns) VALUES (1,-2, 3),\n(4,5., 6);" +
 			"INSERT `namespaced`.`table` (x,y,z) VALUES (7,8,9);" +
@@ -129,7 +128,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 }
 
 func (s *testMydumpParserSuite) TestReadChunks(c *C) {
-	reader := strings.NewReader(`
+	reader := mydump.NewStringReader(`
 		INSERT foo VALUES (1,2,3,4),(5,6,7,8),(9,10,11,12);
 		INSERT foo VALUES (13,14,15,16),(17,18,19,20),(21,22,23,24),(25,26,27,28);
 		INSERT foo VALUES (29,30,31,32),(33,34,35,36);
@@ -174,7 +173,7 @@ func (s *testMydumpParserSuite) TestReadChunks(c *C) {
 }
 
 func (s *testMydumpParserSuite) TestNestedRow(c *C) {
-	reader := strings.NewReader(`
+	reader := mydump.NewStringReader(`
 		INSERT INTO exam_detail VALUES
 		("123",CONVERT("{}" USING UTF8MB4)),
 		("456",CONVERT("{\"a\":4}" USING UTF8MB4)),
@@ -352,7 +351,7 @@ func (s *testMydumpParserSuite) TestVariousSyntax(c *C) {
 }
 
 func (s *testMydumpParserSuite) TestPseudoKeywords(c *C) {
-	reader := strings.NewReader(`
+	reader := mydump.NewStringReader(`
 		INSERT INTO t (
 			c, C,
 			co, CO,

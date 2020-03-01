@@ -34,7 +34,7 @@ import (
 
 type blockParser struct {
 	// states for the lexer
-	reader      io.Reader
+	reader      PooledReader
 	buf         []byte
 	blockBuf    []byte
 	isLastChunk bool
@@ -49,19 +49,17 @@ type blockParser struct {
 	// cache
 	remainBuf *bytes.Buffer
 	appendBuf *bytes.Buffer
-	ioWorkers *worker.Pool
 
 	// the Logger associated with this parser for reporting failure
 	Logger log.Logger
 }
 
-func makeBlockParser(reader io.Reader, blockBufSize int64, ioWorkers *worker.Pool) blockParser {
+func makeBlockParser(reader ReadSeekCloser, blockBufSize int64, ioWorkers *worker.Pool) blockParser {
 	return blockParser{
-		reader:    reader,
+		reader:    MakePooledReader(reader, ioWorkers),
 		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),
 		remainBuf: &bytes.Buffer{},
 		appendBuf: &bytes.Buffer{},
-		ioWorkers: ioWorkers,
 		Logger:    log.L(),
 	}
 }
@@ -111,7 +109,7 @@ type Parser interface {
 // NewChunkParser creates a new parser which can read chunks out of a file.
 func NewChunkParser(
 	sqlMode mysql.SQLMode,
-	reader io.Reader,
+	reader ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 ) *ChunkParser {
@@ -126,13 +124,9 @@ func NewChunkParser(
 	}
 }
 
-// Reader returns the underlying reader of this parser.
-func (parser *blockParser) Reader() io.Reader {
-	return parser.reader
-}
-
 // SetPos changes the reported position and row ID.
 func (parser *blockParser) SetPos(pos int64, rowID int64) {
+	parser.reader.Seek(pos, io.SeekStart)
 	parser.pos = pos
 	parser.lastRow.RowID = rowID
 }
@@ -143,10 +137,7 @@ func (parser *blockParser) Pos() (int64, int64) {
 }
 
 func (parser *blockParser) Close() error {
-	if closer, ok := parser.reader.(io.Closer); ok {
-		return closer.Close()
-	}
-	return errors.New("this parser is not created with a reader that can be closed")
+	return parser.reader.Close()
 }
 
 func (parser *blockParser) Columns() []string {
@@ -216,10 +207,7 @@ func (tok token) String() string {
 func (parser *blockParser) readBlock() error {
 	startTime := time.Now()
 
-	// limit IO concurrency
-	w := parser.ioWorkers.Apply()
-	n, err := io.ReadFull(parser.reader, parser.blockBuf)
-	parser.ioWorkers.Recycle(w)
+	n, err := parser.reader.ReadFull(parser.blockBuf)
 
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:

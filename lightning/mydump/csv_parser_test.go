@@ -56,7 +56,7 @@ type testCase struct {
 
 func (s *testMydumpCSVParserSuite) runTestCases(c *C, cfg *config.CSVConfig, blockBufSize int64, cases []testCase) {
 	for _, tc := range cases {
-		parser := mydump.NewCSVParser(cfg, strings.NewReader(tc.input), blockBufSize, s.ioWorkers)
+		parser := mydump.NewCSVParser(cfg, mydump.NewStringReader(tc.input), blockBufSize, s.ioWorkers)
 		for i, row := range tc.expected {
 			comment := Commentf("input = %q, row = %d", tc.input, i+1)
 			c.Assert(parser.ReadRow(), IsNil, comment)
@@ -68,13 +68,13 @@ func (s *testMydumpCSVParserSuite) runTestCases(c *C, cfg *config.CSVConfig, blo
 
 func (s *testMydumpCSVParserSuite) runFailingTestCases(c *C, cfg *config.CSVConfig, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
-		parser := mydump.NewCSVParser(cfg, strings.NewReader(tc), blockBufSize, s.ioWorkers)
+		parser := mydump.NewCSVParser(cfg, mydump.NewStringReader(tc), blockBufSize, s.ioWorkers)
 		c.Assert(parser.ReadRow(), ErrorMatches, "syntax error", Commentf("input = %q", tc))
 	}
 }
 
 func (s *testMydumpCSVParserSuite) TestTCPH(c *C) {
-	reader := strings.NewReader(
+	reader := mydump.NewStringReader(
 		`1|goldenrod lavender spring chocolate lace|Manufacturer#1|Brand#13|PROMO BURNISHED COPPER|7|JUMBO PKG|901.00|ly. slyly ironi|
 2|blush thistle blue yellow saddle|Manufacturer#1|Brand#13|LARGE BRUSHED BRASS|1|LG CASE|902.00|lar accounts amo|
 3|spring green yellow purple cornsilk|Manufacturer#4|Brand#42|STANDARD POLISHED BRASS|21|WRAP CASE|903.00|egular deposits hag|
@@ -150,7 +150,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 
 	// example 1, trailing new lines
 
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader("aaa,bbb,ccc\nzzz,yyy,xxx\n"), config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader("aaa,bbb,ccc\nzzz,yyy,xxx\n"), config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -178,7 +178,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 
 	// example 2, no trailing new lines
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader("aaa,bbb,ccc\nzzz,yyy,xxx"), config.ReadBlockSize, s.ioWorkers)
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader("aaa,bbb,ccc\nzzz,yyy,xxx"), config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -206,7 +206,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 
 	// example 5, quoted fields
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader(`"aaa","bbb","ccc"`+"\nzzz,yyy,xxx"), config.ReadBlockSize, s.ioWorkers)
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"aaa","bbb","ccc"`+"\nzzz,yyy,xxx"), config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -234,7 +234,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 
 	// example 6, line breaks within fields
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader(`"aaa","b
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"aaa","b
 bb","ccc"
 zzz,yyy,xxx`), config.ReadBlockSize, s.ioWorkers)
 
@@ -264,7 +264,7 @@ zzz,yyy,xxx`), config.ReadBlockSize, s.ioWorkers)
 
 	// example 7, quote escaping
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader(`"aaa","b""bb","ccc"`), config.ReadBlockSize, s.ioWorkers)
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"aaa","b""bb","ccc"`), config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -289,7 +289,7 @@ func (s *testMydumpCSVParserSuite) TestMySQL(c *C) {
 		Null:            `\N`,
 	}
 
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader(`"\"","\\","\?"
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"\"","\\","\?"
 "\
 ",\N,\\N`), config.ReadBlockSize, s.ioWorkers)
 
@@ -353,7 +353,7 @@ func (s *testMydumpCSVParserSuite) TestTSV(c *C) {
 		Header:          true,
 	}
 
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader(`a	b	c	d	e	f
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader(`a	b	c	d	e	f
 0				foo	0000-00-00
 0				foo	0000-00-00
 0	abc	def	ghi	bar	1999-12-31`), config.ReadBlockSize, s.ioWorkers)
@@ -410,17 +410,17 @@ func (s *testMydumpCSVParserSuite) TestEmpty(c *C) {
 		Delimiter: `"`,
 	}
 
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader(""), config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader(""), config.ReadBlockSize, s.ioWorkers)
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 
 	// Try again with headers.
 
 	cfg.Header = true
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader(""), config.ReadBlockSize, s.ioWorkers)
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader(""), config.ReadBlockSize, s.ioWorkers)
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader("h\n"), config.ReadBlockSize, s.ioWorkers)
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader("h\n"), config.ReadBlockSize, s.ioWorkers)
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 }
 
@@ -429,7 +429,7 @@ func (s *testMydumpCSVParserSuite) TestCRLF(c *C) {
 		Separator: ",",
 		Delimiter: `"`,
 	}
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader("a\rb\r\nc\n\n\n\nd"), config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader("a\rb\r\nc\n\n\n\nd"), config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -464,7 +464,7 @@ func (s *testMydumpCSVParserSuite) TestQuotedSeparator(c *C) {
 		Delimiter: `"`,
 	}
 
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader(`",",','`), config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader(`",",','`), config.ReadBlockSize, s.ioWorkers)
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 1,
@@ -1131,6 +1131,14 @@ func (*errorReader) Read(p []byte) (int, error) {
 	return 0, errors.New("fake read error")
 }
 
+func (*errorReader) Seek(offset int64, whence int) (int64, error) {
+	return 0, errors.New("fake seek error")
+}
+
+func (*errorReader) Close() error {
+	return errors.New("fake close error")
+}
+
 func (s *testMydumpCSVParserSuite) TestReadError(c *C) {
 	cfg := config.CSVConfig{
 		Separator: ",",
@@ -1148,7 +1156,7 @@ func (s *testMydumpCSVParserSuite) TestSyntaxErrorLog(c *C) {
 		Delimiter: "'",
 	}
 
-	tc := strings.NewReader("x'" + strings.Repeat("y", 50000))
+	tc := mydump.NewStringReader("x'" + strings.Repeat("y", 50000))
 	parser := mydump.NewCSVParser(&cfg, tc, 50000, s.ioWorkers)
 	var buffer *zaptest.Buffer
 	parser.Logger, buffer = log.MakeTestLogger()
