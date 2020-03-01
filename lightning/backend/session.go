@@ -24,6 +24,20 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
+// invalidIterator is a trimmed down Iterator type which is invalid.
+type invalidIterator struct {
+	kv.Iterator
+}
+
+// Valid implements the kv.Iterator interface
+func (*invalidIterator) Valid() bool {
+	return false
+}
+
+// Close implements the kv.Iterator interface
+func (*invalidIterator) Close() {
+}
+
 // transaction is a trimmed down Transaction type which only supports adding a
 // new KV pair.
 type transaction struct {
@@ -31,12 +45,20 @@ type transaction struct {
 	kvPairs []common.KvPair
 }
 
-// Get implements the kv.Transaction interface
+// Reset implements the kv.MemBuffer interface
+func (t *transaction) Reset() {}
+
+// Get implements the kv.Retriever interface
 func (t *transaction) Get(ctx context.Context, key kv.Key) ([]byte, error) {
 	return nil, kv.ErrNotExist
 }
 
-// Set implements the kv.Transaction interface
+// Iter implements the kv.Retriever interface
+func (t *transaction) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	return &invalidIterator{}, nil
+}
+
+// Set implements the kv.Mutator interface
 func (t *transaction) Set(k kv.Key, v []byte) error {
 	t.kvPairs = append(t.kvPairs, common.KvPair{
 		Key: k.Clone(),
@@ -84,10 +106,18 @@ func newSession(options *SessionOptions) *session {
 	vars.StmtCtx.TimeZone = vars.Location()
 	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
 	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
-	return &session{
+
+	s := &session{
 		txn:  transaction{},
 		vars: vars,
 	}
+	s.vars.GetWriteStmtBufs().BufStore = &kv.BufferStore{MemBuffer: &s.txn}
+
+	// FIXME: potential further improvements:
+	//  - (*TransactionContext).UpdateDeltaForTable takes 14% of Encode() time.
+	//    But we cannot make `vars.TxnCtx` into nil nor make it no-op.
+
+	return s
 }
 
 func (se *session) takeKvPairs() []common.KvPair {
