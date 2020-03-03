@@ -60,7 +60,7 @@ checksuccess:
 $(VFSGENDEV_BIN):
 	cd tools && $(GOBUILD) -o ../$(VFSGENDEV_BIN) github.com/shurcooL/vfsgen/cmd/vfsgendev
 
-data_parsers: $(VFSGENDEV_BIN) lightning/mydump/parser_generated.go lightning/mydump/csv_parser_generated.go
+data_parsers: $(VFSGENDEV_BIN) lightning/mydump/parser_generated.go
 	PATH="$(GOPATH)/bin":"$(PATH)" protoc -I. -I"$(GOPATH)/src" lightning/checkpoints/file_checkpoints.proto --gogofaster_out=.
 	$(VFSGENDEV_BIN) -source='"github.com/pingcap/tidb-lightning/lightning/web".Res' && mv res_vfsdata.go lightning/web/
 

@@ -1,19 +1,22 @@
 package mydump_test
 
 import (
-	// "fmt"
 	"context"
+	"encoding/csv"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-	"github.com/pingcap/tidb/types"
-	"go.uber.org/zap/zaptest"
 )
 
 var _ = Suite(&testMydumpCSVParserSuite{})
@@ -52,10 +55,11 @@ type testCase struct {
 
 func (s *testMydumpCSVParserSuite) runTestCases(c *C, cfg *config.CSVConfig, blockBufSize int64, cases []testCase) {
 	for _, tc := range cases {
-		parser := mydump.NewCSVParser(cfg, strings.NewReader(tc.input), blockBufSize, s.ioWorkers)
+		parser := mydump.NewCSVParser(cfg, mydump.NewStringReader(tc.input), blockBufSize, s.ioWorkers)
 		for i, row := range tc.expected {
 			comment := Commentf("input = %q, row = %d", tc.input, i+1)
-			c.Assert(parser.ReadRow(), IsNil, comment)
+			e := parser.ReadRow()
+			c.Assert(e, IsNil, Commentf("input = %q, row = %d, error = %s", tc.input, i+1, errors.ErrorStack(e)))
 			c.Assert(parser.LastRow(), DeepEquals, mydump.Row{RowID: int64(i) + 1, Row: row}, comment)
 		}
 		c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF, Commentf("input = %q", tc.input))
@@ -64,13 +68,14 @@ func (s *testMydumpCSVParserSuite) runTestCases(c *C, cfg *config.CSVConfig, blo
 
 func (s *testMydumpCSVParserSuite) runFailingTestCases(c *C, cfg *config.CSVConfig, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
-		parser := mydump.NewCSVParser(cfg, strings.NewReader(tc), blockBufSize, s.ioWorkers)
-		c.Assert(parser.ReadRow(), ErrorMatches, "syntax error", Commentf("input = %q", tc))
+		parser := mydump.NewCSVParser(cfg, mydump.NewStringReader(tc), blockBufSize, s.ioWorkers)
+		e := parser.ReadRow()
+		c.Assert(e, ErrorMatches, "syntax error.*", Commentf("input = %q / %s", tc, errors.ErrorStack(e)))
 	}
 }
 
-func (s *testMydumpCSVParserSuite) TestTCPH(c *C) {
-	reader := strings.NewReader(
+func (s *testMydumpCSVParserSuite) TestTPCH(c *C) {
+	reader := mydump.NewStringReader(
 		`1|goldenrod lavender spring chocolate lace|Manufacturer#1|Brand#13|PROMO BURNISHED COPPER|7|JUMBO PKG|901.00|ly. slyly ironi|
 2|blush thistle blue yellow saddle|Manufacturer#1|Brand#13|LARGE BRUSHED BRASS|1|LG CASE|902.00|lar accounts amo|
 3|spring green yellow purple cornsilk|Manufacturer#4|Brand#42|STANDARD POLISHED BRASS|21|WRAP CASE|903.00|egular deposits hag|
@@ -146,7 +151,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 
 	// example 1, trailing new lines
 
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader("aaa,bbb,ccc\nzzz,yyy,xxx\n"), config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader("aaa,bbb,ccc\nzzz,yyy,xxx\n"), config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -174,7 +179,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 
 	// example 2, no trailing new lines
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader("aaa,bbb,ccc\nzzz,yyy,xxx"), config.ReadBlockSize, s.ioWorkers)
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader("aaa,bbb,ccc\nzzz,yyy,xxx"), config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -202,7 +207,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 
 	// example 5, quoted fields
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader(`"aaa","bbb","ccc"`+"\nzzz,yyy,xxx"), config.ReadBlockSize, s.ioWorkers)
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"aaa","bbb","ccc"`+"\nzzz,yyy,xxx"), config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -230,7 +235,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 
 	// example 6, line breaks within fields
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader(`"aaa","b
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"aaa","b
 bb","ccc"
 zzz,yyy,xxx`), config.ReadBlockSize, s.ioWorkers)
 
@@ -260,7 +265,7 @@ zzz,yyy,xxx`), config.ReadBlockSize, s.ioWorkers)
 
 	// example 7, quote escaping
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader(`"aaa","b""bb","ccc"`), config.ReadBlockSize, s.ioWorkers)
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"aaa","b""bb","ccc"`), config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -285,7 +290,7 @@ func (s *testMydumpCSVParserSuite) TestMySQL(c *C) {
 		Null:            `\N`,
 	}
 
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader(`"\"","\\","\?"
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader(`"\"","\\","\?"
 "\
 ",\N,\\N`), config.ReadBlockSize, s.ioWorkers)
 
@@ -349,7 +354,7 @@ func (s *testMydumpCSVParserSuite) TestTSV(c *C) {
 		Header:          true,
 	}
 
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader(`a	b	c	d	e	f
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader(`a	b	c	d	e	f
 0				foo	0000-00-00
 0				foo	0000-00-00
 0	abc	def	ghi	bar	1999-12-31`), config.ReadBlockSize, s.ioWorkers)
@@ -406,17 +411,17 @@ func (s *testMydumpCSVParserSuite) TestEmpty(c *C) {
 		Delimiter: `"`,
 	}
 
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader(""), config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader(""), config.ReadBlockSize, s.ioWorkers)
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 
 	// Try again with headers.
 
 	cfg.Header = true
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader(""), config.ReadBlockSize, s.ioWorkers)
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader(""), config.ReadBlockSize, s.ioWorkers)
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 
-	parser = mydump.NewCSVParser(&cfg, strings.NewReader("h\n"), config.ReadBlockSize, s.ioWorkers)
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader("h\n"), config.ReadBlockSize, s.ioWorkers)
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 }
 
@@ -425,7 +430,7 @@ func (s *testMydumpCSVParserSuite) TestCRLF(c *C) {
 		Separator: ",",
 		Delimiter: `"`,
 	}
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader("a\rb\r\nc\n\n\n\nd"), config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader("a\rb\r\nc\n\n\n\nd"), config.ReadBlockSize, s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -460,7 +465,7 @@ func (s *testMydumpCSVParserSuite) TestQuotedSeparator(c *C) {
 		Delimiter: `"`,
 	}
 
-	parser := mydump.NewCSVParser(&cfg, strings.NewReader(`",",','`), config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader(`",",','`), config.ReadBlockSize, s.ioWorkers)
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 1,
@@ -481,29 +486,19 @@ func (s *testMydumpCSVParserSuite) TestConsecutiveFields(c *C) {
 	// Go's CSV package returns a parse error.
 	// NPM's CSV package returns a parse error.
 	// MySQL's LOAD DATA statement returns `"xxx"yyy` as-is.
-	// For simplicity we treat this as two separate fields.
 
 	cfg := config.CSVConfig{
 		Separator: ",",
 		Delimiter: `"`,
 	}
 
-	testCases := []testCase{
-		{
-			input:    `"x"?`,
-			expected: [][]types.Datum{{types.NewStringDatum("x"), types.NewStringDatum("?")}},
-		},
-		{
-			input:    "\"\"\x01",
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum("\x01")}},
-		},
-		{
-			input:    "\"\"\v",
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum("\v")}},
-		},
+	testCases := []string{
+		`"x"?`,
+		"\"\"\x01",
+		"\"\"\v",
 	}
 
-	s.runTestCases(c, &cfg, config.ReadBlockSize, testCases)
+	s.runFailingTestCases(c, &cfg, config.ReadBlockSize, testCases)
 }
 
 func (s *testMydumpCSVParserSuite) TestSpecialChars(c *C) {
@@ -531,7 +526,11 @@ func (s *testMydumpCSVParserSuite) TestSpecialChars(c *C) {
 		},
 		{
 			input:    "\n\r",
-			expected: [][]types.Datum{{nullDatum}},
+			expected: [][]types.Datum{},
+		},
+		{
+			input:    `"""",0`,
+			expected: [][]types.Datum{{types.NewStringDatum(`"`), types.NewStringDatum(`0`)}},
 		},
 	}
 
@@ -562,116 +561,13 @@ func (s *testMydumpCSVParserSuite) TestContinuation(c *C) {
 				},
 			},
 		},
-	}
-
-	s.runTestCases(c, &cfg, 1, testCases)
-}
-
-func (s *testMydumpCSVParserSuite) TestOverlappingSepDelim(c *C) {
-	// If the same character is simultaneously a separator and a delimiter,
-	// we treat paired characters as a delimiter and an orphan character as a
-	// separator, due to behavior of picking longest match in Ragel's tokenizer.
-	cfg := config.CSVConfig{
-		Separator: ",",
-		Delimiter: ",",
-	}
-
-	testCases := []testCase{
 		{
-			input:    `,`,
-			expected: [][]types.Datum{{nullDatum, nullDatum}},
-		},
-		{
-			input:    "0000,0",
-			expected: [][]types.Datum{{types.NewStringDatum("0000"), types.NewStringDatum("0")}},
-		},
-		{
-			input:    ",0",
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum("0")}},
-		},
-		{
-			input:    ",\r",
-			expected: [][]types.Datum{{nullDatum, nullDatum}},
-		},
-		{
-			input:    ",\n",
-			expected: [][]types.Datum{{nullDatum, nullDatum}},
-		},
-		{
-			input:    ",\r\n",
-			expected: [][]types.Datum{{nullDatum, nullDatum}},
-		},
-		{
-			input:    ",,",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    ",c",
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum("c")}},
-		},
-		{
-			input:    ",\x04",
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum("\x04")}},
-		},
-		{
-			input:    ",\f",
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum("\f")}},
-		},
-		{
-			input:    ",0,",
-			expected: [][]types.Datum{{types.NewStringDatum("0")}},
-		},
-		{
-			input:    `,\`,
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum(`\`)}},
-		},
-		{
-			input:    "0,00,0",
-			expected: [][]types.Datum{{types.NewStringDatum("0"), types.NewStringDatum("00"), types.NewStringDatum("0")}},
-		},
-		{
-			input:    ",,0",
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum("0")}},
-		},
-		{
-			input:    ",,\f",
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum("\f")}},
-		},
-		{
-			input:    ",,\x8f",
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum("\x8f")}},
-		},
-		{
-			input:    ",,,",
-			expected: [][]types.Datum{{types.NewStringDatum(",")}},
+			input:    `"VzMXdTXsLbiIqTYQlwPSudocNPKVsAqXgnuvupXEzlxkaFpBtHNDyoVEydoEgdnhsygaNHLpMTdEkpkrkNdzVjCbSoXvUqwoVaca"`,
+			expected: [][]types.Datum{{types.NewStringDatum("VzMXdTXsLbiIqTYQlwPSudocNPKVsAqXgnuvupXEzlxkaFpBtHNDyoVEydoEgdnhsygaNHLpMTdEkpkrkNdzVjCbSoXvUqwoVaca")}},
 		},
 	}
 
 	s.runTestCases(c, &cfg, 1, testCases)
-
-	cfg.BackslashEscape = true
-	testCases = []testCase{
-		{
-			input:    ",,\x02",
-			expected: [][]types.Datum{{nullDatum, types.NewStringDatum("\x02")}},
-		},
-		{
-			input:    ",,\n",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    ",,\r",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-	}
-
-	s.runTestCases(c, &cfg, 1, testCases)
-
-	failingInputs := []string{
-		`,\`,
-		`,,\`,
-	}
-	s.runFailingTestCases(c, &cfg, 1, failingInputs)
 }
 
 func (s *testMydumpCSVParserSuite) TestBackslashAsSep(c *C) {
@@ -697,58 +593,9 @@ func (s *testMydumpCSVParserSuite) TestBackslashAsSep(c *C) {
 		`"\`,
 	}
 	s.runFailingTestCases(c, &cfg, 1, failingInputs)
-
-	cfg.BackslashEscape = true
-
-	testCases = []testCase{
-		{
-			input:    `0\`,
-			expected: [][]types.Datum{{types.NewStringDatum("0"), nullDatum}},
-		},
-		{
-			input:    `\`,
-			expected: [][]types.Datum{{nullDatum, nullDatum}},
-		},
-		{
-			input:    `""""\0`,
-			expected: [][]types.Datum{{types.NewStringDatum(`"`), types.NewStringDatum("\x00")}},
-		},
-		{
-			input:    `\0`,
-			expected: [][]types.Datum{{types.NewStringDatum("\x00")}},
-		},
-		{
-			input:    `"\"`,
-			expected: [][]types.Datum{{types.NewStringDatum(`\`)}},
-		},
-		{
-			input:    `"\"\`,
-			expected: [][]types.Datum{{types.NewStringDatum(`\`), nullDatum}},
-		},
-	}
-
-	s.runTestCases(c, &cfg, 1, testCases)
-
-	failingInputs = []string{
-		`"\`,
-		"\"\\\xef",
-		`"000\0`,
-		`"\0`,
-		`"\\`,
-		"\"\\\v",
-		"\"\\\n",
-		"\"\\\x00",
-		"\"\\\r",
-	}
-	s.runFailingTestCases(c, &cfg, 1, failingInputs)
 }
 
 func (s *testMydumpCSVParserSuite) TestBackslashAsDelim(c *C) {
-	// Most of these are just documenting the current behavior for coverage,
-	// there's no sane way to describe the desired behavior. The expected
-	// results of these tests may change according to the parser's internals.
-	//
-	// We'll deny these cases when checking the config.
 	cfg := config.CSVConfig{
 		Separator: ",",
 		Delimiter: `\`,
@@ -766,358 +613,6 @@ func (s *testMydumpCSVParserSuite) TestBackslashAsDelim(c *C) {
 		`"\`,
 	}
 	s.runFailingTestCases(c, &cfg, 1, failingInputs)
-
-	cfg.BackslashEscape = true
-
-	testCases = []testCase{
-		{
-			input:    `\0`,
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\\x00",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    `\\`,
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\\r",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\\n",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "000\r\\0",
-			expected: [][]types.Datum{{types.NewStringDatum("000")}, {nullDatum}},
-		},
-		{
-			input:    "\\\xe3",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\\v",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\0\xbf",
-			expected: [][]types.Datum{{types.NewStringDatum("0")}},
-		},
-		{
-			input:    `\0\`,
-			expected: [][]types.Datum{{types.NewStringDatum("0")}},
-		},
-		{
-			input:    "\\0\n",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\0\r",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\0\v",
-			expected: [][]types.Datum{{types.NewStringDatum("0")}},
-		},
-		{
-			input:    "00\n\\00",
-			expected: [][]types.Datum{{types.NewStringDatum("00")}, {types.NewStringDatum("0")}},
-		},
-		{
-			input:    `\\0`,
-			expected: [][]types.Datum{{types.NewStringDatum(`\`)}},
-		},
-		{
-			input:    "00,\\00",
-			expected: [][]types.Datum{{types.NewStringDatum("00"), types.NewStringDatum("0")}},
-		},
-		{
-			input:    "\\\\\x00",
-			expected: [][]types.Datum{{types.NewStringDatum(`\`)}},
-		},
-		{
-			input:    `\01`,
-			expected: [][]types.Datum{{types.NewStringDatum("0")}},
-		},
-		{
-			input:    "\\0\x00",
-			expected: [][]types.Datum{{types.NewStringDatum("0")}},
-		},
-		{
-			input:    `\,`,
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\\\\r",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    `\0\\`,
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    `\0,`,
-			expected: [][]types.Datum{{nullDatum, nullDatum}},
-		},
-		{
-			input:    `\\\\\\\\\\0`,
-			expected: [][]types.Datum{{types.NewStringDatum(`\\\`)}},
-		},
-		{
-			input:    `\\,`,
-			expected: [][]types.Datum{{nullDatum, nullDatum}},
-		},
-		{
-			input:    "\\0\\\r",
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "\\0\\\n",
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "\\0\r\\",
-			expected: [][]types.Datum{{types.NewStringDatum("0\r")}},
-		},
-		{
-			input:    "\\\\\n",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    `\0\0`,
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "0\n\\0\\0",
-			expected: [][]types.Datum{{types.NewStringDatum(`0`)}, {types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "\\0\n\\\v",
-			expected: [][]types.Datum{{types.NewStringDatum("0\n"), types.NewStringDatum("\v")}},
-		},
-		{
-			input:    "\\0\\\v",
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "\\0\n\\0",
-			expected: [][]types.Datum{{types.NewStringDatum("0\n"), types.NewStringDatum("0")}},
-		},
-		{
-			input:    "\\0\\\x00",
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "\\0\n\\\n",
-			expected: [][]types.Datum{{types.NewStringDatum("0\n")}},
-		},
-		{
-			input:    "\\0\r\\\r",
-			expected: [][]types.Datum{{types.NewStringDatum("0\r")}},
-		},
-		{
-			input:    "\n\\0\n\\0",
-			expected: [][]types.Datum{{nullDatum}, {types.NewStringDatum("0\n"), types.NewStringDatum("0")}},
-		},
-		{
-			input:    "\\0\n\\\x01",
-			expected: [][]types.Datum{{types.NewStringDatum("0\n"), types.NewStringDatum("\x01")}},
-		},
-	}
-	s.runTestCases(c, &cfg, 1, testCases)
-
-	failingInputs = []string{
-		`0\`,
-		`\`,
-		`\\\`,
-		`\0,\\`,
-	}
-	s.runFailingTestCases(c, &cfg, 1, failingInputs)
-}
-
-func (s *testMydumpCSVParserSuite) TestBackslashAsSepAndDelim(c *C) {
-	// Most of these are just documenting the current behavior for coverage,
-	// there's no sane way to describe the desired behavior. The expected
-	// results of these tests may change according to the parser's internals.
-	//
-	// We'll deny these cases when checking the config.
-	cfg := config.CSVConfig{
-		Separator: `\`,
-		Delimiter: `\`,
-	}
-
-	testCases := []testCase{
-		{
-			input:    `\`,
-			expected: [][]types.Datum{{nullDatum, nullDatum}},
-		},
-		{
-			input:    `\0\`,
-			expected: [][]types.Datum{{types.NewStringDatum("0")}},
-		},
-		{
-			input:    `\\`,
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    `\\\`,
-			expected: [][]types.Datum{{types.NewStringDatum(`\`)}},
-		},
-	}
-	s.runTestCases(c, &cfg, 1, testCases)
-
-	cfg.BackslashEscape = true
-
-	testCases = []testCase{
-		{
-			input:    `0\`,
-			expected: [][]types.Datum{{types.NewStringDatum("0"), nullDatum}},
-		},
-		{
-			input:    `\`,
-			expected: [][]types.Datum{{nullDatum, nullDatum}},
-		},
-		{
-			input:    "\\\xe7",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    `\0`,
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\\x00",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    `\\`,
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\\r",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\\n",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "000\r\\0",
-			expected: [][]types.Datum{{types.NewStringDatum("000")}, {nullDatum}},
-		},
-		{
-			input:    "\\\v",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    `\0\`,
-			expected: [][]types.Datum{{types.NewStringDatum("0")}},
-		},
-		{
-			input:    "00\r\\\\0",
-			expected: [][]types.Datum{{types.NewStringDatum("00")}, {types.NewStringDatum(`\`)}},
-		},
-		{
-			input:    "\\0\n\\",
-			expected: [][]types.Datum{{types.NewStringDatum("0\n")}},
-		},
-		{
-			input:    "\\\\r",
-			expected: [][]types.Datum{{types.NewStringDatum(`\`)}},
-		},
-		{
-			input:    "\\\\\r",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    "\\\\0",
-			expected: [][]types.Datum{{types.NewStringDatum(`\`)}},
-		},
-		{
-			input:    "\\\\\v",
-			expected: [][]types.Datum{{types.NewStringDatum(`\`)}},
-		},
-		{
-			input:    "\\\\\x00",
-			expected: [][]types.Datum{{types.NewStringDatum(`\`)}},
-		},
-		{
-			input:    "\\\\\n",
-			expected: [][]types.Datum{{nullDatum}},
-		},
-		{
-			input:    `\\\`,
-			expected: [][]types.Datum{{types.NewStringDatum(`\`)}},
-		},
-		{
-			input:    "\\0\\\v",
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "\\0\n\\\\",
-			expected: [][]types.Datum{{types.NewStringDatum("0\n\\")}},
-		},
-		{
-			input:    "\\0\n\\0",
-			expected: [][]types.Datum{{types.NewStringDatum("0\n"), types.NewStringDatum("0")}},
-		},
-		{
-			input:    `\0\\`,
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "\\0\\\x00",
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "\\0\n\\\n",
-			expected: [][]types.Datum{{types.NewStringDatum("0\n")}},
-		},
-		{
-			input:    "\\0\\t",
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "\\0\n\\\x04",
-			expected: [][]types.Datum{{types.NewStringDatum("0\n"), types.NewStringDatum("\x04")}},
-		},
-		{
-			input:    "\\0\\\r",
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "\\0\r\\\r",
-			expected: [][]types.Datum{{types.NewStringDatum("0\r")}},
-		},
-		{
-			input:    "\\0\n\\\xdf",
-			expected: [][]types.Datum{{types.NewStringDatum("0\n"), types.NewStringDatum("\xdf")}},
-		},
-		{
-			input:    "\n\\0\n\\0",
-			expected: [][]types.Datum{{nullDatum}, {types.NewStringDatum("0\n"), types.NewStringDatum("0")}},
-		},
-		{
-			input:    "\\0\r\\\v",
-			expected: [][]types.Datum{{types.NewStringDatum("0\r"), types.NewStringDatum("\v")}},
-		},
-		{
-			input:    "\\0\\\n",
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    `\0\0`,
-			expected: [][]types.Datum{{types.NewStringDatum(`0\`)}},
-		},
-		{
-			input:    "0\n\\0\\0",
-			expected: [][]types.Datum{{types.NewStringDatum("0")}, {types.NewStringDatum(`0\`)}},
-		},
-	}
-	s.runTestCases(c, &cfg, 1, testCases)
 }
 
 // errorReader implements the Reader interface which always returns an error.
@@ -1125,6 +620,14 @@ type errorReader struct{}
 
 func (*errorReader) Read(p []byte) (int, error) {
 	return 0, errors.New("fake read error")
+}
+
+func (*errorReader) Seek(offset int64, whence int) (int64, error) {
+	return 0, errors.New("fake seek error")
+}
+
+func (*errorReader) Close() error {
+	return errors.New("fake close error")
 }
 
 func (s *testMydumpCSVParserSuite) TestReadError(c *C) {
@@ -1144,15 +647,101 @@ func (s *testMydumpCSVParserSuite) TestSyntaxErrorLog(c *C) {
 		Delimiter: "'",
 	}
 
-	tc := strings.NewReader("x'" + strings.Repeat("y", 50000))
+	tc := mydump.NewStringReader("x'" + strings.Repeat("y", 50000))
 	parser := mydump.NewCSVParser(&cfg, tc, 50000, s.ioWorkers)
-	var buffer *zaptest.Buffer
-	parser.Logger, buffer = log.MakeTestLogger()
+	logger, buffer := log.MakeTestLogger()
+	parser.SetLogger(logger)
 	c.Assert(parser.ReadRow(), ErrorMatches, "syntax error.*")
-	c.Assert(parser.Logger.Sync(), IsNil)
+	c.Assert(logger.Sync(), IsNil)
 
 	c.Assert(
 		buffer.Stripped(), Equals,
 		`{"$lvl":"ERROR","$msg":"syntax error","pos":1,"content":"'`+strings.Repeat("y", 255)+`"}`,
 	)
+}
+
+// Run `go test github.com/pingcap/tidb-lightning/lightning/mydump -check.b -check.bmem -test.v` to get benchmark result.
+// Please ensure your temporary storage has (c.N / 2) KiB of free space.
+
+type benchCSVParserSuite struct {
+	csvPath   string
+	ioWorkers *worker.Pool
+}
+
+var _ = Suite(&benchCSVParserSuite{})
+
+func (s *benchCSVParserSuite) setupTest(c *C) {
+	s.ioWorkers = worker.NewPool(context.Background(), 5, "bench_csv")
+
+	dir := c.MkDir()
+	s.csvPath = filepath.Join(dir, "input.csv")
+	file, err := os.Create(s.csvPath)
+	c.Assert(err, IsNil)
+	defer func() {
+		c.Assert(file.Close(), IsNil)
+	}()
+	for i := 0; i < c.N; i++ {
+		_, err = file.WriteString("18,1,1,0.3650,GC,BARBARBAR,rw9AOV1AjoI1,50000.00,-10.00,10.00,1,1,djj3Q2XaIPoYVy1FuF,gc80Q2o82Au3C9xv,PYOolSxG3w,DI,265111111,7586538936787184,2020-02-26 20:06:00.193,OE,YCkSPBVqoJ2V5F8zWs87V5XzbaIY70aWCD4dgcB6bjUzCr5wOJCJ2TYH49J7yWyysbudJIxlTAEWSJahY7hswLtTsqyjEkrlsN8iDMAa9Poj29miJ08tnn2G8mL64IlyywvnRGbLbyGvWDdrOSF42RyUFTWVyqlDWc6Gr5wyMPYgvweKemzFDVD3kro5JsmBmJY08EK54nQoyfo2sScyb34zcM9GFo9ZQTwloINfPYQKXQm32m0XvU7jiNmYpFTFJQjdqA825SEvQqMMefG2WG4jVu9UPdhdUjRsFRd0Gw7YPKByOlcuY0eKxT7sAzMKXx2000RR6dqHNXe47oVYd\n")
+		c.Assert(err, IsNil)
+	}
+	c.ResetTimer()
+}
+
+func (s *benchCSVParserSuite) BenchmarkReadRowUsingMydumpCSVParser(c *C) {
+	s.setupTest(c)
+
+	file, err := os.Open(s.csvPath)
+	c.Assert(err, IsNil)
+	defer func() {
+		c.Assert(file.Close(), IsNil)
+	}()
+
+	cfg := config.CSVConfig{Separator: ","}
+	parser := mydump.NewCSVParser(&cfg, file, 65536, s.ioWorkers)
+	parser.SetLogger(log.Logger{Logger: zap.NewNop()})
+
+	rowsCount := 0
+	for {
+		err := parser.ReadRow()
+		if err == nil {
+			rowsCount++
+			continue
+		}
+		if errors.Cause(err) == io.EOF {
+			return
+		}
+		c.Fatal(err)
+	}
+	c.Assert(rowsCount, Equals, c.N)
+}
+
+func (s *benchCSVParserSuite) BenchmarkReadRowUsingEncodingCSV(c *C) {
+	s.setupTest(c)
+
+	file, err := os.Open(s.csvPath)
+	c.Assert(err, IsNil)
+	defer func() {
+		c.Assert(file.Close(), IsNil)
+	}()
+
+	csvParser := csv.NewReader(file)
+
+	rowsCount := 0
+	for {
+		records, err := csvParser.Read()
+		if err == nil {
+			// for fair comparison, we need to include the cost of conversion to Datum.
+			datums := make([]types.Datum, 0, len(records))
+			for _, record := range records {
+				datums = append(datums, types.NewStringDatum(record))
+			}
+			rowsCount++
+			continue
+		}
+		if errors.Cause(err) == io.EOF {
+			return
+		}
+		c.Fatal(err)
+	}
+	c.Assert(rowsCount, Equals, c.N)
 }
