@@ -360,12 +360,12 @@ func (parser *CSVParser) ReadRow() error {
 func (parser *CSVParser) ReadUntilTokNewLine() (pos int64, err error) {
 	hasField := false
 	for {
-		tok, _, err := parser.lex()
+		firstByte, err := parser.readByte()
 		switch errors.Cause(err) {
 		case nil:
 		case io.EOF:
 			if hasField {
-				tok = csvTokNewLine
+				firstByte = '\n'
 				break
 			}
 			fallthrough
@@ -373,7 +373,7 @@ func (parser *CSVParser) ReadUntilTokNewLine() (pos int64, err error) {
 			return parser.pos, errors.Trace(err)
 		}
 		hasField = true
-		if tok == csvTokNewLine {
+		if firstByte == '\n' {
 			return parser.pos, nil
 		}
 	}
