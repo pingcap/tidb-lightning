@@ -106,6 +106,7 @@ func newSession(options *SessionOptions) *session {
 	vars.StmtCtx.TimeZone = vars.Location()
 	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
 	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
+	vars.TxnCtx = nil
 
 	s := &session{
 		txn:  transaction{},
