@@ -9,7 +9,7 @@ Currently, we support reading SQL dump exported via mydumper.
 ![](https://pingcap.com/images/docs/tidb-lightning-architecture.png)
 
 * [Detailed documentation](https://pingcap.com/docs/tools/lightning/overview-architecture/)
-* [简体中文文档](https://pingcap.com/docs-cn/tools/lightning/overview-architecture/)
+* [简体中文文档](https://pingcap.com/docs-cn/stable/reference/tools/tidb-lightning/overview/)
 
 ## Contributing
 
