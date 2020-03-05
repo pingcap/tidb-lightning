@@ -10,12 +10,12 @@ require (
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/mock v1.4.0
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
-	github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12
+	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
-	github.com/pingcap/failpoint v0.0.0-20191029060244-12f4ac2fd11d
-	github.com/pingcap/kvproto v0.0.0-20200108025604-a4dc183d2af5
+	github.com/pingcap/failpoint v0.0.0-20200210140405-f8f9fb234798
+	github.com/pingcap/kvproto v0.0.0-20200210234432-a965739f8162
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
-	github.com/pingcap/parser v0.0.0-20200207090844-d65f5147dd9f
+	github.com/pingcap/parser v0.0.0-20200218113622-517beb2e39c2
 	github.com/pingcap/tidb v1.1.0-beta.0.20200110130413-8c3ee37c1938
 	github.com/pingcap/tidb-tools v4.0.0-beta+incompatible
 	github.com/prometheus/client_golang v1.4.0
@@ -29,4 +29,4 @@ require (
 	modernc.org/mathutil v1.0.0
 )
 
-replace github.com/pingcap/tidb => github.com/XuHuaiyu/tidb v0.0.0-20200305034632-db3a8f08d804
+replace github.com/pingcap/tidb => github.com/XuHuaiyu/tidb v0.0.0-20200305040504-ba0c83c0a06d
