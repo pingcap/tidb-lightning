@@ -1567,7 +1567,7 @@ type deliverResult struct {
 
 func (cr *chunkRestore) deliverLoop(
 	ctx context.Context,
-	kvsCh <-chan deliveredKVs,
+	kvsCh <-chan []deliveredKVs,
 	t *TableRestore,
 	engineID int32,
 	dataEngine, indexEngine *kv.OpenedEngine,
@@ -1588,21 +1588,22 @@ func (cr *chunkRestore) deliverLoop(
 		var dataChecksum, indexChecksum verify.KVChecksum
 		var offset, rowID int64
 		var columns []string
-
+		var kvPacket []deliveredKVs
 		// Fetch enough KV pairs from the source.
 	populate:
 		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
 			select {
-			case d := <-kvsCh:
-				if d.kvs == nil {
+			case kvPacket = <-kvsCh:
+				if len(kvPacket) == 0 {
 					channelClosed = true
 					break populate
 				}
-
-				d.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
-				columns = d.columns
-				offset = d.offset
-				rowID = d.rowID
+				for _, p := range kvPacket {
+					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
+					columns = p.columns
+					offset = p.offset
+					rowID = p.rowID
+				}
 			case <-ctx.Done():
 				err = ctx.Err()
 				return
@@ -1672,14 +1673,14 @@ func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *Rest
 
 func (cr *chunkRestore) encodeLoop(
 	ctx context.Context,
-	kvsCh chan<- deliveredKVs,
+	kvsCh chan<- []deliveredKVs,
 	t *TableRestore,
 	logger log.Logger,
 	kvEncoder kv.Encoder,
 	deliverCompleteCh <-chan deliverResult,
-	pauser *common.Pauser,
+	rc *RestoreController,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
-	send := func(kvs deliveredKVs) error {
+	send := func(kvs []deliveredKVs) error {
 		select {
 		case kvsCh <- kvs:
 			return nil
@@ -1697,63 +1698,73 @@ func (cr *chunkRestore) encodeLoop(
 		}
 	}
 
-	initializedColumns := false
-outside:
-	for {
+	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.Mydumper.MaxKVPairs
+	initializedColumns, reachEOF := false, false
+	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
 			return
 		}
-
 		offset, _ := cr.parser.Pos()
 		if offset >= cr.chunk.Chunk.EndOffset {
 			break
 		}
 
-		start := time.Now()
-		err = cr.parser.ReadRow()
-		newOffset, rowID := cr.parser.Pos()
 		columnNames := cr.parser.Columns()
-		switch errors.Cause(err) {
-		case nil:
-			if !initializedColumns {
-				if len(cr.chunk.ColumnPermutation) == 0 {
-					t.initializeColumns(columnNames, cr.chunk)
+		var readDur, encodeDur time.Duration
+		canDeliver := false
+		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
+		var newOffset, rowID int64
+	outLoop:
+		for !canDeliver {
+			readDurStart := time.Now()
+			err = cr.parser.ReadRow()
+			newOffset, rowID = cr.parser.Pos()
+			switch errors.Cause(err) {
+			case nil:
+				if !initializedColumns {
+					if len(cr.chunk.ColumnPermutation) == 0 {
+						t.initializeColumns(columnNames, cr.chunk)
+					}
+					initializedColumns = true
 				}
-				initializedColumns = true
+			case io.EOF:
+				reachEOF = true
+				break outLoop
+			default:
+				err = errors.Annotatef(err, "in file %s at offset %d", &cr.chunk.Key, newOffset)
+				return
 			}
-		case io.EOF:
-			break outside
-		default:
-			err = errors.Annotatef(err, "in file %s at offset %d", &cr.chunk.Key, newOffset)
-			return
+			readDur += time.Since(readDurStart)
+			encodeDurStart := time.Now()
+			lastRow := cr.parser.LastRow()
+			// sql -> kv
+			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
+			encodeDur += time.Since(encodeDurStart)
+			if encodeErr != nil {
+				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
+				return
+			}
+			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID})
+			if len(kvPacket) == int(maxKvPairsCnt) || newOffset == cr.chunk.Chunk.EndOffset {
+				canDeliver = true
+			}
 		}
-
-		readDur := time.Since(start)
+		encodeTotalDur += encodeDur
+		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 		readTotalDur += readDur
 		metric.RowReadSecondsHistogram.Observe(readDur.Seconds())
 		metric.RowReadBytesHistogram.Observe(float64(newOffset - offset))
 
-		// sql -> kv
-		lastRow := cr.parser.LastRow()
-		kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
-		encodeDur := time.Since(start)
-		encodeTotalDur += encodeDur
-		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
-
-		if encodeErr != nil {
-			// error is already logged inside kvEncoder.Encode(), just propagate up directly.
-			err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
-			return
+		if len(kvPacket) != 0 {
+			deliverKvStart := time.Now()
+			if err = send(kvPacket); err != nil {
+				return
+			}
+			metric.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
 		}
-
-		deliverKvStart := time.Now()
-		if err = send(deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID}); err != nil {
-			return
-		}
-		metric.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
 	}
 
-	err = send(deliveredKVs{kvs: nil})
+	err = send([]deliveredKVs{})
 	return
 }
 
@@ -1770,7 +1781,7 @@ func (cr *chunkRestore) restore(
 		Timestamp:        cr.chunk.Timestamp,
 		RowFormatVersion: rc.rowFormatVer,
 	})
-	kvsCh := make(chan deliveredKVs, maxKVQueueSize)
+	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
 
 	defer func() {
@@ -1794,7 +1805,7 @@ func (cr *chunkRestore) restore(
 		zap.Stringer("path", &cr.chunk.Key),
 	).Begin(zap.InfoLevel, "restore file")
 
-	readTotalDur, encodeTotalDur, err := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc.pauser)
+	readTotalDur, encodeTotalDur, err := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc)
 	if err != nil {
 		return err
 	}
