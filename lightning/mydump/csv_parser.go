@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 	"github.com/pingcap/tidb/types"
+	"sync"
 )
 
 var (
@@ -50,6 +51,14 @@ type CSVParser struct {
 	// fieldIndexes is an index of fields inside recordBuffer.
 	// The i'th field ends at offset fieldIndexes[i] in recordBuffer.
 	fieldIndexes []int
+}
+
+const estColCnt = 10
+
+var DatumSlicePool = &sync.Pool{
+	New: func() interface{} {
+		return make([]types.Datum, 0, estColCnt)
+	},
 }
 
 func NewCSVParser(
@@ -342,7 +351,7 @@ func (parser *CSVParser) ReadRow() error {
 		records = records[:i]
 	}
 
-	row.Row = make([]types.Datum, 0, len(records))
+	row.Row = DatumSlicePool.Get().([]types.Datum)
 	for _, record := range records {
 		var datum types.Datum
 		unescaped, isNull := parser.unescapeString(record)

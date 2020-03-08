@@ -421,7 +421,7 @@ func (parser *ChunkParser) ReadRow() error {
 			switch tok {
 			case tokRowBegin:
 				row.RowID++
-				row.Row = make([]types.Datum, 0, len(row.Row))
+				row.Row = DatumSlicePool.Get().([]types.Datum)
 				st = stateRow
 			case tokUnquoted, tokDoubleQuoted, tokBackQuoted:
 				parser.columns = nil
