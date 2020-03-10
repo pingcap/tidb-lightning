@@ -336,7 +336,21 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	estimatedChunkCount := 0
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
-			estimatedChunkCount += len(tableMeta.DataFiles)
+			for _, tablePath := range tableMeta.DataFiles {
+				isCsvFile := strings.HasSuffix(strings.ToLower(tablePath), ".csv")
+				if isCsvFile {
+					f, _ := os.Stat(tablePath)
+					dataFileSize := f.Size()
+					cfg := rc.cfg.Mydumper
+					if dataFileSize > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += int(dataFileSize / cfg.MaxRegionSize)
+					} else {
+						estimatedChunkCount += 1
+					}
+				} else {
+					estimatedChunkCount += 1
+				}
+			}
 		}
 	}
 	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(float64(estimatedChunkCount))
