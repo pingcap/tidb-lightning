@@ -209,7 +209,7 @@ func SplitLargeFile(
 	ioWorker *worker.Pool,
 ) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := cfg.Mydumper.MaxRegionSize
-	dataFileSizes = make([]float64, 0, dataFileSize/maxRegionSize)
+	dataFileSizes = make([]float64, 0, dataFileSize/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
