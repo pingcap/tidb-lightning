@@ -264,32 +264,6 @@ func (s *restoreSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
 
-func (s *restoreSuite) TestSetSessionConcurrencyVars(c *C) {
-	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-
-	mock.ExpectExec(
-		`SET\s+`+
-			`SESSION tidb_build_stats_concurrency = \?,\s+`+
-			`SESSION tidb_distsql_scan_concurrency = \?,\s+`+
-			`SESSION tidb_index_serial_scan_concurrency = \?,\s+`+
-			`SESSION tidb_checksum_table_concurrency = \?`).
-		WithArgs(123, 456, 789, 543).
-		WillReturnResult(sqlmock.NewResult(1, 4))
-	mock.ExpectClose()
-
-	ctx := context.Background()
-	setSessionConcurrencyVars(ctx, db, config.DBStore{
-		BuildStatsConcurrency:      123,
-		DistSQLScanConcurrency:     456,
-		IndexSerialScanConcurrency: 789,
-		ChecksumTableConcurrency:   543,
-	})
-
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
-}
-
 var _ = Suite(&tableRestoreSuite{})
 
 type tableRestoreSuite struct {
