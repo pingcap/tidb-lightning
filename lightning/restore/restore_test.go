@@ -757,6 +757,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	c.Assert(kvsCh, HasLen, 2)
 
 	kvs := <-kvsCh
+	c.Assert(kvs, HasLen, 1)
 	c.Assert(kvs[0].kvs, HasLen, 2)
 	c.Assert(kvs[0].rowID, Equals, int64(19))
 	c.Assert(kvs[0].offset, Equals, int64(36))

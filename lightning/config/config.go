@@ -144,13 +144,13 @@ type MydumperRuntime struct {
 	CharacterSet     string    `toml:"character-set" json:"character-set"`
 	CSV              CSVConfig `toml:"csv" json:"csv"`
 	CaseSensitive    bool      `toml:"case-sensitive" json:"case-sensitive"`
-	MaxKVPairs       int64     `toml:"max-kv-pairs" json:"max-kv-pairs"`
 }
 
 type TikvImporter struct {
 	Addr        string `toml:"addr" json:"addr"`
 	Backend     string `toml:"backend" json:"backend"`
 	OnDuplicate string `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs  int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
 }
 
 type Checkpoint struct {
@@ -245,11 +245,11 @@ func NewConfig() *Config {
 				BackslashEscape: true,
 				TrimLastSep:     false,
 			},
-			MaxKVPairs: 32,
 		},
 		TikvImporter: TikvImporter{
 			Backend:     BackendImporter,
 			OnDuplicate: ReplaceOnDup,
+			MaxKVPairs:  32,
 		},
 		PostRestore: PostRestore{
 			Checksum: true,

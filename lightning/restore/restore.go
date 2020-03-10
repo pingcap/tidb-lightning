@@ -1698,7 +1698,7 @@ func (cr *chunkRestore) encodeLoop(
 		}
 	}
 
-	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.Mydumper.MaxKVPairs
+	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.TikvImporter.MaxKVPairs
 	initializedColumns, reachEOF := false, false
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
