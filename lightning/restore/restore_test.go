@@ -751,7 +751,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 		RowFormatVersion: "1",
 	})
 	cfg := config.NewConfig()
-	rc := RestoreController{pauser: DeliverPauser, cfg: cfg}
+	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, IsNil)
 	c.Assert(kvsCh, HasLen, 2)
@@ -777,7 +777,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 
 	go cancel()
 	cfg := config.NewConfig()
-	rc := RestoreController{pauser: DeliverPauser, cfg: cfg}
+	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 	c.Assert(kvsCh, HasLen, 0)
@@ -797,7 +797,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	s.cr.parser.Close()
 
 	cfg := config.NewConfig()
-	rc := RestoreController{pauser: DeliverPauser, cfg: cfg}
+	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, ErrorMatches, `in file .*[/\\]db\.table\.2\.sql:0 at offset 0:.*file already closed`)
 	c.Assert(kvsCh, HasLen, 0)
@@ -819,7 +819,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 		}
 	}()
 	cfg := config.NewConfig()
-	rc := RestoreController{pauser: DeliverPauser, cfg: cfg}
+	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, ErrorMatches, "fake deliver error")
 	c.Assert(kvsCh, HasLen, 0)
