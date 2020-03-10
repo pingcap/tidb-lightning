@@ -129,8 +129,11 @@ func (s *utilSuite) TestToDSN(c *C) {
 		SQLMode:          "strict",
 		MaxAllowedPacket: 1234,
 		TLS:              "cluster",
+		Vars: map[string]string{
+			"tidb_distsql_scan_concurrency": "1",
+		},
 	}
-	c.Assert(param.ToDSN(), Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster")
+	c.Assert(param.ToDSN(), Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency=1")
 }
 
 func (s *utilSuite) TestIsContextCanceledError(c *C) {

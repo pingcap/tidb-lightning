@@ -23,6 +23,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
@@ -55,12 +56,19 @@ type MySQLConnectParam struct {
 	SQLMode          string
 	MaxAllowedPacket uint64
 	TLS              string
+	Vars             map[string]string
 }
 
 func (param *MySQLConnectParam) ToDSN() string {
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8mb4&sql_mode='%s'&maxAllowedPacket=%d&tls=%s",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8mb4&sql_mode='%s'&maxAllowedPacket=%d&tls=%s",
 		param.User, param.Password, param.Host, param.Port,
 		param.SQLMode, param.MaxAllowedPacket, param.TLS)
+
+	for k, v := range param.Vars {
+		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
+	}
+
+	return dsn
 }
 
 func (param *MySQLConnectParam) Connect() (*sql.DB, error) {

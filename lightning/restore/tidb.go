@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -49,6 +50,12 @@ func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
 		SQLMode:          dsn.StrSQLMode,
 		MaxAllowedPacket: dsn.MaxAllowedPacket,
 		TLS:              dsn.TLS,
+		Vars: map[string]string{
+			"tidb_build_stats_concurrency":       strconv.Itoa(dsn.BuildStatsConcurrency),
+			"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
+			"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
+			"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
+		},
 	}
 	db, err := param.Connect()
 	if err != nil {
