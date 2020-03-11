@@ -1016,8 +1016,6 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		return nil
 	}
 
-	setSessionConcurrencyVars(ctx, rc.tidbMgr.db, rc.cfg.TiDB)
-
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
@@ -1478,15 +1476,6 @@ type RemoteChecksum struct {
 	Checksum   uint64
 	TotalKVs   uint64
 	TotalBytes uint64
-}
-
-func setSessionConcurrencyVars(ctx context.Context, db *sql.DB, dsn config.DBStore) {
-	common.SQLWithRetry{DB: db, Logger: log.L()}.Exec(ctx, "set session concurrency variables", `SET
-		SESSION tidb_build_stats_concurrency = ?,
-		SESSION tidb_distsql_scan_concurrency = ?,
-		SESSION tidb_index_serial_scan_concurrency = ?,
-		SESSION tidb_checksum_table_concurrency = ?;
-	`, dsn.BuildStatsConcurrency, dsn.DistSQLScanConcurrency, dsn.IndexSerialScanConcurrency, dsn.ChecksumTableConcurrency)
 }
 
 // DoChecksum do checksum for tables.
