@@ -1727,6 +1727,7 @@ outside:
 		encodeDur := time.Since(start)
 		encodeTotalDur += encodeDur
 		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
+		cr.parser.RecycleRow(lastRow)
 
 		if encodeErr != nil {
 			// error is already logged inside kvEncoder.Encode(), just propagate up directly.

@@ -342,7 +342,7 @@ func (parser *CSVParser) ReadRow() error {
 		records = records[:i]
 	}
 
-	row.Row = make([]types.Datum, 0, len(records))
+	row.Row = parser.acquireDatumSlice()
 	for _, record := range records {
 		var datum types.Datum
 		unescaped, isNull := parser.unescapeString(record)
