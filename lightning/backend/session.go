@@ -60,9 +60,12 @@ func (t *transaction) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 
 // Set implements the kv.Mutator interface
 func (t *transaction) Set(k kv.Key, v []byte) error {
+	val := make([]byte, len(v))
+	copy(val, v)
+
 	t.kvPairs = append(t.kvPairs, common.KvPair{
 		Key: k.Clone(),
-		Val: append([]byte{}, v...),
+		Val: val,
 	})
 	return nil
 }
