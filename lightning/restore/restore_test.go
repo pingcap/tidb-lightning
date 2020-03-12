@@ -683,7 +683,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 
 	saveCpCh := make(chan saveCp, 2)
 	go func() {
-		kvsCh <- []deliveredKVs{deliveredKVs{
+		kvsCh <- []deliveredKVs{{
 			kvs: kv.MakeRowFromKvPairs([]common.KvPair{
 				{
 					Key: []byte("txxxxxxxx_ryyyyyyyy"),
