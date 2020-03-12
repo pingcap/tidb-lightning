@@ -16,6 +16,7 @@ package backend
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,6 +40,8 @@ type importer struct {
 	conn   *grpc.ClientConn
 	cli    kv.ImportKVClient
 	pdAddr string
+
+	mutationPool sync.Pool
 }
 
 // NewImporter creates a new connection to tikv-importer. A single connection
@@ -50,9 +53,10 @@ func NewImporter(ctx context.Context, tls *common.TLS, importServerAddr string, 
 	}
 
 	return MakeBackend(&importer{
-		conn:   conn,
-		cli:    kv.NewImportKVClient(conn),
-		pdAddr: pdAddr,
+		conn:         conn,
+		cli:          kv.NewImportKVClient(conn),
+		pdAddr:       pdAddr,
+		mutationPool: sync.Pool{New: func() interface{} { return &kv.Mutation{} }},
 	}), nil
 }
 
@@ -61,9 +65,10 @@ func NewImporter(ctx context.Context, tls *common.TLS, importServerAddr string, 
 // outside of tests.
 func NewMockImporter(cli kv.ImportKVClient, pdAddr string) Backend {
 	return MakeBackend(&importer{
-		conn:   nil,
-		cli:    cli,
-		pdAddr: pdAddr,
+		conn:         nil,
+		cli:          cli,
+		pdAddr:       pdAddr,
+		mutationPool: sync.Pool{New: func() interface{} { return &kv.Mutation{} }},
 	})
 }
 
@@ -190,11 +195,10 @@ func (importer *importer) WriteRows(
 	// Send kv paris as write request content
 	mutations := make([]*kv.Mutation, len(kvs))
 	for i, pair := range kvs {
-		mutations[i] = &kv.Mutation{
-			Op:    kv.Mutation_Put,
-			Key:   pair.Key,
-			Value: pair.Val,
-		}
+		mutations[i] = importer.mutationPool.Get().(*kv.Mutation)
+		mutations[i].Op = kv.Mutation_Put
+		mutations[i].Key = pair.Key
+		mutations[i].Value = pair.Val
 	}
 
 	req.Reset()
@@ -205,7 +209,12 @@ func (importer *importer) WriteRows(
 		},
 	}
 
-	if err := wstream.Send(req); err != nil {
+	err = wstream.Send(req)
+	for i := 0; i < len(mutations); i++ {
+		importer.mutationPool.Put(mutations[i])
+	}
+
+	if err != nil {
 		return errors.Trace(err)
 	}
 
