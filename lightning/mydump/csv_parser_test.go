@@ -709,7 +709,7 @@ func (s *benchCSVParserSuite) BenchmarkReadRowUsingMydumpCSVParser(c *C) {
 			continue
 		}
 		if errors.Cause(err) == io.EOF {
-			return
+			break
 		}
 		c.Fatal(err)
 	}
@@ -741,7 +741,7 @@ func (s *benchCSVParserSuite) BenchmarkReadRowUsingEncodingCSV(c *C) {
 			continue
 		}
 		if errors.Cause(err) == io.EOF {
-			return
+			break
 		}
 		c.Fatal(err)
 	}

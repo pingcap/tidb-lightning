@@ -332,12 +332,8 @@ func (parser *CSVParser) ReadRow() error {
 	}
 	// remove trailing empty values
 	if parser.cfg.TrimLastSep {
-		i := len(records)
-		for i > 0 {
-			if len(records[i-1]) > 0 {
-				break
-			}
-			i--
+		var i int
+		for i = len(records); i > 0 && len(records[i-1]) == 0; i-- {
 		}
 		records = records[:i]
 	}
