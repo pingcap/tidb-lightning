@@ -14,13 +14,16 @@
 package mydump_test
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	. "github.com/pingcap/tidb-lightning/lightning/mydump"
+	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
 var _ = Suite(&testMydumpRegionSuite{})
@@ -60,8 +63,9 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabases()[0]
 
+	ioWorkers := worker.NewPool(context.Background(), 1, "io")
 	for _, meta := range dbMeta.Tables {
-		regions, err := MakeTableRegions(meta, 1, 1, 0, 1)
+		regions, err := MakeTableRegions(meta, 1, cfg, ioWorkers)
 		c.Assert(err, IsNil)
 
 		table := meta.Name
@@ -192,4 +196,57 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 		5: 100,
 		6: 100,
 	})
+}
+
+func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
+	meta := &MDTableMeta{
+		DB:   "csv",
+		Name: "large_csv_file",
+	}
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			CSV: config.CSVConfig{
+				Separator:       ",",
+				Delimiter:       "",
+				Header:          false,
+				TrimLastSep:     false,
+				NotNull:         false,
+				Null:            "NULL",
+				BackslashEscape: true,
+			},
+			StrictFormat: true,
+		},
+	}
+	filePath := "./csv/split_large_file.csv"
+	dataFileInfo, err := os.Stat(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fileSize := dataFileInfo.Size()
+	colCnt := int64(3)
+	for _, tc := range []struct {
+		maxRegionSize int64
+		chkCnt        int
+		offsets       [][]int64
+	}{
+		{1, 4, [][]int64{{0, 6}, {6, 12}, {12, 18}, {18, 24}}},
+		{6, 2, [][]int64{{0, 12}, {12, 24}}},
+		{8, 2, [][]int64{{0, 12}, {12, 24}}},
+		{12, 2, [][]int64{{0, 18}, {18, 24}}},
+		{13, 2, [][]int64{{0, 18}, {18, 24}}},
+		{18, 1, [][]int64{{0, 24}}},
+		{19, 1, [][]int64{{0, 24}}},
+	} {
+		cfg.Mydumper.MaxRegionSize = tc.maxRegionSize
+		prevRowIdxMax := int64(0)
+		ioWorker := worker.NewPool(context.Background(), 4, "io")
+		_, regions, _, err := SplitLargeFile(meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker)
+		c.Assert(err, IsNil)
+		c.Assert(len(regions), Equals, tc.chkCnt)
+		for i := range tc.offsets {
+			c.Assert(regions[i].Chunk.Offset, Equals, tc.offsets[i][0])
+			c.Assert(regions[i].Chunk.EndOffset, Equals, tc.offsets[i][1])
+		}
+	}
 }
