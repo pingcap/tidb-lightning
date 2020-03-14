@@ -14,11 +14,14 @@
 package mydump
 
 import (
+	"io"
 	"math"
 	"os"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
 type TableRegion struct {
@@ -135,14 +138,12 @@ func AllocateEngineIDs(
 func MakeTableRegions(
 	meta *MDTableMeta,
 	columns int,
-	batchSize int64,
-	batchImportRatio float64,
-	tableConcurrency int,
+	cfg *config.Config,
+	ioWorkers *worker.Pool,
 ) ([]*TableRegion, error) {
 	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
 	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
-
 	prevRowIDMax := int64(0)
 	for _, dataFile := range meta.DataFiles {
 		dataFileInfo, err := os.Stat(dataFile)
@@ -152,8 +153,24 @@ func MakeTableRegions(
 		dataFileSize := dataFileInfo.Size()
 
 		divisor := int64(columns)
-		if strings.HasSuffix(strings.ToLower(dataFile), ".sql") {
+		isCsvFile := strings.HasSuffix(strings.ToLower(dataFile), ".csv")
+		if !isCsvFile {
 			divisor += 2
+		}
+		// If a csv file is overlarge, we need to split it into mutiple regions.
+		// Note: We can only split a csv file whose format is strict and header is empty.
+		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat && !cfg.Mydumper.CSV.Header {
+			var (
+				regions      []*TableRegion
+				subFileSizes []float64
+			)
+			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(meta, cfg, dataFile, dataFileSize, divisor, prevRowIDMax, ioWorkers)
+			if err != nil {
+				return nil, err
+			}
+			dataFileSizes = append(dataFileSizes, subFileSizes...)
+			filesRegions = append(filesRegions, regions...)
+			continue
 		}
 		rowIDMax := prevRowIDMax + dataFileSize/divisor
 		filesRegions = append(filesRegions, &TableRegion{
@@ -171,6 +188,71 @@ func MakeTableRegions(
 		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
 	}
 
-	AllocateEngineIDs(filesRegions, dataFileSizes, float64(batchSize), batchImportRatio, float64(tableConcurrency))
+	AllocateEngineIDs(filesRegions, dataFileSizes, float64(cfg.Mydumper.BatchSize), cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
 	return filesRegions, nil
+}
+
+// SplitLargeFile splits a large csv file into multiple regions, the size of
+// each regions is specified by `config.MaxRegionSize`.
+// Note: We split the file coarsely, thus the format of csv file is needed to be
+// strict.
+// e.g.
+// - CSV file with header is invalid
+// - a complete tuple split into multiple lines is invalid
+func SplitLargeFile(
+	meta *MDTableMeta,
+	cfg *config.Config,
+	dataFilePath string,
+	dataFileSize int64,
+	divisor int64,
+	prevRowIdxMax int64,
+	ioWorker *worker.Pool,
+) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
+	maxRegionSize := cfg.Mydumper.MaxRegionSize
+	dataFileSizes = make([]float64, 0, dataFileSize/maxRegionSize+1)
+	startOffset, endOffset := int64(0), maxRegionSize
+	for {
+		curRowsCnt := (endOffset - startOffset) / divisor
+		rowIDMax := prevRowIdxMax + curRowsCnt
+		if endOffset != dataFileSize {
+			reader, err := os.Open(dataFilePath)
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker)
+			parser.SetPos(endOffset, prevRowIdMax)
+			_, err = reader.Seek(endOffset, io.SeekStart)
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			pos, err := parser.ReadUntilTokNewLine()
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			endOffset = pos
+			parser.Close()
+		}
+		regions = append(regions,
+			&TableRegion{
+				DB:    meta.DB,
+				Table: meta.Name,
+				File:  dataFilePath,
+				Chunk: Chunk{
+					Offset:       startOffset,
+					EndOffset:    endOffset,
+					PrevRowIDMax: prevRowIdxMax,
+					RowIDMax:     rowIDMax,
+				},
+			})
+		dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))
+		prevRowIdxMax = rowIDMax
+		if endOffset == dataFileSize {
+			break
+		}
+		startOffset = endOffset
+		if endOffset += maxRegionSize; endOffset > dataFileSize {
+			endOffset = dataFileSize
+		}
+	}
+	return prevRowIdxMax, regions, dataFileSizes, nil
 }

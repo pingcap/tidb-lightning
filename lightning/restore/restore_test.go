@@ -341,7 +341,9 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	cp := &TableCheckpoint{
 		Engines: make(map[int32]*EngineCheckpoint),
 	}
-	err := s.tr.populateChunks(s.cfg, cp)
+
+	rc := &RestoreController{cfg: s.cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io")}
+	err := s.tr.populateChunks(rc, cp)
 	c.Assert(err, IsNil)
 
 	c.Assert(cp.Engines, DeepEquals, map[int32]*EngineCheckpoint{

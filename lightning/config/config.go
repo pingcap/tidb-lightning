@@ -133,6 +133,7 @@ type CSVConfig struct {
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	Null            string `toml:"null" json:"null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
+	MaxRegionSize   int64  `toml:"max-region-size" json:"max-region-size"`
 }
 
 type MydumperRuntime struct {
@@ -144,6 +145,8 @@ type MydumperRuntime struct {
 	CharacterSet     string    `toml:"character-set" json:"character-set"`
 	CSV              CSVConfig `toml:"csv" json:"csv"`
 	CaseSensitive    bool      `toml:"case-sensitive" json:"case-sensitive"`
+	StrictFormat     bool      `toml:"strict-format" json:"strict-format"`
+	MaxRegionSize    int64     `toml:"max-region-size" json:"max-region-size"`
 }
 
 type TikvImporter struct {
@@ -245,6 +248,8 @@ func NewConfig() *Config {
 				BackslashEscape: true,
 				TrimLastSep:     false,
 			},
+			StrictFormat:  false,
+			MaxRegionSize: MaxRegionSize,
 		},
 		TikvImporter: TikvImporter{
 			Backend:     BackendImporter,
