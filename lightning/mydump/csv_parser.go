@@ -150,3 +150,25 @@ func (parser *CSVParser) ReadRow() error {
 		}
 	}
 }
+
+func (parser *CSVParser) ReadUntilTokNewLine() (pos int64, err error) {
+	hasField := false
+	for {
+		tok, _, err := parser.lex()
+		switch errors.Cause(err) {
+		case nil:
+		case io.EOF:
+			if hasField {
+				tok = csvTokNewLine
+				break
+			}
+			fallthrough
+		default:
+			return parser.pos, errors.Trace(err)
+		}
+		hasField = true
+		if tok == csvTokNewLine {
+			return parser.pos, nil
+		}
+	}
+}
