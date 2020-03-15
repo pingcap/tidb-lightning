@@ -1712,7 +1712,6 @@ func (cr *chunkRestore) encodeLoop(
 			break
 		}
 
-		columnNames := cr.parser.Columns()
 		var readDur, encodeDur time.Duration
 		canDeliver := false
 		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
@@ -1721,6 +1720,7 @@ func (cr *chunkRestore) encodeLoop(
 		for !canDeliver {
 			readDurStart := time.Now()
 			err = cr.parser.ReadRow()
+			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
 			switch errors.Cause(err) {
 			case nil:
