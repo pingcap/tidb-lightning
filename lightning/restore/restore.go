@@ -1748,7 +1748,7 @@ func (cr *chunkRestore) encodeLoop(
 				return
 			}
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID})
-			if len(kvPacket) == int(maxKvPairsCnt) || newOffset == cr.chunk.Chunk.EndOffset {
+			if len(kvPacket) >= maxKvPairsCnt || newOffset == cr.chunk.Chunk.EndOffset {
 				canDeliver = true
 			}
 		}
