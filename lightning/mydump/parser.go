@@ -268,7 +268,7 @@ func unescape(
 			case 't':
 				return "\t"
 			case 'Z':
-				return "\x26"
+				return "\x1a"
 			default:
 				return substr[1:]
 			}
