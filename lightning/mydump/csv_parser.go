@@ -174,7 +174,7 @@ func (parser *CSVParser) readUntil(chars string) ([]byte, byte, error) {
 	}
 }
 
-func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
+func (parser *CSVParser) readRecord() ([]string, error) {
 	parser.recordBuffer = parser.recordBuffer[:0]
 	parser.fieldIndexes = parser.fieldIndexes[:0]
 
@@ -225,11 +225,7 @@ outside:
 	// Create a single string and create slices out of it.
 	// This pins the memory of the fields together, but allocates once.
 	str := string(parser.recordBuffer) // Convert to string once to batch allocations
-	dst = dst[:0]
-	if cap(dst) < len(parser.fieldIndexes) {
-		dst = make([]string, len(parser.fieldIndexes))
-	}
-	dst = dst[:len(parser.fieldIndexes)]
+	dst := make([]string, len(parser.fieldIndexes))
 	var preIdx int
 	for i, idx := range parser.fieldIndexes {
 		dst[i] = str[preIdx:idx]
@@ -330,7 +326,7 @@ func (parser *CSVParser) ReadRow() error {
 
 	// skip the header first
 	if parser.pos == 0 && parser.cfg.Header {
-		columns, err := parser.readRecord(nil)
+		columns, err := parser.readRecord()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -341,24 +337,19 @@ func (parser *CSVParser) ReadRow() error {
 		}
 	}
 
-	records, err := parser.readRecord(parser.lastRecord)
+	records, err := parser.readRecord()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	parser.lastRecord = records
 	// remove trailing empty values
 	if parser.cfg.TrimLastSep {
-		i := len(records)
-		for i > 0 {
-			if len(records[i-1]) > 0 {
-				break
-			}
-			i--
+		var i int
+		for i = len(records); i > 0 && len(records[i-1]) == 0; i-- {
 		}
 		records = records[:i]
 	}
 
-	row.Row = DatumSlicePool.Get().([]types.Datum)
+	row.Row = parser.acquireDatumSlice()
 	for _, record := range records {
 		var datum types.Datum
 		unescaped, isNull := parser.unescapeString(record)
@@ -373,24 +364,11 @@ func (parser *CSVParser) ReadRow() error {
 	return nil
 }
 
-func (parser *CSVParser) ReadUntilTokNewLine() (pos int64, err error) {
-	hasField := false
-	for {
-		firstByte, err := parser.readByte()
-		switch errors.Cause(err) {
-		case nil:
-		case io.EOF:
-			if hasField {
-				firstByte = '\n'
-				break
-			}
-			fallthrough
-		default:
-			return parser.pos, errors.Trace(err)
-		}
-		hasField = true
-		if firstByte == '\n' {
-			return parser.pos, nil
-		}
+func (parser *CSVParser) ReadUntilTokNewLine() (int64, error) {
+	_, _, err := parser.readUntil("\r\n")
+	if err != nil {
+		return 0, err
 	}
+	parser.skipByte()
+	return parser.pos, nil
 }

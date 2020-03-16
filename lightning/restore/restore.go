@@ -1743,6 +1743,7 @@ func (cr *chunkRestore) encodeLoop(
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
 			mydump.DatumSlicePool.Put(lastRow.Row[:0])
 			encodeDur += time.Since(encodeDurStart)
+			cr.parser.RecycleRow(lastRow)
 			if encodeErr != nil {
 				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 				return

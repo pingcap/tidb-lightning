@@ -704,11 +704,12 @@ func (s *benchCSVParserSuite) BenchmarkReadRowUsingMydumpCSVParser(c *C) {
 	for {
 		err := parser.ReadRow()
 		if err == nil {
+			parser.RecycleRow(parser.LastRow())
 			rowsCount++
 			continue
 		}
 		if errors.Cause(err) == io.EOF {
-			return
+			break
 		}
 		c.Fatal(err)
 	}
@@ -727,19 +728,20 @@ func (s *benchCSVParserSuite) BenchmarkReadRowUsingEncodingCSV(c *C) {
 	csvParser := csv.NewReader(file)
 
 	rowsCount := 0
+	var datums []types.Datum
 	for {
 		records, err := csvParser.Read()
 		if err == nil {
 			// for fair comparison, we need to include the cost of conversion to Datum.
-			datums := make([]types.Datum, 0, len(records))
 			for _, record := range records {
 				datums = append(datums, types.NewStringDatum(record))
 			}
+			datums = datums[:0]
 			rowsCount++
 			continue
 		}
 		if errors.Cause(err) == io.EOF {
-			return
+			break
 		}
 		c.Fatal(err)
 	}

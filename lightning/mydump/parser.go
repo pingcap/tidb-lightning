@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -42,6 +43,7 @@ type blockParser struct {
 	// The list of column names of the last INSERT statement.
 	columns []string
 
+	rowPool *sync.Pool
 	lastRow Row
 	// Current file offset.
 	pos int64
@@ -61,6 +63,11 @@ func makeBlockParser(reader ReadSeekCloser, blockBufSize int64, ioWorkers *worke
 		remainBuf: &bytes.Buffer{},
 		appendBuf: &bytes.Buffer{},
 		Logger:    log.L(),
+		rowPool: &sync.Pool{
+			New: func() interface{} {
+				return make([]types.Datum, 0, 16)
+			},
+		},
 	}
 }
 
@@ -100,6 +107,7 @@ type Parser interface {
 	Close() error
 	ReadRow() error
 	LastRow() Row
+	RecycleRow(row Row)
 
 	// Columns returns the _lower-case_ column names corresponding to values in
 	// the LastRow.
@@ -421,7 +429,7 @@ func (parser *ChunkParser) ReadRow() error {
 			switch tok {
 			case tokRowBegin:
 				row.RowID++
-				row.Row = DatumSlicePool.Get().([]types.Datum)
+				row.Row = parser.acquireDatumSlice()
 				st = stateRow
 			case tokUnquoted, tokDoubleQuoted, tokBackQuoted:
 				parser.columns = nil
@@ -491,6 +499,16 @@ func (parser *ChunkParser) ReadRow() error {
 // LastRow is the copy of the row parsed by the last call to ReadRow().
 func (parser *blockParser) LastRow() Row {
 	return parser.lastRow
+}
+
+// RecycleRow places the row object back into the allocation pool.
+func (parser *blockParser) RecycleRow(row Row) {
+	parser.rowPool.Put(row.Row[:0])
+}
+
+// acquireDatumSlice allocates an empty []types.Datum
+func (parser *blockParser) acquireDatumSlice() []types.Datum {
+	return parser.rowPool.Get().([]types.Datum)
 }
 
 // ReadChunks parses the entire file and splits it into continuous chunks of
