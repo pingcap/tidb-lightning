@@ -86,9 +86,10 @@ set +e
 i=0
 wait_max_time=20
 while [ $i -lt $wait_max_time ]; do
-    lightning_proc=$(ps -ef|grep '[b]in/tidb-lightning.test')
+    lightning_proc=$(ps -ef|grep "[b]in/tidb-lightning\\.test.*$TEST_NAME")
     ret="$?"
     if [ "$ret" -eq 0 ]; then
+        echo "lightning is still running: $lightning_proc"
         sleep 1
     else
         break

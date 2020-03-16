@@ -31,6 +31,7 @@ reset_cluster_version() {
 trap reset_cluster_version EXIT
 
 curl_cluster_version '{"cluster-version":"2.0.0-fake.and.error.expected"}'
+sleep 1
 
 run_sql 'DROP DATABASE IF EXISTS checkreq'
 set +e
