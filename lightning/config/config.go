@@ -147,7 +147,6 @@ type MydumperRuntime struct {
 	CaseSensitive    bool      `toml:"case-sensitive" json:"case-sensitive"`
 	StrictFormat     bool      `toml:"strict-format" json:"strict-format"`
 	MaxRegionSize    int64     `toml:"max-region-size" json:"max-region-size"`
-	MaxKVPairs       int64     `toml:"max-kv-pairs" json:"max-kv-pairs"`
 }
 
 type TikvImporter struct {
@@ -250,7 +249,6 @@ func NewConfig() *Config {
 				TrimLastSep:     false,
 			},
 			StrictFormat:  false,
-			MaxKVPairs:    128,
 			MaxRegionSize: MaxRegionSize,
 		},
 		TikvImporter: TikvImporter{
