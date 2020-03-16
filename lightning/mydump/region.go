@@ -14,7 +14,6 @@
 package mydump
 
 import (
-	"io"
 	"math"
 	"os"
 	"strings"
@@ -221,10 +220,6 @@ func SplitLargeFile(
 			}
 			parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker)
 			parser.SetPos(endOffset, prevRowIdMax)
-			_, err = reader.Seek(endOffset, io.SeekStart)
-			if err != nil {
-				return 0, nil, nil, err
-			}
 			pos, err := parser.ReadUntilTokNewLine()
 			if err != nil {
 				return 0, nil, nil, err
