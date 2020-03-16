@@ -1741,7 +1741,6 @@ func (cr *chunkRestore) encodeLoop(
 			lastRow := cr.parser.LastRow()
 			// sql -> kv
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
-			mydump.DatumSlicePool.Put(lastRow.Row[:0])
 			encodeDur += time.Since(encodeDurStart)
 			cr.parser.RecycleRow(lastRow)
 			if encodeErr != nil {

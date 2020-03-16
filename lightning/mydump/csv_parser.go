@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"io"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -53,14 +52,6 @@ type CSVParser struct {
 	fieldIndexes []int
 
 	lastRecord []string
-}
-
-const estColCnt = 10
-
-var DatumSlicePool = &sync.Pool{
-	New: func() interface{} {
-		return make([]types.Datum, 0, estColCnt)
-	},
 }
 
 func NewCSVParser(
