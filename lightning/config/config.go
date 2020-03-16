@@ -153,6 +153,7 @@ type TikvImporter struct {
 	Addr        string `toml:"addr" json:"addr"`
 	Backend     string `toml:"backend" json:"backend"`
 	OnDuplicate string `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs  int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
 }
 
 type Checkpoint struct {
@@ -253,6 +254,7 @@ func NewConfig() *Config {
 		TikvImporter: TikvImporter{
 			Backend:     BackendImporter,
 			OnDuplicate: ReplaceOnDup,
+			MaxKVPairs:  32,
 		},
 		PostRestore: PostRestore{
 			Checksum: true,
