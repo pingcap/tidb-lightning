@@ -210,8 +210,8 @@ func (importer *importer) WriteRows(
 	}
 
 	err = wstream.Send(req)
-	for i := 0; i < len(mutations); i++ {
-		importer.mutationPool.Put(mutations[i])
+	for _, mutation := range mutations {
+		importer.mutationPool.Put(mutation)
 	}
 
 	if err != nil {

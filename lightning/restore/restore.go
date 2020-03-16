@@ -948,7 +948,7 @@ func (t *TableRestore) restoreEngine(
 	totalSQLSize := int64(0)
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
-		totalSQLSize += chunk.Chunk.EndOffset // want EndOffset - Offset ?
+		totalSQLSize += chunk.Chunk.EndOffset - chunk.Chunk.Offset
 	}
 
 	err = chunkErr.Get()

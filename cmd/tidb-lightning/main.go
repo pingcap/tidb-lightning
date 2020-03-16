@@ -57,7 +57,7 @@ func main() {
 	gogc := os.Getenv("GOGC")
 	if gogc == "" {
 		old := debug.SetGCPercent(500)
-		log.L().Info("set gc percentage", zap.Int("old", old), zap.Int("new", 500))
+		log.L().Debug("set gc percentage", zap.Int("old", old), zap.Int("new", 500))
 	}
 
 	err := app.GoServe()
