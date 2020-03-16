@@ -340,7 +340,7 @@ func (s *testMydumpParserSuite) TestVariousSyntax(c *C) {
 		},
 		{
 			input:    `('\0\b\n\r\t\Z\'\a')`,
-			expected: [][]types.Datum{{types.NewStringDatum("\x00\b\n\r\t\x26'a")}},
+			expected: [][]types.Datum{{types.NewStringDatum("\x00\b\n\r\t\x1a'a")}},
 		},
 		{
 			input:    `(CONVERT("[1,2,3]" USING UTF8MB4))`,
