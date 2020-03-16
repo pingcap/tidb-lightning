@@ -472,7 +472,7 @@ func (parser *ChunkParser) ReadRow() error {
 				// can't handle integers more than 64 bits anyway)
 				fallthrough
 			case tokUnquoted, tokSingleQuoted, tokDoubleQuoted:
-				value.SetString(parser.unescapeString(string(content)))
+				value.SetString(parser.unescapeString(string(content)), "utf8mb4_bin")
 			case tokHexString:
 				hexLit, err := types.ParseHexStr(string(content))
 				if err != nil {

@@ -50,6 +50,8 @@ type CSVParser struct {
 	// fieldIndexes is an index of fields inside recordBuffer.
 	// The i'th field ends at offset fieldIndexes[i] in recordBuffer.
 	fieldIndexes []int
+
+	lastRecord []string
 }
 
 func NewCSVParser(
@@ -163,7 +165,7 @@ func (parser *CSVParser) readUntil(chars string) ([]byte, byte, error) {
 	}
 }
 
-func (parser *CSVParser) readRecord() ([]string, error) {
+func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
 	parser.recordBuffer = parser.recordBuffer[:0]
 	parser.fieldIndexes = parser.fieldIndexes[:0]
 
@@ -214,7 +216,11 @@ outside:
 	// Create a single string and create slices out of it.
 	// This pins the memory of the fields together, but allocates once.
 	str := string(parser.recordBuffer) // Convert to string once to batch allocations
-	dst := make([]string, len(parser.fieldIndexes))
+	dst = dst[:0]
+	if cap(dst) < len(parser.fieldIndexes) {
+		dst = make([]string, len(parser.fieldIndexes))
+	}
+	dst = dst[:len(parser.fieldIndexes)]
 	var preIdx int
 	for i, idx := range parser.fieldIndexes {
 		dst[i] = str[preIdx:idx]
@@ -315,7 +321,7 @@ func (parser *CSVParser) ReadRow() error {
 
 	// skip the header first
 	if parser.pos == 0 && parser.cfg.Header {
-		columns, err := parser.readRecord()
+		columns, err := parser.readRecord(nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -326,10 +332,11 @@ func (parser *CSVParser) ReadRow() error {
 		}
 	}
 
-	records, err := parser.readRecord()
+	records, err := parser.readRecord(parser.lastRecord)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	parser.lastRecord = records
 	// remove trailing empty values
 	if parser.cfg.TrimLastSep {
 		var i int
@@ -345,7 +352,7 @@ func (parser *CSVParser) ReadRow() error {
 		if isNull {
 			datum.SetNull()
 		} else {
-			datum.SetString(unescaped)
+			datum.SetString(unescaped, "utf8mb4_bin")
 		}
 		row.Row = append(row.Row, datum)
 	}

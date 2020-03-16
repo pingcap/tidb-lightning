@@ -2,6 +2,8 @@ package backend_test
 
 import (
 	"context"
+	"sync"
+	"testing"
 
 	"github.com/golang/mock/gomock"
 	. "github.com/pingcap/check"
@@ -9,6 +11,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
 	uuid "github.com/satori/go.uuid"
 
+	kvpb "github.com/pingcap/kvproto/pkg/import_kvpb"
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/mock"
@@ -192,4 +195,40 @@ func (s *importerSuite) TestCloseImportCleanupEngine(c *C) {
 	c.Assert(err, IsNil)
 	err = engine.Cleanup(s.ctx)
 	c.Assert(err, IsNil)
+}
+
+func BenchmarkMutationAlloc(b *testing.B) {
+	var g *kvpb.Mutation
+	for i := 0; i < b.N; i++ {
+		m := &kvpb.Mutation{
+			Op:    kvpb.Mutation_Put,
+			Key:   nil,
+			Value: nil,
+		}
+		g = m
+	}
+
+	var _ = g
+}
+
+func BenchmarkMutationPool(b *testing.B) {
+	p := sync.Pool{
+		New: func() interface{} {
+			return &kvpb.Mutation{}
+		},
+	}
+	var g *kvpb.Mutation
+
+	for i := 0; i < b.N; i++ {
+		m := p.Get().(*kvpb.Mutation)
+		m.Op = kvpb.Mutation_Put
+		m.Key = nil
+		m.Value = nil
+
+		g = m
+
+		p.Put(m)
+	}
+
+	var _ = g
 }

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/pingcap/tidb-lightning/lightning"
@@ -43,6 +44,21 @@ func main() {
 	}()
 
 	logger := log.L()
+
+	// Lightning allocates too many transient objects and heap size is small,
+	// so garbage collections happen too frequently and lots of time is spent in GC component.
+	//
+	// In a test of loading the table `order_line.csv` of 14k TPCC.
+	// The time need of `encode kv data and write` step reduce from 52m4s to 37m30s when change
+	// GOGC from 100 to 500, the total time needed reduce near 15m too.
+	// The cost of this is the memory of lightnin at runtime grow from about 200M to 700M, but it's acceptable.
+	//
+	// So we set the gc percentage as 500 default to reduce the GC frequency instead of 100.
+	gogc := os.Getenv("GOGC")
+	if gogc == "" {
+		old := debug.SetGCPercent(500)
+		log.L().Debug("set gc percentage", zap.Int("old", old), zap.Int("new", 500))
+	}
 
 	err := app.GoServe()
 	if err != nil {

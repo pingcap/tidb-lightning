@@ -106,16 +106,13 @@ func newSession(options *SessionOptions) *session {
 	vars.StmtCtx.TimeZone = vars.Location()
 	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
 	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
+	vars.TxnCtx = nil
 
 	s := &session{
 		txn:  transaction{},
 		vars: vars,
 	}
 	s.vars.GetWriteStmtBufs().BufStore = &kv.BufferStore{MemBuffer: &s.txn}
-
-	// FIXME: potential further improvements:
-	//  - (*TransactionContext).UpdateDeltaForTable takes 14% of Encode() time.
-	//    But we cannot make `vars.TxnCtx` into nil nor make it no-op.
 
 	return s
 }

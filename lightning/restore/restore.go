@@ -581,7 +581,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 
 	var restoreErr common.OnceError
 
-	stopPeriodicActions := make(chan struct{}, 1)
+	stopPeriodicActions := make(chan struct{})
 	go rc.runPeriodicActions(ctx, stopPeriodicActions)
 
 	type task struct {
@@ -691,7 +691,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	}
 
 	wg.Wait()
-	stopPeriodicActions <- struct{}{}
+	close(stopPeriodicActions)
 
 	err := restoreErr.Get()
 	logTask.End(zap.ErrorLevel, err)
@@ -948,7 +948,7 @@ func (t *TableRestore) restoreEngine(
 	totalSQLSize := int64(0)
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
-		totalSQLSize += chunk.Chunk.EndOffset
+		totalSQLSize += chunk.Chunk.EndOffset - chunk.Chunk.Offset
 	}
 
 	err = chunkErr.Get()
