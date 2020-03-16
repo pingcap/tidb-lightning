@@ -117,10 +117,6 @@ func newSession(options *SessionOptions) *session {
 	}
 	s.vars.GetWriteStmtBufs().BufStore = &kv.BufferStore{MemBuffer: &s.txn}
 
-	// FIXME: potential further improvements:
-	//  - (*TransactionContext).UpdateDeltaForTable takes 14% of Encode() time.
-	//    But we cannot make `vars.TxnCtx` into nil nor make it no-op.
-
 	return s
 }
 

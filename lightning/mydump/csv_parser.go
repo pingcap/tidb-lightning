@@ -347,7 +347,7 @@ func (parser *CSVParser) ReadRow() error {
 		if isNull {
 			datum.SetNull()
 		} else {
-			datum.SetString(unescaped)
+			datum.SetString(unescaped, "utf8mb4_bin")
 		}
 		row.Row = append(row.Row, datum)
 	}

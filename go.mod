@@ -13,10 +13,10 @@ require (
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
 	github.com/pingcap/failpoint v0.0.0-20200210140405-f8f9fb234798
-	github.com/pingcap/kvproto v0.0.0-20200210234432-a965739f8162
+	github.com/pingcap/kvproto v0.0.0-20200221125103-35b65c96516e
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
 	github.com/pingcap/parser v0.0.0-20200218113622-517beb2e39c2
-	github.com/pingcap/tidb v1.1.0-beta.0.20200110130413-8c3ee37c1938
+	github.com/pingcap/tidb v1.1.0-beta.0.20200303031609-495f8b74382f
 	github.com/pingcap/tidb-tools v4.0.0-beta+incompatible
 	github.com/prometheus/client_golang v1.4.0
 	github.com/prometheus/client_model v0.2.0
@@ -28,5 +28,3 @@ require (
 	google.golang.org/grpc v1.25.1
 	modernc.org/mathutil v1.0.0
 )
-
-replace github.com/pingcap/tidb => github.com/XuHuaiyu/tidb v0.0.0-20200305040504-ba0c83c0a06d
