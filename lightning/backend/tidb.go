@@ -117,7 +117,7 @@ func (enc tidbEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
 				sb.WriteString(`\r`)
 			case '\t':
 				sb.WriteString(`\t`)
-			case 0x26:
+			case 26:
 				sb.WriteString(`\Z`)
 			case '\'':
 				sb.WriteString(`''`)
