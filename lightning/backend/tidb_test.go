@@ -75,7 +75,7 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 		types.NewFloat64Datum(5e-324),
 		types.NewFloat64Datum(1.7976931348623157e+308),
 		types.NewFloat64Datum(-0.0),
-		types.NewStringDatum("甲乙丙\r\n\x00\x26'\"\\`"),
+		types.NewStringDatum("甲乙丙\r\n\x00\x1a'\"\\`"),
 		types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0xabcdef, 6)),
 		types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(0x98765432, 4)),
 		types.NewDecimalDatum(types.NewDecFromFloatForTest(12.5)),
