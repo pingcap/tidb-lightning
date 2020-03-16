@@ -1276,7 +1276,6 @@ func newChunkRestore(
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	}
 
-	reader.Seek(chunk.Chunk.Offset, io.SeekStart)
 	parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax)
 
 	return &chunkRestore{
@@ -1743,6 +1742,7 @@ func (cr *chunkRestore) encodeLoop(
 			// sql -> kv
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
 			encodeDur += time.Since(encodeDurStart)
+			cr.parser.RecycleRow(lastRow)
 			if encodeErr != nil {
 				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 				return
