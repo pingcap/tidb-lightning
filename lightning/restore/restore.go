@@ -1700,7 +1700,7 @@ func (cr *chunkRestore) encodeLoop(
 		}
 	}
 
-	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.Mydumper.MaxKVPairs
+	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.TikvImporter.MaxKVPairs
 	initializedColumns, reachEOF := false, false
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
@@ -1711,7 +1711,6 @@ func (cr *chunkRestore) encodeLoop(
 			break
 		}
 
-		columnNames := cr.parser.Columns()
 		var readDur, encodeDur time.Duration
 		canDeliver := false
 		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
@@ -1720,6 +1719,7 @@ func (cr *chunkRestore) encodeLoop(
 		for !canDeliver {
 			readDurStart := time.Now()
 			err = cr.parser.ReadRow()
+			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
 			switch errors.Cause(err) {
 			case nil:
@@ -1748,7 +1748,7 @@ func (cr *chunkRestore) encodeLoop(
 				return
 			}
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID})
-			if len(kvPacket) == int(maxKvPairsCnt) || newOffset == cr.chunk.Chunk.EndOffset {
+			if len(kvPacket) >= maxKvPairsCnt || newOffset == cr.chunk.Chunk.EndOffset {
 				canDeliver = true
 			}
 		}
