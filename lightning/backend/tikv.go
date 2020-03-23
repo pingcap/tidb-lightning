@@ -15,8 +15,10 @@ package backend
 
 import (
 	"context"
+	"regexp"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -158,4 +160,35 @@ func Compact(ctx context.Context, tls *common.TLS, tikvAddr string, level int32)
 	})
 	task.End(zap.ErrorLevel, err)
 	return err
+}
+
+var fetchModeRegexp = regexp.MustCompile(`\btikv_config_rocksdb\{cf="default",name="hard_pending_compaction_bytes_limit"\} ([^\n]+)`)
+
+// FetchMode obtains the import mode status of the TiKV node.
+func FetchMode(ctx context.Context, tls *common.TLS, tikvAddr string) (import_sstpb.SwitchMode, error) {
+	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption())
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	client := debugpb.NewDebugClient(conn)
+	resp, err := client.GetMetrics(ctx, &debugpb.GetMetricsRequest{All: false})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return FetchModeFromMetrics(resp.Prometheus)
+}
+
+// FetchMode obtains the import mode status from the Prometheus metrics of a TiKV node.
+func FetchModeFromMetrics(metrics string) (import_sstpb.SwitchMode, error) {
+	m := fetchModeRegexp.FindStringSubmatch(metrics)
+	switch {
+	case len(m) < 2:
+		return 0, errors.New("import mode status is not exposed")
+	case m[1] == "0":
+		return import_sstpb.SwitchMode_Import, nil
+	default:
+		return import_sstpb.SwitchMode_Normal, nil
+	}
 }

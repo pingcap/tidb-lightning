@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -112,4 +113,36 @@ func (s *tikvSuite) TestForAllStores(c *C) {
 			State:   kv.StoreStateOffline,
 		},
 	})
+}
+
+func (s *tikvSuite) TestFetchModeFromMetrics(c *C) {
+	testCases := []struct {
+		metrics string
+		mode    import_sstpb.SwitchMode
+		isErr   bool
+	}{
+		{
+			metrics: `tikv_config_rocksdb{cf="default",name="hard_pending_compaction_bytes_limit"} 274877906944`,
+			mode:    import_sstpb.SwitchMode_Normal,
+		},
+		{
+			metrics: `tikv_config_rocksdb{cf="default",name="hard_pending_compaction_bytes_limit"} 0`,
+			mode:    import_sstpb.SwitchMode_Import,
+		},
+		{
+			metrics: ``,
+			isErr:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		comment := Commentf("test case '%s'", tc.metrics)
+		mode, err := kv.FetchModeFromMetrics(tc.metrics)
+		if tc.isErr {
+			c.Assert(err, NotNil, comment)
+		} else {
+			c.Assert(err, IsNil, comment)
+			c.Assert(mode, Equals, tc.mode, comment)
+		}
+	}
 }
