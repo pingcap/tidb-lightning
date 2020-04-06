@@ -17,6 +17,7 @@ import DialogActions from '@material-ui/core/DialogActions';
 import DialogContent from '@material-ui/core/DialogContent';
 import DialogTitle from '@material-ui/core/DialogTitle';
 import IconButton from '@material-ui/core/IconButton';
+import Portal from '@material-ui/core/Portal';
 import Snackbar from '@material-ui/core/Snackbar';
 import SnackbarContent from '@material-ui/core/SnackbarContent';
 import { createStyles, Theme, WithStyles, withStyles } from '@material-ui/core/styles';
@@ -121,13 +122,15 @@ class TaskButton extends React.Component<Props, States> {
                         </Button>
                     </DialogActions>
                 </Dialog>
-                <Snackbar open={this.state.errorOpened} autoHideDuration={5000} onClose={this.handleCloseError}>
-                    <SnackbarContent className={classes.errorSnackBar} message={this.state.errorMessage} action={
-                        <IconButton color='inherit' onClick={this.handleCloseError}>
-                            <CloseIcon />
-                        </IconButton>
-                    } />
-                </Snackbar>
+                <Portal> {/* the Portal workarounds mui-org/material-ui#12201 */}
+                    <Snackbar open={this.state.errorOpened} autoHideDuration={5000} onClose={this.handleCloseError}>
+                        <SnackbarContent className={classes.errorSnackBar} message={this.state.errorMessage} action={
+                            <IconButton color='inherit' onClick={this.handleCloseError}>
+                                <CloseIcon />
+                            </IconButton>
+                        } />
+                    </Snackbar>
+                </Portal>
             </div>
         )
     }
