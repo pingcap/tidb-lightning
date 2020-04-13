@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -192,6 +193,7 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 
 	logger := log.Logger{Logger: zap.NewNop()}
 
+	timeutil.SetSystemTZ("Etc/GMT-8") // force timezone to be UTC+08:00.
 	encoder := NewTableKVEncoder(tbl, &SessionOptions{
 		SQLMode:          mysql.ModeStrictAllTables,
 		Timestamp:        1234567893,

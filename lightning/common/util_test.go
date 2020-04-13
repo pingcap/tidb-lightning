@@ -27,7 +27,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/parser/mysql"
+	tmysql "github.com/pingcap/tidb/errno"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
