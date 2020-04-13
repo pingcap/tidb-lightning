@@ -41,7 +41,7 @@ func main() {
 
 func run() error {
 	var (
-		compact                                     *bool
+		compact, flagFetchMode                      *bool
 		mode, flagImportEngine, flagCleanupEngine   *string
 		cpRemove, cpErrIgnore, cpErrDestroy, cpDump *string
 
@@ -51,6 +51,7 @@ func run() error {
 	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], func(fs *flag.FlagSet) {
 		compact = fs.Bool("compact", false, "do manual compaction on the target cluster")
 		mode = fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
+		flagFetchMode = fs.Bool("fetch-mode", false, "obtain the current mode of every tikv in the cluster")
 
 		flagImportEngine = fs.String("import-engine", "", "manually import a closed engine (value can be '`db`.`table`:123' or a UUID")
 		flagCleanupEngine = fs.String("cleanup-engine", "", "manually delete a closed engine")
@@ -83,6 +84,9 @@ func run() error {
 
 	if *compact {
 		return errors.Trace(compactCluster(ctx, cfg, tls))
+	}
+	if *flagFetchMode {
+		return errors.Trace(fetchMode(ctx, cfg, tls))
 	}
 	if len(*mode) != 0 {
 		return errors.Trace(switchMode(ctx, cfg, tls, *mode))
@@ -139,6 +143,23 @@ func switchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode s
 		kv.StoreStateDisconnected,
 		func(c context.Context, store *kv.Store) error {
 			return kv.SwitchMode(c, tls, store.Address, m)
+		},
+	)
+}
+
+func fetchMode(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
+	return kv.ForAllStores(
+		ctx,
+		tls.WithHost(cfg.TiDB.PdAddr),
+		kv.StoreStateDisconnected,
+		func(c context.Context, store *kv.Store) error {
+			mode, err := kv.FetchMode(c, tls, store.Address)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%-30s | Error: %v\n", store.Address, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "%-30s | %s mode\n", store.Address, mode)
+			}
+			return nil
 		},
 	)
 }

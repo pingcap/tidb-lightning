@@ -15,12 +15,16 @@ package backend
 
 import (
 	"context"
+	"regexp"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -124,14 +128,22 @@ func ForAllStores(
 	return eg.Wait()
 }
 
+func ignoreUnimplementedError(err error, logger log.Logger) error {
+	if status.Code(err) == codes.Unimplemented {
+		logger.Debug("skipping potentially TiFlash store")
+		return nil
+	}
+	return errors.Trace(err)
+}
+
 // SwitchMode changes the TiKV node at the given address to a particular mode.
 func SwitchMode(ctx context.Context, tls *common.TLS, tikvAddr string, mode import_sstpb.SwitchMode) error {
-	task := log.With(zap.Stringer("mode", mode)).Begin(zap.DebugLevel, "switch mode")
+	task := log.With(zap.Stringer("mode", mode), zap.String("tikv", tikvAddr)).Begin(zap.DebugLevel, "switch mode")
 	err := withTiKVConnection(ctx, tls, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
 		_, err := client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
 			Mode: mode,
 		})
-		return errors.Trace(err)
+		return ignoreUnimplementedError(err, task.Logger)
 	})
 	task.End(zap.WarnLevel, err)
 	return err
@@ -139,13 +151,44 @@ func SwitchMode(ctx context.Context, tls *common.TLS, tikvAddr string, mode impo
 
 // Compact performs a leveled compaction with the given minimum level.
 func Compact(ctx context.Context, tls *common.TLS, tikvAddr string, level int32) error {
-	task := log.With(zap.Int32("level", level)).Begin(zap.InfoLevel, "compact cluster")
+	task := log.With(zap.Int32("level", level), zap.String("tikv", tikvAddr)).Begin(zap.InfoLevel, "compact cluster")
 	err := withTiKVConnection(ctx, tls, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
 		_, err := client.Compact(ctx, &import_sstpb.CompactRequest{
 			OutputLevel: level,
 		})
-		return errors.Trace(err)
+		return ignoreUnimplementedError(err, task.Logger)
 	})
 	task.End(zap.ErrorLevel, err)
 	return err
+}
+
+var fetchModeRegexp = regexp.MustCompile(`\btikv_config_rocksdb\{cf="default",name="hard_pending_compaction_bytes_limit"\} ([^\n]+)`)
+
+// FetchMode obtains the import mode status of the TiKV node.
+func FetchMode(ctx context.Context, tls *common.TLS, tikvAddr string) (import_sstpb.SwitchMode, error) {
+	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption())
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	client := debugpb.NewDebugClient(conn)
+	resp, err := client.GetMetrics(ctx, &debugpb.GetMetricsRequest{All: false})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return FetchModeFromMetrics(resp.Prometheus)
+}
+
+// FetchMode obtains the import mode status from the Prometheus metrics of a TiKV node.
+func FetchModeFromMetrics(metrics string) (import_sstpb.SwitchMode, error) {
+	m := fetchModeRegexp.FindStringSubmatch(metrics)
+	switch {
+	case len(m) < 2:
+		return 0, errors.New("import mode status is not exposed")
+	case m[1] == "0":
+		return import_sstpb.SwitchMode_Import, nil
+	default:
+		return import_sstpb.SwitchMode_Normal, nil
+	}
 }
