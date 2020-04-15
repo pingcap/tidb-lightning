@@ -44,6 +44,9 @@ const (
 	BackendTiDB = "tidb"
 	// BackendImporter is a constant for choosing the "Importer" backend in the configuration.
 	BackendImporter = "importer"
+	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
+	// it means we should sort & split at Local so that we can remove importer backend
+	BackendLocal = "local"
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -150,10 +153,12 @@ type MydumperRuntime struct {
 }
 
 type TikvImporter struct {
-	Addr        string `toml:"addr" json:"addr"`
-	Backend     string `toml:"backend" json:"backend"`
-	OnDuplicate string `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs  int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	Addr            string `toml:"addr" json:"addr"`
+	Backend         string `toml:"backend" json:"backend"`
+	OnDuplicate     string `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs      int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	RegionSplitSize int64  `toml:"region-split-size" json:"region-split-size"`
+	FilePath        string `toml:"file-path" json:"file-path"`
 }
 
 type Checkpoint struct {
@@ -252,9 +257,10 @@ func NewConfig() *Config {
 			MaxRegionSize: MaxRegionSize,
 		},
 		TikvImporter: TikvImporter{
-			Backend:     BackendImporter,
-			OnDuplicate: ReplaceOnDup,
-			MaxKVPairs:  32,
+			Backend:         BackendImporter,
+			OnDuplicate:     ReplaceOnDup,
+			MaxKVPairs:      32,
+			RegionSplitSize: SplitRegionSize,
 		},
 		PostRestore: PostRestore{
 			Checksum: true,
@@ -384,7 +390,7 @@ func (cfg *Config) Adjust() error {
 		if cfg.App.TableConcurrency == 0 {
 			cfg.App.TableConcurrency = cfg.App.RegionConcurrency
 		}
-	case BackendImporter:
+	case BackendImporter, BackendLocal:
 		if cfg.App.IndexConcurrency == 0 {
 			cfg.App.IndexConcurrency = 2
 		}
