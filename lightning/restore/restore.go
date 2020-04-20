@@ -337,7 +337,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
 			for _, tablePath := range tableMeta.DataFiles {
-				isCsvFile := strings.HasSuffix(strings.ToLower(tablePath), ".csv")
+				isCsvFile := strings.HasSuffix(tablePath, ".csv")
 				if isCsvFile {
 					f, _ := os.Stat(tablePath)
 					dataFileSize := f.Size()
