@@ -180,6 +180,9 @@ func (s *checkReqSuite) TestCheckTiKVVersion(c *C) {
 	versions = []string{"9999.0.0", "9999.0.0"}
 	c.Assert(rc.checkTiKVVersion(), IsNil)
 
+	versions = []string{"4.1.0", "v4.1.0-alpha-9-ga27a7dd"}
+	c.Assert(rc.checkTiKVVersion(), IsNil)
+
 	versions = []string{"9999.0.0", "1.0.0"}
 	c.Assert(rc.checkTiKVVersion(), ErrorMatches, `TiKV \(at tikv1\.test:20160\) version too old.*`)
 }
