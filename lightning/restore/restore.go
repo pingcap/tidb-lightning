@@ -1207,7 +1207,7 @@ func (rc *RestoreController) checkTiKVVersion() error {
 		kv.StoreStateDown,
 		func(c context.Context, store *kv.Store) error {
 			component := fmt.Sprintf("TiKV (at %s)", store.Address)
-			version, err := semver.NewVersion(store.Version)
+			version, err := semver.NewVersion(strings.TrimPrefix(store.Version, "v"))
 			if err != nil {
 				return errors.Annotate(err, component)
 			}
