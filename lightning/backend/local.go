@@ -15,6 +15,7 @@ package backend
 
 import (
 	"context"
+	"os"
 	"path"
 	"sync"
 	"time"
@@ -61,11 +62,6 @@ type localFile struct {
 
 func (e *localFile) Close() error {
 	return e.db.Close()
-}
-
-type grpcClis struct {
-	clis sync.Map
-	//clis map[uint64]sst.ImportSSTClient
 }
 
 type local struct {
@@ -123,6 +119,10 @@ func (local *local) Close() {
 		v.(*localFile).Close()
 		return true
 	})
+	err := os.RemoveAll(local.localFile)
+	if err != nil {
+		log.L().Error("remove local db file failed", zap.Error(err))
+	}
 }
 
 func (local *local) RetryImportDelay() time.Duration {
@@ -161,18 +161,14 @@ func (local *local) getImportClient(peer *metapb.Peer) (sst.ImportSSTClient, err
 	return cli.(sst.ImportSSTClient), nil
 }
 
-func (local *local) WriteToTiKV(
+func (local *local) WriteToPeer(
 	ctx context.Context,
 	meta *sst.SSTMeta,
 	ts uint64,
-	region *split.RegionInfo,
+	peer *metapb.Peer,
 	mutations []*sst.Mutation) (metas []*sst.SSTMeta, err error) {
-	leader := region.Leader
-	if leader == nil {
-		leader = region.Region.GetPeers()[0]
-	}
 
-	cli, err := local.getImportClient(leader)
+	cli, err := local.getImportClient(peer)
 	if err != nil {
 		return
 	}
@@ -213,6 +209,23 @@ func (local *local) WriteToTiKV(
 		log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", metas))
 	}
 	return
+}
+
+func (local *local) WriteToTiKV(
+	ctx context.Context,
+	meta *sst.SSTMeta,
+	ts uint64,
+	region *split.RegionInfo,
+	mutations []*sst.Mutation) ([]*sst.SSTMeta, error) {
+	var firstPeerMetas []*sst.SSTMeta
+	for _, peer := range region.Region.GetPeers() {
+		metas, err := local.WriteToPeer(ctx, meta, ts, peer, mutations)
+		if err != nil {
+			return nil, err
+		}
+		firstPeerMetas = metas
+	}
+	return firstPeerMetas, nil
 }
 
 func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
@@ -338,7 +351,7 @@ func (local *local) writeAndIngestByRange(
 		local.mutationPool.Put(mutation)
 	}
 
-	for i := 0; i < maxRetryTimes; i ++ {
+	for i := 0; i < maxRetryTimes; i++ {
 		for _, meta := range metas {
 			resp, err := local.Ingest(ctx, meta, region)
 			if err != nil {
@@ -349,6 +362,7 @@ func (local *local) writeAndIngestByRange(
 			if !needRetry {
 				return errIngest
 			}
+			log.L().Warn("retry ingest due to", zap.Error(errIngest))
 			// retry with not leader and epoch not match error
 			region = newRegion
 		}
@@ -400,6 +414,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		log.L().Error("write and ingest ranges failed", zap.Error(err))
 		return err
 	}
+	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID))
 	return nil
 }
 
@@ -473,8 +488,8 @@ func isIngestRetryable(resp *sst.IngestResponse, region *split.RegionInfo, meta 
 				Leader: newLeader,
 				Region: region.Region,
 			}
-		return true, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
-	}
+			return true, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+		}
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
@@ -494,8 +509,8 @@ func isIngestRetryable(resp *sst.IngestResponse, region *split.RegionInfo, meta 
 				}
 				if newLeader != nil {
 					newRegion = &split.RegionInfo{
-						Leader:newLeader,
-						Region:currentRegion,
+						Leader: newLeader,
+						Region: currentRegion,
 					}
 				}
 			}
@@ -509,7 +524,7 @@ func nextKey(key []byte) []byte {
 	if len(key) == 0 {
 		return []byte{}
 	}
-	res := make([]byte, 0, len(key) + 1)
+	res := make([]byte, 0, len(key)+1)
 	pos := 0
 	for i := len(key) - 1; i >= 0; i-- {
 		if key[i] != '\xff' {
@@ -517,7 +532,7 @@ func nextKey(key []byte) []byte {
 			break
 		}
 	}
-	s, e := key[:pos], key[pos] + 1
+	s, e := key[:pos], key[pos]+1
 	res = append(append(res, s...), e)
 	return res
 }
