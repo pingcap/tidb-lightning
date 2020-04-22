@@ -64,25 +64,23 @@ func (e *localFile) Close() error {
 }
 
 type grpcClis struct {
-	mu   sync.Mutex
-	clis map[uint64]sst.ImportSSTClient
+	clis sync.Map
+	//clis map[uint64]sst.ImportSSTClient
 }
 
 type local struct {
-	mu sync.Mutex
-
-	engines  map[uuid.UUID]localFile
-	grpcClis *grpcClis
+	engines  sync.Map
+	grpcClis sync.Map
 	splitCli split.SplitClient
 
-	filePath        string
+	localFile       string
 	regionSplitSize int64
 
 	mutationPool sync.Pool
 }
 
 // NewLocal creates new connections to tikv.
-func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, regionSplitSize int64, filePath string) (Backend, error) {
+func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, regionSplitSize int64, localFile string) (Backend, error) {
 	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
@@ -91,9 +89,7 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "get all stores failed")
 	}
-	clients := &grpcClis{
-		clis: make(map[uint64]sst.ImportSSTClient),
-	}
+	clients := sync.Map{}
 
 	tlsConf := tls.TransToTlsConfig()
 	if err != nil {
@@ -107,14 +103,14 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		if err != nil {
 			return MakeBackend(nil), errors.Annotatef(err, "connect to store failed: %s", store.Address)
 		}
-		clients.clis[store.GetId()] = sst.NewImportSSTClient(conn)
+		clients.Store(store.GetId(), sst.NewImportSSTClient(conn))
 	}
 	return MakeBackend(&local{
 		grpcClis: clients,
-		engines:  make(map[uuid.UUID]localFile),
+		engines:  sync.Map{},
 		splitCli: splitCli,
 
-		filePath:        filePath,
+		localFile:       localFile,
 		regionSplitSize: regionSplitSize,
 
 		mutationPool: sync.Pool{New: func() interface{} { return &sst.Mutation{} }},
@@ -123,11 +119,10 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 
 // Close the importer connection.
 func (local *local) Close() {
-	local.mu.Lock()
-	defer local.mu.Unlock()
-	for _, e := range local.engines {
-		e.Close()
-	}
+	local.engines.Range(func(k, v interface{}) bool {
+		v.(*localFile).Close()
+		return true
+	})
 }
 
 func (local *local) RetryImportDelay() time.Duration {
@@ -144,14 +139,12 @@ func (local *local) ShouldPostProcess() bool {
 }
 
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	dbPath := path.Join(local.filePath, engineUUID.String())
+	dbPath := path.Join(local.localFile, engineUUID.String())
 	db, err := leveldb.OpenFile(dbPath, nil)
 	if err != nil {
 		return err
 	}
-	local.mu.Lock()
-	defer local.mu.Unlock()
-	local.engines[engineUUID] = localFile{db: db, length: 0, ranges: make([]Range, 0)}
+	local.engines.Store(engineUUID, &localFile{db: db, length: 0, ranges: make([]Range, 0)})
 	return nil
 }
 
@@ -161,13 +154,11 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 }
 
 func (local *local) getImportClient(peer *metapb.Peer) (sst.ImportSSTClient, error) {
-	local.grpcClis.mu.Lock()
-	defer local.grpcClis.mu.Unlock()
-	cli, ok := local.grpcClis.clis[peer.GetStoreId()]
+	cli, ok := local.grpcClis.Load(peer.GetStoreId())
 	if !ok {
 		return nil, errors.Errorf("could not find grpc client for peer id %d", peer.GetId())
 	}
-	return cli, nil
+	return cli.(sst.ImportSSTClient), nil
 }
 
 func (local *local) WriteToTiKV(
@@ -251,7 +242,7 @@ func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split
 	return resp, nil
 }
 
-func (local *local) ReadAndSplitIntoRange(engineFile localFile) ([]Range, error) {
+func (local *local) ReadAndSplitIntoRange(engineFile *localFile) ([]Range, error) {
 	if engineFile.length == 0 {
 		return nil, nil
 	}
@@ -365,7 +356,7 @@ func (local *local) writeAndIngestByRange(
 	return nil
 }
 
-func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile localFile, ranges []Range) error {
+func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *localFile, ranges []Range) error {
 	if engineFile.length == 0 {
 		return nil
 	}
@@ -388,14 +379,12 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile local
 }
 
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	local.mu.Lock()
-	engineFile, ok := local.engines[engineUUID]
-	defer local.mu.Unlock()
+	engineFile, ok := local.engines.Load(engineUUID)
 	if !ok {
 		return errors.Errorf("could not find engine %s in ImportEngine", engineUUID.String())
 	}
 	// split sorted file into range by 96MB size per file
-	ranges, err := local.ReadAndSplitIntoRange(engineFile)
+	ranges, err := local.ReadAndSplitIntoRange(engineFile.(*localFile))
 	if err != nil {
 		return err
 	}
@@ -406,7 +395,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		return err
 	}
 	// start to write to kv and ingest
-	err = local.WriteAndIngestByRanges(ctx, engineFile, ranges)
+	err = local.WriteAndIngestByRanges(ctx, engineFile.(*localFile), ranges)
 	if err != nil {
 		log.L().Error("write and ingest ranges failed", zap.Error(err))
 		return err
@@ -416,11 +405,13 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// release this engine after import success
-	local.mu.Lock()
-	defer local.mu.Unlock()
-	engineFile := local.engines[engineUUID]
-	engineFile.Close()
-	delete(local.engines, engineUUID)
+	engineFile, ok := local.engines.Load(engineUUID)
+	if ok {
+		engineFile.(*localFile).Close()
+		local.engines.Delete(engineUUID)
+	} else {
+		log.L().Error("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+	}
 	return nil
 }
 
@@ -437,12 +428,11 @@ func (local *local) WriteRows(
 		return nil
 	}
 
-	local.mu.Lock()
-	engineFile, ok := local.engines[engineUUID]
-	local.mu.Unlock()
+	e, ok := local.engines.Load(engineUUID)
 	if !ok {
 		return errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
+	engineFile := e.(*localFile)
 
 	// write to go leveldb get get sorted kv
 	batch := new(leveldb.Batch)
@@ -458,9 +448,7 @@ func (local *local) WriteRows(
 		return err
 	}
 	engineFile.ts = ts
-	local.mu.Lock()
-	local.engines[engineUUID] = engineFile
-	local.mu.Unlock()
+	local.engines.Store(engineUUID, engineFile)
 	return
 }
 
