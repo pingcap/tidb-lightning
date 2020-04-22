@@ -223,25 +223,24 @@ func (local *local) WriteToTiKV(
 		if err != nil {
 			return nil, err
 		}
-		firstPeerMetas = metas
+		if firstPeerMetas == nil {
+			firstPeerMetas = metas
+		}
 	}
 	return firstPeerMetas, nil
 }
 
 func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
-	leader := region.Leader
-	if leader == nil {
-		leader = region.Region.GetPeers()[0]
-	}
+	peer := region.Region.GetPeers()[0]
 
-	cli, err := local.getImportClient(leader)
+	cli, err := local.getImportClient(peer)
 	if err != nil {
 		return nil, err
 	}
 	reqCtx := &kvrpcpb.Context{
 		RegionId:    region.Region.GetId(),
 		RegionEpoch: region.Region.GetRegionEpoch(),
-		Peer:        leader,
+		Peer:        peer,
 	}
 
 	req := &sst.IngestRequest{
@@ -383,7 +382,18 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 		iter := engineFile.db.NewIterator(&dbutil.Range{Start: r.start, Limit: nextKey(r.end)}, nil)
 		length := r.length
 		eg.Go(func() error {
-			return local.writeAndIngestByRange(ctx, iter, engineFile.ts, length)
+			var err error
+			for i := 0; i < maxRetryTimes; i++ {
+				if err = local.writeAndIngestByRange(ctx, iter, engineFile.ts, length); err != nil {
+					log.L().Warn("write and ingest by range failed",
+						zap.Int("retry time", i+1),
+						zap.Error(err))
+				} else {
+					return nil
+				}
+			}
+			log.L().Error("write and ingest by range retry exceed maxRetryTimes:3")
+			return err
 		})
 	}
 	if err := eg.Wait(); err != nil {
