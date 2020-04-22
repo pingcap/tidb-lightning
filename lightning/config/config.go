@@ -158,7 +158,7 @@ type TikvImporter struct {
 	OnDuplicate     string `toml:"on-duplicate" json:"on-duplicate"`
 	MaxKVPairs      int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	RegionSplitSize int64  `toml:"region-split-size" json:"region-split-size"`
-	FilePath        string `toml:"file-path" json:"file-path"`
+	LocalDBPath     string `toml:"local-db-path" json:"local-db-path"`
 }
 
 type Checkpoint struct {

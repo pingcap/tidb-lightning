@@ -157,6 +157,6 @@ func (tc *TLS) ToPDSecurityOption() pd.SecurityOption {
 	}
 }
 
-func (tc *TLS) TransToTlsConfig() (*tls.Config, error) {
-	return ToTLSConfig(tc.caPath, tc.certPath, tc.keyPath)
+func (tc *TLS) TransToTlsConfig() *tls.Config {
+	return tc.inner
 }

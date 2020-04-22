@@ -188,7 +188,7 @@ func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDat
 	case config.BackendTiDB:
 		backend = kv.NewTiDBBackend(tidbMgr.db, cfg.TikvImporter.OnDuplicate)
 	case config.BackendLocal:
-		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, cfg.TikvImporter.RegionSplitSize, cfg.TikvImporter.FilePath)
+		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, cfg.TikvImporter.RegionSplitSize, cfg.TikvImporter.LocalDBPath)
 		if err != nil {
 			return nil, err
 		}

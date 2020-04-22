@@ -51,8 +51,8 @@ type localFile struct {
 	ts        uint64
 	db        *leveldb.DB
 	meta      sst.SSTMeta
-	length    int
-	totalSize int
+	length    int64
+	totalSize int64
 
 	ranges   []Range
 	startKey []byte
@@ -95,7 +95,7 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		clis: make(map[uint64]sst.ImportSSTClient),
 	}
 
-	tlsConf, err := tls.TransToTlsConfig()
+	tlsConf := tls.TransToTlsConfig()
 	if err != nil {
 		return MakeBackend(nil), err
 	}
@@ -135,8 +135,8 @@ func (local *local) RetryImportDelay() time.Duration {
 }
 
 func (local *local) MaxChunkSize() int {
-	// 31 MB. hardcoded by importer, so do we
-	return 31 << 10
+	// 96MB
+	return int(local.regionSplitSize)
 }
 
 func (local *local) ShouldPostProcess() bool {
@@ -224,7 +224,7 @@ func (local *local) WriteToTiKV(
 	return
 }
 
-func (local *local) Ingest(ctx context.Context, writeMetas []*sst.SSTMeta, region *split.RegionInfo) ([]*sst.IngestResponse, error) {
+func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
 	leader := region.Leader
 	if leader == nil {
 		leader = region.Region.GetPeers()[0]
@@ -240,19 +240,15 @@ func (local *local) Ingest(ctx context.Context, writeMetas []*sst.SSTMeta, regio
 		Peer:        leader,
 	}
 
-	resps := make([]*sst.IngestResponse, 0, len(writeMetas))
-	for _, meta := range writeMetas {
-		req := &sst.IngestRequest{
-			Context: reqCtx,
-			Sst:     meta,
-		}
-		resp, err := cli.Ingest(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-		resps = append(resps, resp)
+	req := &sst.IngestRequest{
+		Context: reqCtx,
+		Sst:     meta,
 	}
-	return resps, nil
+	resp, err := cli.Ingest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func (local *local) ReadAndSplitIntoRange(engineFile localFile) ([]Range, error) {
@@ -351,10 +347,20 @@ func (local *local) writeAndIngestByRange(
 		local.mutationPool.Put(mutation)
 	}
 
-	_, err = local.Ingest(ctx, metas, region)
-	if err != nil {
-		log.L().Error("ingest to tikv failed", zap.Error(err))
-		return err
+	for i := 0; i < maxRetryTimes; i ++ {
+		for _, meta := range metas {
+			resp, err := local.Ingest(ctx, meta, region)
+			if err != nil {
+				log.L().Error("ingest to tikv failed", zap.Error(err))
+				return err
+			}
+			needRetry, newRegion, errIngest := isIngestRetryable(resp, region, meta)
+			if !needRetry {
+				return errIngest
+			}
+			// retry with not leader and epoch not match error
+			region = newRegion
+		}
 	}
 	return nil
 }
@@ -440,12 +446,12 @@ func (local *local) WriteRows(
 
 	// write to go leveldb get get sorted kv
 	batch := new(leveldb.Batch)
-	size := 0
+	size := int64(0)
 	for _, pair := range kvs {
 		batch.Put(pair.Key, pair.Val)
-		size += len(pair.Key) + len(pair.Val)
+		size += int64(len(pair.Key) + len(pair.Val))
 	}
-	engineFile.length += batch.Len()
+	engineFile.length += int64(batch.Len())
 	engineFile.totalSize += size
 	err := engineFile.db.Write(batch, nil)
 	if err != nil {
@@ -466,7 +472,56 @@ func (local *local) NewEncoder(tbl table.Table, options *SessionOptions) Encoder
 	return NewTableKVEncoder(tbl, options)
 }
 
-func nextKeyNoAlloc(key []byte) ([]byte, byte) {
+func isIngestRetryable(resp *sst.IngestResponse, region *split.RegionInfo, meta *sst.SSTMeta) (bool, *split.RegionInfo, error) {
+	if resp.GetError() == nil {
+		return false, nil, nil
+	}
+
+	var newRegion *split.RegionInfo
+	switch errPb := resp.GetError(); {
+	case errPb.NotLeader != nil:
+		if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
+			newRegion = &split.RegionInfo{
+				Leader: newLeader,
+				Region: region.Region,
+			}
+		return true, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+	}
+	case errPb.EpochNotMatch != nil:
+		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
+			var currentRegion *metapb.Region
+			for _, r := range currentRegions {
+				if insideRegion(r, meta) {
+					currentRegion = r
+					break
+				}
+			}
+			if currentRegion != nil {
+				var newLeader *metapb.Peer
+				for _, p := range currentRegion.Peers {
+					if p.GetStoreId() == region.Leader.GetStoreId() {
+						newLeader = p
+						break
+					}
+				}
+				if newLeader != nil {
+					newRegion = &split.RegionInfo{
+						Leader:newLeader,
+						Region:currentRegion,
+					}
+				}
+			}
+		}
+		return true, newRegion, errors.Errorf("epoch not match: %s", errPb.GetMessage())
+	}
+	return false, nil, errors.Errorf("non retryable error: %s", resp.GetError().GetMessage())
+}
+
+func nextKey(key []byte) []byte {
+	if len(key) == 0 {
+		return []byte{}
+	}
+	res := make([]byte, 0, len(key) + 1)
 	pos := 0
 	for i := len(key) - 1; i >= 0; i-- {
 		if key[i] != '\xff' {
@@ -474,15 +529,7 @@ func nextKeyNoAlloc(key []byte) ([]byte, byte) {
 			break
 		}
 	}
-	return key[:pos], key[pos] + 1
-}
-
-func nextKey(key []byte) []byte {
-	if len(key) == 0 {
-		return []byte{}
-	}
-	res := make([]byte, 0, len(key))
-	s, e := nextKeyNoAlloc(key)
+	s, e := key[:pos], key[pos] + 1
 	res = append(append(res, s...), e)
 	return res
 }

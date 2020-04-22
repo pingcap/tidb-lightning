@@ -8,6 +8,8 @@ import (
 
 	split "github.com/pingcap/br/pkg/restore"
 	"github.com/pingcap/errors"
+	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -109,7 +111,7 @@ func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error
 }
 
 func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
-	for i := 0; i < 64; i++ {
+	for i := 0; i < split.SplitCheckMaxRetryTimes ; i++ {
 		ok, err := local.hasRegion(ctx, regionID)
 		if err != nil {
 			log.L().Warn("wait for split failed", zap.Error(err))
@@ -211,4 +213,14 @@ func truncateRowKey(key []byte) []byte {
 
 func beforeEnd(key []byte, end []byte) bool {
 	return bytes.Compare(key, end) < 0 || len(end) == 0
+}
+
+func insideRegion(region *metapb.Region, meta *sst.SSTMeta) bool {
+	rg := meta.GetRange()
+	return keyInsideRegion(region, rg.GetStart()) && keyInsideRegion(region, rg.GetEnd())
+}
+
+func keyInsideRegion(region *metapb.Region, key []byte) bool {
+	return bytes.Compare(key, region.GetStartKey()) > 0 && (
+		beforeEnd(key, region.GetEndKey()))
 }
