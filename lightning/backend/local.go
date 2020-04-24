@@ -15,6 +15,7 @@ package backend
 
 import (
 	"context"
+	"crypto/tls"
 	"os"
 	"path"
 	"sync"
@@ -33,11 +34,18 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 
 	split "github.com/pingcap/br/pkg/restore"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
+)
+
+const (
+	dialTimeout = 5 * time.Second
 )
 
 // Range record start and end key for localFile.DB
@@ -64,10 +72,16 @@ func (e *localFile) Close() error {
 	return e.db.Close()
 }
 
+type grpcClis struct {
+	mu   sync.Mutex
+	clis map[uint64]*grpc.ClientConn
+}
+
 type local struct {
 	engines  sync.Map
-	grpcClis sync.Map
+	grpcClis grpcClis
 	splitCli split.SplitClient
+	tlsConf  *tls.Config
 
 	localFile       string
 	regionSplitSize int64
@@ -81,36 +95,59 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
 	}
-	allStores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
-	if err != nil {
-		return MakeBackend(nil), errors.Annotate(err, "get all stores failed")
-	}
-	clients := sync.Map{}
-
 	tlsConf := tls.TransToTlsConfig()
 	if err != nil {
 		return MakeBackend(nil), err
 	}
 	splitCli := split.NewSplitClient(pdCli, tlsConf)
 
-	for _, store := range allStores {
-		// create new connection for every store
-		conn, err := grpc.DialContext(ctx, store.GetAddress(), tls.ToGRPCDialOption())
-		if err != nil {
-			return MakeBackend(nil), errors.Annotatef(err, "connect to store failed: %s", store.Address)
-		}
-		clients.Store(store.GetId(), sst.NewImportSSTClient(conn))
-	}
-	return MakeBackend(&local{
-		grpcClis: clients,
+	local := &local{
 		engines:  sync.Map{},
 		splitCli: splitCli,
+		tlsConf:  tlsConf,
 
 		localFile:       localFile,
 		regionSplitSize: regionSplitSize,
 
 		mutationPool: sync.Pool{New: func() interface{} { return &sst.Mutation{} }},
-	}), nil
+	}
+	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
+	return MakeBackend(local), nil
+}
+
+func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
+
+	store, err := local.splitCli.GetStore(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	opt := grpc.WithInsecure()
+	if local.tlsConf != nil {
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(local.tlsConf))
+	}
+	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	keepAlive := 10
+	keepAliveTimeout := 3
+	bfConf := backoff.DefaultConfig
+	bfConf.MaxDelay = time.Second * 3
+	conn, err := grpc.DialContext(
+		ctx,
+		store.GetAddress(),
+		opt,
+		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                time.Duration(keepAlive) * time.Second,
+			Timeout:             time.Duration(keepAliveTimeout) * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
+	cancel()
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	// Cache the conn.
+	local.grpcClis.clis[storeID] = conn
+	return conn, nil
 }
 
 // Close the importer connection.
@@ -130,8 +167,8 @@ func (local *local) RetryImportDelay() time.Duration {
 }
 
 func (local *local) MaxChunkSize() int {
-	// 96MB
-	return int(local.regionSplitSize)
+	// 31MB
+	return 31 << 10
 }
 
 func (local *local) ShouldPostProcess() bool {
@@ -153,12 +190,20 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 	return nil
 }
 
-func (local *local) getImportClient(peer *metapb.Peer) (sst.ImportSSTClient, error) {
-	cli, ok := local.grpcClis.Load(peer.GetStoreId())
+func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
+	local.grpcClis.mu.Lock()
+	defer local.grpcClis.mu.Unlock()
+	var err error
+
+	conn, ok := local.grpcClis.clis[peer.GetStoreId()]
 	if !ok {
-		return nil, errors.Errorf("could not find grpc client for peer id %d", peer.GetId())
+		conn, err = local.getGrpcConnLocked(ctx, peer.GetStoreId())
+		if err != nil {
+			log.L().Error("could not get grpc connect ", zap.Uint64("storeId", peer.GetStoreId()))
+			return nil, err
+		}
 	}
-	return cli.(sst.ImportSSTClient), nil
+	return sst.NewImportSSTClient(conn), nil
 }
 
 func (local *local) WriteToPeer(
@@ -168,7 +213,7 @@ func (local *local) WriteToPeer(
 	peer *metapb.Peer,
 	mutations []*sst.Mutation) (metas []*sst.SSTMeta, err error) {
 
-	cli, err := local.getImportClient(peer)
+	cli, err := local.getImportClient(ctx, peer)
 	if err != nil {
 		return
 	}
@@ -206,7 +251,7 @@ func (local *local) WriteToPeer(
 		}
 	} else {
 		metas = resp.Metas
-		log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", metas))
+		log.L().Info("get metas after write kv stream to tikv", zap.Reflect("metas", metas))
 	}
 	return
 }
@@ -217,30 +262,38 @@ func (local *local) WriteToTiKV(
 	ts uint64,
 	region *split.RegionInfo,
 	mutations []*sst.Mutation) ([]*sst.SSTMeta, error) {
-	var firstPeerMetas []*sst.SSTMeta
+	var leaderPeerMetas []*sst.SSTMeta
+	leaderID := region.Leader.GetId()
 	for _, peer := range region.Region.GetPeers() {
 		metas, err := local.WriteToPeer(ctx, meta, ts, peer, mutations)
 		if err != nil {
 			return nil, err
 		}
-		if firstPeerMetas == nil {
-			firstPeerMetas = metas
+		if leaderID == peer.GetId() {
+			leaderPeerMetas = metas
+			log.L().Info("lock metas", zap.Reflect("metas", leaderPeerMetas))
 		}
+		log.L().Debug("write to kv", zap.Reflect("peer", peer),
+			zap.Reflect("region", region), zap.Uint64("leader", leaderID),
+			zap.Reflect("meta", meta), zap.Reflect("return metas", metas))
 	}
-	return firstPeerMetas, nil
+	return leaderPeerMetas, nil
 }
 
 func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
-	peer := region.Region.GetPeers()[0]
+	leader := region.Leader
+	if leader == nil {
+		leader = region.Region.GetPeers()[0]
+	}
 
-	cli, err := local.getImportClient(peer)
+	cli, err := local.getImportClient(ctx, leader)
 	if err != nil {
 		return nil, err
 	}
 	reqCtx := &kvrpcpb.Context{
 		RegionId:    region.Region.GetId(),
 		RegionEpoch: region.Region.GetRegionEpoch(),
-		Peer:        peer,
+		Peer:        leader,
 	}
 
 	req := &sst.IngestRequest{
@@ -350,9 +403,10 @@ func (local *local) writeAndIngestByRange(
 		local.mutationPool.Put(mutation)
 	}
 
-	for i := 0; i < maxRetryTimes; i++ {
-		for _, meta := range metas {
-			resp, err := local.Ingest(ctx, meta, region)
+	var resp *sst.IngestResponse
+	for _, meta := range metas {
+		for i := 0; i < maxRetryTimes; i++ {
+			resp, err = local.Ingest(ctx, meta, region)
 			if err != nil {
 				log.L().Error("ingest to tikv failed", zap.Error(err))
 				return err
@@ -361,12 +415,19 @@ func (local *local) writeAndIngestByRange(
 			if !needRetry {
 				return errIngest
 			}
-			log.L().Warn("retry ingest due to", zap.Error(errIngest))
+			log.L().Warn("retry ingest due to",
+				zap.Reflect("meta", meta),
+				zap.Int("retry time", i),
+				zap.Reflect("region", region),
+				zap.Reflect("new region", newRegion),
+				zap.Error(errIngest),
+			)
+
 			// retry with not leader and epoch not match error
 			region = newRegion
 		}
 	}
-	return nil
+	return err
 }
 
 func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *localFile, ranges []Range) error {

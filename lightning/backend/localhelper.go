@@ -3,6 +3,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"strings"
 	"time"
 
@@ -28,11 +29,10 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 		return nil
 	}
 
-	minKey := ranges[0].start
-	maxKey := ranges[len(ranges)-1].end
+	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
+	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
 
-	// TODO maybe paginate scan
-	regions, err := local.splitCli.ScanRegions(ctx, minKey, maxKey, -1)
+	regions, err := paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
 	if err != nil {
 		return err
 	}
@@ -42,6 +42,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 	}
 
 	splitKeyMap := getSplitKeys(ranges, regions)
+
 	regionMap := make(map[uint64]*split.RegionInfo)
 	for _, region := range regions {
 		regionMap[region.Region.GetId()] = region
@@ -85,6 +86,35 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 			zap.Duration("take", time.Since(startTime)))
 	}
 	return nil
+}
+
+func paginateScanRegion(
+	ctx context.Context, client split.SplitClient, startKey, endKey []byte, limit int,
+) ([]*split.RegionInfo, error) {
+	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
+		return nil, errors.Errorf("startKey >= endKey, startKey %s, endkey %s",
+			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+	}
+
+	regions := []*split.RegionInfo{}
+	for {
+		batch, err := client.ScanRegions(ctx, startKey, endKey, limit)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		regions = append(regions, batch...)
+		if len(batch) < limit {
+			// No more region
+			break
+		}
+		startKey = batch[len(batch)-1].Region.GetEndKey()
+		if len(startKey) == 0 ||
+			(len(endKey) > 0 && bytes.Compare(startKey, endKey) >= 0) {
+			// All key space have scanned
+			break
+		}
+	}
+	return regions, nil
 }
 
 func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
