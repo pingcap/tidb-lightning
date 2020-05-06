@@ -30,6 +30,7 @@ import (
 	uuid "github.com/satori/go.uuid"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
+	dbopt "github.com/syndtr/goleveldb/leveldb/opt"
 	dbutil "github.com/syndtr/goleveldb/leveldb/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -86,7 +87,7 @@ type local struct {
 	localFile       string
 	regionSplitSize int64
 
-	mutationPool sync.Pool
+	pairPool sync.Pool
 }
 
 // NewLocal creates new connections to tikv.
@@ -109,7 +110,7 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		localFile:       localFile,
 		regionSplitSize: regionSplitSize,
 
-		mutationPool: sync.Pool{New: func() interface{} { return &sst.Mutation{} }},
+		pairPool: sync.Pool{New: func() interface{} { return &sst.Pair{} }},
 	}
 	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
 	return MakeBackend(local), nil
@@ -167,8 +168,8 @@ func (local *local) RetryImportDelay() time.Duration {
 }
 
 func (local *local) MaxChunkSize() int {
-	// 31MB
-	return 31 << 10
+	// a batch size write to leveldb
+	return int(local.regionSplitSize)
 }
 
 func (local *local) ShouldPostProcess() bool {
@@ -177,7 +178,15 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	dbPath := path.Join(local.localFile, engineUUID.String())
-	db, err := leveldb.OpenFile(dbPath, nil)
+	db, err := leveldb.OpenFile(dbPath, &dbopt.Options{
+		OpenFilesCacheCapacity: 1024,
+		BlockCacheCapacity: 768 / 2 * dbopt.MiB,
+		WriteBuffer:        768 / 4 * dbopt.MiB,
+		CompactionL0Trigger: 40,
+		CompactionTotalSizeMultiplier: 15,
+		WriteL0PauseTrigger: 120,
+		WriteL0SlowdownTrigger: 80,
+	})
 	if err != nil {
 		return err
 	}
@@ -211,7 +220,7 @@ func (local *local) WriteToPeer(
 	meta *sst.SSTMeta,
 	ts uint64,
 	peer *metapb.Peer,
-	mutations []*sst.Mutation) (metas []*sst.SSTMeta, err error) {
+	pairs []*sst.Pair) (metas []*sst.SSTMeta, err error) {
 
 	cli, err := local.getImportClient(ctx, peer)
 	if err != nil {
@@ -237,7 +246,7 @@ func (local *local) WriteToPeer(
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
 			CommitTs:  ts,
-			Mutations: mutations,
+			Pairs: pairs,
 		},
 	}
 	err = wstream.Send(req)
@@ -251,7 +260,7 @@ func (local *local) WriteToPeer(
 		}
 	} else {
 		metas = resp.Metas
-		log.L().Info("get metas after write kv stream to tikv", zap.Reflect("metas", metas))
+		log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", metas))
 	}
 	return
 }
@@ -261,17 +270,17 @@ func (local *local) WriteToTiKV(
 	meta *sst.SSTMeta,
 	ts uint64,
 	region *split.RegionInfo,
-	mutations []*sst.Mutation) ([]*sst.SSTMeta, error) {
+	pairs []*sst.Pair) ([]*sst.SSTMeta, error) {
 	var leaderPeerMetas []*sst.SSTMeta
 	leaderID := region.Leader.GetId()
 	for _, peer := range region.Region.GetPeers() {
-		metas, err := local.WriteToPeer(ctx, meta, ts, peer, mutations)
+		metas, err := local.WriteToPeer(ctx, meta, ts, peer, pairs)
 		if err != nil {
 			return nil, err
 		}
 		if leaderID == peer.GetId() {
 			leaderPeerMetas = metas
-			log.L().Info("lock metas", zap.Reflect("metas", leaderPeerMetas))
+			log.L().Debug("lock metas", zap.Reflect("metas", leaderPeerMetas))
 		}
 		log.L().Debug("write to kv", zap.Reflect("peer", peer),
 			zap.Reflect("region", region), zap.Uint64("leader", leaderID),
@@ -350,16 +359,15 @@ func (local *local) writeAndIngestByRange(
 
 	defer iter.Release()
 	index := 0
-	mutations := make([]*sst.Mutation, length)
+	mutations := make([]*sst.Pair, length)
 
 	for iter.Next() {
 		k := iter.Key()
 		v := iter.Value()
-		mutations[index] = local.mutationPool.Get().(*sst.Mutation)
-		mutations[index] = &sst.Mutation{
+		mutations[index] = local.pairPool.Get().(*sst.Pair)
+		mutations[index] = &sst.Pair{
 			Key:   append([]byte{}, k...),
 			Value: append([]byte{}, v...),
-			Op:    sst.Mutation_Put,
 		}
 		index += 1
 	}
@@ -393,6 +401,7 @@ func (local *local) writeAndIngestByRange(
 			End:   endKey,
 		},
 	}
+	// TODO split mutation to batch
 	metas, err := local.WriteToTiKV(ctx, meta, ts, region, mutations)
 	if err != nil {
 		log.L().Error("write to tikv failed", zap.Error(err))
@@ -400,7 +409,7 @@ func (local *local) writeAndIngestByRange(
 	}
 
 	for _, mutation := range mutations {
-		local.mutationPool.Put(mutation)
+		local.pairPool.Put(mutation)
 	}
 
 	var resp *sst.IngestResponse
@@ -529,7 +538,7 @@ func (local *local) WriteRows(
 	}
 	engineFile.length += int64(batch.Len())
 	engineFile.totalSize += size
-	err := engineFile.db.Write(batch, nil)
+	err := engineFile.db.Write(batch, &dbopt.WriteOptions{NoWriteMerge:true})
 	if err != nil {
 		return err
 	}

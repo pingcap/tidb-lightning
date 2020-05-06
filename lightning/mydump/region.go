@@ -19,7 +19,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
@@ -114,6 +117,8 @@ func AllocateEngineIDs(
 		n += 1.0
 	}
 
+	log.L().Info("current Batch", zap.Float64("cb", curBatchSize))
+
 	for i, dataFileSize := range dataFileSizes {
 		filesRegions[i].EngineID = curEngineID
 		curEngineSize += dataFileSize
@@ -186,6 +191,10 @@ func MakeTableRegions(
 		prevRowIDMax = rowIDMax
 		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
 	}
+
+	log.L().Info("in makeTableRegions",
+		zap.Int64("maxRegionSize", cfg.Mydumper.MaxRegionSize),
+		zap.Int("len fileRegions", len(filesRegions)))
 
 	AllocateEngineIDs(filesRegions, dataFileSizes, float64(cfg.Mydumper.BatchSize), cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
 	return filesRegions, nil
