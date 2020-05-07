@@ -14,6 +14,7 @@
 package backend
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"os"
@@ -28,10 +29,9 @@ import (
 	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/table"
 	uuid "github.com/satori/go.uuid"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/iterator"
-	dbopt "github.com/syndtr/goleveldb/leveldb/opt"
-	dbutil "github.com/syndtr/goleveldb/leveldb/util"
+
+	"github.com/dgraph-io/badger/v2"
+
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -59,7 +59,7 @@ type Range struct {
 
 type localFile struct {
 	ts        uint64
-	db        *leveldb.DB
+	db        *badger.DB
 	meta      sst.SSTMeta
 	length    int64
 	totalSize int64
@@ -101,6 +101,11 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		return MakeBackend(nil), err
 	}
 	splitCli := split.NewSplitClient(pdCli, tlsConf)
+
+	err = os.Mkdir(localFile, 0700)
+	if err != nil {
+		return MakeBackend(nil), err
+	}
 
 	local := &local{
 		engines:  sync.Map{},
@@ -178,15 +183,12 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	dbPath := path.Join(local.localFile, engineUUID.String())
-	db, err := leveldb.OpenFile(dbPath, &dbopt.Options{
-		OpenFilesCacheCapacity: 1024,
-		BlockCacheCapacity: 768 / 2 * dbopt.MiB,
-		WriteBuffer:        768 / 4 * dbopt.MiB,
-		CompactionL0Trigger: 40,
-		CompactionTotalSizeMultiplier: 15,
-		WriteL0PauseTrigger: 120,
-		WriteL0SlowdownTrigger: 80,
-	})
+	opt := badger.DefaultOptions(dbPath)
+	opt.SyncWrites = false
+	opt.MaxTableSize = 128 << 20
+	// disable badger log
+	opt.Logger = nil
+	db, err := badger.Open(opt)
 	if err != nil {
 		return err
 	}
@@ -321,62 +323,89 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile) ([]Range, error
 		return nil, nil
 	}
 	ranges := make([]Range, 0)
-	iter := engineFile.db.NewIterator(nil, nil)
-	size := int64(0)
-	length := 0
-	var k, v []byte
-	var startKey, endKey []byte
-	first := true
-	for iter.Next() {
-		k = iter.Key()
-		v = iter.Value()
-		length++
-		if first {
-			first = false
-			startKey = append([]byte{}, k...)
+	err := engineFile.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchSize = 10
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		size := int64(0)
+		length := 0
+		var startKey, endKey []byte
+		first := true
+		var k []byte
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			k = item.Key()
+			vSize := item.ValueSize()
+			length++
+			if first {
+				first = false
+				startKey = append([]byte{}, k...)
+			}
+			size += int64(len(k)) + vSize
+			if size > local.regionSplitSize {
+				endKey = append([]byte{}, k...)
+				ranges = append(ranges, Range{start: startKey, end: endKey, length: length})
+				first = true
+				size = 0
+				length = 0
+			}
 		}
-		size += int64(len(k) + len(v))
-		if size > local.regionSplitSize {
-			endKey = append([]byte{}, k...)
-			ranges = append(ranges, Range{start: startKey, end: endKey, length: length})
-			first = true
-			size = 0
-			length = 0
+		if size > 0 {
+			ranges = append(ranges, Range{start: startKey, end: k, length: length})
 		}
-	}
-	iter.Release()
-	if size > 0 {
-		ranges = append(ranges, Range{start: startKey, end: k, length: length})
-	}
-	return ranges, nil
+		return nil
+	})
+
+	return ranges, err
 }
 
 func (local *local) writeAndIngestByRange(
 	ctx context.Context,
-	iter iterator.Iterator,
+	db *badger.DB,
+	start, end []byte,
 	ts uint64,
 	length int) error {
 
-	defer iter.Release()
 	index := 0
-	mutations := make([]*sst.Pair, length)
+	pairs := make([]*sst.Pair, length)
 
-	for iter.Next() {
-		k := iter.Key()
-		v := iter.Value()
-		mutations[index] = local.pairPool.Get().(*sst.Pair)
-		mutations[index] = &sst.Pair{
-			Key:   append([]byte{}, k...),
-			Value: append([]byte{}, v...),
+	err := db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchSize = 10
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Seek(start); it.Valid(); it.Next() {
+			item := it.Item()
+			if bytes.Compare(item.Key(), end) > 0 {
+				return nil
+			}
+			pair := local.pairPool.Get().(*sst.Pair)
+			pair = &sst.Pair{
+				Key: make([]byte, item.KeySize()),
+				Value: make([]byte, 0),
+			}
+			item.KeyCopy(pair.Key)
+			b, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			pair.Value = b
+			pairs[index] = pair
+			index += 1
 		}
-		index += 1
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	if index == 0 {
 		return nil
 	}
 
-	startKey := mutations[0].Key
-	endKey := mutations[index-1].Key
+	startKey := pairs[0].Key
+	endKey := pairs[index-1].Key
 	region, err := local.splitCli.GetRegion(ctx, startKey)
 	if err != nil {
 		log.L().Error("get region in write failed", zap.Error(err))
@@ -402,13 +431,13 @@ func (local *local) writeAndIngestByRange(
 		},
 	}
 	// TODO split mutation to batch
-	metas, err := local.WriteToTiKV(ctx, meta, ts, region, mutations)
+	metas, err := local.WriteToTiKV(ctx, meta, ts, region, pairs)
 	if err != nil {
 		log.L().Error("write to tikv failed", zap.Error(err))
 		return err
 	}
 
-	for _, mutation := range mutations {
+	for _, mutation := range pairs {
 		local.pairPool.Put(mutation)
 	}
 
@@ -449,12 +478,14 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 			zap.Binary("start", r.start),
 			zap.Binary("end", r.end),
 			zap.Int("len", r.length))
-		iter := engineFile.db.NewIterator(&dbutil.Range{Start: r.start, Limit: nextKey(r.end)}, nil)
+		db := engineFile.db
 		length := r.length
+		startKey := r.start
+		endKey := r.end
 		eg.Go(func() error {
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
-				if err = local.writeAndIngestByRange(ctx, iter, engineFile.ts, length); err != nil {
+				if err = local.writeAndIngestByRange(ctx, db, startKey, endKey, engineFile.ts, length); err != nil {
 					log.L().Warn("write and ingest by range failed",
 						zap.Int("retry time", i+1),
 						zap.Error(err))
@@ -530,18 +561,20 @@ func (local *local) WriteRows(
 	engineFile := e.(*localFile)
 
 	// write to go leveldb get get sorted kv
-	batch := new(leveldb.Batch)
+	wb := engineFile.db.NewWriteBatch()
+	defer wb.Cancel()
+
 	size := int64(0)
 	for _, pair := range kvs {
-		batch.Put(pair.Key, pair.Val)
+		wb.Set(pair.Key, pair.Val)
 		size += int64(len(pair.Key) + len(pair.Val))
 	}
-	engineFile.length += int64(batch.Len())
-	engineFile.totalSize += size
-	err := engineFile.db.Write(batch, &dbopt.WriteOptions{NoWriteMerge:true})
+	err := wb.Flush()
 	if err != nil {
 		return err
 	}
+	engineFile.length += int64(len(kvs))
+	engineFile.totalSize += size
 	engineFile.ts = ts
 	local.engines.Store(engineUUID, engineFile)
 	return
