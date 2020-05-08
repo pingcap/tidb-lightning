@@ -359,14 +359,16 @@ func (local *local) writeAndIngestByRange(
 
 	defer iter.Release()
 	index := 0
-	mutations := make([]*sst.Pair, length)
+	pairs := make([]*sst.Pair, length)
 
 	for iter.Next() {
 		k := iter.Key()
 		v := iter.Value()
-		mutations[index] = local.pairPool.Get().(*sst.Pair)
-		mutations[index] = &sst.Pair{
-			Key:   append([]byte{}, k...),
+		//pairs[index] = local.pairPool.Get().(*sst.Pair)
+		//pairs[index].Key = append(pairs[index].Key, k...)
+		//pairs[index].Value = append(pairs[index].Value, v...)
+		pairs[index] = &sst.Pair{
+			Key: append([]byte{}, k...),
 			Value: append([]byte{}, v...),
 		}
 		index += 1
@@ -375,8 +377,8 @@ func (local *local) writeAndIngestByRange(
 		return nil
 	}
 
-	startKey := mutations[0].Key
-	endKey := mutations[index-1].Key
+	startKey := pairs[0].Key
+	endKey := pairs[index-1].Key
 	region, err := local.splitCli.GetRegion(ctx, startKey)
 	if err != nil {
 		log.L().Error("get region in write failed", zap.Error(err))
@@ -402,15 +404,17 @@ func (local *local) writeAndIngestByRange(
 		},
 	}
 	// TODO split mutation to batch
-	metas, err := local.WriteToTiKV(ctx, meta, ts, region, mutations)
+	metas, err := local.WriteToTiKV(ctx, meta, ts, region, pairs)
 	if err != nil {
 		log.L().Error("write to tikv failed", zap.Error(err))
 		return err
 	}
 
-	for _, mutation := range mutations {
-		local.pairPool.Put(mutation)
-	}
+	//for _, pair := range pairs {
+	//	pair.Value = pair.Value[:0]
+	//	pair.Key = pair.Key[:0]
+	//	local.pairPool.Put(pair)
+	//}
 
 	var resp *sst.IngestResponse
 	for _, meta := range metas {

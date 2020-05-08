@@ -19,7 +19,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := GO111MODULE=on GOOS=linux CGO_ENABLED=0 $(GO) build
+GOBUILD   := GO111MODULE=on GOMAXPROCS=40 GOOS=linux CGO_ENABLED=0 $(GO) build
 GOTEST    := GO111MODULE=on CGO_ENABLED=1 $(GO) test -p 3
 
 ARCH      := "`uname -s`"
