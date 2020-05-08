@@ -11,6 +11,7 @@ require (
 	github.com/golang/mock v1.4.3
 	github.com/google/uuid v1.1.1
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
+	github.com/mackerelio/go-osstat v0.1.0
 	github.com/pingcap/br v0.0.0-20200413082646-b37ae8f0b494
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011

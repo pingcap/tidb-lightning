@@ -43,6 +43,8 @@ import (
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
+
+	"github.com/mackerelio/go-osstat/memory"
 )
 
 const (
@@ -87,6 +89,8 @@ type local struct {
 	localFile       string
 	regionSplitSize int64
 
+	memoryTotalSize uint64
+
 	pairPool sync.Pool
 }
 
@@ -102,6 +106,11 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 	}
 	splitCli := split.NewSplitClient(pdCli, tlsConf)
 
+	memoryTotal, err := memoryTotalSize()
+	if err != nil {
+		return MakeBackend(nil), err
+	}
+
 	local := &local{
 		engines:  sync.Map{},
 		splitCli: splitCli,
@@ -109,6 +118,7 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 
 		localFile:       localFile,
 		regionSplitSize: regionSplitSize,
+		memoryTotalSize: memoryTotal,
 
 		pairPool: sync.Pool{New: func() interface{} { return &sst.Pair{} }},
 	}
@@ -176,13 +186,27 @@ func (local *local) ShouldPostProcess() bool {
 	return true
 }
 
+
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	dbPath := path.Join(local.localFile, engineUUID.String())
+	//# binlog pump config
+	//# block-cache-capacity = 8388608
+	//# block-restart-interval = 16
+	//# block-size = 4096
+	//# compaction-L0-trigger = 8
+	//# compaction-table-size = 67108864
+	//# compaction-total-size = 536870912
+	//# compaction-total-size-multiplier = 8.0
+	//# write-buffer = 67108864
+	//# write-L0-pause-trigger = 24
+	//# write-L0-slowdown-trigger = 17
+
 	db, err := leveldb.OpenFile(dbPath, &dbopt.Options{
-		OpenFilesCacheCapacity: 1024,
-		BlockCacheCapacity: 768 / 2 * dbopt.MiB,
-		WriteBuffer:        768 / 4 * dbopt.MiB,
-		CompactionL0Trigger: 40,
+		// same as import default block_cache_size
+		BlockCacheCapacity: int(local.memoryTotalSize/1024/1024/4) * dbopt.MiB,
+		WriteBuffer:        1 * dbopt.GiB,
+		CompactionL0Trigger: 8,
+		CompactionTableSize: 64 * dbopt.MiB,
 		CompactionTotalSizeMultiplier: 15,
 		WriteL0PauseTrigger: 120,
 		WriteL0SlowdownTrigger: 80,
@@ -619,4 +643,12 @@ func nextKey(key []byte) []byte {
 	s, e := key[:pos], key[pos]+1
 	res = append(append(res, s...), e)
 	return res
+}
+
+func memoryTotalSize() (uint64, error) {
+	stat, err := memory.Get()
+	if err != nil {
+		return 0, err
+	}
+	return stat.Total, nil
 }
