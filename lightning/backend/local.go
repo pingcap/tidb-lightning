@@ -14,6 +14,7 @@
 package backend
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"os"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	uuid "github.com/satori/go.uuid"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
@@ -67,8 +69,6 @@ type localFile struct {
 	totalSize int64
 
 	ranges   []Range
-	startKey []byte
-	endKey   []byte
 }
 
 func (e *localFile) Close() error {
@@ -346,32 +346,120 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile) ([]Range, error
 	}
 	ranges := make([]Range, 0)
 	iter := engineFile.db.NewIterator(nil, nil)
-	size := int64(0)
-	length := 0
-	var k, v []byte
+	defer iter.Release()
+	//size := int64(0)
+	//length := 0
 	var startKey, endKey []byte
-	first := true
-	for iter.Next() {
-		k = iter.Key()
-		v = iter.Value()
-		length++
-		if first {
-			first = false
-			startKey = append([]byte{}, k...)
+	if iter.First() {
+		startKey = append([]byte{}, iter.Key()...)
+	} else {
+		return nil, errors.Errorf("could not find first pair, this shouldn't happen")
+	}
+	if iter.Last() {
+		endKey = append([]byte{}, iter.Key()...)
+	} else {
+		return nil, errors.Errorf("could not find last pair, this shouldn't happen")
+	}
+	// <= 96MB no need to split into range
+	if engineFile.totalSize <= local.regionSplitSize {
+		ranges = append(ranges, Range{start: startKey, end: endKey, length: int(engineFile.length)})
+		return ranges, nil
+	}
+
+	// split data into n ranges, then seek n times to get n + 1 ranges
+	n := engineFile.totalSize / local.regionSplitSize
+
+	if tablecodec.IsIndexKey(startKey) {
+		// index engine
+		tableID, startIndexID, _ , err := tablecodec.DecodeIndexKey(startKey)
+		if err != nil {
+			return nil, err
 		}
-		size += int64(len(k) + len(v))
-		if size > local.regionSplitSize {
-			endKey = append([]byte{}, k...)
-			ranges = append(ranges, Range{start: startKey, end: endKey, length: length})
-			first = true
-			size = 0
-			length = 0
+		tableID, endIndexID, _ , err := tablecodec.DecodeIndexKey(endKey)
+		if err != nil {
+			return nil, err
+		}
+		indexCount := (endIndexID - startIndexID) + 1
+
+		// each index has to split into n / indexCount ranges
+		indexRangeCount := n / indexCount
+
+		for i := startIndexID; i <= endIndexID; i ++ {
+			k := tablecodec.EncodeTableIndexPrefix(tableID, i)
+			iter.Seek(k)
+			// get first key of index i
+			startKeyOfIndex := append([]byte{}, iter.Key()...)
+
+			k = tablecodec.EncodeTableIndexPrefix(tableID, i+1)
+			iter.Seek(k)
+			// get last key of index i
+			iter.Prev()
+			lastKeyOfIndex := append([]byte{}, iter.Key()...)
+
+			_, _, startValues, err := tablecodec.DecodeIndexKeyPrefix(startKeyOfIndex)
+			if err != nil {
+				return nil, err
+			}
+			_, _, endValues, err := tablecodec.DecodeIndexKeyPrefix(lastKeyOfIndex)
+			if err != nil {
+				return nil, err
+			}
+
+			// if index is Unique or Primary, key is encoded as
+			// Key: tablePrefix{tableID}_indexPrefixSep{indexID}_indexedColumnsValue, Value: rowID
+			// if index is non-Unique, key is encoded as
+			// Key: tablePrefix{tableID}_indexPrefixSep{indexID}_indexedColumnsValue_rowID, Value: null
+
+			// we can split by indexColumnsValue to get indexRangeCount ranges from above Keys
+
+			values := splitValuesToRange(startValues, endValues, indexRangeCount)
+
+			for _, v := range values {
+				ranges = append(ranges, Range{start: append([]byte{}, startKeyOfIndex...), end: append([]byte{}, v...)})
+				startKeyOfIndex = append([]byte{}, v...)
+			}
+		}
+	}  else {
+		// data engine
+		tableID, startHandle, err := tablecodec.DecodeRecordKey(startKey)
+		if err != nil {
+			return nil, err
+		}
+		endHandle, err := tablecodec.DecodeRowKey(endKey)
+		if err != nil {
+			return nil, err
+		}
+		step := (endHandle - startHandle) / n
+		for i := startHandle; i + step < endHandle; i += step {
+			skey := tablecodec.EncodeRowKeyWithHandle(tableID, i)
+			ekey := tablecodec.EncodeRowKeyWithHandle(tableID, i + step)
+			ranges = append(ranges, Range{start: skey, end: ekey, length: int(step)})
 		}
 	}
-	iter.Release()
-	if size > 0 {
-		ranges = append(ranges, Range{start: startKey, end: k, length: length})
-	}
+
+	//var k, v []byte
+	//var startKey, endKey []byte
+	//first := true
+	//for iter.Next() {
+	//	k = iter.Key()
+	//	v = iter.Value()
+	//	length++
+	//	if first {
+	//		first = false
+	//		startKey = append([]byte{}, k...)
+	//	}
+	//	size += int64(len(k) + len(v))
+	//	if size > local.regionSplitSize {
+	//		endKey = append([]byte{}, k...)
+	//		ranges = append(ranges, Range{start: startKey, end: endKey, length: length})
+	//		first = true
+	//		size = 0
+	//		length = 0
+	//	}
+	//}
+	//if size > 0 {
+	//	ranges = append(ranges, Range{start: startKey, end: k, length: length})
+	//}
 	return ranges, nil
 }
 
@@ -384,6 +472,9 @@ func (local *local) writeAndIngestByRange(
 	defer iter.Release()
 	index := 0
 	pairs := make([]*sst.Pair, length)
+	if length == 0 {
+		pairs = make([]*sst.Pair, 0, 128)
+	}
 
 	for iter.Next() {
 		k := iter.Key()
@@ -391,11 +482,18 @@ func (local *local) writeAndIngestByRange(
 		//pairs[index] = local.pairPool.Get().(*sst.Pair)
 		//pairs[index].Key = append(pairs[index].Key, k...)
 		//pairs[index].Value = append(pairs[index].Value, v...)
-		pairs[index] = &sst.Pair{
-			Key: append([]byte{}, k...),
-			Value: append([]byte{}, v...),
+		if length == 0 {
+			pairs = append(pairs, &sst.Pair{
+				Key: append([]byte{}, k...),
+				Value: append([]byte{}, v...),
+			})
+		} else {
+			pairs[index] = &sst.Pair{
+				Key: append([]byte{}, k...),
+				Value: append([]byte{}, v...),
+			}
+			index += 1
 		}
-		index += 1
 	}
 	if index == 0 {
 		return nil
@@ -651,4 +749,92 @@ func memoryTotalSize() (uint64, error) {
 		return 0, err
 	}
 	return stat.Total, nil
+}
+
+
+// splitValuesToRange try to cut [start, end] to count range approximately
+// just like [start, v1], [v1, v2]... [vCount, end]
+// return value []{v1, v2... vCount}
+func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
+	minLen := len(start)
+	if minLen > len(end) {
+		minLen = len(end)
+	}
+	v := int64(0)
+	if v >= count {
+		return [][]byte{end}
+	}
+
+	s := append([]byte{}, start...)
+	e := append([]byte{}, end...)
+	index := 0
+	for i := 0; i < minLen; i ++ {
+		if e[i] >= s[i] {
+			v = (v*256) + int64(e[i] - s[i])
+		} else {
+			v = (v-1)*256 + (int64(e[i] - s[i]) + 256)
+		}
+		if v >= count {
+			index = i
+			break
+		}
+	}
+	for v < count {
+		s = append(s, byte(0))
+		e = append(e, byte(0))
+		v = v*256
+		index ++
+	}
+	step := v / count
+	checkpoint := append([]byte{}, s...)
+	reverseStepBytes := make([]byte, 0, step / 256 + 1)
+	for step > 0 {
+		reverseStepBytes = append(reverseStepBytes, byte(step%256))
+		step /= 256
+	}
+
+	stepLen := len(reverseStepBytes)
+
+	if stepLen > index {
+		// this shoudn't happen
+		stepLen = index
+		log.L().Error("step is bigger than s, e",
+			zap.Binary("step", reverseBytes(reverseStepBytes)),
+			zap.Binary("start", s),
+			zap.Binary("end", e))
+	}
+
+	res := make([][]byte, 0)
+	for {
+		reverseCheckpoint := reverseBytes(checkpoint)
+		carry := 0
+		for i := 0; i < stepLen; i ++ {
+			value := int(reverseStepBytes[i] + reverseCheckpoint[i])
+			if value > 255 {
+				reverseCheckpoint[i] = byte(value + carry - 256)
+				carry = 1
+			} else {
+				reverseCheckpoint[i] = byte(value + carry - 256)
+				break
+			}
+		}
+		if carry == 1 {
+			reverseCheckpoint[stepLen] += 1
+		}
+		checkpoint = reverseBytes(reverseCheckpoint)
+		if bytes.Compare(checkpoint, e) > 0 {
+			break
+		}
+		res = append(res, checkpoint)
+	}
+	res = append(res, e)
+	return res
+}
+
+func reverseBytes(b []byte) []byte {
+	s := append([]byte{}, b...)
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
+	return s
 }
