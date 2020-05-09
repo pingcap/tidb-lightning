@@ -53,12 +53,8 @@ func PrintInfo(app string, callback func()) {
 		zap.String("UTC Build Time", BuildTS),
 		zap.String("Go Version", GoVersion),
 	)
-	fmt.Fprintln(os.Stdout, "Welcome to "+app,
-		zap.String("Release Version", ReleaseVersion),
-		zap.String("Git Commit Hash", GitHash),
-		zap.String("Git Branch", GitBranch),
-		zap.String("UTC Build Time", BuildTS),
-		zap.String("Go Version", GoVersion),
+	fmt.Fprintln(os.Stdout, "Welcome to "+app+"\n",
+		GetRawInfo(),
 	)
 
 	if callback != nil {

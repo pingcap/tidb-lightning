@@ -186,6 +186,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 			return nil, errors.Annotate(err, "Create debug logs directory failed")
 		}
 		cfg.App.Config.File = configFile
+		fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s.\n", configFile)
 	}
 	if *tidbHost != "" {
 		cfg.TiDB.Host = *tidbHost
