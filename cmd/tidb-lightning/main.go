@@ -63,6 +63,7 @@ func main() {
 	err := app.GoServe()
 	if err != nil {
 		logger.Error("failed to start HTTP server", zap.Error(err))
+		fmt.Fprintln(os.Stderr, "failed to start HTTP server:", err)
 		return
 	}
 
@@ -73,8 +74,10 @@ func main() {
 	}
 	if err != nil {
 		logger.Error("tidb lightning encountered error", zap.Error(err))
+		fmt.Fprintln(os.Stderr, "tidb lightning encountered error:", err)
 	} else {
 		logger.Info("tidb lightning exit")
+		fmt.Fprintln(os.Stdout, "tidb lightning exit", err)
 	}
 
 	syncErr := logger.Sync()

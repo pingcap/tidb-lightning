@@ -15,6 +15,7 @@ package common
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"go.uber.org/zap"
@@ -46,6 +47,13 @@ func PrintInfo(app string, callback func()) {
 	defer log.SetLevel(oldLevel)
 
 	log.L().Info("Welcome to "+app,
+		zap.String("Release Version", ReleaseVersion),
+		zap.String("Git Commit Hash", GitHash),
+		zap.String("Git Branch", GitBranch),
+		zap.String("UTC Build Time", BuildTS),
+		zap.String("Go Version", GoVersion),
+	)
+	fmt.Fprintln(os.Stdout, "Welcome to "+app,
 		zap.String("Release Version", ReleaseVersion),
 		zap.String("Git Commit Hash", GitHash),
 		zap.String("Git Branch", GitBranch),

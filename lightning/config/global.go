@@ -180,6 +180,12 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if *logFilePath != "" {
 		cfg.App.Config.File = *logFilePath
+	} else {
+		configFile, err := log.AdjustLogFilePath()
+		if err != nil {
+			return nil, errors.Annotate(err, "Create debug logs directory failed")
+		}
+		cfg.App.Config.File = configFile
 	}
 	if *tidbHost != "" {
 		cfg.TiDB.Host = *tidbHost

@@ -125,7 +125,7 @@ func (es *errorSummaries) emitLog() {
 func (es *errorSummaries) record(tableName string, err error, status CheckpointStatus) {
 	es.Lock()
 	defer es.Unlock()
-	es.summary[tableName] = errorSummary{status: status, err: err}
+	es.summary[tableName] = errorSummary{status: status, err: errors.Annotatef(err, "table %s", tableName)}
 }
 
 type RestoreController struct {
