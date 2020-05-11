@@ -1132,6 +1132,10 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 	// skip requirement check if explicitly turned off
 	if !rc.cfg.App.CheckRequirements {
 		return nil
+	} else if rc.cfg.TiDB.PdAddr == "" {
+		log.L().Warn("pd address is not given, lightning will skip tidb/pd/tikv version check")
+		fmt.Fprintf(os.Stdout, "pd address is not given, lightning will skip tidb/pd/tikv version check.\n\n")
+		return nil
 	}
 
 	if err := rc.checkTiDBVersion(); err != nil {
