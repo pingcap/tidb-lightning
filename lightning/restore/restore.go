@@ -671,10 +671,9 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			zap.Int("count", len(allDirtyCheckpoints)),
 		)
 
-		for tableName, status := range allInvalidCheckpoints {
+		for tableName := range allDirtyCheckpoints {
 			logger.Info("-",
 				zap.String("table", tableName),
-				zap.Uint8("status", uint8(status)),
 				zap.String("recommendedAction", "./tidb-lightning-ctl --checkpoint-remove='"+tableName+"' --config=..."),
 			)
 		}
