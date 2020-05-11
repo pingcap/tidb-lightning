@@ -15,6 +15,7 @@ package common
 
 import (
 	"fmt"
+
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"go.uber.org/zap"
 )
