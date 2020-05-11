@@ -190,8 +190,10 @@ func MakeTableRegions(
 		}
 		filesRegions = append(filesRegions, tableRegion)
 		if tableRegion.Size() > tableRegionSizeWarningThreshold {
-			log.L().Warn("single sql file's size exceeds 1G, please modify dump configs to split file" +
-				" in several smaller files to improve lightning's efficiency", zap.String("file", dataFile))
+			log.L().Warn(
+				"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
+				zap.String("file", dataFile),
+				zap.Int64("size", dataFileSize))
 		}
 		prevRowIDMax = rowIDMax
 		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
