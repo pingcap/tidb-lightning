@@ -376,6 +376,7 @@ func (cfg *Config) Adjust() error {
 	}
 
 	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
+	mustHaveInternalConnections := true
 	switch cfg.TikvImporter.Backend {
 	case BackendTiDB:
 		if cfg.App.IndexConcurrency == 0 {
@@ -384,6 +385,7 @@ func (cfg *Config) Adjust() error {
 		if cfg.App.TableConcurrency == 0 {
 			cfg.App.TableConcurrency = cfg.App.RegionConcurrency
 		}
+		mustHaveInternalConnections = false
 	case BackendImporter:
 		if cfg.App.IndexConcurrency == 0 {
 			cfg.App.IndexConcurrency = 2
@@ -448,7 +450,7 @@ func (cfg *Config) Adjust() error {
 	}
 
 	// automatically determine the TiDB port & PD address from TiDB settings
-	if cfg.TiDB.Port <= 0 || len(cfg.TiDB.PdAddr) == 0 {
+	if mustHaveInternalConnections && (cfg.TiDB.Port <= 0 || len(cfg.TiDB.PdAddr) == 0) {
 		tls, err := cfg.ToTLS()
 		if err != nil {
 			return err
@@ -461,17 +463,18 @@ func (cfg *Config) Adjust() error {
 		}
 		if cfg.TiDB.Port <= 0 {
 			cfg.TiDB.Port = int(settings.Port)
-			if cfg.TiDB.Port <= 0 {
-				return errors.New("invalid `tidb.port` setting")
-			}
 		}
 		if len(cfg.TiDB.PdAddr) == 0 {
 			pdAddrs := strings.Split(settings.Path, ",")
 			cfg.TiDB.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
-			if len(cfg.TiDB.PdAddr) == 0 {
-				return errors.New("invalid `tidb.pd-addr` setting")
-			}
 		}
+	}
+
+	if cfg.TiDB.Port <= 0 {
+		return errors.New("invalid `tidb.port` setting")
+	}
+	if mustHaveInternalConnections && len(cfg.TiDB.PdAddr) == 0 {
+		return errors.New("invalid `tidb.pd-addr` setting")
 	}
 
 	// handle mydumper

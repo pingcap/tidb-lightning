@@ -17,8 +17,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	// "encoding/json"
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
@@ -359,7 +357,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 						Offset:       0,
 						EndOffset:    37,
 						PrevRowIDMax: 0,
-						RowIDMax:     18,
+						RowIDMax:     7, // 37 bytes with 3 columns can store at most 7 rows.
 					},
 					Timestamp: 1234567897,
 				},
@@ -368,8 +366,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
-						PrevRowIDMax: 18,
-						RowIDMax:     36,
+						PrevRowIDMax: 7,
+						RowIDMax:     14,
 					},
 					Timestamp: 1234567897,
 				},
@@ -378,8 +376,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
-						PrevRowIDMax: 36,
-						RowIDMax:     54,
+						PrevRowIDMax: 14,
+						RowIDMax:     21,
 					},
 					Timestamp: 1234567897,
 				},
@@ -393,8 +391,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
-						PrevRowIDMax: 54,
-						RowIDMax:     72,
+						PrevRowIDMax: 21,
+						RowIDMax:     28,
 					},
 					Timestamp: 1234567897,
 				},
@@ -403,8 +401,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
-						PrevRowIDMax: 72,
-						RowIDMax:     90,
+						PrevRowIDMax: 28,
+						RowIDMax:     35,
 					},
 					Timestamp: 1234567897,
 				},
@@ -413,8 +411,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
-						PrevRowIDMax: 90,
-						RowIDMax:     108,
+						PrevRowIDMax: 35,
+						RowIDMax:     42,
 					},
 					Timestamp: 1234567897,
 				},
