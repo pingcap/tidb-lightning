@@ -16,19 +16,19 @@
 set -eux
 
 # clean env
-rm -f "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
+rm -f "$TEST_DIR/lightning.log"
 run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint'
 
 export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/InitializeCheckpointExit=return(true)"
-run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data"
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data"
 
 run_sql 'DROP DATABASE IF EXISTS cpdt'
 
 export GO_FAILPOINTS=""
-run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data"
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data"
 
-ILLEGAL_CP_COUNT=$(grep 'TiDB Lightning detects tables with illegal checkpoints.' "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
-TABLE_SUGGEST=$(grep './tidb-lightning-ctl --checkpoint-remove=' "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
+ILLEGAL_CP_COUNT=$(grep 'TiDB Lightning detects tables with illegal checkpoints.' "$TEST_DIR/lightning.log" | wc -l)
+TABLE_SUGGEST=$(grep './tidb-lightning-ctl --checkpoint-remove=' "$TEST_DIR/lightning.log" | wc -l)
 
 [ $ILLEGAL_CP_COUNT -eq 1 ]
 [ $TABLE_SUGGEST -eq 1 ]
@@ -37,19 +37,19 @@ TABLE_SUGGEST=$(grep './tidb-lightning-ctl --checkpoint-remove=' "$TEST_DIR/ligh
 
 # clean env
 run_sql 'DROP DATABASE IF EXISTS cpdt'
-rm -f "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
+rm -f "$TEST_DIR/lightning.log"
 rm -f "/tmp/tidb_lightning_checkpoint.pb"
 
 export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/InitializeCheckpointExit=return(true)"
-run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/file.toml" -d "tests/$TEST_NAME/data"
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning.log" --config "tests/$TEST_NAME/file.toml" -d "tests/$TEST_NAME/data"
 
 run_sql 'DROP DATABASE IF EXISTS cpdt'
 
 export GO_FAILPOINTS=""
-run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/file.toml" -d "tests/$TEST_NAME/data"
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning.log" --config "tests/$TEST_NAME/file.toml" -d "tests/$TEST_NAME/data"
 
-ILLEGAL_CP_COUNT=$(grep 'TiDB Lightning detects tables with illegal checkpoints.' "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
-TABLE_SUGGEST=$(grep './tidb-lightning-ctl --checkpoint-remove=' "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
+ILLEGAL_CP_COUNT=$(grep 'TiDB Lightning detects tables with illegal checkpoints.' "$TEST_DIR/lightning.log" | wc -l)
+TABLE_SUGGEST=$(grep './tidb-lightning-ctl --checkpoint-remove=' "$TEST_DIR/lightning.log" | wc -l)
 
 [ $ILLEGAL_CP_COUNT -eq 1 ]
 [ $TABLE_SUGGEST -eq 1 ]
