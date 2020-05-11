@@ -15,8 +15,6 @@ package log
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -204,18 +202,4 @@ func (task *Task) End(level zapcore.Level, err error, extraFields ...zap.Field) 
 		)...)
 	}
 	return elapsed
-}
-
-// AdjustLogFilePath adjusts a log file path for lightning
-func AdjustLogFilePath() (string, error) {
-	if err := os.MkdirAll("./logs", 0755); err != nil {
-		return "", err
-	}
-
-	fileName := time.Now().Format("./logs/tidb-lightning-2006-01-02-15-04-05.log")
-	filePath, err := filepath.Abs(fileName)
-	if err != nil {
-		filePath = fileName
-	}
-	return filePath, nil
 }

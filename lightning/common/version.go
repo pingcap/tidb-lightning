@@ -15,8 +15,6 @@ package common
 
 import (
 	"fmt"
-	"os"
-
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"go.uber.org/zap"
 )
@@ -53,7 +51,6 @@ func PrintInfo(app string, callback func()) {
 		zap.String("UTC Build Time", BuildTS),
 		zap.String("Go Version", GoVersion),
 	)
-	fmt.Fprintln(os.Stdout, "Welcome to "+app+"\n"+GetRawInfo())
 
 	if callback != nil {
 		callback()

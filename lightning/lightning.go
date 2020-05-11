@@ -171,7 +171,6 @@ var taskCfgRecorderKey struct{}
 func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	common.PrintInfo("lightning", func() {
 		log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
-		fmt.Fprintf(os.Stdout, "loaded task's cfg: %s\n\n",  taskCfg)
 	})
 
 	ctx, cancel := context.WithCancel(l.ctx)

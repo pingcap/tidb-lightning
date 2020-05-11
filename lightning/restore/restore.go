@@ -1247,7 +1247,7 @@ func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
 		err = rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
 	}
 	task.End(zap.ErrorLevel, err)
-	return errors.Trace(errors.Annotate(err, "clean checkpoints"))
+	return errors.Annotate(err, "clean checkpoints")
 }
 
 type chunkRestore struct {
