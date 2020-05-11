@@ -642,7 +642,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		for tableName, status := range allInvalidCheckpoints {
 			failedStep := status * 10
 			var action strings.Builder
-			action.WriteString("./tidb-lightning-ctl --checkpoint-errors-")
+			action.WriteString("./tidb-lightning-ctl --checkpoint-error-")
 			switch failedStep {
 			case CheckpointStatusAlteredAutoInc, CheckpointStatusAnalyzed:
 				action.WriteString("ignore")
@@ -661,7 +661,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			)
 		}
 
-		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-errors-destroy=all --config=...` to start from scratch")
+		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch")
 		logger.Info("For details of this failure, read the log file from the PREVIOUS run")
 
 		return errors.New("TiDB Lightning has failed last time; please resolve these errors first")
