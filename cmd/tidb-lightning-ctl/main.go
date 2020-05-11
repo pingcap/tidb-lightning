@@ -63,7 +63,6 @@ func run() error {
 
 		fsUsage = fs.Usage
 	}))
-	fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s.\n\n", globalCfg.App.Config.File)
 
 	cfg := config.NewConfig()
 	if err := cfg.LoadFromGlobal(globalCfg); err != nil {
