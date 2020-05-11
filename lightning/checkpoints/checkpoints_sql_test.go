@@ -229,8 +229,8 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
-			sqlmock.NewRows([]string{"status", "alloc_base"}).
-				AddRow(60, 132861),
+			sqlmock.NewRows([]string{"status", "alloc_base", "table_id"}).
+				AddRow(60, 132861, int64(2)),
 		)
 	s.mock.ExpectCommit()
 
@@ -239,6 +239,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 	c.Assert(cp, DeepEquals, &checkpoints.TableCheckpoint{
 		Status:    checkpoints.CheckpointStatusAllWritten,
 		AllocBase: 132861,
+		TableID:  int64(2),
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {Status: checkpoints.CheckpointStatusLoaded},
 			0: {
