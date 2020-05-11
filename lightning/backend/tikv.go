@@ -145,7 +145,7 @@ func SwitchMode(ctx context.Context, tls *common.TLS, tikvAddr string, mode impo
 		})
 		return ignoreUnimplementedError(err, task.Logger)
 	})
-	task.End(zap.WarnLevel, err)
+	task.End(zap.InfoLevel, err)
 	return err
 }
 
