@@ -671,7 +671,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	if len(allDirtyCheckpoints) > 0 {
 		logger := log.L()
 		logger.Error(
-			"TiDB Lightning detects tables with illegal checkpoints. To prevent data mismatch, this run will stop now. Please drop illegal checkpoints first",
+			"TiDB Lightning has detected tables with illegal checkpoints. To prevent data mismatch, this run will stop now. Please remove these checkpoints first",
 			zap.Int("count", len(allDirtyCheckpoints)),
 		)
 
@@ -684,7 +684,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 
 		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-remove=all --config=...` to start from scratch")
 
-		return errors.New("TiDB Lightning detects tables with illegal checkpoints; please remove these checkpoints first")
+		return errors.New("TiDB Lightning has detected tables with illegal checkpoints; please remove these checkpoints first")
 	}
 
 	for _, dbMeta := range rc.dbMetas {
