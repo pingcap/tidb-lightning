@@ -315,6 +315,10 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.Inject("InitializeCheckpointExit", func() {
+		log.L().Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
+		os.Exit(1)
+	})
 
 	go rc.listenCheckpointUpdates()
 
