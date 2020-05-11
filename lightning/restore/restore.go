@@ -610,6 +610,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 
 	// first collect all tables where the checkpoint is invalid
 	allInvalidCheckpoints := make(map[string]CheckpointStatus)
+	// collect all tables whose checkpoint's tableID can't match current tableID
+	allDirtyCheckpoints := make(map[string]struct{})
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo, ok := rc.dbInfos[dbMeta.Name]
 		if !ok {
@@ -628,6 +630,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			}
 			if cp.Status <= CheckpointStatusMaxInvalid {
 				allInvalidCheckpoints[tableName] = cp.Status
+			} else if cp.TableID != tableInfo.ID {
+				allDirtyCheckpoints[tableName] = struct{}{}
 			}
 		}
 	}
@@ -642,7 +646,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		for tableName, status := range allInvalidCheckpoints {
 			failedStep := status * 10
 			var action strings.Builder
-			action.WriteString("./tidb-lightning-ctl --checkpoint-errors-")
+			action.WriteString("./tidb-lightning-ctl --checkpoint-error-")
 			switch failedStep {
 			case CheckpointStatusAlteredAutoInc, CheckpointStatusAnalyzed:
 				action.WriteString("ignore")
@@ -661,10 +665,29 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			)
 		}
 
-		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-errors-destroy=all --config=...` to start from scratch")
+		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch")
 		logger.Info("For details of this failure, read the log file from the PREVIOUS run")
 
 		return errors.New("TiDB Lightning has failed last time; please resolve these errors first")
+	}
+	if len(allDirtyCheckpoints) > 0 {
+		logger := log.L()
+		logger.Error(
+			"TiDB Lightning detects tables with illegal checkpoints. To prevent data mismatch, this run will stop now. Please drop illegal checkpoints first",
+			zap.Int("count", len(allDirtyCheckpoints)),
+		)
+
+		for tableName, status := range allInvalidCheckpoints {
+			logger.Info("-",
+				zap.String("table", tableName),
+				zap.Uint8("status", uint8(status)),
+				zap.String("recommendedAction", "./tidb-lightning-ctl --checkpoint-remove='"+tableName+"' --config=..."),
+			)
+		}
+
+		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-remove=all --config=...` to start from scratch")
+
+		return errors.New("TiDB Lightning detects tables with illegal checkpoints; please remove these checkpoints first")
 	}
 
 	for _, dbMeta := range rc.dbMetas {
