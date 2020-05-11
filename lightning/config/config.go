@@ -226,7 +226,7 @@ func NewConfig() *Config {
 			Host:                       "127.0.0.1",
 			User:                       "root",
 			StatusPort:                 10080,
-			StrSQLMode:                 mysql.DefaultSQLMode,
+			StrSQLMode:                 "ONLY_FULL_GROUP_BY,NO_AUTO_CREATE_USER",
 			MaxAllowedPacket:           defaultMaxAllowedPacket,
 			BuildStatsConcurrency:      20,
 			DistSQLScanConcurrency:     100,
