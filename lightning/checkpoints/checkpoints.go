@@ -59,7 +59,7 @@ const WholeTableEngineID = math.MaxInt32
 const (
 	// the table names to store each kind of checkpoint in the checkpoint database
 	// remember to increase the version number in case of incompatible change.
-	checkpointTableNameTable  = "table_v5"
+	checkpointTableNameTable  = "table_v6"
 	checkpointTableNameEngine = "engine_v5"
 	checkpointTableNameChunk  = "chunk_v4"
 )
