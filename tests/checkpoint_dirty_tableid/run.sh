@@ -29,8 +29,8 @@ set +e
 run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data"
 set -e
 
-ILLEGAL_CP_COUNT=$(grep 'TiDB Lightning detects tables with illegal checkpoints.' "$TEST_DIR/lightning.log" | wc -l)
-TABLE_SUGGEST=$(grep './tidb-lightning-ctl --checkpoint-remove=' "$TEST_DIR/lightning.log" | wc -l)
+ILLEGAL_CP_COUNT=$(grep "TiDB Lightning detects tables with illegal checkpoints. To prevent data mismatch, this run will stop now. Please drop illegal checkpoints first" "$TEST_DIR/lightning.log" | wc -l)
+TABLE_SUGGEST=$(grep "./tidb-lightning-ctl --checkpoint-remove=" "$TEST_DIR/lightning.log" | wc -l)
 
 [ $ILLEGAL_CP_COUNT -eq 1 ]
 [ $TABLE_SUGGEST -eq 2 ]
@@ -52,8 +52,8 @@ set +e
 run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning.log" --config "tests/$TEST_NAME/file.toml" -d "tests/$TEST_NAME/data"
 set -e
 
-ILLEGAL_CP_COUNT=$(grep 'TiDB Lightning detects tables with illegal checkpoints.' "$TEST_DIR/lightning.log" | wc -l)
-TABLE_SUGGEST=$(grep './tidb-lightning-ctl --checkpoint-remove=' "$TEST_DIR/lightning.log" | wc -l)
+ILLEGAL_CP_COUNT=$(grep "TiDB Lightning detects tables with illegal checkpoints. To prevent data mismatch, this run will stop now. Please drop illegal checkpoints first" "$TEST_DIR/lightning.log" | wc -l)
+TABLE_SUGGEST=$(grep "./tidb-lightning-ctl --checkpoint-remove=" "$TEST_DIR/lightning.log" | wc -l)
 
 [ $ILLEGAL_CP_COUNT -eq 1 ]
 [ $TABLE_SUGGEST -eq 2 ]
