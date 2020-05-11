@@ -8,16 +8,16 @@ package mock
 
 import (
 	context "context"
-	reflect "reflect"
-	time "time"
-
 	gomock "github.com/golang/mock/gomock"
+	model "github.com/pingcap/parser/model"
 	backend "github.com/pingcap/tidb-lightning/lightning/backend"
 	log "github.com/pingcap/tidb-lightning/lightning/log"
 	verification "github.com/pingcap/tidb-lightning/lightning/verification"
 	table "github.com/pingcap/tidb/table"
 	types "github.com/pingcap/tidb/types"
 	uuid "github.com/satori/go.uuid"
+	reflect "reflect"
+	time "time"
 )
 
 // MockBackend is a mock of AbstractBackend interface
@@ -41,6 +41,20 @@ func NewMockBackend(ctrl *gomock.Controller) *MockBackend {
 // EXPECT returns an object that allows the caller to indicate expected use
 func (m *MockBackend) EXPECT() *MockBackendMockRecorder {
 	return m.recorder
+}
+
+// CheckRequirements mocks base method
+func (m *MockBackend) CheckRequirements() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckRequirements")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CheckRequirements indicates an expected call of CheckRequirements
+func (mr *MockBackendMockRecorder) CheckRequirements() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockBackend)(nil).CheckRequirements))
 }
 
 // CleanupEngine mocks base method
@@ -81,6 +95,21 @@ func (m *MockBackend) CloseEngine(arg0 context.Context, arg1 uuid.UUID) error {
 func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloseEngine", reflect.TypeOf((*MockBackend)(nil).CloseEngine), arg0, arg1)
+}
+
+// FetchRemoteTableModels mocks base method
+func (m *MockBackend) FetchRemoteTableModels(arg0 string) ([]*model.TableInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchRemoteTableModels", arg0)
+	ret0, _ := ret[0].([]*model.TableInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchRemoteTableModels indicates an expected call of FetchRemoteTableModels
+func (mr *MockBackendMockRecorder) FetchRemoteTableModels(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockBackend)(nil).FetchRemoteTableModels), arg0)
 }
 
 // ImportEngine mocks base method

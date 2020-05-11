@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore
+package backend
 
 import (
 	"encoding/json"
@@ -19,12 +19,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 
 	"github.com/coreos/go-semver/semver"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pingcap/tidb-lightning/lightning/config"
 )
 
 var _ = Suite(&checkReqSuite{})
@@ -93,26 +91,14 @@ func (s *checkReqSuite) TestCheckTiDBVersion(c *C) {
 		})
 		c.Assert(err, IsNil)
 	}))
-	mockURL, err := url.Parse(mockServer.URL)
-	c.Assert(err, IsNil)
-	mockPort, err := strconv.Atoi(mockURL.Port())
-	c.Assert(err, IsNil)
 
-	rc := &RestoreController{
-		cfg: &config.Config{
-			TiDB: config.DBStore{
-				Host:       mockURL.Hostname(),
-				StatusPort: mockPort,
-			},
-		},
-		tls: common.NewTLSFromMockServer(mockServer),
-	}
+	tls := common.NewTLSFromMockServer(mockServer)
 
 	version = "5.7.25-TiDB-v9999.0.0"
-	c.Assert(rc.checkTiDBVersion(), IsNil)
+	c.Assert(checkTiDBVersion(tls, requiredTiDBVersion), IsNil)
 
 	version = "5.7.25-TiDB-v1.0.0"
-	c.Assert(rc.checkTiDBVersion(), ErrorMatches, "TiDB version too old.*")
+	c.Assert(checkTiDBVersion(tls, requiredTiDBVersion), ErrorMatches, "TiDB version too old.*")
 }
 
 func (s *checkReqSuite) TestCheckPDVersion(c *C) {
@@ -127,20 +113,13 @@ func (s *checkReqSuite) TestCheckPDVersion(c *C) {
 	mockURL, err := url.Parse(mockServer.URL)
 	c.Assert(err, IsNil)
 
-	rc := &RestoreController{
-		cfg: &config.Config{
-			TiDB: config.DBStore{
-				PdAddr: mockURL.Host,
-			},
-		},
-		tls: common.NewTLSFromMockServer(mockServer),
-	}
+	tls := common.NewTLSFromMockServer(mockServer)
 
 	version = "9999.0.0"
-	c.Assert(rc.checkPDVersion(), IsNil)
+	c.Assert(checkPDVersion(tls, mockURL.Host, requiredPDVersion), IsNil)
 
 	version = "1.0.0"
-	c.Assert(rc.checkPDVersion(), ErrorMatches, "PD version too old.*")
+	c.Assert(checkPDVersion(tls, mockURL.Host, requiredPDVersion), ErrorMatches, "PD version too old.*")
 }
 
 func (s *checkReqSuite) TestCheckTiKVVersion(c *C) {
@@ -168,21 +147,14 @@ func (s *checkReqSuite) TestCheckTiKVVersion(c *C) {
 	mockURL, err := url.Parse(mockServer.URL)
 	c.Assert(err, IsNil)
 
-	rc := &RestoreController{
-		cfg: &config.Config{
-			TiDB: config.DBStore{
-				PdAddr: mockURL.Host,
-			},
-		},
-		tls: common.NewTLSFromMockServer(mockServer),
-	}
+	tls := common.NewTLSFromMockServer(mockServer)
 
 	versions = []string{"9999.0.0", "9999.0.0"}
-	c.Assert(rc.checkTiKVVersion(), IsNil)
+	c.Assert(checkTiKVVersion(tls, mockURL.Host, requiredTiKVVersion), IsNil)
 
 	versions = []string{"4.1.0", "v4.1.0-alpha-9-ga27a7dd"}
-	c.Assert(rc.checkTiKVVersion(), IsNil)
+	c.Assert(checkTiKVVersion(tls, mockURL.Host, requiredTiKVVersion), IsNil)
 
 	versions = []string{"9999.0.0", "1.0.0"}
-	c.Assert(rc.checkTiKVVersion(), ErrorMatches, `TiKV \(at tikv1\.test:20160\) version too old.*`)
+	c.Assert(checkTiKVVersion(tls, mockURL.Host, requiredTiKVVersion), ErrorMatches, `TiKV \(at tikv1\.test:20160\) version too old.*`)
 }

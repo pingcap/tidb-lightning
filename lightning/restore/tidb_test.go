@@ -15,15 +15,13 @@ package restore
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
@@ -31,17 +29,15 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
-	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
 var _ = Suite(&tidbSuite{})
 
 type tidbSuite struct {
-	mockDB   sqlmock.Sqlmock
-	mockHTTP *httptest.Server
-	handler  http.Handler
-	timgr    *TiDBManager
+	mockDB  sqlmock.Sqlmock
+	handler http.Handler
+	timgr   *TiDBManager
 }
 
 func TestTiDB(t *testing.T) {
@@ -53,20 +49,14 @@ func (s *tidbSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 
 	s.mockDB = mock
-	s.mockHTTP = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		s.handler.ServeHTTP(w, req)
-	}))
-
 	defaultSQLMode, err := tmysql.GetSQLMode(tmysql.DefaultSQLMode)
 	c.Assert(err, IsNil)
 
-	tls := common.NewTLSFromMockServer(s.mockHTTP)
-	s.timgr = NewTiDBManagerWithDB(db, tls, defaultSQLMode)
+	s.timgr = NewTiDBManagerWithDB(db, defaultSQLMode)
 }
 
 func (s *tidbSuite) TearDownTest(c *C) {
 	s.timgr.Close()
-	s.mockHTTP.Close()
 	c.Assert(s.mockDB.ExpectationsWereMet(), IsNil)
 }
 
@@ -250,31 +240,24 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 		tableInfos = append(tableInfos, info)
 	}
 
-	s.handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		c.Assert(req.URL.Path, Equals, "/schema/db")
-		e := json.NewEncoder(w).Encode(tableInfos)
-		c.Assert(e, IsNil)
+	loaded, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "db"}}, func(schema string) ([]*model.TableInfo, error) {
+		c.Assert(schema, Equals, "db")
+		return tableInfos, nil
 	})
-
-	loaded, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "db"}})
 	c.Assert(err, IsNil)
 	c.Assert(loaded, DeepEquals, map[string]*checkpoints.TidbDBInfo{
 		"db": {
 			Name: "db",
 			Tables: map[string]*checkpoints.TidbTableInfo{
 				"t1": {
-					ID:      100,
-					Name:    "t1",
-					Columns: 1,
-					Indices: 0,
-					Core:    tableInfos[0],
+					ID:   100,
+					Name: "t1",
+					Core: tableInfos[0],
 				},
 				"t2": {
-					ID:      101,
-					Name:    "t2",
-					Columns: 2,
-					Indices: 1,
-					Core:    tableInfos[1],
+					ID:   101,
+					Name: "t2",
+					Core: tableInfos[1],
 				},
 			},
 		},
@@ -284,12 +267,9 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 func (s *tidbSuite) TestLoadSchemaInfoMissing(c *C) {
 	ctx := context.Background()
 
-	s.handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("[schema:1049]Unknown database 'asdjalsjdlas'"))
+	_, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "asdjalsjdlas"}}, func(schema string) ([]*model.TableInfo, error) {
+		return nil, errors.Errorf("[schema:1049]Unknown database '%s'", schema)
 	})
-
-	_, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "asdjalsjdlas"}})
 	c.Assert(err, ErrorMatches, ".*Unknown database.*")
 }
 
