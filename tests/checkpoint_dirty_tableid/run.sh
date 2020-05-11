@@ -33,7 +33,7 @@ ILLEGAL_CP_COUNT=$(grep 'TiDB Lightning detects tables with illegal checkpoints.
 TABLE_SUGGEST=$(grep './tidb-lightning-ctl --checkpoint-remove=' "$TEST_DIR/lightning.log" | wc -l)
 
 [ $ILLEGAL_CP_COUNT -eq 1 ]
-[ $TABLE_SUGGEST -eq 1 ]
+[ $TABLE_SUGGEST -eq 2 ]
 
 # Try again with the file checkpoints
 
@@ -56,4 +56,4 @@ ILLEGAL_CP_COUNT=$(grep 'TiDB Lightning detects tables with illegal checkpoints.
 TABLE_SUGGEST=$(grep './tidb-lightning-ctl --checkpoint-remove=' "$TEST_DIR/lightning.log" | wc -l)
 
 [ $ILLEGAL_CP_COUNT -eq 1 ]
-[ $TABLE_SUGGEST -eq 1 ]
+[ $TABLE_SUGGEST -eq 2 ]
