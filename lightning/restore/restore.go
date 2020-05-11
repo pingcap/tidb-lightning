@@ -624,7 +624,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			}
 			if cp.Status <= CheckpointStatusMaxInvalid {
 				allInvalidCheckpoints[tableName] = cp.Status
-			} else if cp.TableID != tableInfo.ID {
+			} else if cp.TableID > 0 && cp.TableID != tableInfo.ID {
 				allDirtyCheckpoints[tableName] = struct{}{}
 			}
 		}
