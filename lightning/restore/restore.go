@@ -125,7 +125,7 @@ func (es *errorSummaries) emitLog() {
 func (es *errorSummaries) record(tableName string, err error, status CheckpointStatus) {
 	es.Lock()
 	defer es.Unlock()
-	es.summary[tableName] = errorSummary{status: status, err: errors.Annotatef(err, "table %s", tableName)}
+	es.summary[tableName] = errorSummary{status: status, err: err}
 }
 
 type RestoreController struct {
@@ -599,6 +599,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 				err := task.tr.restoreTable(ctx2, rc, task.cp)
+				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
@@ -1246,7 +1247,7 @@ func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
 		err = rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
 	}
 	task.End(zap.ErrorLevel, err)
-	return errors.Trace(err)
+	return errors.Trace(errors.Annotate(err, "clean checkpoints"))
 }
 
 type chunkRestore struct {
