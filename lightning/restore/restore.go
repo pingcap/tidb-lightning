@@ -592,6 +592,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 				err := task.tr.restoreTable(ctx2, rc, task.cp)
+				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
@@ -635,7 +636,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		for tableName, status := range allInvalidCheckpoints {
 			failedStep := status * 10
 			var action strings.Builder
-			action.WriteString("./tidb-lightning-ctl --checkpoint-errors-")
+			action.WriteString("./tidb-lightning-ctl --checkpoint-error-")
 			switch failedStep {
 			case CheckpointStatusAlteredAutoInc, CheckpointStatusAnalyzed:
 				action.WriteString("ignore")
@@ -654,7 +655,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			)
 		}
 
-		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-errors-destroy=all --config=...` to start from scratch")
+		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch")
 		logger.Info("For details of this failure, read the log file from the PREVIOUS run")
 
 		return errors.New("TiDB Lightning has failed last time; please resolve these errors first")
@@ -1147,7 +1148,7 @@ func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
 		err = rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
 	}
 	task.End(zap.ErrorLevel, err)
-	return errors.Trace(err)
+	return errors.Annotate(err, "clean checkpoints")
 }
 
 type chunkRestore struct {
