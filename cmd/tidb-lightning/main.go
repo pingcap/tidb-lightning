@@ -79,7 +79,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "tidb lightning encountered error: ", err)
 	} else {
 		logger.Info("tidb lightning exit")
-		fmt.Fprintln(os.Stdout, "tidb lightning exit", err)
+		fmt.Fprintln(os.Stdout, "tidb lightning exit")
 	}
 
 	syncErr := logger.Sync()
