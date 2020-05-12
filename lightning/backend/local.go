@@ -14,7 +14,6 @@
 package backend
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"os"
@@ -30,8 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	uuid "github.com/satori/go.uuid"
 
-	"github.com/dgraph-io/badger/v2"
-
+	"github.com/cockroachdb/pebble"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -59,7 +57,7 @@ type Range struct {
 
 type localFile struct {
 	ts        uint64
-	db        *badger.DB
+	db        *pebble.DB
 	meta      sst.SSTMeta
 	length    int64
 	totalSize int64
@@ -183,12 +181,12 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	dbPath := path.Join(local.localFile, engineUUID.String())
-	opt := badger.DefaultOptions(dbPath)
-	opt.SyncWrites = false
-	opt.MaxTableSize = 128 << 20
-	// disable badger log
-	opt.Logger = nil
-	db, err := badger.Open(opt)
+	cache := pebble.NewCache()
+	defer cache.Unref()
+	opt := &pebble.Options{
+		DisableWAL: true,
+	}
+	db, err := pebble.Open(dbPath, opt)
 	if err != nil {
 		return err
 	}
@@ -323,47 +321,42 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile) ([]Range, error
 		return nil, nil
 	}
 	ranges := make([]Range, 0)
-	err := engineFile.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 10
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		size := int64(0)
-		length := 0
-		var startKey, endKey []byte
-		first := true
-		var k []byte
+	iter := engineFile.db.NewIter(nil)
 
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			k = item.Key()
-			vSize := item.ValueSize()
-			length++
-			if first {
-				first = false
-				startKey = append([]byte{}, k...)
-			}
-			size += int64(len(k)) + vSize
-			if size > local.regionSplitSize {
-				endKey = append([]byte{}, k...)
-				ranges = append(ranges, Range{start: startKey, end: endKey, length: length})
-				first = true
-				size = 0
-				length = 0
-			}
-		}
-		if size > 0 {
-			ranges = append(ranges, Range{start: startKey, end: k, length: length})
-		}
-		return nil
-	})
+	defer iter.Close()
 
-	return ranges, err
+	size := int64(0)
+	length := 0
+	var startKey, endKey []byte
+	var k []byte
+	first := true
+
+	for iter.Next() {
+		k = iter.Key()
+		v := iter.Value()
+		length++
+		if first {
+			first = false
+			startKey = append([]byte{}, k...)
+		}
+		size += int64(len(k) + len(v))
+		if size > local.regionSplitSize {
+			endKey = append([]byte{}, k...)
+			ranges = append(ranges, Range{start: startKey, end: endKey, length: length})
+			first = true
+			size = 0
+			length = 0
+		}
+	}
+	if size > 0 {
+		ranges = append(ranges, Range{start: startKey, end: k, length: length})
+	}
+	return ranges, nil
 }
 
 func (local *local) writeAndIngestByRange(
 	ctx context.Context,
-	db *badger.DB,
+	db *pebble.DB,
 	start, end []byte,
 	ts uint64,
 	length int) error {
@@ -371,36 +364,25 @@ func (local *local) writeAndIngestByRange(
 	index := 0
 	pairs := make([]*sst.Pair, length)
 
-	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 10
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Seek(start); it.Valid(); it.Next() {
-			item := it.Item()
-			if bytes.Compare(item.Key(), end) > 0 {
-				return nil
-			}
-			pair := local.pairPool.Get().(*sst.Pair)
-			pair = &sst.Pair{
-				Key: make([]byte, item.KeySize()),
-				Value: make([]byte, 0),
-			}
-			item.KeyCopy(pair.Key)
-			b, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			pair.Value = b
-			pairs[index] = pair
-			index += 1
+	ito := &pebble.IterOptions{
+		LowerBound: start,
+		UpperBound: nextKey(end),
+	}
+	iter := db.NewIter(ito)
+	for iter.Next() {
+		pair := &sst.Pair{
+			Key: append([]byte{}, iter.Key()...),
+			Value: append([]byte{}, iter.Value()...),
 		}
-		return nil
-	})
-	if err != nil {
-		return err
+		pairs[index] = pair
+		index += 1
+
 	}
 	if index == 0 {
+		log.L().Info("no pairs in iterator",
+			zap.Binary("start", start),
+			zap.Binary("end", end),
+			zap.Binary("next end", nextKey(end)))
 		return nil
 	}
 
@@ -561,15 +543,16 @@ func (local *local) WriteRows(
 	engineFile := e.(*localFile)
 
 	// write to go leveldb get get sorted kv
-	wb := engineFile.db.NewWriteBatch()
-	defer wb.Cancel()
+	wb := engineFile.db.NewBatch()
+	defer wb.Close()
+	wo := &pebble.WriteOptions{Sync:false}
 
 	size := int64(0)
 	for _, pair := range kvs {
-		wb.Set(pair.Key, pair.Val)
+		wb.Set(pair.Key, pair.Val, wo)
 		size += int64(len(pair.Key) + len(pair.Val))
 	}
-	err := wb.Flush()
+	err := wb.Commit(wo)
 	if err != nil {
 		return err
 	}

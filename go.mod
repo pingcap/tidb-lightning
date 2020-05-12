@@ -5,6 +5,7 @@ go 1.13
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.4.1
+	github.com/cockroachdb/pebble v0.0.0-20200508213501-5a133cfa147f
 	github.com/coreos/go-semver v0.3.0
 	github.com/dgraph-io/badger/v2 v2.0.3
 	github.com/go-sql-driver/mysql v1.5.0
