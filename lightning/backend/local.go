@@ -181,10 +181,17 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	dbPath := path.Join(local.localFile, engineUUID.String())
-	cache := pebble.NewCache()
+	cache := pebble.NewCache(128 << 20)
 	defer cache.Unref()
 	opt := &pebble.Options{
-		DisableWAL: true,
+		Cache:                    cache,
+		MemTableSize:             128 << 20,
+		MaxConcurrentCompactions: 16,
+		MinCompactionRate:        1024 << 20,
+		L0CompactionThreshold:    2 << 31, // set to max try to disable compaction
+		L0StopWritesThreshold:    2 << 31, // set to max try to disable compaction
+		MaxOpenFiles:             10000,
+		DisableWAL:               true,
 	}
 	db, err := pebble.Open(dbPath, opt)
 	if err != nil {
@@ -245,8 +252,8 @@ func (local *local) WriteToPeer(
 	req.Reset()
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
-			CommitTs:  ts,
-			Pairs: pairs,
+			CommitTs: ts,
+			Pairs:    pairs,
 		},
 	}
 	err = wstream.Send(req)
@@ -322,7 +329,8 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile) ([]Range, error
 	}
 	ranges := make([]Range, 0)
 	iter := engineFile.db.NewIter(nil)
-
+	// Needs seek to first because NewIter returns an iterator that is unpositioned
+	iter.First()
 	defer iter.Close()
 
 	size := int64(0)
@@ -331,7 +339,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile) ([]Range, error
 	var k []byte
 	first := true
 
-	for iter.Next() {
+	for iter.Valid() {
 		k = iter.Key()
 		v := iter.Value()
 		length++
@@ -342,14 +350,20 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile) ([]Range, error
 		size += int64(len(k) + len(v))
 		if size > local.regionSplitSize {
 			endKey = append([]byte{}, k...)
+			log.L().Debug("append ranges in read and split",
+				zap.Binary("start", startKey),
+				zap.Binary("end", endKey),
+				zap.Int("length", length),
+			)
 			ranges = append(ranges, Range{start: startKey, end: endKey, length: length})
 			first = true
 			size = 0
 			length = 0
 		}
+		iter.Next()
 	}
 	if size > 0 {
-		ranges = append(ranges, Range{start: startKey, end: k, length: length})
+		ranges = append(ranges, Range{start: startKey, end: append([]byte{}, k...), length: length})
 	}
 	return ranges, nil
 }
@@ -369,17 +383,21 @@ func (local *local) writeAndIngestByRange(
 		UpperBound: nextKey(end),
 	}
 	iter := db.NewIter(ito)
-	for iter.Next() {
+	defer iter.Close()
+	// Needs seek to first because NewIter returns an iterator that is unpositioned
+	iter.First()
+
+	for iter.Valid() {
 		pair := &sst.Pair{
-			Key: append([]byte{}, iter.Key()...),
+			Key:   append([]byte{}, iter.Key()...),
 			Value: append([]byte{}, iter.Value()...),
 		}
 		pairs[index] = pair
 		index += 1
-
+		iter.Next()
 	}
 	if index == 0 {
-		log.L().Info("no pairs in iterator",
+		log.L().Info("iterator has no pairs",
 			zap.Binary("start", start),
 			zap.Binary("end", end),
 			zap.Binary("next end", nextKey(end)))
@@ -419,10 +437,6 @@ func (local *local) writeAndIngestByRange(
 		return err
 	}
 
-	for _, mutation := range pairs {
-		local.pairPool.Put(mutation)
-	}
-
 	var resp *sst.IngestResponse
 	for _, meta := range metas {
 		for i := 0; i < maxRetryTimes; i++ {
@@ -452,6 +466,7 @@ func (local *local) writeAndIngestByRange(
 
 func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *localFile, ranges []Range) error {
 	if engineFile.length == 0 {
+		log.L().Error("the ranges is empty")
 		return nil
 	}
 	var eg errgroup.Group
@@ -545,7 +560,7 @@ func (local *local) WriteRows(
 	// write to go leveldb get get sorted kv
 	wb := engineFile.db.NewBatch()
 	defer wb.Close()
-	wo := &pebble.WriteOptions{Sync:false}
+	wo := &pebble.WriteOptions{Sync: false}
 
 	size := int64(0)
 	for _, pair := range kvs {
