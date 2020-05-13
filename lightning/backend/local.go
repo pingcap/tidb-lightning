@@ -45,6 +45,7 @@ import (
 
 const (
 	dialTimeout = 5 * time.Second
+	defaultRangeConcurrency = 128
 )
 
 // Range record start and end key for localFile.DB
@@ -85,6 +86,7 @@ type local struct {
 	localFile       string
 	regionSplitSize int64
 
+	rangeConcurrency chan struct{}
 	pairPool sync.Pool
 }
 
@@ -113,6 +115,7 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		localFile:       localFile,
 		regionSplitSize: regionSplitSize,
 
+		rangeConcurrency: make(chan struct{}, defaultRangeConcurrency),
 		pairPool: sync.Pool{New: func() interface{} { return &sst.Pair{} }},
 	}
 	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
@@ -479,7 +482,11 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 		length := r.length
 		startKey := r.start
 		endKey := r.end
+		local.rangeConcurrency <- struct{}{}
 		eg.Go(func() error {
+			defer func() {
+				<-local.rangeConcurrency
+			}()
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
 				if err = local.writeAndIngestByRange(ctx, db, startKey, endKey, engineFile.ts, length); err != nil {
