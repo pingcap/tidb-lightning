@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -28,8 +29,6 @@ import (
 	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/table"
 	uuid "github.com/satori/go.uuid"
-
-	"github.com/cockroachdb/pebble"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -336,47 +335,56 @@ func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split
 	return resp, nil
 }
 
-func (local *local) ReadAndSplitIntoRange(engineFile *localFile) ([]Range, error) {
+func (local *local) printSSTableInfos(tables [][]pebble.TableInfo, uid uuid.UUID) {
+	tableCount := 0
+	totalSize := uint64(0)
+	maxTableSize := uint64(0)
+	minTableSize := uint64(2 << 31)
+
+	zf := make([]zap.Field, 0)
+	zf = append(zf, zap.Stringer("uuid", uid))
+
+	for i, levelTables := range tables {
+		for idx, t := range levelTables {
+			tableCount ++
+			totalSize += t.Size
+			sk := append([]byte{}, t.Smallest.UserKey...)
+			lk := append([]byte{}, t.Largest.UserKey...)
+			zf = append(zf, zap.Int("level", i))
+			zf = append(zf, zap.Int("idx", idx))
+			zf = append(zf, zap.Binary("start", sk))
+			zf = append(zf, zap.Binary("end", lk))
+			zf = append(zf, zap.Uint64("size", t.Size))
+			if t.Size > maxTableSize {
+				maxTableSize = t.Size
+			}
+			if t.Size < minTableSize {
+				minTableSize = t.Size
+			}
+		}
+	}
+	zf = append(zf, zap.Int("table count", tableCount))
+	zf = append(zf, zap.Uint64("max table size", maxTableSize))
+	zf = append(zf, zap.Uint64("min table size", minTableSize))
+	zf = append(zf, zap.Uint64("total table size", totalSize))
+	log.L().Info("ssttables summary infos", zf...)
+}
+
+func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid.UUID) ([]Range, error) {
 	if engineFile.length == 0 {
 		return nil, nil
 	}
 	ranges := make([]Range, 0)
-	iter := engineFile.db.NewIter(nil)
-	// Needs seek to first because NewIter returns an iterator that is unpositioned
-	iter.First()
-	defer iter.Close()
 
-	size := int64(0)
-	length := 0
-	var startKey, endKey []byte
-	var k []byte
-	first := true
+	tables := engineFile.db.SSTables()
+	local.printSSTableInfos(tables, engineUUID)
 
-	for iter.Valid() {
-		k = iter.Key()
-		v := iter.Value()
-		length++
-		if first {
-			first = false
-			startKey = append([]byte{}, k...)
+	for _, levelTables := range tables {
+		for _, table := range levelTables {
+			start := append([]byte{}, table.Smallest.UserKey...)
+			end := append([]byte{}, table.Largest.UserKey...)
+			ranges = append(ranges, Range{start: start, end: end})
 		}
-		size += int64(len(k) + len(v))
-		if size > local.regionSplitSize {
-			endKey = append([]byte{}, k...)
-			log.L().Debug("append ranges in read and split",
-				zap.Binary("start", startKey),
-				zap.Binary("end", endKey),
-				zap.Int("length", length),
-			)
-			ranges = append(ranges, Range{start: startKey, end: endKey, length: length})
-			first = true
-			size = 0
-			length = 0
-		}
-		iter.Next()
-	}
-	if size > 0 {
-		ranges = append(ranges, Range{start: startKey, end: append([]byte{}, k...), length: length})
 	}
 	return ranges, nil
 }
@@ -540,7 +548,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		return errors.Errorf("could not find engine %s in ImportEngine", engineUUID.String())
 	}
 	// split sorted file into range by 96MB size per file
-	ranges, err := local.ReadAndSplitIntoRange(engineFile.(*localFile))
+	ranges, err := local.ReadAndSplitIntoRange(engineFile.(*localFile), engineUUID)
 	if err != nil {
 		return err
 	}
