@@ -31,7 +31,6 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
@@ -41,11 +40,12 @@ import (
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
+	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
 const (
-	dialTimeout = 5 * time.Second
-	defaultRangeConcurrency = 128
+	dialTimeout             = 5 * time.Second
+	defaultRangeConcurrency = 32
 )
 
 // Range record start and end key for localFile.DB
@@ -86,8 +86,8 @@ type local struct {
 	localFile       string
 	regionSplitSize int64
 
-	rangeConcurrency chan struct{}
-	pairPool sync.Pool
+	rangeConcurrency *worker.Pool
+	pairPool         sync.Pool
 }
 
 // NewLocal creates new connections to tikv.
@@ -115,8 +115,8 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		localFile:       localFile,
 		regionSplitSize: regionSplitSize,
 
-		rangeConcurrency: make(chan struct{}, defaultRangeConcurrency),
-		pairPool: sync.Pool{New: func() interface{} { return &sst.Pair{} }},
+		rangeConcurrency: worker.NewPool(ctx, defaultRangeConcurrency, "range"),
+		pairPool:         sync.Pool{New: func() interface{} { return &sst.Pair{} }},
 	}
 	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
 	return MakeBackend(local), nil
@@ -472,7 +472,10 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 		log.L().Error("the ranges is empty")
 		return nil
 	}
-	var eg errgroup.Group
+	var wg sync.WaitGroup
+	log.L().Info("write to tikv", zap.Int("total ranges", len(ranges)))
+	errCh := make(chan error)
+	finishCh := make(chan struct{})
 	for _, r := range ranges {
 		log.L().Debug("deliver range",
 			zap.Binary("start", r.start),
@@ -482,10 +485,12 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 		length := r.length
 		startKey := r.start
 		endKey := r.end
-		local.rangeConcurrency <- struct{}{}
-		eg.Go(func() error {
+		w := local.rangeConcurrency.Apply()
+		wg.Add(1)
+		go func(w *worker.Worker) {
 			defer func() {
-				<-local.rangeConcurrency
+				wg.Done()
+				local.rangeConcurrency.Recycle(w)
 			}()
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
@@ -493,18 +498,30 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 					log.L().Warn("write and ingest by range failed",
 						zap.Int("retry time", i+1),
 						zap.Error(err))
-				} else {
-					return nil
 				}
 			}
+			if err != nil {
+				errCh <- err
+			}
+		}(w)
+	}
+	go func() {
+		wg.Wait()
+		close(finishCh)
+	}()
+
+	for {
+		select {
+		case _, ok := <-finishCh:
+			if !ok {
+				// Finished
+				return nil
+			}
+		case err := <-errCh:
 			log.L().Error("write and ingest by range retry exceed maxRetryTimes:3")
 			return err
-		})
+		}
 	}
-	if err := eg.Wait(); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
