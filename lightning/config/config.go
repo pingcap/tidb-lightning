@@ -158,7 +158,7 @@ type TikvImporter struct {
 	OnDuplicate      string `toml:"on-duplicate" json:"on-duplicate"`
 	MaxKVPairs       int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	RegionSplitSize  int64  `toml:"region-split-size" json:"region-split-size"`
-	LocalDBPath      string `toml:"loca-db-path" json:"local-db-path"`
+	SortedKVDir      string `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
 	RangeConcurrency int    `toml:"range-concurrency" json:"range-concurrency"`
 }
 

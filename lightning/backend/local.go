@@ -209,8 +209,14 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 }
 
 func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	// Do nothing since we will do prepare jobs in importEngine, just like tikv-importer
-	return nil
+	// flush mem table to storage, to free memory,
+	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
+	engineFile, ok := local.engines.Load(engineUUID)
+	if !ok {
+		return errors.Errorf("could not find engine %s in CloseEngine", engineUUID.String())
+	}
+	db := engineFile.(*localFile).db
+	return db.Flush()
 }
 
 func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
