@@ -400,7 +400,7 @@ func (cfg *Config) Adjust() error {
 			cfg.App.TableConcurrency = cfg.App.RegionConcurrency
 		}
 		mustHaveInternalConnections = false
-	case BackendImporter, BackendLocal:
+	case BackendImporter, BackendLocal, BackendTiKV:
 		if cfg.App.IndexConcurrency == 0 {
 			cfg.App.IndexConcurrency = 2
 		}
