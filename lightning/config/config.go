@@ -153,12 +153,13 @@ type MydumperRuntime struct {
 }
 
 type TikvImporter struct {
-	Addr            string `toml:"addr" json:"addr"`
-	Backend         string `toml:"backend" json:"backend"`
-	OnDuplicate     string `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs      int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
-	RegionSplitSize int64  `toml:"region-split-size" json:"region-split-size"`
-	LocalDBPath     string `toml:"local-db-path" json:"local-db-path"`
+	Addr             string `toml:"addr" json:"addr"`
+	Backend          string `toml:"backend" json:"backend"`
+	OnDuplicate      string `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs       int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	RegionSplitSize  int64  `toml:"region-split-size" json:"region-split-size"`
+	LocalDBPath      string `toml:"loca-db-path" json:"local-db-path"`
+	RangeConcurrency int    `toml:"range-concurrency" json:"range-concurrency"`
 }
 
 type Checkpoint struct {

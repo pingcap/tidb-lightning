@@ -91,7 +91,7 @@ type local struct {
 }
 
 // NewLocal creates new connections to tikv.
-func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, regionSplitSize int64, localFile string) (Backend, error) {
+func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, regionSplitSize int64, localFile string, rangeConcurrency int) (Backend, error) {
 	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
@@ -107,6 +107,10 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		return MakeBackend(nil), err
 	}
 
+	if rangeConcurrency == 0 {
+		rangeConcurrency = defaultRangeConcurrency
+	}
+
 	local := &local{
 		engines:  sync.Map{},
 		splitCli: splitCli,
@@ -115,7 +119,7 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		localFile:       localFile,
 		regionSplitSize: regionSplitSize,
 
-		rangeConcurrency: worker.NewPool(ctx, defaultRangeConcurrency, "range"),
+		rangeConcurrency: worker.NewPool(ctx, rangeConcurrency, "range"),
 		pairPool:         sync.Pool{New: func() interface{} { return &sst.Pair{} }},
 	}
 	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
@@ -473,7 +477,7 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 		return nil
 	}
 	var wg sync.WaitGroup
-	log.L().Info("write to tikv", zap.Int("total ranges", len(ranges)))
+	log.L().Info("ranges write to tikv", zap.Int("length", len(ranges)))
 	errCh := make(chan error)
 	finishCh := make(chan struct{})
 	for _, r := range ranges {
