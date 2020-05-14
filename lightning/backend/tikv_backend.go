@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -47,7 +48,7 @@ func (be *tikvBackend) MaxChunkSize() int {
 }
 
 func (be *tikvBackend) ShouldPostProcess() bool {
-	return false
+	return true
 }
 
 func (be *tikvBackend) CheckRequirements() error {
@@ -76,6 +77,7 @@ func (be *tikvBackend) ImportEngine(context.Context, uuid.UUID) error {
 }
 
 func (be *tikvBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, _ uint64, r Rows) error {
+	start := time.Now()
 	kvs := r.(kvPairs)
 	if len(kvs) == 0 {
 		return nil
@@ -88,7 +90,21 @@ func (be *tikvBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 		values = append(values, kv.Val)
 	}
 
-	return be.kvClient.BatchPut(keys, values)
+	totalBytes := calculateBytes(kvs)
+	err := be.kvClient.BatchPut(keys, values)
+	if err == nil {
+		log.L().Debug(fmt.Sprintf("write rows finish, row count: %d, bytes: %d, duration: %v", len(kvs), totalBytes, time.Now().Sub(start)))
+	}
+
+	return err
+}
+
+func calculateBytes(kvs kvPairs) int {
+	total := 0
+	for _, kv := range kvs {
+		total += len(kv.Key) + len(kv.Val)
+	}
+	return total
 }
 
 func (be *tikvBackend) FetchRemoteTableModels(schemaName string) ([]*model.TableInfo, error) {
