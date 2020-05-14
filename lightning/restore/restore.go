@@ -187,6 +187,8 @@ func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDat
 		if err != nil {
 			return nil, err
 		}
+	case config.BackendTiKV:
+		backend, err = kv.NewTiKVBackend(cfg.TiDB.PdAddr, tls)
 	default:
 		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
 	}
