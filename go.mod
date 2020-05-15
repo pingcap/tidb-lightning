@@ -40,3 +40,5 @@ require (
 	gopkg.in/mgo.v2 v2.0.0-20180705113604-9856a29383ce // indirect
 	modernc.org/mathutil v1.0.0
 )
+
+replace github.com/pingcap/tidb => github.com/glorv/tidb v1.1.0-beta.0.20200515014903-ff2771ddbbad
