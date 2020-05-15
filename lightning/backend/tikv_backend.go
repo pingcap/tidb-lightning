@@ -50,7 +50,7 @@ func (be *tikvBackend) MaxChunkSize() int {
 }
 
 func (be *tikvBackend) ShouldPostProcess() bool {
-	return false
+	return true
 }
 
 func (be *tikvBackend) CheckRequirements() error {
@@ -85,10 +85,6 @@ func (be *tikvBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 		return nil
 	}
 
-	for _, kv := range kvs {
-		log.L().Info("write kv", zap.Binary("key", kv.Key), zap.Binary("value", kv.Val))
-	}
-
 	keysDefault := make([][]byte, 0)
 	valuesDefault := make([][]byte, 0)
 	keysWrite := make([][]byte, 0)
@@ -106,6 +102,10 @@ func (be *tikvBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 			keysDefault = append(keysDefault, key)
 			valuesDefault = append(valuesDefault, pair.Val)
 		}
+	}
+
+	for i, key := range keysWrite {
+		log.L().Info("write kv", zap.Binary("key", key), zap.Binary("value", valuesWrite[i]))
 	}
 
 	totalBytes := calculateBytes(kvs)
@@ -127,9 +127,31 @@ func (be *tikvBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 }
 
 func encodeKeyWithTs(key []byte, ts uint64) []byte {
-	newKey := append(key, byte(0), byte(0), byte(0), byte(0), byte(0), byte(0), byte(0), byte(0))
-	binary.BigEndian.PutUint64(newKey[len(key):], ^ts)
-	return newKey
+	keyLen := len(key)
+	index := 0
+	res := make([]byte, 0, maxEncodedBytesSize(len(key)))
+	padBytes := []byte{0, 0, 0, 0, 0, 0, 0, 0}
+	for ; index < keyLen; {
+		remain := keyLen - index
+		pad := 0
+		if remain > 8 {
+			res = append(res, key[index:index+8]...)
+		} else {
+			pad = 8 - remain
+			res = append(res, key[index:]...)
+			res = append(res, padBytes[:pad]...)
+		}
+		res = append(res, byte(255 - pad))
+		index += 8
+	}
+	keyLen = len(res)
+	res = append(res, byte(0), byte(0), byte(0), byte(0), byte(0), byte(0), byte(0), byte(0))
+	binary.BigEndian.PutUint64(res[keyLen:], ^ts)
+	return res
+}
+
+func maxEncodedBytesSize(n int) int {
+	return (n / 8 + 1) * (8 + 1)
 }
 
 func encodeValue(value []byte, ts uint64) []byte {
@@ -138,7 +160,7 @@ func encodeValue(value []byte, ts uint64) []byte {
 	length := binary.PutUvarint(buf[1:], ts)
 	buf = buf[:length+1]
 	if len(value) > 0 {
-		buf = append(buf, uint8(len(value)))
+		buf = append(buf, 'v', uint8(len(value)))
 		buf = append(buf, value...)
 	}
 	return buf
