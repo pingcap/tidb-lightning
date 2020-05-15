@@ -14,6 +14,7 @@
 package backend
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"os"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	uuid "github.com/satori/go.uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -346,7 +348,7 @@ func (local *local) printSSTableInfos(tables [][]pebble.TableInfo, uid uuid.UUID
 
 	for i, levelTables := range tables {
 		for idx, t := range levelTables {
-			tableCount ++
+			tableCount++
 			totalSize += t.Size
 			sk := append([]byte{}, t.Smallest.UserKey...)
 			lk := append([]byte{}, t.Largest.UserKey...)
@@ -375,16 +377,135 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 		return nil, nil
 	}
 	ranges := make([]Range, 0)
+	iter := engineFile.db.NewIter(nil)
+	defer iter.Close()
+	//size := int64(0)
+	//length := 0
+	var startKey, endKey []byte
+	if iter.First() {
+		startKey = append([]byte{}, iter.Key()...)
+	} else {
+		return nil, errors.Errorf("could not find first pair, this shouldn't happen")
+	}
+	if iter.Last() {
+		endKey = append([]byte{}, iter.Key()...)
+	} else {
+		return nil, errors.Errorf("could not find last pair, this shouldn't happen")
+	}
+	// <= 96MB no need to split into range
+	if engineFile.totalSize <= local.regionSplitSize {
+		ranges = append(ranges, Range{start: startKey, end: endKey, length: int(engineFile.length)})
+		return ranges, nil
+	}
 
-	tables := engineFile.db.SSTables()
-	local.printSSTableInfos(tables, engineUUID)
+	log.L().Info("ReadAndSplitIntoRange", zap.Binary("start", startKey), zap.Binary("end", endKey))
 
-	for _, levelTables := range tables {
-		for _, table := range levelTables {
-			start := append([]byte{}, table.Smallest.UserKey...)
-			end := append([]byte{}, table.Largest.UserKey...)
-			ranges = append(ranges, Range{start: start, end: end})
+	// split data into n ranges, then seek n times to get n + 1 ranges
+	n := engineFile.totalSize / local.regionSplitSize
+
+	if tablecodec.IsIndexKey(startKey) {
+		// index engine
+		tableID, startIndexID, _, err := tablecodec.DecodeIndexKey(startKey)
+		if err != nil {
+			return nil, err
 		}
+		tableID, endIndexID, _, err := tablecodec.DecodeIndexKey(endKey)
+		if err != nil {
+			return nil, err
+		}
+		indexCount := (endIndexID - startIndexID) + 1
+
+		// each index has to split into n / indexCount ranges
+		indexRangeCount := n / indexCount
+
+		for i := startIndexID; i <= endIndexID; i++ {
+			k := tablecodec.EncodeTableIndexPrefix(tableID, i)
+			iter.SeekGE(k)
+			// get first key of index i
+			startKeyOfIndex := append([]byte{}, iter.Key()...)
+
+			k = tablecodec.EncodeTableIndexPrefix(tableID, i+1)
+			// get last key of index i
+			iter.SeekLT(k)
+
+			lastKeyOfIndex := append([]byte{}, iter.Key()...)
+
+			_, startIndexID, startValues, err := tablecodec.DecodeIndexKeyPrefix(startKeyOfIndex)
+			if err != nil {
+				return nil, err
+			}
+			_, endIndexID, endValues, err := tablecodec.DecodeIndexKeyPrefix(lastKeyOfIndex)
+			if err != nil {
+				return nil, err
+			}
+
+			if startIndexID != endIndexID {
+				// this shouldn't happen
+				log.L().Error("index ID not match",
+					zap.Int64("startID", startIndexID),
+					zap.Int64("endID", endIndexID))
+				return nil, errors.New("index ID not match")
+			}
+
+			// if index is Unique or Primary, the key is encoded as
+			// tablePrefix{tableID}_indexPrefixSep{indexID}_indexedColumnsValue
+			// if index is non-Unique, key is encoded as
+			// tablePrefix{tableID}_indexPrefixSep{indexID}_indexedColumnsValue_rowID
+
+			// we can split by indexColumnsValue to get indexRangeCount ranges from above Keys
+
+			log.L().Info("split index to range",
+				zap.Int64("indexID", i),
+				zap.Binary("start", startKeyOfIndex),
+				zap.Binary("end", lastKeyOfIndex),
+			)
+
+			values := splitValuesToRange(startValues, endValues, indexRangeCount)
+
+			keyPrefix := tablecodec.EncodeTableIndexPrefix(tableID, i)
+
+			for _, v := range values {
+				log.L().Debug("index engine append range",
+					zap.Binary("start key", append([]byte{}, startKeyOfIndex...)),
+					zap.Binary("end key", append(keyPrefix, v...)))
+				e := append([]byte{}, append(keyPrefix, v...)...)
+				ranges = append(ranges, Range{start: append([]byte{}, startKeyOfIndex...), end: e})
+				startKeyOfIndex = nextKey(e)
+			}
+		}
+	} else {
+		// data engine
+		tableID, startHandle, err := tablecodec.DecodeRecordKey(startKey)
+		if err != nil {
+			return nil, err
+		}
+		endHandle, err := tablecodec.DecodeRowKey(endKey)
+		if err != nil {
+			return nil, err
+		}
+		step := (endHandle - startHandle) / n
+		index := int64(0)
+		var skey, ekey []byte
+		for i := startHandle; i+step < endHandle; i += step {
+			skey = tablecodec.EncodeRowKeyWithHandle(tableID, i)
+			ekey = tablecodec.EncodeRowKeyWithHandle(tableID, i+step-1)
+			index = i
+			log.L().Debug("data engine append range",
+				zap.Int64("start handle", i),
+				zap.Int64("end handle", i+step-1),
+				zap.Binary("start key", skey),
+				zap.Binary("end key", ekey),
+				zap.Int64("step", step))
+			ranges = append(ranges, Range{start: skey, end: ekey})
+		}
+		log.L().Debug("data engine append range at final",
+			zap.Int64("start handle", index+step),
+			zap.Int64("end handle", endHandle),
+			zap.Binary("start key", skey),
+			zap.Binary("end key", endKey),
+			zap.Int64("step", endHandle-index-step+1))
+		skey = tablecodec.EncodeRowKeyWithHandle(tableID, index+step)
+		ranges = append(ranges, Range{start: skey, end: endKey})
 	}
 	return ranges, nil
 }
@@ -396,37 +517,49 @@ func (local *local) writeAndIngestByRange(
 	ts uint64,
 	length int) error {
 
-	index := 0
-	pairs := make([]*sst.Pair, length)
+	pairs := make([]*sst.Pair, 0, 128)
 
 	ito := &pebble.IterOptions{
 		LowerBound: start,
 		UpperBound: nextKey(end),
 	}
+
 	iter := db.NewIter(ito)
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	iter.First()
 
+	size := int64(0)
+	l := 0
+
 	for iter.Valid() {
+		l ++
+		size += int64(len(iter.Key()) + len(iter.Value()))
 		pair := &sst.Pair{
 			Key:   append([]byte{}, iter.Key()...),
 			Value: append([]byte{}, iter.Value()...),
 		}
-		pairs[index] = pair
-		index += 1
+		pairs = append(pairs, pair)
 		iter.Next()
 	}
-	if index == 0 {
-		log.L().Info("iterator has no pairs",
+
+	log.L().Info("iterator",
+		zap.Int64("size of iter", size),
+		zap.Int("len of iter", l),
+		zap.Binary("start", start),
+		zap.Binary("end", end))
+
+	if len(pairs) == 0 {
+		log.L().Info("There is no pairs in iterator",
 			zap.Binary("start", start),
 			zap.Binary("end", end),
-			zap.Binary("next end", nextKey(end)))
+			zap.Binary("next end", nextKey(end)),
+		)
 		return nil
 	}
 
 	startKey := pairs[0].Key
-	endKey := pairs[index-1].Key
+	endKey := pairs[len(pairs)-1].Key
 	region, err := local.splitCli.GetRegion(ctx, startKey)
 	if err != nil {
 		log.L().Error("get region in write failed", zap.Error(err))
@@ -516,6 +649,8 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 					log.L().Warn("write and ingest by range failed",
 						zap.Int("retry time", i+1),
 						zap.Error(err))
+				} else {
+					return
 				}
 			}
 			if err != nil {
@@ -688,4 +823,120 @@ func nextKey(key []byte) []byte {
 	s, e := key[:pos], key[pos]+1
 	res = append(append(res, s...), e)
 	return res
+}
+
+// splitValuesToRange try to cut [start, end] to count range approximately
+// just like [start, v1], [v1, v2]... [vCount, end]
+// return value []{v1, v2... vCount}
+func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
+	if bytes.Compare(start, end) == 0 {
+		log.L().Info("couldn't split range due to start end are same",
+			zap.Binary("start", start),
+			zap.Binary("end", end),
+			zap.Int64("count", count))
+		return [][]byte{end}
+	}
+	minLen := len(start)
+	if minLen > len(end) {
+		minLen = len(end)
+	}
+	v := int64(0)
+	if v >= count {
+		return [][]byte{end}
+	}
+
+	s := append([]byte{}, start...)
+	e := append([]byte{}, end...)
+	index := 0
+	for i := 0; i < minLen; i++ {
+		if e[i] >= s[i] {
+			v = (v * 256) + int64(e[i]-s[i])
+		} else {
+			v = (v-1)*256 + (int64(e[i]-s[i]) + 256)
+		}
+		if v >= count {
+			index = i
+			break
+		}
+		index ++
+	}
+
+	step := v / count
+	reverseStepBytes := make([]byte, 0, step/256+1)
+	for step > 0 {
+		reverseStepBytes = append(reverseStepBytes, byte(step%256))
+		step /= 256
+	}
+
+	stepLen := len(reverseStepBytes)
+
+	commonPrefix := append([]byte{}, s[:index]...)
+
+	s = s[index:index+stepLen]
+	e = e[index:index+stepLen]
+	log.L().Debug("len",
+		zap.Int("ls", len(s)),
+		zap.Int("le", len(e)),
+	)
+
+	for v < count {
+		s = append(s, byte(0))
+		e = append(e, byte(0))
+		v = v * 256
+	}
+
+	log.L().Debug("splitValuesToRange",
+		zap.Int64("v", v),
+		zap.Int64("count", count),
+		zap.Int64("step", step),
+		zap.Int("stepLen", stepLen),
+		zap.Int("index", index),
+		zap.Binary("start", start),
+		zap.Binary("end", end),
+		zap.Binary("s", s),
+		zap.Binary("e", e),
+	)
+
+	checkpoint := append([]byte{}, s...)
+	res := make([][]byte, 0)
+	index = 0
+	for {
+		index++
+		log.L().Debug("seek checkpoint",
+			zap.Binary("cp", checkpoint),
+			zap.Binary("common", commonPrefix),
+			zap.Int("length of res", len(res)),
+			zap.Int("index", index),
+			zap.Binary("ck", append(commonPrefix, checkpoint...)),
+		)
+		reverseCheckpoint := reverseBytes(checkpoint)
+		carry := 0
+		for i := 0; i < stepLen; i++ {
+			value := int(reverseStepBytes[i] + reverseCheckpoint[i])
+			reverseCheckpoint[i] = byte(value + carry - 256)
+			if value > 255 {
+				carry = 1
+			} else {
+				break
+			}
+		}
+		if carry == 1 {
+			reverseCheckpoint[stepLen] += 1
+		}
+		checkpoint = reverseBytes(reverseCheckpoint)
+		if int64(index) >= count {
+			break
+		}
+		res = append(res, append([]byte{}, append(commonPrefix, checkpoint...)...))
+	}
+	res = append(res, append([]byte{}, end...))
+	return res
+}
+
+func reverseBytes(b []byte) []byte {
+	s := append([]byte{}, b...)
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
+	return s
 }

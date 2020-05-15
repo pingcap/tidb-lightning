@@ -26,6 +26,7 @@ import (
 func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []Range) error {
 	if len(ranges) == 0 {
 		// TODO log
+
 		return nil
 	}
 
