@@ -241,7 +241,8 @@ func (local *local) WriteToPeer(
 	meta *sst.SSTMeta,
 	ts uint64,
 	peer *metapb.Peer,
-	pairs []*sst.Pair) (metas []*sst.SSTMeta, err error) {
+	pairs []*sst.Pair,
+	step int) (metas []*sst.SSTMeta, err error) {
 
 	cli, err := local.getImportClient(ctx, peer)
 	if err != nil {
@@ -263,16 +264,24 @@ func (local *local) WriteToPeer(
 		return
 	}
 
-	req.Reset()
-	req.Chunk = &sst.WriteRequest_Batch{
-		Batch: &sst.WriteBatch{
-			CommitTs: ts,
-			Pairs:    pairs,
-		},
-	}
-	err = wstream.Send(req)
-	if err != nil {
-		return
+	startOffset := 0
+	for startOffset < len(pairs) {
+		endOffset := startOffset + step
+		if endOffset > len(pairs) {
+			endOffset = len(pairs)
+		}
+		req.Reset()
+		req.Chunk = &sst.WriteRequest_Batch{
+			Batch: &sst.WriteBatch{
+				CommitTs: ts,
+				Pairs:    pairs[startOffset:endOffset],
+			},
+		}
+		err = wstream.Send(req)
+		if err != nil {
+			return
+		}
+		startOffset += step
 	}
 
 	if resp, closeErr := wstream.CloseAndRecv(); closeErr != nil {
@@ -291,11 +300,12 @@ func (local *local) WriteToTiKV(
 	meta *sst.SSTMeta,
 	ts uint64,
 	region *split.RegionInfo,
-	pairs []*sst.Pair) ([]*sst.SSTMeta, error) {
+	pairs []*sst.Pair,
+	step int) ([]*sst.SSTMeta, error) {
 	var leaderPeerMetas []*sst.SSTMeta
 	leaderID := region.Leader.GetId()
 	for _, peer := range region.Region.GetPeers() {
-		metas, err := local.WriteToPeer(ctx, meta, ts, peer, pairs)
+		metas, err := local.WriteToPeer(ctx, meta, ts, peer, pairs, step)
 		if err != nil {
 			return nil, err
 		}
@@ -465,9 +475,6 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 			keyPrefix := tablecodec.EncodeTableIndexPrefix(tableID, i)
 
 			for _, v := range values {
-				log.L().Debug("index engine append range",
-					zap.Binary("start key", append([]byte{}, startKeyOfIndex...)),
-					zap.Binary("end key", append(keyPrefix, v...)))
 				e := append([]byte{}, append(keyPrefix, v...)...)
 				ranges = append(ranges, Range{start: append([]byte{}, startKeyOfIndex...), end: e})
 				startKeyOfIndex = nextKey(e)
@@ -486,7 +493,12 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 		step := (endHandle - startHandle) / n
 		index := int64(0)
 		var skey, ekey []byte
-		for i := startHandle; i+step < endHandle; i += step {
+		log.L().Info("data engine",
+			zap.Int64("step", step),
+			zap.Int64("startHandle", startHandle),
+			zap.Int64("endHandle", endHandle))
+
+		for i := startHandle; i+step <= endHandle; i += step {
 			skey = tablecodec.EncodeRowKeyWithHandle(tableID, i)
 			ekey = tablecodec.EncodeRowKeyWithHandle(tableID, i+step-1)
 			index = i
@@ -533,7 +545,7 @@ func (local *local) writeAndIngestByRange(
 	l := 0
 
 	for iter.Valid() {
-		l ++
+		l++
 		size += int64(len(iter.Key()) + len(iter.Value()))
 		pair := &sst.Pair{
 			Key:   append([]byte{}, iter.Key()...),
@@ -543,7 +555,10 @@ func (local *local) writeAndIngestByRange(
 		iter.Next()
 	}
 
+	step := l / (int(size/local.regionSplitSize) + 1)
+
 	log.L().Info("iterator",
+		zap.Int("step", step),
 		zap.Int64("size of iter", size),
 		zap.Int("len of iter", l),
 		zap.Binary("start", start),
@@ -584,8 +599,7 @@ func (local *local) writeAndIngestByRange(
 			End:   endKey,
 		},
 	}
-	// TODO split mutation to batch
-	metas, err := local.WriteToTiKV(ctx, meta, ts, region, pairs)
+	metas, err := local.WriteToTiKV(ctx, meta, ts, region, pairs, step)
 	if err != nil {
 		log.L().Error("write to tikv failed", zap.Error(err))
 		return err
@@ -858,7 +872,7 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 			index = i
 			break
 		}
-		index ++
+		index++
 	}
 
 	step := v / count
@@ -872,12 +886,8 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 
 	commonPrefix := append([]byte{}, s[:index]...)
 
-	s = s[index:index+stepLen]
-	e = e[index:index+stepLen]
-	log.L().Debug("len",
-		zap.Int("ls", len(s)),
-		zap.Int("le", len(e)),
-	)
+	s = s[index : index+stepLen]
+	e = e[index : index+stepLen]
 
 	for v < count {
 		s = append(s, byte(0))
@@ -907,7 +917,6 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 			zap.Binary("common", commonPrefix),
 			zap.Int("length of res", len(res)),
 			zap.Int("index", index),
-			zap.Binary("ck", append(commonPrefix, checkpoint...)),
 		)
 		reverseCheckpoint := reverseBytes(checkpoint)
 		carry := 0

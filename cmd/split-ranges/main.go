@@ -106,7 +106,7 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 			index = i
 			break
 		}
-		index ++
+		index++
 	}
 
 	step := v / count
@@ -120,8 +120,8 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 
 	commonPrefix := append([]byte{}, s[:index]...)
 
-	s = s[index:index+stepLen]
-	e = e[index:index+stepLen]
+	s = s[index : index+stepLen]
+	e = e[index : index+stepLen]
 	log.L().Info("len",
 		zap.Int("ls", len(s)),
 		zap.Int("le", len(e)),
@@ -188,7 +188,6 @@ func reverseBytes(b []byte) []byte {
 	}
 	return s
 }
-
 
 func ParseKey(format, key string) ([]byte, error) {
 	switch format {
