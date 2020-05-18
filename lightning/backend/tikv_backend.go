@@ -3,7 +3,6 @@ package backend
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -12,7 +11,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	uuid "github.com/satori/go.uuid"
-	"go.uber.org/zap"
 	"time"
 )
 
@@ -79,7 +77,6 @@ func (be *tikvBackend) ImportEngine(context.Context, uuid.UUID) error {
 }
 
 func (be *tikvBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, ts uint64, r Rows) error {
-	start := time.Now()
 	kvs := r.(kvPairs)
 	if len(kvs) == 0 {
 		return nil
@@ -104,11 +101,6 @@ func (be *tikvBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 		}
 	}
 
-	for i, key := range keysWrite {
-		log.L().Info("write kv", zap.Binary("key", key), zap.Binary("value", valuesWrite[i]))
-	}
-
-	totalBytes := calculateBytes(kvs)
 	err := be.kvClient.BatchPutCf(keysWrite, valuesWrite, "write")
 	if err != nil {
 		return err
@@ -121,8 +113,6 @@ func (be *tikvBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 		}
 	}
 
-	log.L().Debug(fmt.Sprintf("write rows finish, row count: %d, bytes: %d, duration: %v", len(kvs), totalBytes, time.Now().Sub(start)))
-
 	return err
 }
 
@@ -131,10 +121,10 @@ func encodeKeyWithTs(key []byte, ts uint64) []byte {
 	index := 0
 	res := make([]byte, 0, maxEncodedBytesSize(len(key)))
 	padBytes := []byte{0, 0, 0, 0, 0, 0, 0, 0}
-	for ; index < keyLen; {
+	for ; index < keyLen; index += 8 {
 		remain := keyLen - index
 		pad := 0
-		if remain > 8 {
+		if remain >= 8 {
 			res = append(res, key[index:index+8]...)
 		} else {
 			pad = 8 - remain
@@ -142,10 +132,9 @@ func encodeKeyWithTs(key []byte, ts uint64) []byte {
 			res = append(res, padBytes[:pad]...)
 		}
 		res = append(res, byte(255 - pad))
-		index += 8
 	}
 	keyLen = len(res)
-	res = append(res, byte(0), byte(0), byte(0), byte(0), byte(0), byte(0), byte(0), byte(0))
+	res = append(res, padBytes...)
 	binary.BigEndian.PutUint64(res[keyLen:], ^ts)
 	return res
 }
@@ -164,14 +153,6 @@ func encodeValue(value []byte, ts uint64) []byte {
 		buf = append(buf, value...)
 	}
 	return buf
-}
-
-func calculateBytes(kvs kvPairs) int {
-	total := 0
-	for _, kv := range kvs {
-		total += len(kv.Key) + len(kv.Val)
-	}
-	return total
 }
 
 func isShortValue(value []byte) bool {
