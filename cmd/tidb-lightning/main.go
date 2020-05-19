@@ -28,6 +28,8 @@ import (
 
 func main() {
 	cfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
+	fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s.\n\n", cfg.App.Config.File)
+
 	app := lightning.New(cfg)
 
 	sc := make(chan os.Signal, 1)
@@ -63,6 +65,7 @@ func main() {
 	err := app.GoServe()
 	if err != nil {
 		logger.Error("failed to start HTTP server", zap.Error(err))
+		fmt.Fprintln(os.Stderr, "failed to start HTTP server:", err)
 		return
 	}
 
@@ -72,9 +75,12 @@ func main() {
 		err = app.RunOnce()
 	}
 	if err != nil {
-		logger.Error("tidb lightning encountered error", zap.Error(err))
+		logger.Error("tidb lightning encountered error stack info", zap.Error(err))
+		logger.Error("tidb lightning encountered error", log.ShortError(err))
+		fmt.Fprintln(os.Stderr, "tidb lightning encountered error: ", err)
 	} else {
 		logger.Info("tidb lightning exit")
+		fmt.Fprintln(os.Stdout, "tidb lightning exit")
 	}
 
 	syncErr := logger.Sync()

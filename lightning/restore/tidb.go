@@ -37,7 +37,6 @@ import (
 
 type TiDBManager struct {
 	db     *sql.DB
-	tls    *common.TLS
 	parser *parser.Parser
 }
 
@@ -62,18 +61,17 @@ func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
 		return nil, errors.Trace(err)
 	}
 
-	return NewTiDBManagerWithDB(db, tls, dsn.SQLMode), nil
+	return NewTiDBManagerWithDB(db, dsn.SQLMode), nil
 }
 
 // NewTiDBManagerWithDB creates a new TiDB manager with an existing database
 // connection.
-func NewTiDBManagerWithDB(db *sql.DB, tls *common.TLS, sqlMode mysql.SQLMode) *TiDBManager {
+func NewTiDBManagerWithDB(db *sql.DB, sqlMode mysql.SQLMode) *TiDBManager {
 	parser := parser.New()
 	parser.SetSQLMode(sqlMode)
 
 	return &TiDBManager{
 		db:     db,
-		tls:    tls,
 		parser: parser,
 	}
 }
@@ -151,15 +149,6 @@ func (timgr *TiDBManager) createTableIfNotExistsStmt(createTable, tblName string
 	return res.String(), nil
 }
 
-func (timgr *TiDBManager) getTables(schema string) ([]*model.TableInfo, error) {
-	var tables []*model.TableInfo
-	err := timgr.tls.GetJSON("/schema/"+schema, &tables)
-	if err != nil {
-		return nil, errors.Annotatef(err, "get tables for schema %s", schema)
-	}
-	return tables, nil
-}
-
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
 	sql := common.SQLWithRetry{
 		DB:     timgr.db,
@@ -168,12 +157,16 @@ func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error
 	return sql.Exec(ctx, "drop table", "DROP TABLE "+tableName)
 }
 
-func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.MDDatabaseMeta) (map[string]*TidbDBInfo, error) {
+func (timgr *TiDBManager) LoadSchemaInfo(
+	ctx context.Context,
+	schemas []*mydump.MDDatabaseMeta,
+	getTables func(string) ([]*model.TableInfo, error),
+) (map[string]*TidbDBInfo, error) {
 	result := make(map[string]*TidbDBInfo, len(schemas))
 	for _, schema := range schemas {
-		tables, err := timgr.getTables(schema.Name)
+		tables, err := getTables(schema.Name)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		dbInfo := &TidbDBInfo{
@@ -193,11 +186,9 @@ func (timgr *TiDBManager) LoadSchemaInfo(ctx context.Context, schemas []*mydump.
 				return nil, errors.Trace(err)
 			}
 			tableInfo := &TidbTableInfo{
-				ID:      tbl.ID,
-				Name:    tableName,
-				Columns: len(tbl.Columns),
-				Indices: len(tbl.Indices),
-				Core:    tbl,
+				ID:   tbl.ID,
+				Name: tableName,
+				Core: tbl,
 			}
 			dbInfo.Tables[tableName] = tableInfo
 		}

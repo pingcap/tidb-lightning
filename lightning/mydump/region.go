@@ -19,9 +19,14 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
+
+const tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
 
 type TableRegion struct {
 	EngineID int32
@@ -172,7 +177,7 @@ func MakeTableRegions(
 			continue
 		}
 		rowIDMax := prevRowIDMax + dataFileSize/divisor
-		filesRegions = append(filesRegions, &TableRegion{
+		tableRegion := &TableRegion{
 			DB:    meta.DB,
 			Table: meta.Name,
 			File:  dataFile,
@@ -182,7 +187,14 @@ func MakeTableRegions(
 				PrevRowIDMax: prevRowIDMax,
 				RowIDMax:     rowIDMax,
 			},
-		})
+		}
+		filesRegions = append(filesRegions, tableRegion)
+		if tableRegion.Size() > tableRegionSizeWarningThreshold {
+			log.L().Warn(
+				"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
+				zap.String("file", dataFile),
+				zap.Int64("size", dataFileSize))
+		}
 		prevRowIDMax = rowIDMax
 		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
 	}

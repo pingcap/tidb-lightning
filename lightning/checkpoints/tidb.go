@@ -23,9 +23,7 @@ type TidbDBInfo struct {
 }
 
 type TidbTableInfo struct {
-	ID      int64
-	Name    string
-	Columns int
-	Indices int
-	Core    *model.TableInfo
+	ID   int64
+	Name string
+	Core *model.TableInfo
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	uuid "github.com/satori/go.uuid"
@@ -115,6 +116,24 @@ type AbstractBackend interface {
 	ImportEngine(ctx context.Context, engineUUID uuid.UUID) error
 
 	CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
+
+	// CheckRequirements performs the check whether the backend satisfies the
+	// version requirements
+	CheckRequirements() error
+
+	// FetchRemoteTableModels obtains the models of all tables given the schema
+	// name. The returned table info does not need to be precise if the encoder,
+	// is not requiring them, but must at least fill in the following fields for
+	// TablesFromMeta to succeed:
+	//  - Name
+	//  - State (must be model.StatePublic)
+	//  - ID
+	//  - Columns
+	//     * Name
+	//     * State (must be model.StatePublic)
+	//     * Offset (must be 0, 1, 2, ...)
+	//  - PKIsHandle (true = do not generate _tidb_rowid)
+	FetchRemoteTableModels(schemaName string) ([]*model.TableInfo, error)
 }
 
 // Backend is the delivery target for Lightning
@@ -168,6 +187,14 @@ func (be Backend) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
 
 func (be Backend) ShouldPostProcess() bool {
 	return be.abstract.ShouldPostProcess()
+}
+
+func (be Backend) CheckRequirements() error {
+	return be.abstract.CheckRequirements()
+}
+
+func (be Backend) FetchRemoteTableModels(schemaName string) ([]*model.TableInfo, error) {
+	return be.abstract.FetchRemoteTableModels(schemaName)
 }
 
 // OpenEngine opens an engine with the given table name and engine ID.

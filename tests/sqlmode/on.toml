@@ -1,0 +1,2 @@
+[tidb]
+sql-mode = 'STRICT_TRANS_TABLES'
