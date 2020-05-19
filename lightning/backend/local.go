@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"os"
 	"path"
 	"sync"
@@ -466,6 +467,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 
 			log.L().Info("split index to range",
 				zap.Int64("indexID", i),
+				zap.Int64("rangeCount", indexRangeCount),
 				zap.Binary("start", startKeyOfIndex),
 				zap.Binary("end", lastKeyOfIndex),
 			)
@@ -850,102 +852,43 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 			zap.Int64("count", count))
 		return [][]byte{end}
 	}
+
+	startBytes := make([]byte, 8)
+	endBytes := make([]byte, 8)
+
 	minLen := len(start)
 	if minLen > len(end) {
 		minLen = len(end)
 	}
-	v := int64(0)
-	if v >= count {
-		return [][]byte{end}
-	}
 
-	s := append([]byte{}, start...)
-	e := append([]byte{}, end...)
-	index := 0
+	offset := 0
 	for i := 0; i < minLen; i++ {
-		if e[i] >= s[i] {
-			v = (v * 256) + int64(e[i]-s[i])
-		} else {
-			v = (v-1)*256 + (int64(e[i]-s[i]) + 256)
-		}
-		if v >= count {
-			index = i
+		if start[i] != end[i] {
+			offset = i
 			break
 		}
-		index++
 	}
 
-	step := v / count
-	reverseStepBytes := make([]byte, 0, step/256+1)
-	for step > 0 {
-		reverseStepBytes = append(reverseStepBytes, byte(step%256))
-		step /= 256
+	copy(startBytes, start[offset:])
+	copy(endBytes, end[offset:])
+
+	sValue := binary.BigEndian.Uint64(startBytes)
+	eValue := binary.BigEndian.Uint64(endBytes)
+
+	step := (eValue - sValue) / uint64(count)
+	if step == uint64(0) {
+		step = uint64(1)
 	}
 
-	stepLen := len(reverseStepBytes)
-
-	commonPrefix := append([]byte{}, s[:index]...)
-
-	s = s[index : index+stepLen]
-	e = e[index : index+stepLen]
-
-	for v < count {
-		s = append(s, byte(0))
-		e = append(e, byte(0))
-		v = v * 256
+	res := make([][]byte, 0, count)
+	for cur := sValue + step; cur <= eValue - step; cur += step {
+		curBytes := make([]byte, offset + 8)
+		copy(curBytes, start[:offset])
+		binary.BigEndian.PutUint64(curBytes[offset:], cur)
+		res = append(res, curBytes)
 	}
+	res = append(res, end)
 
-	log.L().Debug("splitValuesToRange",
-		zap.Int64("v", v),
-		zap.Int64("count", count),
-		zap.Int64("step", step),
-		zap.Int("stepLen", stepLen),
-		zap.Int("index", index),
-		zap.Binary("start", start),
-		zap.Binary("end", end),
-		zap.Binary("s", s),
-		zap.Binary("e", e),
-	)
-
-	checkpoint := append([]byte{}, s...)
-	res := make([][]byte, 0)
-	index = 0
-	for {
-		index++
-		log.L().Debug("seek checkpoint",
-			zap.Binary("cp", checkpoint),
-			zap.Binary("common", commonPrefix),
-			zap.Int("length of res", len(res)),
-			zap.Int("index", index),
-		)
-		reverseCheckpoint := reverseBytes(checkpoint)
-		carry := 0
-		for i := 0; i < stepLen; i++ {
-			value := int(reverseStepBytes[i] + reverseCheckpoint[i])
-			reverseCheckpoint[i] = byte(value + carry - 256)
-			if value > 255 {
-				carry = 1
-			} else {
-				break
-			}
-		}
-		if carry == 1 {
-			reverseCheckpoint[stepLen] += 1
-		}
-		checkpoint = reverseBytes(reverseCheckpoint)
-		if int64(index) >= count {
-			break
-		}
-		res = append(res, append([]byte{}, append(commonPrefix, checkpoint...)...))
-	}
-	res = append(res, append([]byte{}, end...))
 	return res
 }
 
-func reverseBytes(b []byte) []byte {
-	s := append([]byte{}, b...)
-	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
-		s[i], s[j] = s[j], s[i]
-	}
-	return s
-}

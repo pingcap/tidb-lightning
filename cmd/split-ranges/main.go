@@ -15,6 +15,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -61,11 +62,70 @@ func main() {
 		zap.Binary("endKey", endKey),
 	)
 
-	v := splitValuesToRange(startKey, endKey, int64(count))
+	v := splitValuesToRange2(startKey, endKey, int64(count))
 	for _, i := range v {
 		log.L().Info("return values", zap.Binary("key", i))
 	}
 }
+
+// splitValuesToRange try to cut [start, end] to count range approximately
+// just like [start, v1], [v1, v2]... [vCount, end]
+// return value []{v1, v2... vCount}
+func splitValuesToRange2(start []byte, end []byte, count int64) [][]byte {
+	if bytes.Compare(start, end) == 0 {
+		log.L().Info("couldn't split range due to start end are same",
+			zap.Binary("start", start),
+			zap.Binary("end", end),
+			zap.Int64("count", count))
+		return [][]byte{end}
+	}
+
+	startBytes := make([]byte, 8)
+	endBytes := make([]byte, 8)
+
+	minLen := len(start)
+	if minLen > len(end) {
+		minLen = len(end)
+	}
+
+	offset := 0
+	for i := 0; i < minLen; i++ {
+		if start[i] != end[i] {
+			offset = i
+			break
+		}
+	}
+
+	copy(startBytes, start[offset:])
+	copy(endBytes, end[offset:])
+
+	sValue := binary.BigEndian.Uint64(startBytes)
+	eValue := binary.BigEndian.Uint64(endBytes)
+
+	log.L().Info("s",
+		zap.Binary("sb", start[:offset]),
+		zap.Binary("eb", end[:offset]),
+		zap.Uint64("start", sValue),
+		zap.Uint64("end", eValue),
+	)
+
+	step := (eValue - sValue) / uint64(count)
+	if step == uint64(0) {
+		step = uint64(1)
+	}
+
+	res := make([][]byte, 0, count)
+	for cur := sValue + step; cur <= eValue; cur += step {
+		curBytes := make([]byte, offset + 8)
+		copy(curBytes, start[:offset])
+		binary.BigEndian.PutUint64(curBytes[offset:], cur)
+		res = append(res, curBytes)
+	}
+	res = append(res, end)
+
+	return res
+}
+
 
 // splitValuesToRange try to cut [start, end] to count range approximately
 // just like [start, v1], [v1, v2]... [vCount, end]
@@ -89,24 +149,32 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 
 	s := append([]byte{}, start...)
 	e := append([]byte{}, end...)
-	index := 0
+	preIndex := 0
+	postIndex := 0
 	log.L().Info("minLen", zap.Int("len", minLen), zap.Int64("count", count))
 	for i := 0; i < minLen; i++ {
 		log.L().Info("e[i], s[i]",
 			zap.Int("i", i),
+			zap.Int64("v", v),
 			zap.Binary("e[i]", []byte{e[i]}),
 			zap.Binary("s[i]", []byte{s[i]}),
 		)
-		if e[i] >= s[i] {
+		if e[i] > s[i] {
 			v = (v * 256) + int64(e[i]-s[i])
-		} else {
+			if preIndex == 0 {
+				preIndex = i
+			}
+		} else if e[i] < s[i] {
 			v = (v-1)*256 + (int64(e[i]-s[i]) + 256)
+			if preIndex == 0 {
+				preIndex = i
+			}
 		}
 		if v >= count {
-			index = i
+			postIndex = i
 			break
 		}
-		index++
+		postIndex ++
 	}
 
 	step := v / count
@@ -118,10 +186,10 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 
 	stepLen := len(reverseStepBytes)
 
-	commonPrefix := append([]byte{}, s[:index]...)
+	commonPrefix := append([]byte{}, s[:preIndex]...)
 
-	s = s[index : index+stepLen]
-	e = e[index : index+stepLen]
+	s = s[preIndex : postIndex+1]
+	e = e[preIndex : postIndex+1]
 	log.L().Info("len",
 		zap.Int("ls", len(s)),
 		zap.Int("le", len(e)),
@@ -138,7 +206,7 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 		zap.Int64("count", count),
 		zap.Int64("step", step),
 		zap.Int("stepLen", stepLen),
-		zap.Int("index", index),
+		zap.Int("preIndex", preIndex),
 		zap.Binary("start", start),
 		zap.Binary("end", end),
 		zap.Binary("s", s),
@@ -147,14 +215,14 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 
 	checkpoint := append([]byte{}, s...)
 	res := make([][]byte, 0)
-	index = 0
+	preIndex = 0
 	for {
-		index++
+		preIndex++
 		log.L().Info("seek checkpoint",
 			zap.Binary("cp", checkpoint),
 			zap.Binary("common", commonPrefix),
 			zap.Int("length of res", len(res)),
-			zap.Int("index", index),
+			zap.Int("preIndex", preIndex),
 			zap.Binary("ck", append(commonPrefix, checkpoint...)),
 		)
 		reverseCheckpoint := reverseBytes(checkpoint)
@@ -172,7 +240,7 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 			reverseCheckpoint[stepLen] += 1
 		}
 		checkpoint = reverseBytes(reverseCheckpoint)
-		if int64(index) >= count {
+		if int64(preIndex) >= count {
 			break
 		}
 		res = append(res, append([]byte{}, append(commonPrefix, checkpoint...)...))
