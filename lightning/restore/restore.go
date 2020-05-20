@@ -853,9 +853,13 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		var err error
 		if indexEngineCp.Status < CheckpointStatusImported {
 			// the lock ensures the import() step will not be concurrent.
-			rc.postProcessLock.Lock()
+			if !rc.isLocalBackend() {
+				rc.postProcessLock.Lock()
+			}
 			err = t.importKV(ctx, closedIndexEngine)
-			rc.postProcessLock.Unlock()
+			if !rc.isLocalBackend() {
+				rc.postProcessLock.Unlock()
+			}
 			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
 		}
 
@@ -993,9 +997,13 @@ func (t *TableRestore) importEngine(
 	// FIXME: flush is an asynchronous operation, what if flush failed?
 
 	// the lock ensures the import() step will not be concurrent.
-	rc.postProcessLock.Lock()
+	if !rc.isLocalBackend() {
+		rc.postProcessLock.Lock()
+	}
 	err := t.importKV(ctx, closedEngine)
-	rc.postProcessLock.Unlock()
+	if !rc.isLocalBackend() {
+		rc.postProcessLock.Unlock()
+	}
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
 		return errors.Trace(err)
@@ -1253,6 +1261,10 @@ func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
 	}
 	task.End(zap.ErrorLevel, err)
 	return errors.Trace(err)
+}
+
+func (rc *RestoreController) isLocalBackend() bool {
+	return rc.cfg.TikvImporter.Backend == "local"
 }
 
 type chunkRestore struct {

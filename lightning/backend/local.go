@@ -247,6 +247,12 @@ func (local *local) WriteToPeer(
 	peer *metapb.Peer,
 	pairs []*sst.Pair) (metas []*sst.SSTMeta, err error) {
 
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
 	cli, err := local.getImportClient(ctx, peer)
 	if err != nil {
 		return
@@ -304,6 +310,13 @@ func (local *local) WriteToTiKV(
 	region *split.RegionInfo,
 	pairs []*sst.Pair) ([]*sst.SSTMeta, error) {
 	var leaderPeerMetas []*sst.SSTMeta
+
+	select {
+	case <-ctx.Done():
+		return nil, nil
+	default:
+	}
+
 	leaderID := region.Leader.GetId()
 	for _, peer := range region.Region.GetPeers() {
 		metas, err := local.WriteToPeer(ctx, meta, ts, peer, pairs)
@@ -322,6 +335,13 @@ func (local *local) WriteToTiKV(
 }
 
 func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
+
+	select {
+	case <-ctx.Done():
+		return nil, nil
+	default:
+	}
+
 	leader := region.Leader
 	if leader == nil {
 		leader = region.Region.GetPeers()[0]
@@ -561,6 +581,8 @@ func (local *local) writeAndIngestByRange(
 	var metas []*sst.SSTMeta
 	var err error
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 WriteAndIngest:
 	for retry := 0; retry < maxRetryTimes; retry++ {
 		if retry != 0 {
@@ -574,24 +596,25 @@ WriteAndIngest:
 			continue WriteAndIngest
 		}
 
+		startIndex := 0
 		for _, region := range regions {
 			regionEnd := region.Region.EndKey
-			index := binarySearch(pairs, regionEnd)
-			if index != -1 {
-				endKey = codec.EncodeBytes([]byte{}, pairs[index].Key)
+			endIndex := binarySearch(pairs, regionEnd)
+			if endIndex != -1 {
+				endKey = codec.EncodeBytes([]byte{}, pairs[endIndex].Key)
+				// endKey should write into tikv in this region
+				endIndex++
 			} else {
 				// This shouldn't happen
 				log.L().Error("[shouldn't happen] didn't find last key that less than region end", zap.Binary("regionEnd", regionEnd))
 				endKey = codec.EncodeBytes([]byte{}, pairs[len(pairs)-1].Key)
+				endIndex = len(pairs) - 1
 			}
 
-			log.L().Debug("get region",
-				zap.Int("retry", retry), zap.Binary("startKey", startKey),
+			log.L().Debug("get region", zap.Int("retry", retry), zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey), zap.Uint64("id", region.Region.GetId()),
-				zap.Stringer("epoch", region.Region.GetRegionEpoch()),
-				zap.Binary("start", region.Region.GetStartKey()),
-				zap.Binary("end", region.Region.GetEndKey()),
-				zap.Reflect("peers", region.Region.GetPeers()))
+				zap.Stringer("epoch", region.Region.GetRegionEpoch()), zap.Binary("start", region.Region.GetStartKey()),
+				zap.Binary("end", region.Region.GetEndKey()), zap.Reflect("peers", region.Region.GetPeers()))
 
 			// generate new uuid for concurrent write to tikv
 			meta := &sst.SSTMeta{
@@ -608,7 +631,7 @@ WriteAndIngest:
 					zap.Reflect("meta", meta), zap.Reflect("region", region))
 				continue WriteAndIngest
 			}
-			metas, err = local.WriteToTiKV(ctx, meta, ts, region, pairs)
+			metas, err = local.WriteToTiKV(ctx, meta, ts, region, pairs[startIndex:endIndex])
 			if err != nil {
 				log.L().Warn("write to tikv failed", zap.Error(err))
 				continue WriteAndIngest
@@ -646,6 +669,7 @@ WriteAndIngest:
 				}
 			}
 			startKey = regionEnd
+			startIndex = endIndex
 		}
 	}
 	return err
