@@ -56,10 +56,6 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 SplitRegions:
 	for i := 0; i < SplitRetryTimes; i++ {
 		for regionID, keys := range splitKeyMap {
-			log.L().Debug("in split loop",
-				zap.Uint64("regionID", regionID),
-				zap.ByteStrings("keys", keys),
-			)
 			var newRegions []*split.RegionInfo
 			region := regionMap[regionID]
 			newRegions, errSplit := local.BatchSplitRegions(ctx, region, keys)

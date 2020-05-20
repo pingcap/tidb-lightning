@@ -425,7 +425,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 	}
 	// <= 96MB no need to split into range
 	if engineFile.totalSize <= local.regionSplitSize {
-		ranges = append(ranges, Range{start: startKey, end: endKey, length: int(engineFile.length)})
+		ranges = append(ranges, Range{start: startKey, end: nextKey(endKey), length: int(engineFile.length)})
 		return ranges, nil
 	}
 
@@ -656,14 +656,15 @@ WriteAndIngest:
 						// met non-retryable error retry whole Write procedure
 						continue WriteAndIngest
 					}
-					log.L().Warn("retry ingest due to",
-						zap.Reflect("meta", meta), zap.Reflect("region", region),
-						zap.Reflect("new region", newRegion), zap.Error(errIngest))
+
 					err = errIngest
 					// retry with not leader and epoch not match error
 					if newRegion != nil {
 						region = newRegion
 					} else {
+						log.L().Warn("retry ingest due to",
+							zap.Reflect("meta", meta), zap.Reflect("region", region),
+							zap.Reflect("new region", newRegion), zap.Error(errIngest))
 						continue WriteAndIngest
 					}
 				}
