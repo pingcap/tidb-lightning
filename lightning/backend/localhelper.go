@@ -19,6 +19,8 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
+const SplitRetryTimes = 32
+
 // TODO remove this file and use br internal functions
 // This File include region split & scatter operation just like br.
 // we can simply call br function, but we need to change some function signature of br
@@ -33,13 +35,14 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
 	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
 
+	log.L().Info("split and scatter region",
+		zap.Binary("minKey", minKey),
+		zap.Binary("maxKey", maxKey),
+	)
+
 	regions, err := paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
 	if err != nil {
 		return err
-	}
-	splitKeys := make([][]byte, 0, len(ranges))
-	for _, r := range ranges {
-		splitKeys = append(splitKeys, r.end)
 	}
 
 	splitKeyMap := getSplitKeys(ranges, regions)
@@ -48,24 +51,35 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 	for _, region := range regions {
 		regionMap[region.Region.GetId()] = region
 	}
+
 	scatterRegions := make([]*split.RegionInfo, 0)
-	for regionID, keys := range splitKeyMap {
-		var newRegions []*split.RegionInfo
-		region := regionMap[regionID]
-		newRegions, errSplit := local.BatchSplitRegions(ctx, region, keys)
-		if errSplit != nil {
-			if strings.Contains(errSplit.Error(), "no valid key") {
-				for _, key := range keys {
-					log.L().Error("no valid key",
-						zap.Binary("startKey", region.Region.StartKey),
-						zap.Binary("endKey", region.Region.EndKey),
-						zap.Binary("key", codec.EncodeBytes([]byte{}, key)))
+SplitRegions:
+	for i := 0; i < SplitRetryTimes; i++ {
+		for regionID, keys := range splitKeyMap {
+			log.L().Debug("in split loop",
+				zap.Uint64("regionID", regionID),
+				zap.ByteStrings("keys", keys),
+			)
+			var newRegions []*split.RegionInfo
+			region := regionMap[regionID]
+			newRegions, errSplit := local.BatchSplitRegions(ctx, region, keys)
+			if errSplit != nil {
+				if strings.Contains(errSplit.Error(), "no valid key") {
+					for _, key := range keys {
+						log.L().Error("no valid key",
+							zap.Binary("startKey", region.Region.StartKey),
+							zap.Binary("endKey", region.Region.EndKey),
+							zap.Binary("key", codec.EncodeBytes([]byte{}, key)))
+					}
+					return errors.Trace(errSplit)
 				}
-				return errors.Trace(errSplit)
+				log.L().Warn("split regions", zap.Error(errSplit))
+				time.Sleep(time.Second)
+				continue SplitRegions
 			}
-			time.Sleep(time.Second)
+			scatterRegions = append(scatterRegions, newRegions...)
 		}
-		scatterRegions = append(scatterRegions, newRegions...)
+		break
 	}
 
 	startTime := time.Now()
@@ -202,6 +216,10 @@ func getSplitKeys(ranges []Range, regions []*split.RegionInfo) map[uint64][][]by
 				splitKeys = make([][]byte, 0, 1)
 			}
 			splitKeyMap[region.Region.GetId()] = append(splitKeys, key)
+			log.L().Debug("get key for split region",
+				zap.Binary("key", key),
+				zap.Binary("startKey", region.Region.StartKey),
+				zap.Binary("endKey", region.Region.EndKey))
 		}
 	}
 	return splitKeyMap
@@ -214,8 +232,14 @@ func needSplit(splitKey []byte, regions []*split.RegionInfo) *split.RegionInfo {
 		return nil
 	}
 	splitKey = codec.EncodeBytes([]byte{}, splitKey)
+
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
+		log.L().Debug("need split",
+			zap.Binary("splitKey", splitKey),
+			zap.Binary("region start", region.Region.GetStartKey()),
+			zap.Binary("region end", region.Region.GetEndKey()),
+		)
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {
 			return nil
 		}
@@ -252,5 +276,5 @@ func insideRegion(region *metapb.Region, meta *sst.SSTMeta) bool {
 }
 
 func keyInsideRegion(region *metapb.Region, key []byte) bool {
-	return bytes.Compare(key, region.GetStartKey()) > 0 && (beforeEnd(key, region.GetEndKey()))
+	return bytes.Compare(key, region.GetStartKey()) >= 0 && (beforeEnd(key, region.GetEndKey()))
 }

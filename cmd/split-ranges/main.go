@@ -116,7 +116,7 @@ func splitValuesToRange2(start []byte, end []byte, count int64) [][]byte {
 
 	res := make([][]byte, 0, count)
 	for cur := sValue + step; cur <= eValue; cur += step {
-		curBytes := make([]byte, offset + 8)
+		curBytes := make([]byte, offset+8)
 		copy(curBytes, start[:offset])
 		binary.BigEndian.PutUint64(curBytes[offset:], cur)
 		res = append(res, curBytes)
@@ -125,7 +125,6 @@ func splitValuesToRange2(start []byte, end []byte, count int64) [][]byte {
 
 	return res
 }
-
 
 // splitValuesToRange try to cut [start, end] to count range approximately
 // just like [start, v1], [v1, v2]... [vCount, end]
@@ -174,7 +173,7 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 			postIndex = i
 			break
 		}
-		postIndex ++
+		postIndex++
 	}
 
 	step := v / count

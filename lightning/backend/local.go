@@ -31,6 +31,7 @@ import (
 	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	uuid "github.com/satori/go.uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -89,11 +90,12 @@ type local struct {
 	regionSplitSize int64
 
 	rangeConcurrency *worker.Pool
+	maxKVPairs       int
 	pairPool         sync.Pool
 }
 
 // NewLocal creates new connections to tikv.
-func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, regionSplitSize int64, localFile string, rangeConcurrency int) (Backend, error) {
+func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, regionSplitSize int64, localFile string, rangeConcurrency int, maxKVPairs int) (Backend, error) {
 	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
@@ -122,6 +124,7 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		regionSplitSize: regionSplitSize,
 
 		rangeConcurrency: worker.NewPool(ctx, rangeConcurrency, "range"),
+		maxKVPairs:       maxKVPairs,
 		pairPool:         sync.Pool{New: func() interface{} { return &sst.Pair{} }},
 	}
 	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
@@ -242,8 +245,7 @@ func (local *local) WriteToPeer(
 	meta *sst.SSTMeta,
 	ts uint64,
 	peer *metapb.Peer,
-	pairs []*sst.Pair,
-	step int) (metas []*sst.SSTMeta, err error) {
+	pairs []*sst.Pair) (metas []*sst.SSTMeta, err error) {
 
 	cli, err := local.getImportClient(ctx, peer)
 	if err != nil {
@@ -266,6 +268,7 @@ func (local *local) WriteToPeer(
 	}
 
 	startOffset := 0
+	step := local.maxKVPairs
 	for startOffset < len(pairs) {
 		endOffset := startOffset + step
 		if endOffset > len(pairs) {
@@ -286,9 +289,7 @@ func (local *local) WriteToPeer(
 	}
 
 	if resp, closeErr := wstream.CloseAndRecv(); closeErr != nil {
-		if err == nil {
-			err = closeErr
-		}
+		err = closeErr
 	} else {
 		metas = resp.Metas
 		log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", metas))
@@ -301,12 +302,11 @@ func (local *local) WriteToTiKV(
 	meta *sst.SSTMeta,
 	ts uint64,
 	region *split.RegionInfo,
-	pairs []*sst.Pair,
-	step int) ([]*sst.SSTMeta, error) {
+	pairs []*sst.Pair) ([]*sst.SSTMeta, error) {
 	var leaderPeerMetas []*sst.SSTMeta
 	leaderID := region.Leader.GetId()
 	for _, peer := range region.Region.GetPeers() {
-		metas, err := local.WriteToPeer(ctx, meta, ts, peer, pairs, step)
+		metas, err := local.WriteToPeer(ctx, meta, ts, peer, pairs)
 		if err != nil {
 			return nil, err
 		}
@@ -453,8 +453,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 			if startIndexID != endIndexID {
 				// this shouldn't happen
 				log.L().Error("index ID not match",
-					zap.Int64("startID", startIndexID),
-					zap.Int64("endID", endIndexID))
+					zap.Int64("startID", startIndexID), zap.Int64("endID", endIndexID))
 				return nil, errors.New("index ID not match")
 			}
 
@@ -466,19 +465,15 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 			// we can split by indexColumnsValue to get indexRangeCount ranges from above Keys
 
 			log.L().Info("split index to range",
-				zap.Int64("indexID", i),
-				zap.Int64("rangeCount", indexRangeCount),
-				zap.Binary("start", startKeyOfIndex),
-				zap.Binary("end", lastKeyOfIndex),
-			)
+				zap.Int64("indexID", i), zap.Int64("rangeCount", indexRangeCount),
+				zap.Binary("start", startKeyOfIndex), zap.Binary("end", lastKeyOfIndex))
 
 			values := splitValuesToRange(startValues, endValues, indexRangeCount)
 
 			keyPrefix := tablecodec.EncodeTableIndexPrefix(tableID, i)
-
 			for _, v := range values {
 				e := append([]byte{}, append(keyPrefix, v...)...)
-				ranges = append(ranges, Range{start: append([]byte{}, startKeyOfIndex...), end: e})
+				ranges = append(ranges, Range{start: append([]byte{}, startKeyOfIndex...), end: nextKey(e)})
 				startKeyOfIndex = nextKey(e)
 			}
 		}
@@ -495,31 +490,27 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 		step := (endHandle - startHandle) / n
 		index := int64(0)
 		var skey, ekey []byte
-		log.L().Info("data engine",
-			zap.Int64("step", step),
-			zap.Int64("startHandle", startHandle),
-			zap.Int64("endHandle", endHandle))
+
+		log.L().Info("data engine", zap.Int64("step", step),
+			zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
 
 		for i := startHandle; i+step <= endHandle; i += step {
 			skey = tablecodec.EncodeRowKeyWithHandle(tableID, i)
 			ekey = tablecodec.EncodeRowKeyWithHandle(tableID, i+step-1)
 			index = i
-			log.L().Debug("data engine append range",
-				zap.Int64("start handle", i),
-				zap.Int64("end handle", i+step-1),
-				zap.Binary("start key", skey),
-				zap.Binary("end key", ekey),
-				zap.Int64("step", step))
-			ranges = append(ranges, Range{start: skey, end: ekey})
+			log.L().Debug("data engine append range", zap.Int64("start handle", i),
+				zap.Int64("end handle", i+step-1), zap.Binary("start key", skey),
+				zap.Binary("end key", ekey), zap.Int64("step", step))
+
+			ranges = append(ranges, Range{start: skey, end: nextKey(ekey)})
 		}
 		log.L().Debug("data engine append range at final",
-			zap.Int64("start handle", index+step),
-			zap.Int64("end handle", endHandle),
-			zap.Binary("start key", skey),
-			zap.Binary("end key", endKey),
+			zap.Int64("start handle", index+step), zap.Int64("end handle", endHandle),
+			zap.Binary("start key", skey), zap.Binary("end key", endKey),
 			zap.Int64("step", endHandle-index-step+1))
+
 		skey = tablecodec.EncodeRowKeyWithHandle(tableID, index+step)
-		ranges = append(ranges, Range{start: skey, end: endKey})
+		ranges = append(ranges, Range{start: skey, end: nextKey(endKey)})
 	}
 	return ranges, nil
 }
@@ -528,14 +519,18 @@ func (local *local) writeAndIngestByRange(
 	ctx context.Context,
 	db *pebble.DB,
 	start, end []byte,
-	ts uint64,
-	length int) error {
+	ts uint64) error {
+
+	select {
+	case <-ctx.Done():
+		return errors.New("context is cancel by other reason")
+	default:
+	}
 
 	pairs := make([]*sst.Pair, 0, 128)
-
 	ito := &pebble.IterOptions{
 		LowerBound: start,
-		UpperBound: nextKey(end),
+		UpperBound: end,
 	}
 
 	iter := db.NewIter(ito)
@@ -544,10 +539,7 @@ func (local *local) writeAndIngestByRange(
 	iter.First()
 
 	size := int64(0)
-	l := 0
-
 	for iter.Valid() {
-		l++
 		size += int64(len(iter.Key()) + len(iter.Value()))
 		pair := &sst.Pair{
 			Key:   append([]byte{}, iter.Key()...),
@@ -557,78 +549,103 @@ func (local *local) writeAndIngestByRange(
 		iter.Next()
 	}
 
-	step := l / (int(size/local.regionSplitSize) + 1)
-
-	log.L().Info("iterator",
-		zap.Int("step", step),
-		zap.Int64("size of iter", size),
-		zap.Int("len of iter", l),
-		zap.Binary("start", start),
-		zap.Binary("end", end))
-
 	if len(pairs) == 0 {
 		log.L().Info("There is no pairs in iterator",
 			zap.Binary("start", start),
 			zap.Binary("end", end),
-			zap.Binary("next end", nextKey(end)),
-		)
+			zap.Binary("next end", nextKey(end)))
 		return nil
 	}
 
-	startKey := pairs[0].Key
-	endKey := pairs[len(pairs)-1].Key
-	region, err := local.splitCli.GetRegion(ctx, startKey)
-	if err != nil {
-		log.L().Error("get region in write failed", zap.Error(err))
-		return err
-	}
+	var regions []*split.RegionInfo
+	var metas []*sst.SSTMeta
+	var err error
 
-	log.L().Debug("get region",
-		zap.Uint64("id", region.Region.GetId()),
-		zap.Stringer("epoch", region.Region.GetRegionEpoch()),
-		zap.Binary("start", region.Region.GetStartKey()),
-		zap.Binary("end", region.Region.GetEndKey()),
-		zap.Reflect("peers", region.Region.GetPeers()),
-	)
+WriteAndIngest:
+	for retry := 0; retry < maxRetryTimes; retry++ {
+		if retry != 0 {
+			time.Sleep(time.Second)
+		}
+		startKey := codec.EncodeBytes([]byte{}, pairs[0].Key)
+		endKey := codec.EncodeBytes([]byte{}, pairs[len(pairs)-1].Key)
+		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, 128)
+		if err != nil {
+			log.L().Warn("scan region failed", zap.Error(err))
+			continue WriteAndIngest
+		}
 
-	// generate new uuid for concurrent write to tikv
-	meta := &sst.SSTMeta{
-		Uuid:        uuid.NewV4().Bytes(),
-		RegionId:    region.Region.GetId(),
-		RegionEpoch: region.Region.GetRegionEpoch(),
-		Range: &sst.Range{
-			Start: startKey,
-			End:   endKey,
-		},
-	}
-	metas, err := local.WriteToTiKV(ctx, meta, ts, region, pairs, step)
-	if err != nil {
-		log.L().Error("write to tikv failed", zap.Error(err))
-		return err
-	}
+		for _, region := range regions {
+			regionEnd := region.Region.EndKey
+			index := binarySearch(pairs, regionEnd)
+			if index != -1 {
+				endKey = codec.EncodeBytes([]byte{}, pairs[index].Key)
+			} else {
+				// This shouldn't happen
+				log.L().Error("[shouldn't happen] didn't find last key that less than region end", zap.Binary("regionEnd", regionEnd))
+				endKey = codec.EncodeBytes([]byte{}, pairs[len(pairs)-1].Key)
+			}
 
-	var resp *sst.IngestResponse
-	for _, meta := range metas {
-		for i := 0; i < maxRetryTimes; i++ {
-			resp, err = local.Ingest(ctx, meta, region)
+			log.L().Debug("get region",
+				zap.Int("retry", retry), zap.Binary("startKey", startKey),
+				zap.Binary("endKey", endKey), zap.Uint64("id", region.Region.GetId()),
+				zap.Stringer("epoch", region.Region.GetRegionEpoch()),
+				zap.Binary("start", region.Region.GetStartKey()),
+				zap.Binary("end", region.Region.GetEndKey()),
+				zap.Reflect("peers", region.Region.GetPeers()))
+
+			// generate new uuid for concurrent write to tikv
+			meta := &sst.SSTMeta{
+				Uuid:        uuid.NewV4().Bytes(),
+				RegionId:    region.Region.GetId(),
+				RegionEpoch: region.Region.GetRegionEpoch(),
+				Range: &sst.Range{
+					Start: startKey,
+					End:   endKey,
+				},
+			}
+			if !insideRegion(region.Region, meta) {
+				log.L().Error("[shouldn't happen] sst out of range",
+					zap.Reflect("meta", meta), zap.Reflect("region", region))
+				continue WriteAndIngest
+			}
+			metas, err = local.WriteToTiKV(ctx, meta, ts, region, pairs)
 			if err != nil {
-				log.L().Error("ingest to tikv failed", zap.Error(err))
-				return err
+				log.L().Warn("write to tikv failed", zap.Error(err))
+				continue WriteAndIngest
 			}
-			needRetry, newRegion, errIngest := isIngestRetryable(resp, region, meta)
-			if !needRetry {
-				return errIngest
-			}
-			log.L().Warn("retry ingest due to",
-				zap.Reflect("meta", meta),
-				zap.Int("retry time", i),
-				zap.Reflect("region", region),
-				zap.Reflect("new region", newRegion),
-				zap.Error(errIngest),
-			)
 
-			// retry with not leader and epoch not match error
-			region = newRegion
+			var resp *sst.IngestResponse
+		IngestMeta:
+			for _, meta := range metas {
+				for i := 0; i < maxRetryTimes; i++ {
+					log.L().Debug("ingest meta", zap.Reflect("meta", meta))
+					resp, err = local.Ingest(ctx, meta, region)
+					if err != nil {
+						log.L().Warn("ingest failed", zap.Error(err))
+						continue
+					}
+					needRetry, newRegion, errIngest := isIngestRetryable(resp, region, meta)
+					if errIngest == nil {
+						// ingest next meta
+						continue IngestMeta
+					}
+					if !needRetry {
+						// met non-retryable error retry whole Write procedure
+						continue WriteAndIngest
+					}
+					log.L().Warn("retry ingest due to",
+						zap.Reflect("meta", meta), zap.Reflect("region", region),
+						zap.Reflect("new region", newRegion), zap.Error(errIngest))
+					err = errIngest
+					// retry with not leader and epoch not match error
+					if newRegion != nil {
+						region = newRegion
+					} else {
+						continue WriteAndIngest
+					}
+				}
+			}
+			startKey = regionEnd
 		}
 	}
 	return err
@@ -639,17 +656,15 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 		log.L().Error("the ranges is empty")
 		return nil
 	}
+	log.L().Debug("the ranges length write to tikv", zap.Int("length", len(ranges)))
+
 	var wg sync.WaitGroup
-	log.L().Info("ranges write to tikv", zap.Int("length", len(ranges)))
-	errCh := make(chan error)
+	errCh := make(chan error, len(ranges))
 	finishCh := make(chan struct{})
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	for _, r := range ranges {
-		log.L().Debug("deliver range",
-			zap.Binary("start", r.start),
-			zap.Binary("end", r.end),
-			zap.Int("len", r.length))
 		db := engineFile.db
-		length := r.length
 		startKey := r.start
 		endKey := r.end
 		w := local.rangeConcurrency.Apply()
@@ -661,10 +676,9 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 			}()
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
-				if err = local.writeAndIngestByRange(ctx, db, startKey, endKey, engineFile.ts, length); err != nil {
+				if err = local.writeAndIngestByRange(ctx, db, startKey, endKey, engineFile.ts); err != nil {
 					log.L().Warn("write and ingest by range failed",
-						zap.Int("retry time", i+1),
-						zap.Error(err))
+						zap.Int("retry time", i+1), zap.Error(err))
 				} else {
 					return
 				}
@@ -687,7 +701,6 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 				return nil
 			}
 		case err := <-errCh:
-			log.L().Error("write and ingest by range retry exceed maxRetryTimes:3")
 			return err
 		}
 	}
@@ -881,8 +894,8 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 	}
 
 	res := make([][]byte, 0, count)
-	for cur := sValue + step; cur <= eValue - step; cur += step {
-		curBytes := make([]byte, offset + 8)
+	for cur := sValue + step; cur <= eValue-step; cur += step {
+		curBytes := make([]byte, offset+8)
 		copy(curBytes, start[:offset])
 		binary.BigEndian.PutUint64(curBytes[offset:], cur)
 		res = append(res, curBytes)
@@ -892,3 +905,28 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 	return res
 }
 
+// find last key that is less than target key
+func binarySearch(pairs []*sst.Pair, targetKey []byte) int {
+	if len(targetKey) == 0 {
+		// target is max, so return max index pair
+		return len(pairs) - 1
+	}
+	low := 0
+	high := len(pairs) - 1
+	for low <= high {
+		mid := low + (high-low)/2
+		midValue := pairs[mid]
+		compare := bytes.Compare(codec.EncodeBytes([]byte{}, midValue.Key), targetKey)
+		if compare < 0 {
+			if mid == len(pairs)-1 || bytes.Compare(codec.EncodeBytes([]byte{}, pairs[mid+1].Key), targetKey) > 0 {
+				return mid
+			}
+			low = mid + 1
+		} else if compare == 0 {
+			return mid - 1
+		} else {
+			high = mid - 1
+		}
+	}
+	return -1
+}
