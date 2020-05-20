@@ -90,12 +90,12 @@ type local struct {
 	regionSplitSize int64
 
 	rangeConcurrency *worker.Pool
-	maxKVPairs       int
+	sendKVPairs      int
 	pairPool         sync.Pool
 }
 
 // NewLocal creates new connections to tikv.
-func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, regionSplitSize int64, localFile string, rangeConcurrency int, maxKVPairs int) (Backend, error) {
+func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, regionSplitSize int64, localFile string, rangeConcurrency int, sendKVPairs int) (Backend, error) {
 	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
@@ -124,7 +124,7 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		regionSplitSize: regionSplitSize,
 
 		rangeConcurrency: worker.NewPool(ctx, rangeConcurrency, "range"),
-		maxKVPairs:       maxKVPairs,
+		sendKVPairs:      sendKVPairs,
 		pairPool:         sync.Pool{New: func() interface{} { return &sst.Pair{} }},
 	}
 	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
@@ -268,7 +268,7 @@ func (local *local) WriteToPeer(
 	}
 
 	startOffset := 0
-	step := local.maxKVPairs
+	step := local.sendKVPairs
 	for startOffset < len(pairs) {
 		endOffset := startOffset + step
 		if endOffset > len(pairs) {

@@ -157,6 +157,7 @@ type TikvImporter struct {
 	Backend          string `toml:"backend" json:"backend"`
 	OnDuplicate      string `toml:"on-duplicate" json:"on-duplicate"`
 	MaxKVPairs       int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	SendKVPairs      int    `toml:"send-kv-pairs" json:"send-kv-pairs"`
 	RegionSplitSize  int64  `toml:"region-split-size" json:"region-split-size"`
 	SortedKVDir      string `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
 	RangeConcurrency int    `toml:"range-concurrency" json:"range-concurrency"`
@@ -261,6 +262,7 @@ func NewConfig() *Config {
 			Backend:         BackendImporter,
 			OnDuplicate:     ReplaceOnDup,
 			MaxKVPairs:      32,
+			SendKVPairs:     100000,
 			RegionSplitSize: SplitRegionSize,
 		},
 		PostRestore: PostRestore{
