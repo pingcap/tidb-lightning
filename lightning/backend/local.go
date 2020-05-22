@@ -634,7 +634,7 @@ WriteAndIngest:
 
 			if len(regions) == 1 {
 				if err := local.WriteAndIngestPairs(ctx, meta, ts, region, pairs[startIndex:endIndex]); err != nil {
-					continue
+					continue WriteAndIngest
 				}
 			} else {
 				shouldWait = true
@@ -686,7 +686,7 @@ func (local *local) WriteAndIngestPairs(
 			needRetry, newRegion, errIngest := isIngestRetryable(resp, region, meta)
 			if errIngest == nil {
 				// ingest next meta
-				continue
+				break
 			}
 			if !needRetry {
 				// met non-retryable error retry whole Write procedure
