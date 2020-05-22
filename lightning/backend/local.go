@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path"
+	"sort"
 	"sync"
 	"time"
 
@@ -599,17 +600,12 @@ WriteAndIngest:
 		startIndex := 0
 		for _, region := range regions {
 			regionEnd := region.Region.EndKey
-			endIndex := binarySearch(pairs, regionEnd)
-			if endIndex != -1 {
-				endKey = codec.EncodeBytes([]byte{}, pairs[endIndex].Key)
-				// endKey should write into tikv in this region
-				endIndex++
-			} else {
-				// This shouldn't happen
-				log.L().Error("[shouldn't happen] didn't find last key that less than region end", zap.Binary("regionEnd", regionEnd))
-				endKey = codec.EncodeBytes([]byte{}, pairs[len(pairs)-1].Key)
-				endIndex = len(pairs) - 1
-			}
+			_, endKey, _ := codec.DecodeBytes([]byte{}, region.Region.EndKey)
+			endIndex := sort.Search(len(pairs), func(i int) bool {
+				return bytes.Compare(endKey, pairs[i].Key)	< 0
+			})
+
+			endKey = codec.EncodeBytes([]byte{}, pairs[endIndex-1].Key)
 
 			log.L().Debug("get region", zap.Int("retry", retry), zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey), zap.Uint64("id", region.Region.GetId()),
