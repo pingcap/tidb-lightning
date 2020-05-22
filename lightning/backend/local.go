@@ -602,7 +602,7 @@ WriteAndIngest:
 			regionEnd := region.Region.EndKey
 			_, endKey, _ := codec.DecodeBytes([]byte{}, region.Region.EndKey)
 			endIndex := sort.Search(len(pairs), func(i int) bool {
-				return bytes.Compare(endKey, pairs[i].Key)	< 0
+				return bytes.Compare(pairs[i].Key, endKey)	< 0
 			})
 
 			endKey = codec.EncodeBytes([]byte{}, pairs[endIndex-1].Key)
