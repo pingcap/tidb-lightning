@@ -600,7 +600,7 @@ WriteAndIngest:
 		startIndex := 0
 		for _, region := range regions {
 			regionEnd := region.Region.EndKey
-			_, endKey, _ := codec.DecodeBytes([]byte{}, region.Region.EndKey)
+			_, endKey, _ := codec.DecodeBytes(region.Region.EndKey, []byte{})
 			endIndex := sort.Search(len(pairs), func(i int) bool {
 				return bytes.Compare(pairs[i].Key, endKey)	< 0
 			})
