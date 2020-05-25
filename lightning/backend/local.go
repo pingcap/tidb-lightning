@@ -654,6 +654,7 @@ WriteAndIngest:
 				return nil
 			}
 		}
+		break
 	}
 	return err
 }
@@ -691,7 +692,7 @@ func (local *local) WriteAndIngestPairs(
 
 			err = errIngest
 			// retry with not leader and epoch not match error
-			if newRegion != nil {
+			if newRegion != nil && i < maxRetryTimes - 1 {
 				region = newRegion
 			} else {
 				log.L().Warn("retry ingest due to",
