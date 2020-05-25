@@ -616,7 +616,7 @@ WriteAndIngest:
 		}
 
 		shouldWait := false
-		errChan := make(chan error)
+		errChan := make(chan error, len(regions))
 		startIndex := 0
 		for _, region := range regions {
 			regionEnd := region.Region.EndKey
@@ -670,13 +670,16 @@ WriteAndIngest:
 		if shouldWait {
 			shouldRetry := false
 			for i := 0; i < len(regions); i++ {
-				err = <- errChan
+				err = <-errChan
 				if err != nil {
+					log.L().Warn("should retry this range", zap.Int("retry", retry), zap.Error(err))
 					shouldRetry = true
 				}
 			}
 			if !shouldRetry {
 				return nil
+			} else {
+				continue
 			}
 		}
 		break
