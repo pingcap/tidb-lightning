@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path"
 	"sort"
@@ -70,6 +71,8 @@ type localFile struct {
 	ranges   []Range
 	startKey []byte
 	endKey   []byte
+
+	uuid uuid.UUID
 }
 
 func (e *localFile) Close() error {
@@ -210,7 +213,7 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &localFile{db: db, length: 0, ranges: make([]Range, 0)})
+	local.engines.Store(engineUUID, &localFile{db: db, length: 0, ranges: make([]Range, 0), uuid: engineUUID})
 	return nil
 }
 
@@ -424,6 +427,18 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 	} else {
 		return nil, errors.Errorf("could not find last pair, this shouldn't happen")
 	}
+
+	iter1 := engineFile.db.NewIter(nil)
+	total := 0
+	totalBytes := 0
+	for iter1.Next(); iter1.Valid(); iter1.Next() {
+		total ++
+		totalBytes += len(iter.Key()) + len(iter.Value())
+	}
+	_ = iter1.Close()
+
+	fmt.Printf("engine %s ReadAndSplitIntoRange: total_keys: %d,  total_bytes: %d\n", engineUUID, total, totalBytes)
+
 	// <= 96MB no need to split into range
 	if engineFile.totalSize <= local.regionSplitSize {
 		ranges = append(ranges, Range{start: startKey, end: nextKey(endKey), length: int(engineFile.length)})
@@ -540,7 +555,8 @@ func (local *local) writeAndIngestByRange(
 	ctx context.Context,
 	db *pebble.DB,
 	start, end []byte,
-	ts uint64) error {
+	ts uint64,
+	engineUUID uuid.UUID) error {
 
 	select {
 	case <-ctx.Done():
@@ -560,6 +576,7 @@ func (local *local) writeAndIngestByRange(
 	iter.First()
 
 	size := int64(0)
+	count := 0
 	for iter.Valid() {
 		size += int64(len(iter.Key()) + len(iter.Value()))
 		pair := &sst.Pair{
@@ -567,8 +584,11 @@ func (local *local) writeAndIngestByRange(
 			Value: append([]byte{}, iter.Value()...),
 		}
 		pairs = append(pairs, pair)
+		count ++
 		iter.Next()
 	}
+
+	fmt.Printf("engine: %v, writeAndIngestByRange count: %d, bytes: %d\n", engineUUID, count, size)
 
 	if len(pairs) == 0 {
 		log.L().Info("There is no pairs in iterator",
@@ -588,7 +608,7 @@ WriteAndIngest:
 			time.Sleep(time.Second)
 		}
 		startKey := codec.EncodeBytes([]byte{}, pairs[0].Key)
-		endKey := codec.EncodeBytes([]byte{}, pairs[len(pairs)-1].Key)
+		endKey := codec.EncodeBytes([]byte{}, nextKey(pairs[len(pairs)-1].Key))
 		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, 128)
 		if err != nil {
 			log.L().Warn("scan region failed", zap.Error(err))
@@ -604,6 +624,11 @@ WriteAndIngest:
 			endIndex := sort.Search(len(pairs), func(i int) bool {
 				return bytes.Compare(pairs[i].Key, endKey) >= 0
 			})
+
+			if endIndex <= startIndex {
+				log.L().Warn("empty range for region", zap.Binary("rangeStart", pairs[startIndex].Key),
+					zap.Binary("rangeEnd", pairs[endIndex-1].Key), zap.Reflect("region", region))
+			}
 
 			endKey = codec.EncodeBytes([]byte{}, pairs[endIndex-1].Key)
 
@@ -730,7 +755,7 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 			}()
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
-				if err = local.writeAndIngestByRange(ctx, db, startKey, endKey, engineFile.ts); err != nil {
+				if err = local.writeAndIngestByRange(ctx, db, startKey, endKey, engineFile.ts, engineFile.uuid); err != nil {
 					log.L().Warn("write and ingest by range failed",
 						zap.Int("retry time", i+1), zap.Error(err))
 				} else {
@@ -810,6 +835,8 @@ func (local *local) WriteRows(
 	if len(kvs) == 0 {
 		return nil
 	}
+
+	fmt.Printf("table %s engine %s WriteRows %d\n", tableName, engineUUID, len(kvs))
 
 	e, ok := local.engines.Load(engineUUID)
 	if !ok {
