@@ -659,9 +659,9 @@ WriteAndIngest:
 				}
 			} else {
 				shouldWait = true
-				go func() {
-					errChan <- local.WriteAndIngestPairs(ctx, meta, ts, region, pairs[startIndex:endIndex])
-				}()
+				go func(start, end int) {
+					errChan <- local.WriteAndIngestPairs(ctx, meta, ts, region, pairs[start:end])
+				}(startIndex, endIndex)
 			}
 
 			startKey = regionEnd
