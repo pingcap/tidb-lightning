@@ -749,7 +749,7 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 					log.L().Warn("write and ingest by range failed",
 						zap.Int("retry time", i+1), zap.Error(err))
 				} else {
-					return
+					break
 				}
 			}
 			errCh <- err
