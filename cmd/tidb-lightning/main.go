@@ -54,10 +54,12 @@ func main() {
 	// The cost of this is the memory of lightnin at runtime grow from about 200M to 700M, but it's acceptable.
 	//
 	// So we set the gc percentage as 500 default to reduce the GC frequency instead of 100.
-	gogc := os.Getenv("GOGC")
-	if gogc == "" {
-		old := debug.SetGCPercent(500)
-		log.L().Debug("set gc percentage", zap.Int("old", old), zap.Int("new", 500))
+	if cfg.TikvImporter.Backend != config.BackendLocal {
+		gogc := os.Getenv("GOGC")
+		if gogc == "" {
+			old := debug.SetGCPercent(500)
+			log.L().Debug("set gc percentage", zap.Int("old", old), zap.Int("new", 500))
+		}
 	}
 
 	err := app.GoServe()

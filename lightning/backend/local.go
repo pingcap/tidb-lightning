@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
-	"fmt"
 	"os"
 	"path"
 	"sort"
@@ -197,10 +196,7 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	dbPath := path.Join(local.localFile, engineUUID.String())
-	cache := pebble.NewCache(128 << 20)
-	defer cache.Unref()
 	opt := &pebble.Options{
-		Cache:                    cache,
 		MemTableSize:             128 << 20,
 		MaxConcurrentCompactions: 16,
 		MinCompactionRate:        1024 << 20,
@@ -414,8 +410,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 	ranges := make([]Range, 0)
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
-	//size := int64(0)
-	//length := 0
+
 	var startKey, endKey []byte
 	if iter.First() {
 		startKey = append([]byte{}, iter.Key()...)
@@ -427,17 +422,6 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 	} else {
 		return nil, errors.Errorf("could not find last pair, this shouldn't happen")
 	}
-
-	iter1 := engineFile.db.NewIter(nil)
-	total := 0
-	totalBytes := 0
-	for iter1.First(); iter1.Valid(); iter1.Next() {
-		total ++
-		totalBytes += len(iter.Key()) + len(iter.Value())
-	}
-	_ = iter1.Close()
-
-	fmt.Printf("engine %s ReadAndSplitIntoRange: total_keys: %d,  total_bytes: %d\n", engineUUID, total, totalBytes)
 
 	// <= 96MB no need to split into range
 	if engineFile.totalSize <= local.regionSplitSize {
@@ -576,7 +560,6 @@ func (local *local) writeAndIngestByRange(
 	iter.First()
 
 	size := int64(0)
-	count := 0
 	for iter.Valid() {
 		size += int64(len(iter.Key()) + len(iter.Value()))
 		pair := &sst.Pair{
@@ -584,11 +567,8 @@ func (local *local) writeAndIngestByRange(
 			Value: append([]byte{}, iter.Value()...),
 		}
 		pairs = append(pairs, pair)
-		count ++
 		iter.Next()
 	}
-
-	fmt.Printf("engine: %v, writeAndIngestByRange count: %d, bytes: %d\n", engineUUID, count, size)
 
 	if len(pairs) == 0 {
 		log.L().Info("There is no pairs in iterator",
@@ -610,9 +590,16 @@ WriteAndIngest:
 		startKey := codec.EncodeBytes([]byte{}, pairs[0].Key)
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairs[len(pairs)-1].Key))
 		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, 128)
-		if err != nil {
-			log.L().Warn("scan region failed", zap.Error(err))
+		if err != nil || len(regions) == 0 {
+			log.L().Warn("scan region failed", zap.Error(err), zap.Int("region_len", len(regions)))
 			continue WriteAndIngest
+		}
+		var regionEndKey []byte
+		_, regionEndKey, err = codec.DecodeBytes(regions[len(regions)-1].Region.EndKey, []byte{})
+		if err != nil || bytes.Compare(regionEndKey, pairs[len(pairs)-1].Key) <= 0 {
+			log.L().Warn("region endKey is smaller than pair endKey", zap.Binary("pairEndKey", pairs[len(pairs)-1].Key),
+				zap.Binary("regionsEndKey", regionEndKey), zap.Error(err))
+			continue
 		}
 
 		shouldWait := false
@@ -628,6 +615,7 @@ WriteAndIngest:
 			if endIndex <= startIndex {
 				log.L().Warn("empty range for region", zap.Binary("rangeStart", pairs[startIndex].Key),
 					zap.Binary("rangeEnd", pairs[endIndex-1].Key), zap.Reflect("region", region))
+				continue
 			}
 
 			endKey = codec.EncodeBytes([]byte{}, pairs[endIndex-1].Key)
@@ -654,7 +642,7 @@ WriteAndIngest:
 			}
 
 			if len(regions) == 1 {
-				if err := local.WriteAndIngestPairs(ctx, meta, ts, region, pairs[startIndex:endIndex]); err != nil {
+				if err = local.WriteAndIngestPairs(ctx, meta, ts, region, pairs[startIndex:endIndex]); err != nil {
 					continue WriteAndIngest
 				}
 			} else {
@@ -670,8 +658,9 @@ WriteAndIngest:
 		if shouldWait {
 			shouldRetry := false
 			for i := 0; i < len(regions); i++ {
-				err = <-errChan
-				if err != nil {
+				err1 := <-errChan
+				if err1 != nil {
+					err = err1
 					log.L().Warn("should retry this range", zap.Int("retry", retry), zap.Error(err))
 					shouldRetry = true
 				}
@@ -682,7 +671,10 @@ WriteAndIngest:
 				continue WriteAndIngest
 			}
 		}
-		break
+		return nil
+	}
+	if err == nil {
+		err = errors.New("all retry failed!")
 	}
 	return err
 }
@@ -823,8 +815,6 @@ func (local *local) WriteRows(
 	if len(kvs) == 0 {
 		return nil
 	}
-
-	fmt.Printf("table %s engine %s WriteRows %d\n", tableName, engineUUID, len(kvs))
 
 	e, ok := local.engines.Load(engineUUID)
 	if !ok {
