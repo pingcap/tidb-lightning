@@ -679,7 +679,7 @@ WriteAndIngest:
 			if !shouldRetry {
 				return nil
 			} else {
-				continue
+				continue WriteAndIngest
 			}
 		}
 		break
@@ -717,8 +717,6 @@ func (local *local) WriteAndIngestPairs(
 				// met non-retryable error retry whole Write procedure
 				return errIngest
 			}
-
-			err = errIngest
 			// retry with not leader and epoch not match error
 			if newRegion != nil && i < maxRetryTimes - 1 {
 				region = newRegion
@@ -740,9 +738,7 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 	}
 	log.L().Debug("the ranges length write to tikv", zap.Int("length", len(ranges)))
 
-	var wg sync.WaitGroup
 	errCh := make(chan error, len(ranges))
-	finishCh := make(chan struct{})
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	for _, r := range ranges {
@@ -750,10 +746,8 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 		startKey := r.start
 		endKey := r.end
 		w := local.rangeConcurrency.Apply()
-		wg.Add(1)
 		go func(w *worker.Worker) {
 			defer func() {
-				wg.Done()
 				local.rangeConcurrency.Recycle(w)
 			}()
 			var err error
@@ -765,27 +759,16 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 					return
 				}
 			}
-			if err != nil {
-				errCh <- err
-			}
+			errCh <- err
 		}(w)
 	}
-	go func() {
-		wg.Wait()
-		close(finishCh)
-	}()
 
-	for {
-		select {
-		case _, ok := <-finishCh:
-			if !ok {
-				// Finished
-				return nil
-			}
-		case err := <-errCh:
-			return err
+	for e := range errCh {
+		if e != nil {
+			return e
 		}
 	}
+	return nil
 }
 
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
