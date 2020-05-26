@@ -739,6 +739,7 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 	log.L().Debug("the ranges length write to tikv", zap.Int("length", len(ranges)))
 
 	errCh := make(chan error, len(ranges))
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	for _, r := range ranges {
@@ -763,7 +764,8 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 		}(w)
 	}
 
-	for e := range errCh {
+	for i := 0; i < len(ranges); i ++ {
+		e := <-errCh
 		if e != nil {
 			return e
 		}
