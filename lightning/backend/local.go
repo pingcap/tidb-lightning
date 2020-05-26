@@ -431,7 +431,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 	iter1 := engineFile.db.NewIter(nil)
 	total := 0
 	totalBytes := 0
-	for iter1.Next(); iter1.Valid(); iter1.Next() {
+	for iter1.First(); iter1.Valid(); iter1.Next() {
 		total ++
 		totalBytes += len(iter.Key()) + len(iter.Value())
 	}
