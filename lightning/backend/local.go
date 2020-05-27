@@ -316,13 +316,36 @@ func (local *local) WriteToTiKV(
 	default:
 	}
 
+	var startKey, endKey []byte
+	if len(region.Region.StartKey) > 0 {
+		_, startKey, _ = codec.DecodeBytes(region.Region.StartKey, []byte{})
+	}
+	if len(region.Region.EndKey) > 0 {
+		_, endKey, _ = codec.DecodeBytes(region.Region.EndKey, []byte{})
+	}
+	opt := &pebble.IterOptions{LowerBound:startKey, UpperBound:endKey}
+	iter := engineFile.db.NewIter(opt)
+	defer iter.Close()
+
+	iter.First()
+	firstKey := append([]byte{}, iter.Key()...)
+	iter.Last()
+	lastKey := append([]byte{}, iter.Key()...)
+
+	firstKeyE := codec.EncodeBytes([]byte{}, firstKey)
+	lastKeyE := codec.EncodeBytes([]byte{}, lastKey)
+
+	log.L().Error("write to tikv", zap.Binary("start", firstKeyE), zap.Binary("end", lastKeyE),
+		zap.Reflect("region", region))
+
+
 	meta := &sst.SSTMeta{
 		Uuid:        uuid.NewV4().Bytes(),
 		RegionId:    region.Region.GetId(),
 		RegionEpoch: region.Region.GetRegionEpoch(),
 		Range: &sst.Range{
-			Start: region.Region.StartKey,
-			End:   region.Region.EndKey,
+			Start: firstKey,
+			End:   lastKey,
 		},
 	}
 
@@ -353,17 +376,6 @@ func (local *local) WriteToTiKV(
 		requests = append(requests, req)
 	}
 
-	var startKey, endKey []byte
-	if len(region.Region.StartKey) > 0 {
-		_, startKey, _ = codec.DecodeBytes(region.Region.StartKey, []byte{})
-	}
-	if len(region.Region.EndKey) > 0 {
-		_, endKey, _ = codec.DecodeBytes(region.Region.EndKey, []byte{})
-	}
-	opt := &pebble.IterOptions{LowerBound:startKey, UpperBound:endKey}
-	iter := engineFile.db.NewIter(opt)
-	defer iter.Close()
-
 	bytesBuf := newBytesBuffer()
 	defer bytesBuf.destroy()
 	pairs := make([]*sst.Pair, 0, local.sendKVPairs)
@@ -376,6 +388,11 @@ func (local *local) WriteToTiKV(
 		pair := &sst.Pair{
 			Key:   bytesBuf.addBytes(iter.Key()),
 			Value: bytesBuf.addBytes(iter.Value()),
+			//Key: append([]byte{}, iter.Key()...),
+			//Value:append([]byte{}, iter.Value()...),
+		}
+		if bytes.Compare(iter.Key(), startKey) < 0 {
+			log.L().Fatal("key out of order", zap.Binary("current", iter.Key()), zap.Binary("fist", startKey))
 		}
 		pairs = append(pairs, pair)
 		count++
@@ -667,11 +684,9 @@ func (b *bytesBuffer) reset() {
 	if len(b.bufs) > 0 {
 		b.curBuf = b.bufs[0]
 		b.curBufLen = len(b.bufs[0])
-	} else {
-		b.curBuf = nil
-		b.curBufLen = 0
+		b.curBufIdx = 0
+		b.curIdx = 0
 	}
-	b.curIdx = 0
 }
 
 func (b *bytesBuffer) destroy() {
@@ -744,11 +759,10 @@ WriteAndIngest:
 			log.L().Warn("scan region failed", zap.Error(err), zap.Int("region_len", len(regions)))
 			continue WriteAndIngest
 		}
-		var regionEndKey []byte
-		_, regionEndKey, err = codec.DecodeBytes(regions[len(regions)-1].Region.EndKey, []byte{})
-		if err != nil || bytes.Compare(regionEndKey, pairEnd) <= 0 {
-			log.L().Warn("region endKey is smaller than pair endKey", zap.Binary("pairEndKey", pairEnd),
-				zap.Binary("regionsEndKey", regionEndKey), zap.Error(err))
+
+		if err != nil || bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
+			log.L().Warn("region endKey is smaller than pair endKey", zap.Binary("pairEndKey", endKey),
+				zap.Binary("regionsEndKey", regions[len(regions)-1].Region.EndKey), zap.Error(err))
 			continue
 		}
 
@@ -813,7 +827,8 @@ func (local *local) WriteAndIngestPairs(
 			log.L().Debug("ingest meta", zap.Reflect("meta", meta))
 			resp, err := local.Ingest(ctx, meta, region)
 			if err != nil {
-				log.L().Warn("ingest failed", zap.Error(err))
+				log.L().Warn("ingest failed", zap.Error(err), zap.Reflect("meta", meta),
+					zap.Reflect("region", region))
 				continue
 			}
 			needRetry, newRegion, errIngest := isIngestRetryable(resp, region, meta)
@@ -822,6 +837,8 @@ func (local *local) WriteAndIngestPairs(
 				break
 			}
 			if !needRetry {
+				log.L().Warn("ingest failed noretry", zap.Error(errIngest), zap.Reflect("meta", meta),
+					zap.Reflect("region", region))
 				// met non-retryable error retry whole Write procedure
 				return errIngest
 			}
