@@ -45,6 +45,9 @@ type transaction struct {
 	kvPairs []common.KvPair
 }
 
+func (t *transaction) NewStagingBuffer() kv.MemBuffer {
+	return kv.NewMemDbBuffer()
+}
 // Reset implements the kv.MemBuffer interface
 func (t *transaction) Reset() {}
 
@@ -112,6 +115,7 @@ func newSession(options *SessionOptions) *session {
 		txn:  transaction{},
 		vars: vars,
 	}
+
 	return s
 }
 
