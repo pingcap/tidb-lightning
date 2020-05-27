@@ -747,8 +747,13 @@ func (t *TableRestore) restoreTable(
 		web.BroadcastTableCheckpoint(t.tableName, cp)
 
 		// rebase the allocator so it exceeds the number of rows.
-		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoIncID)
-		t.alloc[0].Rebase(t.tableInfo.ID, cp.AllocBase, false)
+		if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
+			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoRandID)
+			t.alloc[2].Rebase(t.tableInfo.ID, cp.AllocBase, false)
+		} else {
+			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoIncID)
+			t.alloc[0].Rebase(t.tableInfo.ID, cp.AllocBase, false)
+		}
 		rc.saveCpCh <- saveCp{
 			tableName: t.tableName,
 			merger: &RebaseCheckpointMerger{
@@ -1039,7 +1044,12 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
-		err := AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc[0].Base()+1)
+		var err error
+		if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
+			err = AlterAutoRandom(ctx, rc.tidbMgr.db, t.tableName, t.alloc[2].Base()+1)
+		} else {
+			err = AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc[0].Base()+1)
+		}
 		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
@@ -1583,10 +1593,17 @@ func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *Rest
 	// We need to update the AllocBase every time we've finished a file.
 	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
 	// or integer primary key), which can only be obtained by reading all data.
+
+	var base int64
+	if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
+		base = t.alloc[2].Base() + 1
+	} else {
+		base = t.alloc[0].Base() + 1
+	}
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &RebaseCheckpointMerger{
-			AllocBase: t.alloc[0].Base() + 1,
+			AllocBase: base,
 		},
 	}
 	rc.saveCpCh <- saveCp{

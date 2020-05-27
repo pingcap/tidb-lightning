@@ -163,9 +163,15 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = make([]types.Datum, 0, len(cols)+1)
 	}
 
+	isAutoRandom := false
+	if kvcodec.tbl.Meta().PKIsHandle && !kvcodec.tbl.Meta().ContainsAutoRandomBits() {
+		isAutoRandom = true
+	}
+
 	for i, col := range cols {
 		j := columnPermutation[i]
 		isAutoIncCol := mysql.HasAutoIncrementFlag(col.Flag)
+		isPk := mysql.HasPriKeyFlag(col.Flag)
 		if j >= 0 && j < len(row) {
 			value, err = table.CastValue(kvcodec.se, row[j], col.ToInfo(), false, false)
 			if err == nil {
@@ -181,6 +187,15 @@ func (kvcodec *tableKVEncoder) Encode(
 			return nil, logKVConvertFailed(logger, row, j, col.ToInfo(), err)
 		}
 		record = append(record, value)
+		if isAutoRandom && isPk {
+			typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
+			incrementalBits := typeBitsLength - kvcodec.tbl.Meta().AutoRandomBits
+			hasSignBit := !mysql.HasUnsignedFlag(col.Flag)
+			if hasSignBit {
+				incrementalBits -= 1
+			}
+			kvcodec.tbl.RebaseAutoID(kvcodec.se, int64(incrementalBits), false, autoid.AutoRandomType)
+		}
 		if isAutoIncCol {
 			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.AutoIncrementType)
 		}
@@ -197,7 +212,7 @@ func (kvcodec *tableKVEncoder) Encode(
 			return nil, logKVConvertFailed(logger, row, j, extraHandleColumnInfo, err)
 		}
 		record = append(record, value)
-		kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.AutoIncrementType)
+		kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.RowIDAllocType)
 	}
 
 	_, err = kvcodec.tbl.AddRecord(kvcodec.se, record)
