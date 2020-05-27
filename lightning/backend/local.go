@@ -747,7 +747,7 @@ WriteAndIngest:
 		var regionEndKey []byte
 		_, regionEndKey, err = codec.DecodeBytes(regions[len(regions)-1].Region.EndKey, []byte{})
 		if err != nil || bytes.Compare(regionEndKey, pairEnd) <= 0 {
-			log.L().Warn("region endKey is smaller than pair endKey", zap.Binary("pairEndKey", pairs[len(pairs)-1].Key),
+			log.L().Warn("region endKey is smaller than pair endKey", zap.Binary("pairEndKey", pairEnd),
 				zap.Binary("regionsEndKey", regionEndKey), zap.Error(err))
 			continue
 		}
