@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"fmt"
 	"github.com/pingcap/tidb-lightning/lightning/manual"
 	"os"
 	"path"
@@ -370,6 +371,7 @@ func (local *local) WriteToTiKV(
 	size := int64(0)
 	totalCount := 0
 	for iter.First(); iter.Valid(); iter.Next() {
+		fmt.Printf("key: %v, value: %v", iter.Key(), iter.Valid())
 		size += int64(len(iter.Key()) + len(iter.Value()))
 		pair := &sst.Pair{
 			Key:   bytesBuf.addBytes(iter.Key()),
@@ -706,7 +708,6 @@ func (local *local) writeAndIngestByRange(
 	default:
 	}
 
-	pairs := make([]*sst.Pair, 0, 128)
 	ito := &pebble.IterOptions{
 		LowerBound: start,
 		UpperBound: end,
@@ -726,14 +727,6 @@ func (local *local) writeAndIngestByRange(
 	pairStart := append([]byte{}, iter.Key()...)
 	iter.Last()
 	pairEnd := append([]byte{}, iter.Key()...)
-
-	if len(pairs) == 0 {
-		log.L().Info("There is no pairs in iterator",
-			zap.Binary("start", start),
-			zap.Binary("end", end),
-			zap.Binary("next end", nextKey(end)))
-		return nil
-	}
 
 	var regions []*split.RegionInfo
 	var err error
