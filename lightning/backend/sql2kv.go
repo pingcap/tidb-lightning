@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -166,13 +167,13 @@ func (kvcodec *tableKVEncoder) Encode(
 		j := columnPermutation[i]
 		isAutoIncCol := mysql.HasAutoIncrementFlag(col.Flag)
 		if j >= 0 && j < len(row) {
-			value, err = table.CastValue(kvcodec.se, row[j], col.ToInfo())
+			value, err = table.CastValue(kvcodec.se, row[j], col.ToInfo(), false, false)
 			if err == nil {
 				value, err = col.HandleBadNull(value, kvcodec.se.vars.StmtCtx)
 			}
 		} else if isAutoIncCol {
 			// we still need a conversion, e.g. to catch overflow with a TINYINT column.
-			value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo())
+			value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo(), false, false)
 		} else {
 			value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 		}
@@ -181,14 +182,14 @@ func (kvcodec *tableKVEncoder) Encode(
 		}
 		record = append(record, value)
 		if isAutoIncCol {
-			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false)
+			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.AutoIncrementType)
 		}
 	}
 
 	if !kvcodec.tbl.Meta().PKIsHandle {
 		j := columnPermutation[len(cols)]
 		if j >= 0 && j < len(row) {
-			value, err = table.CastValue(kvcodec.se, row[j], extraHandleColumnInfo)
+			value, err = table.CastValue(kvcodec.se, row[j], extraHandleColumnInfo, false, false)
 		} else {
 			value, err = types.NewIntDatum(rowID), nil
 		}
@@ -196,7 +197,7 @@ func (kvcodec *tableKVEncoder) Encode(
 			return nil, logKVConvertFailed(logger, row, j, extraHandleColumnInfo, err)
 		}
 		record = append(record, value)
-		kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false)
+		kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.AutoIncrementType)
 	}
 
 	_, err = kvcodec.tbl.AddRecord(kvcodec.se, record)

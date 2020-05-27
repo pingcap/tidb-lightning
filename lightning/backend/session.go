@@ -112,8 +112,6 @@ func newSession(options *SessionOptions) *session {
 		txn:  transaction{},
 		vars: vars,
 	}
-	s.vars.GetWriteStmtBufs().BufStore = &kv.BufferStore{MemBuffer: &s.txn}
-
 	return s
 }
 
@@ -134,4 +132,4 @@ func (se *session) GetSessionVars() *variable.SessionVars {
 }
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface
-func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle int64) {}
+func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle) {}

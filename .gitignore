@@ -12,3 +12,4 @@ tools/bin/
 # for the web interface
 web/node_modules/
 web/dist/
+*DS_Store
