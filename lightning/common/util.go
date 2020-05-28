@@ -302,3 +302,11 @@ type KvPair struct {
 	// Val is the value of the KV pair
 	Val []byte
 }
+
+func IsEmptyDir(name string) bool {
+	entries, err := ioutil.ReadDir(name)
+	if err != nil {
+		return false
+	}
+	return len(entries) == 0
+}

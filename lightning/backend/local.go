@@ -18,8 +18,11 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
+	"io/ioutil"
 	"os"
 	"path"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -50,6 +53,7 @@ import (
 const (
 	dialTimeout             = 5 * time.Second
 	bigValueSize			= 1 << 16  // 64K
+	engineMetaFileSuffix 			= ".meta"
 )
 
 // Range record start and end key for localFile.DB
@@ -60,22 +64,31 @@ type Range struct {
 	length int
 }
 
+type localFileMeta struct {
+	Ts uint64	`json:"Ts"`
+	Length int64 `json:"Length"`
+	TotalSize int64 `json:"total_size"`
+}
+
 type localFile struct {
-	ts        uint64
+	localFileMeta
 	db        *pebble.DB
-	meta      sst.SSTMeta
-	length    int64
-	totalSize int64
-
-	ranges   []Range
-	startKey []byte
-	endKey   []byte
-
 	uuid uuid.UUID
 }
 
 func (e *localFile) Close() error {
 	return e.db.Close()
+}
+
+// Cleanup remove meta and db files
+func (e *localFile) Cleanup(dataDir string) error {
+	metaPath := filepath.Join(dataDir, e.uuid.String() + engineMetaFileSuffix)
+	err := os.Remove(metaPath)
+	if err != nil {
+		return err
+	}
+	dbPath := filepath.Join(dataDir, e.uuid.String())
+	return os.RemoveAll(dbPath)
 }
 
 type grpcClis struct {
@@ -95,10 +108,20 @@ type local struct {
 	rangeConcurrency *worker.Pool
 	sendKVPairs      int
 	pairPool         sync.Pool
+	checkpointEnabled bool
 }
 
 // NewLocal creates new connections to tikv.
-func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, regionSplitSize int64, localFile string, rangeConcurrency int, sendKVPairs int) (Backend, error) {
+func NewLocalBackend(
+	ctx context.Context,
+	tls *common.TLS,
+	pdAddr string,
+	regionSplitSize int64,
+	localFile string,
+	rangeConcurrency int,
+	sendKVPairs int,
+	enableCheckpoint bool,
+) (Backend, error) {
 	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
@@ -109,9 +132,22 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 	}
 	splitCli := split.NewSplitClient(pdCli, tlsConf)
 
-	err = os.Mkdir(localFile, 0700)
-	if err != nil {
-		return MakeBackend(nil), err
+	shouldCreate := true
+	if enableCheckpoint {
+		if info, err := os.Stat(localFile); err != nil {
+			if !os.IsNotExist(err) {
+				return MakeBackend(nil), err
+			}
+		} else if info.IsDir()  {
+				shouldCreate = false
+		}
+	}
+
+	if shouldCreate {
+		err = os.Mkdir(localFile, 0700)
+		if err != nil {
+			return MakeBackend(nil), err
+		}
 	}
 
 	local := &local{
@@ -125,6 +161,7 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 		rangeConcurrency: worker.NewPool(ctx, rangeConcurrency, "range"),
 		sendKVPairs:      sendKVPairs,
 		pairPool:         sync.Pool{New: func() interface{} { return &sst.Pair{} }},
+		checkpointEnabled: enableCheckpoint,
 	}
 	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
 	return MakeBackend(local), nil
@@ -171,9 +208,12 @@ func (local *local) Close() {
 		v.(*localFile).Close()
 		return true
 	})
-	err := os.RemoveAll(local.localFile)
-	if err != nil {
-		log.L().Error("remove local db file failed", zap.Error(err))
+
+	if !local.checkpointEnabled || common.IsEmptyDir(local.localFile) {
+		err := os.RemoveAll(local.localFile)
+		if err != nil {
+			log.L().Error("remove local db file failed", zap.Error(err))
+		}
 	}
 }
 
@@ -190,8 +230,7 @@ func (local *local) ShouldPostProcess() bool {
 	return true
 }
 
-func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	dbPath := path.Join(local.localFile, engineUUID.String())
+func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
 		MemTableSize:             128 << 20,
 		MaxConcurrentCompactions: 16,
@@ -201,23 +240,80 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 		MaxOpenFiles:             10000,
 		DisableWAL:               true,
 	}
-	db, err := pebble.Open(dbPath, opt)
+	if readOnly {
+		opt.ReadOnly = true
+	}
+	dbPath := path.Join(local.localFile, engineUUID.String())
+	return pebble.Open(dbPath, opt)
+}
+
+func (local *local) saveEngineMeta(engine *localFile) error {
+	jsonBytes, err := json.Marshal(&engine.localFileMeta)
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &localFile{db: db, length: 0, ranges: make([]Range, 0), uuid: engineUUID})
+	metaPath := filepath.Join(local.localFile, engine.uuid.String() + engineMetaFileSuffix)
+	f, err := os.Create(metaPath)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(jsonBytes)
+	return err
+}
+
+func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) {
+	mataPath := filepath.Join(local.localFile, engineUUID.String() + engineMetaFileSuffix)
+	f, err := os.Open(mataPath)
+	var meta localFileMeta
+	if err != nil {
+		return meta, err
+	}
+	fileBytes, err := ioutil.ReadAll(f)
+	if err != nil {
+		return meta, err
+	}
+
+	err = json.Unmarshal(fileBytes, &meta)
+	return meta, err
+}
+
+func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
+	db, err := local.openEngineDB(engineUUID, false)
+	if err != nil {
+		return err
+	}
+	local.engines.Store(engineUUID, &localFile{db: db, uuid: engineUUID})
 	return nil
 }
 
 func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// flush mem table to storage, to free memory,
 	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
-	engineFile, ok := local.engines.Load(engineUUID)
+	engine, ok := local.engines.Load(engineUUID)
 	if !ok {
-		return errors.Errorf("could not find engine %s in CloseEngine", engineUUID.String())
+		// recovery mode, we should reopen this engine file
+		meta, err := local.LoadEngineMeta(engineUUID)
+		if err != nil {
+			return err
+		}
+		db, err := local.openEngineDB(engineUUID, true)
+		if err != nil {
+			return err
+		}
+		engineFile := &localFile{
+			localFileMeta: meta,
+			uuid:engineUUID,
+			db: db,
+		}
+		local.engines.Store(engineUUID, engineFile)
+		return nil
 	}
-	db := engineFile.(*localFile).db
-	return db.Flush()
+	engineFile := engine.(*localFile)
+	err := engineFile.db.Flush()
+	if err != nil {
+		return err
+	}
+	return local.saveEngineMeta(engineFile)
 }
 
 func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
@@ -392,7 +488,7 @@ func (local *local) WriteToTiKV(
 				requests[i].Reset()
 				requests[i].Chunk = &sst.WriteRequest_Batch{
 					Batch: &sst.WriteBatch{
-						CommitTs: engineFile.ts,
+						CommitTs: engineFile.Ts,
 						Pairs:    pairs,
 					},
 				}
@@ -411,7 +507,7 @@ func (local *local) WriteToTiKV(
 			requests[i].Reset()
 			requests[i].Chunk = &sst.WriteRequest_Batch{
 				Batch: &sst.WriteBatch{
-					CommitTs: engineFile.ts,
+					CommitTs: engineFile.Ts,
 					Pairs:    pairs,
 				},
 			}
@@ -511,7 +607,7 @@ func (local *local) printSSTableInfos(tables [][]pebble.TableInfo, uid uuid.UUID
 }
 
 func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid.UUID) ([]Range, error) {
-	if engineFile.length == 0 {
+	if engineFile.Length == 0 {
 		return nil, nil
 	}
 	ranges := make([]Range, 0)
@@ -531,15 +627,15 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 	}
 
 	// <= 96MB no need to split into range
-	if engineFile.totalSize <= local.regionSplitSize {
-		ranges = append(ranges, Range{start: startKey, end: nextKey(endKey), length: int(engineFile.length)})
+	if engineFile.TotalSize <= local.regionSplitSize {
+		ranges = append(ranges, Range{start: startKey, end: nextKey(endKey), length: int(engineFile.Length)})
 		return ranges, nil
 	}
 
 	log.L().Info("ReadAndSplitIntoRange", zap.Binary("start", startKey), zap.Binary("end", endKey))
 
 	// split data into n ranges, then seek n times to get n + 1 ranges
-	n := engineFile.totalSize / local.regionSplitSize
+	n := engineFile.TotalSize / local.regionSplitSize
 
 	if tablecodec.IsIndexKey(startKey) {
 		// index engine
@@ -882,11 +978,11 @@ func (local *local) WriteAndIngestPairs(
 }
 
 func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *localFile, ranges []Range) error {
-	if engineFile.length == 0 {
+	if engineFile.Length == 0 {
 		log.L().Error("the ranges is empty")
 		return nil
 	}
-	log.L().Debug("the ranges length write to tikv", zap.Int("length", len(ranges)))
+	log.L().Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
 
 	errCh := make(chan error, len(ranges))
 
@@ -952,7 +1048,15 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	// release this engine after import success
 	engineFile, ok := local.engines.Load(engineUUID)
 	if ok {
-		engineFile.(*localFile).Close()
+		localEngine := engineFile.(*localFile)
+		err := localEngine.Close()
+		if err != nil {
+			return err
+		}
+		err = localEngine.Cleanup(local.localFile)
+		if err != nil {
+			return err
+		}
 		local.engines.Delete(engineUUID)
 	} else {
 		log.L().Error("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
@@ -993,9 +1097,9 @@ func (local *local) WriteRows(
 	if err != nil {
 		return err
 	}
-	engineFile.length += int64(len(kvs))
-	engineFile.totalSize += size
-	engineFile.ts = ts
+	engineFile.Length += int64(len(kvs))
+	engineFile.TotalSize += size
+	engineFile.Ts = ts
 	local.engines.Store(engineUUID, engineFile)
 	return
 }

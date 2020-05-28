@@ -298,7 +298,7 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	insertStmt.WriteString(" VALUES")
 
 	// Note: we are not going to do interpolation (prepared statements) to avoid
-	// complication arised from data length overflow of BIT and BINARY columns
+	// complication arised from data Length overflow of BIT and BINARY columns
 
 	for i, row := range rows {
 		if i != 0 {
