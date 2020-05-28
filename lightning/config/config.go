@@ -400,6 +400,9 @@ func (cfg *Config) Adjust() error {
 		if cfg.App.TableConcurrency == 0 {
 			cfg.App.TableConcurrency = 6
 		}
+		if cfg.TikvImporter.RangeConcurrency == 0 {
+			cfg.TikvImporter.RangeConcurrency = 32
+		}
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}

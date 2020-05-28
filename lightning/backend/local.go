@@ -20,7 +20,6 @@ import (
 	"encoding/binary"
 	"os"
 	"path"
-	"sort"
 	"sync"
 	"time"
 
@@ -44,12 +43,13 @@ import (
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
+	"github.com/pingcap/tidb-lightning/lightning/manual"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
 const (
 	dialTimeout             = 5 * time.Second
-	defaultRangeConcurrency = 32
+	bigValueSize			= 1 << 16  // 64K
 )
 
 // Range record start and end key for localFile.DB
@@ -112,10 +112,6 @@ func NewLocalBackend(ctx context.Context, tls *common.TLS, pdAddr string, region
 	err = os.Mkdir(localFile, 0700)
 	if err != nil {
 		return MakeBackend(nil), err
-	}
-
-	if rangeConcurrency == 0 {
-		rangeConcurrency = defaultRangeConcurrency
 	}
 
 	local := &local{
@@ -305,11 +301,8 @@ func (local *local) WriteToPeer(
 
 func (local *local) WriteToTiKV(
 	ctx context.Context,
-	meta *sst.SSTMeta,
-	ts uint64,
-	region *split.RegionInfo,
-	pairs []*sst.Pair) ([]*sst.SSTMeta, error) {
-	var leaderPeerMetas []*sst.SSTMeta
+	engineFile *localFile,
+	region *split.RegionInfo) ([]*sst.SSTMeta, error) {
 
 	select {
 	case <-ctx.Done():
@@ -317,20 +310,134 @@ func (local *local) WriteToTiKV(
 	default:
 	}
 
+	var startKey, endKey []byte
+	if len(region.Region.StartKey) > 0 {
+		_, startKey, _ = codec.DecodeBytes(region.Region.StartKey, []byte{})
+	}
+	if len(region.Region.EndKey) > 0 {
+		_, endKey, _ = codec.DecodeBytes(region.Region.EndKey, []byte{})
+	}
+	opt := &pebble.IterOptions{LowerBound:startKey, UpperBound:endKey}
+	iter := engineFile.db.NewIter(opt)
+	defer iter.Close()
+
+	iter.First()
+	firstKey := append([]byte{}, iter.Key()...)
+	iter.Last()
+	lastKey := append([]byte{}, iter.Key()...)
+
+	firstKeyE := codec.EncodeBytes([]byte{}, firstKey)
+	lastKeyE := codec.EncodeBytes([]byte{}, lastKey)
+
+	meta := &sst.SSTMeta{
+		Uuid:        uuid.NewV4().Bytes(),
+		RegionId:    region.Region.GetId(),
+		RegionEpoch: region.Region.GetRegionEpoch(),
+		Range: &sst.Range{
+			Start: firstKeyE,
+			End:   lastKeyE,
+		},
+	}
+
 	leaderID := region.Leader.GetId()
+	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
+	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
 	for _, peer := range region.Region.GetPeers() {
-		metas, err := local.WriteToPeer(ctx, meta, ts, peer, pairs)
+		cli, err := local.getImportClient(ctx, peer)
 		if err != nil {
 			return nil, err
 		}
-		if leaderID == peer.GetId() {
-			leaderPeerMetas = metas
-			log.L().Debug("lock metas", zap.Reflect("metas", leaderPeerMetas))
+
+		wstream, err := cli.Write(ctx)
+		if err != nil {
+			return nil, err
 		}
-		log.L().Debug("write to kv", zap.Reflect("peer", peer),
-			zap.Reflect("region", region), zap.Uint64("leader", leaderID),
-			zap.Reflect("meta", meta), zap.Reflect("return metas", metas))
+
+		// Bind uuid for this write request
+		req := &sst.WriteRequest{
+			Chunk: &sst.WriteRequest_Meta{
+				Meta: meta,
+			},
+		}
+		if err = wstream.Send(req); err != nil {
+			return nil, err
+		}
+		clients = append(clients, wstream)
+		requests = append(requests, req)
 	}
+
+	bytesBuf := newBytesBuffer()
+	defer bytesBuf.destroy()
+	pairs := make([]*sst.Pair, 0, local.sendKVPairs)
+	count := 0
+	size := int64(0)
+	totalCount := 0
+	for iter.First(); iter.Valid(); iter.Next() {
+		size += int64(len(iter.Key()) + len(iter.Value()))
+		pair := &sst.Pair{
+			Key:   bytesBuf.addBytes(iter.Key()),
+			Value: bytesBuf.addBytes(iter.Value()),
+			//Key: append([]byte{}, iter.Key()...),
+			//Value:append([]byte{}, iter.Value()...),
+		}
+		if bytes.Compare(iter.Key(), startKey) < 0 {
+			log.L().Fatal("key out of order", zap.Binary("current", iter.Key()), zap.Binary("fist", startKey))
+		}
+		pairs = append(pairs, pair)
+		count++
+		totalCount++
+
+		if count >= local.sendKVPairs {
+			for i := range clients {
+				requests[i].Reset()
+				requests[i].Chunk = &sst.WriteRequest_Batch{
+					Batch: &sst.WriteBatch{
+						CommitTs: engineFile.ts,
+						Pairs:    pairs,
+					},
+				}
+				if err := clients[i].Send(requests[i]); err != nil {
+					return nil, err
+				}
+			}
+			count = 0
+			pairs = pairs[:0]
+			bytesBuf.reset()
+		}
+	}
+
+	if count > 0 {
+		for i := range clients {
+			requests[i].Reset()
+			requests[i].Chunk = &sst.WriteRequest_Batch{
+				Batch: &sst.WriteBatch{
+					CommitTs: engineFile.ts,
+					Pairs:    pairs,
+				},
+			}
+			if err := clients[i].Send(requests[i]); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	var leaderPeerMetas []*sst.SSTMeta
+	for i, wStream := range clients {
+		if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
+			return nil, closeErr
+		} else {
+			if leaderID == region.Region.Peers[i].GetId() {
+				leaderPeerMetas = resp.Metas
+				log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
+			}
+		}
+	}
+
+	log.L().Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
+		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
+		zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size),
+		zap.Int64("buf_size", bytesBuf.totalSize()))
+
 	return leaderPeerMetas, nil
 }
 
@@ -535,48 +642,131 @@ func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid
 	return ranges, nil
 }
 
+type bytesRecycleChan struct {
+	ch chan []byte
+}
+
+// recycleChan is used for reusing allocated []byte so we can use memory more efficiently
+//
+// NOTE: we don't used a `sync.Pool` because when will sync.Pool release is depending on the
+// garbage collector which always release the memory so late. Use a fixed size chan to reuse
+// can decrease the memory use to 1/3 compare with sync.Pool.
+var recycleChan *bytesRecycleChan
+
+func init() {
+	recycleChan = &bytesRecycleChan{
+		ch:make(chan []byte, 1024),
+	}
+}
+
+func (c *bytesRecycleChan) Acquire() []byte {
+	select {
+	case b := <-c.ch:
+		return b
+	default:
+		return manual.New(2 << 20) // 1M
+	}
+}
+
+func (c *bytesRecycleChan) Release(w []byte) {
+	select {
+	case c.ch <- w:
+		return
+	default:
+		manual.Free(w)
+	}
+}
+
+type bytesBuffer struct {
+	bufs [][]byte
+	curBuf []byte
+	curIdx int
+	curBufIdx int
+	curBufLen int
+}
+
+func newBytesBuffer() *bytesBuffer {
+	return &bytesBuffer{bufs: make([][]byte, 0, 128), curBufIdx: -1}
+}
+
+func (b *bytesBuffer) addBuf() {
+	if b.curBufIdx < len(b.bufs) - 1 {
+		b.curBufIdx += 1
+		b.curBuf = b.bufs[b.curBufIdx]
+	} else {
+		buf := recycleChan.Acquire()
+		b.bufs = append(b.bufs, buf)
+		b.curBuf = buf
+		b.curBufIdx = len(b.bufs) - 1
+	}
+
+	b.curBufLen = len(b.curBuf)
+	b.curIdx = 0
+}
+
+func (b *bytesBuffer) reset() {
+	if len(b.bufs) > 0 {
+		b.curBuf = b.bufs[0]
+		b.curBufLen = len(b.bufs[0])
+		b.curBufIdx = 0
+		b.curIdx = 0
+	}
+}
+
+func (b *bytesBuffer) destroy() {
+	for _, buf := range b.bufs {
+		recycleChan.Release(buf)
+	}
+	b.bufs = b.bufs[:0]
+}
+
+func (b *bytesBuffer) totalSize() int64 {
+	return int64(len(b.bufs)) * int64(1 << 20)
+}
+
+func (b *bytesBuffer) addBytes(bytes []byte) []byte {
+	if len(bytes) > bigValueSize {
+		return append([]byte{}, bytes...)
+	} else {
+		if b.curIdx + len(bytes) > b.curBufLen {
+			b.addBuf()
+		}
+		idx := b.curIdx
+		copy(b.curBuf[idx:], bytes)
+		b.curIdx += len(bytes)
+		return b.curBuf[idx:b.curIdx]
+	}
+}
+
 func (local *local) writeAndIngestByRange(
 	ctx context.Context,
-	db *pebble.DB,
-	start, end []byte,
-	ts uint64,
-	engineUUID uuid.UUID) error {
-
+	engineFile *localFile,
+	start, end []byte) error {
 	select {
 	case <-ctx.Done():
 		return errors.New("context is cancel by other reason")
 	default:
 	}
 
-	pairs := make([]*sst.Pair, 0, 128)
 	ito := &pebble.IterOptions{
 		LowerBound: start,
 		UpperBound: end,
 	}
 
-	iter := db.NewIter(ito)
+	iter := engineFile.db.NewIter(ito)
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
-	iter.First()
-
-	size := int64(0)
-	for iter.Valid() {
-		size += int64(len(iter.Key()) + len(iter.Value()))
-		pair := &sst.Pair{
-			Key:   append([]byte{}, iter.Key()...),
-			Value: append([]byte{}, iter.Value()...),
-		}
-		pairs = append(pairs, pair)
-		iter.Next()
-	}
-
-	if len(pairs) == 0 {
+	hasKey := iter.First()
+	if !hasKey {
 		log.L().Info("There is no pairs in iterator",
 			zap.Binary("start", start),
 			zap.Binary("end", end),
 			zap.Binary("next end", nextKey(end)))
 		return nil
 	}
+	pairStart := append([]byte{}, iter.Key()...)
+	iter.Last()
+	pairEnd := append([]byte{}, iter.Key()...)
 
 	var regions []*split.RegionInfo
 	var err error
@@ -587,73 +777,40 @@ WriteAndIngest:
 		if retry != 0 {
 			time.Sleep(time.Second)
 		}
-		startKey := codec.EncodeBytes([]byte{}, pairs[0].Key)
-		endKey := codec.EncodeBytes([]byte{}, nextKey(pairs[len(pairs)-1].Key))
+		startKey := codec.EncodeBytes([]byte{}, pairStart)
+		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
 		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, 128)
 		if err != nil || len(regions) == 0 {
 			log.L().Warn("scan region failed", zap.Error(err), zap.Int("region_len", len(regions)))
 			continue WriteAndIngest
 		}
-		var regionEndKey []byte
-		_, regionEndKey, err = codec.DecodeBytes(regions[len(regions)-1].Region.EndKey, []byte{})
-		if err != nil || bytes.Compare(regionEndKey, pairs[len(pairs)-1].Key) <= 0 {
-			log.L().Warn("region endKey is smaller than pair endKey", zap.Binary("pairEndKey", pairs[len(pairs)-1].Key),
-				zap.Binary("regionsEndKey", regionEndKey), zap.Error(err))
+
+		if err != nil || bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
+			log.L().Warn("region endKey is smaller than pair endKey", zap.Binary("pairEndKey", endKey),
+				zap.Binary("regionsEndKey", regions[len(regions)-1].Region.EndKey), zap.Error(err))
 			continue
 		}
 
 		shouldWait := false
 		errChan := make(chan error, len(regions))
-		startIndex := 0
 		for _, region := range regions {
-			regionEnd := region.Region.EndKey
-			_, endKey, _ := codec.DecodeBytes(region.Region.EndKey, []byte{})
-			endIndex := sort.Search(len(pairs), func(i int) bool {
-				return bytes.Compare(pairs[i].Key, endKey) >= 0
-			})
-
-			if endIndex <= startIndex {
-				log.L().Warn("empty range for region", zap.Binary("rangeStart", pairs[startIndex].Key),
-					zap.Binary("rangeEnd", pairs[endIndex-1].Key), zap.Reflect("region", region))
-				continue
-			}
-
-			endKey = codec.EncodeBytes([]byte{}, pairs[endIndex-1].Key)
-
 			log.L().Debug("get region", zap.Int("retry", retry), zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey), zap.Uint64("id", region.Region.GetId()),
 				zap.Stringer("epoch", region.Region.GetRegionEpoch()), zap.Binary("start", region.Region.GetStartKey()),
 				zap.Binary("end", region.Region.GetEndKey()), zap.Reflect("peers", region.Region.GetPeers()))
 
 			// generate new uuid for concurrent write to tikv
-			meta := &sst.SSTMeta{
-				Uuid:        uuid.NewV4().Bytes(),
-				RegionId:    region.Region.GetId(),
-				RegionEpoch: region.Region.GetRegionEpoch(),
-				Range: &sst.Range{
-					Start: startKey,
-					End:   endKey,
-				},
-			}
-			if !insideRegion(region.Region, meta) {
-				log.L().Error("[shouldn't happen] sst out of range",
-					zap.Reflect("meta", meta), zap.Reflect("region", region))
-				continue WriteAndIngest
-			}
 
 			if len(regions) == 1 {
-				if err = local.WriteAndIngestPairs(ctx, meta, ts, region, pairs[startIndex:endIndex]); err != nil {
+				if err = local.WriteAndIngestPairs(ctx, engineFile, region); err != nil {
 					continue WriteAndIngest
 				}
 			} else {
 				shouldWait = true
-				go func(start, end int) {
-					errChan <- local.WriteAndIngestPairs(ctx, meta, ts, region, pairs[start:end])
-				}(startIndex, endIndex)
+				go func(r *split.RegionInfo) {
+					errChan <- local.WriteAndIngestPairs(ctx, engineFile, r)
+				}(region)
 			}
-
-			startKey = regionEnd
-			startIndex = endIndex
 		}
 		if shouldWait {
 			shouldRetry := false
@@ -681,12 +838,10 @@ WriteAndIngest:
 
 func (local *local) WriteAndIngestPairs(
 	ctx context.Context,
-	meta *sst.SSTMeta,
-	ts uint64,
+	engineFile *localFile,
 	region *split.RegionInfo,
-	pairs []*sst.Pair,
 ) error {
-	metas, err := local.WriteToTiKV(ctx, meta, ts, region, pairs)
+	metas, err := local.WriteToTiKV(ctx, engineFile, region)
 	if err != nil {
 		log.L().Warn("write to tikv failed", zap.Error(err))
 		return err
@@ -697,7 +852,8 @@ func (local *local) WriteAndIngestPairs(
 			log.L().Debug("ingest meta", zap.Reflect("meta", meta))
 			resp, err := local.Ingest(ctx, meta, region)
 			if err != nil {
-				log.L().Warn("ingest failed", zap.Error(err))
+				log.L().Warn("ingest failed", zap.Error(err), zap.Reflect("meta", meta),
+					zap.Reflect("region", region))
 				continue
 			}
 			needRetry, newRegion, errIngest := isIngestRetryable(resp, region, meta)
@@ -706,6 +862,8 @@ func (local *local) WriteAndIngestPairs(
 				break
 			}
 			if !needRetry {
+				log.L().Warn("ingest failed noretry", zap.Error(errIngest), zap.Reflect("meta", meta),
+					zap.Reflect("region", region))
 				// met non-retryable error retry whole Write procedure
 				return errIngest
 			}
@@ -735,7 +893,6 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	for _, r := range ranges {
-		db := engineFile.db
 		startKey := r.start
 		endKey := r.end
 		w := local.rangeConcurrency.Apply()
@@ -745,7 +902,7 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *loca
 			}()
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
-				if err = local.writeAndIngestByRange(ctx, db, startKey, endKey, engineFile.ts, engineFile.uuid); err != nil {
+				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey); err != nil {
 					log.L().Warn("write and ingest by range failed",
 						zap.Int("retry time", i+1), zap.Error(err))
 				} else {
