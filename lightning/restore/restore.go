@@ -366,6 +366,9 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int32, err error, statusIfSucceed CheckpointStatus) {
 	merger := &StatusCheckpointMerger{Status: statusIfSucceed, EngineID: engineID}
 
+	log.L().Info("update checkpoint", zap.String("table", tableName), zap.Int32("engine_id", engineID),
+		zap.Uint8("new_status", uint8(statusIfSucceed)), zap.Error(err))
+
 	switch {
 	case err == nil:
 		break
@@ -967,9 +970,12 @@ func (t *TableRestore) restoreEngine(
 		zap.Int64("read", totalSQLSize),
 		zap.Uint64("written", totalKVSize),
 	)
-	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusAllWritten)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
+	//
+	if !rc.isLocalBackend() {
+		rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusAllWritten)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
 	}
 
 	dataWorker := rc.closedEngineLimit.Apply()
@@ -1661,9 +1667,12 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = offset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
-		if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
-			// No need to save checkpoint if nothing was delivered.
-			cr.saveCheckpoint(t, engineID, rc)
+		// do not update checkpoint in local mode
+		if !rc.isLocalBackend() {
+			if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
+				// No need to save checkpoint if nothing was delivered.
+				cr.saveCheckpoint(t, engineID, rc)
+			}
 		}
 	}
 
