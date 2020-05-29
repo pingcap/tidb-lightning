@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -727,6 +728,40 @@ func (t *TableRestore) restoreTable(
 			zap.Int("enginesCnt", len(cp.Engines)),
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
+
+		if rc.isLocalBackend() && cp.Status < CheckpointStatusClosed {
+			var prevRowIdMax, lastOffset int64
+			var prevFilePath string
+
+			idList := make([]int32, 0, len(cp.Engines))
+			for id := range cp.Engines {
+				idList = append(idList, id)
+			}
+			sort.Slice(idList, func(i, j int) bool {
+				return idList[i] < idList[j]
+			})
+
+			for _, i := range idList {
+				e := cp.Engines[i]
+				if e.Status < CheckpointStatusClosed {
+					for _, c := range e.Chunks {
+						if c.Key.Path != prevFilePath {
+							prevRowIdMax = 0
+							lastOffset = 0
+							prevFilePath = c.Key.Path
+						}
+						c.Chunk.Offset = lastOffset
+						lastOffset = c.Chunk.EndOffset
+						c.Chunk.PrevRowIDMax = prevRowIdMax
+						prevRowIdMax = c.Chunk.RowIDMax
+					}
+				} else {
+					prevRowIdMax = e.Chunks[len(e.Chunks)-1].Chunk.RowIDMax
+					lastOffset = e.Chunks[len(e.Chunks)-1].Chunk.EndOffset
+					prevFilePath = e.Chunks[len(e.Chunks)-1].Key.Path
+				}
+			}
+		}
 	} else if cp.Status < CheckpointStatusAllWritten {
 		if err := t.populateChunks(rc, cp); err != nil {
 			return errors.Trace(err)
@@ -1673,14 +1708,9 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = offset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
-		// do not update checkpoint in local mode, local mode can't guarantee the written data
-		// is available if exit after update checkpoint here, because the db is not flush.
-		// Flush frequently has huge impact on performance, so we choose not to update checkpoint instead.
-		if !rc.isLocalBackend() {
-			if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
-				// No need to save checkpoint if nothing was delivered.
-				cr.saveCheckpoint(t, engineID, rc)
-			}
+		if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
+			// No need to save checkpoint if nothing was delivered.
+			cr.saveCheckpoint(t, engineID, rc)
 		}
 	}
 

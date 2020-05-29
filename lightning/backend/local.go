@@ -83,14 +83,13 @@ func (e *localFile) Close() error {
 
 // Cleanup remove meta and db files
 func (e *localFile) Cleanup(dataDir string) error {
-	//metaPath := filepath.Join(dataDir, e.uuid.String() + engineMetaFileSuffix)
-	//err := os.Remove(metaPath)
-	//if err != nil {
-	//	return err
-	//}
-	//dbPath := filepath.Join(dataDir, e.uuid.String())
-	//return os.RemoveAll(dbPath)
-	return nil
+	metaPath := filepath.Join(dataDir, e.uuid.String() + engineMetaFileSuffix)
+	err := os.Remove(metaPath)
+	if err != nil {
+		return err
+	}
+	dbPath := filepath.Join(dataDir, e.uuid.String())
+	return os.RemoveAll(dbPath)
 }
 
 type grpcClis struct {
