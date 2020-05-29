@@ -81,6 +81,10 @@ func (importer *importer) Close() {
 	}
 }
 
+func (importer *importer) Flush(engineId uuid.UUID) error {
+	return nil
+}
+
 func (*importer) RetryImportDelay() time.Duration {
 	return defaultRetryBackoffTime
 }

@@ -774,6 +774,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 	if indexEngineCp.Status < CheckpointStatusImported && cp.Status < CheckpointStatusIndexImported {
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
+
 		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, indexEngineID)
 		if err != nil {
 			return errors.Trace(err)
@@ -886,7 +887,7 @@ func (t *TableRestore) restoreEngine(
 	engineID int32,
 	cp *EngineCheckpoint,
 ) (*kv.ClosedEngine, *worker.Worker, error) {
-	if cp.Status == CheckpointStatusClosed {
+	if cp.Status >= CheckpointStatusClosed {
 		w := rc.closedEngineLimit.Apply()
 		closedEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
@@ -980,6 +981,11 @@ func (t *TableRestore) restoreEngine(
 
 	dataWorker := rc.closedEngineLimit.Apply()
 	closedDataEngine, err := dataEngine.Close(ctx)
+	if err = indexEngine.Flush(); err != nil {
+		// If any error occurred, recycle worker immediately
+		rc.closedEngineLimit.Recycle(dataWorker)
+		return nil, nil, errors.Trace(err)
+	}
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
 	if err != nil {
 		// If any error occurred, recycle worker immediately
@@ -1667,7 +1673,9 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = offset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
-		// do not update checkpoint in local mode
+		// do not update checkpoint in local mode, local mode can't guarantee the written data
+		// is available if exit after update checkpoint here, because the db is not flush.
+		// Flush frequently has huge impact on performance, so we choose not to update checkpoint instead.
 		if !rc.isLocalBackend() {
 			if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
 				// No need to save checkpoint if nothing was delivered.

@@ -24,6 +24,7 @@ import (
 	"path"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -65,8 +66,8 @@ type Range struct {
 }
 
 type localFileMeta struct {
-	Ts uint64	`json:"Ts"`
-	Length int64 `json:"Length"`
+	Ts uint64	`json:"ts"`
+	Length int64 `json:"length"`
 	TotalSize int64 `json:"total_size"`
 }
 
@@ -82,13 +83,14 @@ func (e *localFile) Close() error {
 
 // Cleanup remove meta and db files
 func (e *localFile) Cleanup(dataDir string) error {
-	metaPath := filepath.Join(dataDir, e.uuid.String() + engineMetaFileSuffix)
-	err := os.Remove(metaPath)
-	if err != nil {
-		return err
-	}
-	dbPath := filepath.Join(dataDir, e.uuid.String())
-	return os.RemoveAll(dbPath)
+	//metaPath := filepath.Join(dataDir, e.uuid.String() + engineMetaFileSuffix)
+	//err := os.Remove(metaPath)
+	//if err != nil {
+	//	return err
+	//}
+	//dbPath := filepath.Join(dataDir, e.uuid.String())
+	//return os.RemoveAll(dbPath)
+	return nil
 }
 
 type grpcClis struct {
@@ -217,6 +219,18 @@ func (local *local) Close() {
 	}
 }
 
+func (local *local) Flush(engineId uuid.UUID) error {
+	if engine, ok := local.engines.Load(engineId); ok {
+		engineFile := engine.(*localFile)
+		if err := engineFile.db.Flush(); err != nil {
+			return err
+		}
+		return local.saveEngineMeta(engineFile)
+	} else {
+		return errors.Errorf("engine '%s' not found", engineId.String())
+	}
+}
+
 func (local *local) RetryImportDelay() time.Duration {
 	return defaultRetryBackoffTime
 }
@@ -278,11 +292,15 @@ func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) 
 }
 
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
+	meta, err := local.LoadEngineMeta(engineUUID)
+	if err != nil {
+		meta = localFileMeta{}
+	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &localFile{db: db, uuid: engineUUID})
+	local.engines.Store(engineUUID, &localFile{localFileMeta:meta, db: db, uuid: engineUUID})
 	return nil
 }
 
@@ -1097,10 +1115,10 @@ func (local *local) WriteRows(
 	if err != nil {
 		return err
 	}
-	engineFile.Length += int64(len(kvs))
-	engineFile.TotalSize += size
+	atomic.AddInt64(&engineFile.Length, int64(len(kvs)))
+	atomic.AddInt64(&engineFile.TotalSize, size)
 	engineFile.Ts = ts
-	local.engines.Store(engineUUID, engineFile)
+	//local.engines.Store(engineUUID, engineFile)
 	return
 }
 
