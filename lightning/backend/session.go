@@ -178,7 +178,7 @@ func (m *memDbBuffer) Flush() (int, error) {
 }
 
 // Discard must do nothing because it will discard every time when AddRecord finished
-// It's hard cord in TiDB after this PR(https://github.com/pingcap/tidb/pull/15931/files) merged.
+// It's hard code in TiDB after this PR(https://github.com/pingcap/tidb/pull/15931/files) merged.
 func (m *memDbBuffer) Discard() {
 	// Do nothing
 }
