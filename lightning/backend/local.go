@@ -181,7 +181,7 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 		return nil, errors.Trace(err)
 	}
 	opt := grpc.WithInsecure()
-	if local.tls != nil {
+	if local.tls.TransToTlsConfig() != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(local.tls.TransToTlsConfig()))
 	}
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
