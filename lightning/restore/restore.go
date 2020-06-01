@@ -1016,10 +1016,14 @@ func (t *TableRestore) restoreEngine(
 
 	dataWorker := rc.closedEngineLimit.Apply()
 	closedDataEngine, err := dataEngine.Close(ctx)
-	if err = indexEngine.Flush(); err != nil {
-		// If any error occurred, recycle worker immediately
-		rc.closedEngineLimit.Recycle(dataWorker)
-		return nil, nil, errors.Trace(err)
+	// if checkpoint enabled, we must flush index engine to avoid data lose.
+	// this flush action import upto 10% of the performance, so we only do it if necessary.
+	if rc.cfg.Checkpoint.Enable == true {
+		if err = indexEngine.Flush(); err != nil {
+			// If any error occurred, recycle worker immediately
+			rc.closedEngineLimit.Recycle(dataWorker)
+			return nil, nil, errors.Trace(err)
+		}
 	}
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
 	if err != nil {

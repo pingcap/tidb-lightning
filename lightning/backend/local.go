@@ -84,10 +84,13 @@ func (e *LocalFile) Close() error {
 // Cleanup remove meta and db files
 	func (e *LocalFile) Cleanup(dataDir string) error {
 	metaPath := filepath.Join(dataDir, e.Uuid.String() + engineMetaFileSuffix)
-	err := os.Remove(metaPath)
-	if err != nil {
-		return err
+	if _, err := os.Stat(metaPath); err == nil {
+		err = os.Remove(metaPath)
+		if err != nil {
+			return err
+		}
 	}
+
 	dbPath := filepath.Join(dataDir, e.Uuid.String())
 	return os.RemoveAll(dbPath)
 }
