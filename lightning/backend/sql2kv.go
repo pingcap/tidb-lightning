@@ -164,7 +164,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 
 	isAutoRandom := false
-	if kvcodec.tbl.Meta().PKIsHandle && !kvcodec.tbl.Meta().ContainsAutoRandomBits() {
+	if kvcodec.tbl.Meta().PKIsHandle && kvcodec.tbl.Meta().ContainsAutoRandomBits() {
 		isAutoRandom = true
 	}
 
