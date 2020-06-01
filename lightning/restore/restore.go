@@ -26,7 +26,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -66,12 +65,6 @@ const (
 const (
 	compactStateIdle int32 = iota
 	compactStateDoing
-)
-
-var (
-	requiredTiDBVersion = *semver.New("2.1.0")
-	requiredPDVersion   = *semver.New("2.1.0")
-	requiredTiKVVersion = *semver.New("2.1.0")
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
@@ -319,7 +312,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			}
 		}
 	}
-	dbInfos, err := tidbMgr.LoadSchemaInfo(ctx, rc.dbMetas)
+	dbInfos, err := tidbMgr.LoadSchemaInfo(ctx, rc.dbMetas, rc.backend.FetchRemoteTableModels)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -330,6 +323,10 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.Inject("InitializeCheckpointExit", func() {
+		log.L().Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
+		os.Exit(0)
+	})
 
 	go rc.listenCheckpointUpdates()
 
@@ -610,6 +607,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 				err := task.tr.restoreTable(ctx2, rc, task.cp)
+				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
@@ -621,6 +619,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 
 	// first collect all tables where the checkpoint is invalid
 	allInvalidCheckpoints := make(map[string]CheckpointStatus)
+	// collect all tables whose checkpoint's tableID can't match current tableID
+	allDirtyCheckpoints := make(map[string]struct{})
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo, ok := rc.dbInfos[dbMeta.Name]
 		if !ok {
@@ -639,6 +639,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			}
 			if cp.Status <= CheckpointStatusMaxInvalid {
 				allInvalidCheckpoints[tableName] = cp.Status
+			} else if cp.TableID > 0 && cp.TableID != tableInfo.ID {
+				allDirtyCheckpoints[tableName] = struct{}{}
 			}
 		}
 	}
@@ -653,7 +655,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		for tableName, status := range allInvalidCheckpoints {
 			failedStep := status * 10
 			var action strings.Builder
-			action.WriteString("./tidb-lightning-ctl --checkpoint-errors-")
+			action.WriteString("./tidb-lightning-ctl --checkpoint-error-")
 			switch failedStep {
 			case CheckpointStatusAlteredAutoInc, CheckpointStatusAnalyzed:
 				action.WriteString("ignore")
@@ -672,10 +674,28 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			)
 		}
 
-		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-errors-destroy=all --config=...` to start from scratch")
+		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch")
 		logger.Info("For details of this failure, read the log file from the PREVIOUS run")
 
 		return errors.New("TiDB Lightning has failed last time; please resolve these errors first")
+	}
+	if len(allDirtyCheckpoints) > 0 {
+		logger := log.L()
+		logger.Error(
+			"TiDB Lightning has detected tables with illegal checkpoints. To prevent data mismatch, this run will stop now. Please remove these checkpoints first",
+			zap.Int("count", len(allDirtyCheckpoints)),
+		)
+
+		for tableName := range allDirtyCheckpoints {
+			logger.Info("-",
+				zap.String("table", tableName),
+				zap.String("recommendedAction", "./tidb-lightning-ctl --checkpoint-remove='"+tableName+"' --config=..."),
+			)
+		}
+
+		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-remove=all --config=...` to start from scratch")
+
+		return errors.New("TiDB Lightning has detected tables with illegal checkpoints; please remove these checkpoints first")
 	}
 
 	for _, dbMeta := range rc.dbMetas {
@@ -1199,99 +1219,7 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 	if !rc.cfg.App.CheckRequirements {
 		return nil
 	}
-
-	if err := rc.checkTiDBVersion(); err != nil {
-		return errors.Trace(err)
-	}
-	if err := rc.checkPDVersion(); err != nil {
-		return errors.Trace(err)
-	}
-	if err := rc.checkTiKVVersion(); err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
-}
-
-func extractTiDBVersion(version string) (*semver.Version, error) {
-	// version format: "5.7.10-TiDB-v2.1.0-rc.1-7-g38c939f"
-	//                               ^~~~~~~~~^ we only want this part
-	// version format: "5.7.10-TiDB-v2.0.4-1-g06a0bf5"
-	//                               ^~~~^
-	// version format: "5.7.10-TiDB-v2.0.7"
-	//                               ^~~~^
-	// version format: "5.7.25-TiDB-v3.0.0-beta-211-g09beefbe0-dirty"
-	//                               ^~~~~~~~~^
-	// The version is generated by `git describe --tags` on the TiDB repository.
-	versions := strings.Split(strings.TrimSuffix(version, "-dirty"), "-")
-	end := len(versions)
-	switch end {
-	case 3, 4:
-	case 5, 6:
-		end -= 2
-	default:
-		return nil, errors.Errorf("not a valid TiDB version: %s", version)
-	}
-	rawVersion := strings.Join(versions[2:end], "-")
-	rawVersion = strings.TrimPrefix(rawVersion, "v")
-	return semver.NewVersion(rawVersion)
-}
-
-func (rc *RestoreController) checkTiDBVersion() error {
-	var status struct{ Version string }
-	err := rc.tls.GetJSON("/status", &status)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	version, err := extractTiDBVersion(status.Version)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return checkVersion("TiDB", requiredTiDBVersion, *version)
-}
-
-func (rc *RestoreController) checkPDVersion() error {
-	var rawVersion string
-	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON("/pd/api/v1/config/cluster-version", &rawVersion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	version, err := semver.NewVersion(rawVersion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return checkVersion("PD", requiredPDVersion, *version)
-}
-
-func (rc *RestoreController) checkTiKVVersion() error {
-	return kv.ForAllStores(
-		context.Background(),
-		rc.tls.WithHost(rc.cfg.TiDB.PdAddr),
-		kv.StoreStateDown,
-		func(c context.Context, store *kv.Store) error {
-			component := fmt.Sprintf("TiKV (at %s)", store.Address)
-			version, err := semver.NewVersion(store.Version)
-			if err != nil {
-				return errors.Annotate(err, component)
-			}
-			return checkVersion(component, requiredTiKVVersion, *version)
-		},
-	)
-}
-
-func checkVersion(component string, expected, actual semver.Version) error {
-	if actual.Compare(expected) >= 0 {
-		return nil
-	}
-	return errors.Errorf(
-		"%s version too old, expected '>=%s', found '%s'",
-		component,
-		expected,
-		actual,
-	)
+	return rc.backend.CheckRequirements()
 }
 
 func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
@@ -1312,7 +1240,7 @@ func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
 		err = rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
 	}
 	task.End(zap.ErrorLevel, err)
-	return errors.Trace(err)
+	return errors.Annotate(err, "clean checkpoints")
 }
 
 func (rc *RestoreController) isLocalBackend() bool {
@@ -1401,7 +1329,7 @@ func (tr *TableRestore) Close() {
 
 func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint) error {
 	task := t.logger.Begin(zap.InfoLevel, "load engines and files")
-	chunks, err := mydump.MakeTableRegions(t.tableMeta, t.tableInfo.Columns, rc.cfg, rc.ioWorkers)
+	chunks, err := mydump.MakeTableRegions(t.tableMeta, len(t.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers)
 	if err == nil {
 		timestamp := time.Now().Unix()
 		failpoint.Inject("PopulateChunkTimestamp", func(v failpoint.Value) {

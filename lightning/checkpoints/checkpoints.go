@@ -59,7 +59,7 @@ const WholeTableEngineID = math.MaxInt32
 const (
 	// the table names to store each kind of checkpoint in the checkpoint database
 	// remember to increase the version number in case of incompatible change.
-	checkpointTableNameTable  = "table_v5"
+	checkpointTableNameTable  = "table_v6"
 	checkpointTableNameEngine = "engine_v5"
 	checkpointTableNameChunk  = "chunk_v4"
 )
@@ -149,6 +149,7 @@ type TableCheckpoint struct {
 	Status    CheckpointStatus
 	AllocBase int64
 	Engines   map[int32]*EngineCheckpoint
+	TableID   int64
 }
 
 func (cp *TableCheckpoint) DeepCopy() *TableCheckpoint {
@@ -160,6 +161,7 @@ func (cp *TableCheckpoint) DeepCopy() *TableCheckpoint {
 		Status:    cp.Status,
 		AllocBase: cp.AllocBase,
 		Engines:   engines,
+		TableID:   cp.TableID,
 	}
 }
 func (cp *TableCheckpoint) CountChunks() int {
@@ -396,6 +398,7 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 			hash binary(32) NOT NULL,
 			status tinyint unsigned DEFAULT 30,
 			alloc_base bigint NOT NULL DEFAULT 0,
+			table_id bigint NOT NULL DEFAULT 0,
 			create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			INDEX(task_id)
@@ -463,7 +466,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, dbInfo map[strin
 		// We do need to capture the error is display a user friendly message
 		// (multiple nodes cannot import the same table) though.
 		stmt, err := tx.PrepareContext(c, fmt.Sprintf(`
-			INSERT INTO %s.%s (task_id, table_name, hash) VALUES (?, ?, ?)
+			INSERT INTO %s.%s (task_id, table_name, hash, table_id) VALUES (?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE task_id = CASE
 				WHEN hash = VALUES(hash)
 				THEN VALUES(task_id)
@@ -477,7 +480,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, dbInfo map[strin
 		for _, db := range dbInfo {
 			for _, table := range db.Tables {
 				tableName := common.UniqueTable(db.Name, table.Name)
-				_, err = stmt.ExecContext(c, cpdb.taskID, tableName, 0)
+				_, err = stmt.ExecContext(c, cpdb.taskID, tableName, 0, table.ID)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -577,12 +580,12 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		// 3. Fill in the remaining table info
 
 		tableQuery := fmt.Sprintf(`
-			SELECT status, alloc_base FROM %s.%s WHERE table_name = ?
+			SELECT status, alloc_base, table_id FROM %s.%s WHERE table_name = ?
 		`, cpdb.schema, checkpointTableNameTable)
 		tableRow := tx.QueryRowContext(c, tableQuery, tableName)
 
 		var status uint8
-		if err := tableRow.Scan(&status, &cp.AllocBase); err != nil {
+		if err := tableRow.Scan(&status, &cp.AllocBase, &cp.TableID); err != nil {
 			return errors.Trace(err)
 		}
 		cp.Status = CheckpointStatus(status)
@@ -798,6 +801,7 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, dbInfo map[string
 				cpdb.checkpoints.Checkpoints[tableName] = &TableCheckpointModel{
 					Status:  uint32(CheckpointStatusLoaded),
 					Engines: map[int32]*EngineCheckpointModel{},
+					TableID: table.ID,
 				}
 			}
 			// TODO check if hash matches
@@ -827,6 +831,7 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 		Status:    CheckpointStatus(tableModel.Status),
 		AllocBase: tableModel.AllocBase,
 		Engines:   make(map[int32]*EngineCheckpoint, len(tableModel.Engines)),
+		TableID:   tableModel.TableID,
 	}
 
 	for engineID, engineModel := range tableModel.Engines {

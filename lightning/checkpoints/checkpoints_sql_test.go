@@ -64,13 +64,13 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 	initializeStmt := s.mock.
 		ExpectPrepare("INSERT INTO `mock-schema`\\.table_v\\d+")
 	initializeStmt.ExpectExec().
-		WithArgs(1234, "`db1`.`t1`", sqlmock.AnyArg()).
+		WithArgs(1234, "`db1`.`t1`", sqlmock.AnyArg(), int64(1)).
 		WillReturnResult(sqlmock.NewResult(5, 1))
 	initializeStmt.ExpectExec().
-		WithArgs(1234, "`db1`.`t2`", sqlmock.AnyArg()).
+		WithArgs(1234, "`db1`.`t2`", sqlmock.AnyArg(), int64(2)).
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	initializeStmt.ExpectExec().
-		WithArgs(1234, "`db2`.`t3`", sqlmock.AnyArg()).
+		WithArgs(1234, "`db2`.`t3`", sqlmock.AnyArg(), int64(3)).
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	s.mock.ExpectCommit()
 
@@ -79,14 +79,14 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 		"db1": {
 			Name: "db1",
 			Tables: map[string]*checkpoints.TidbTableInfo{
-				"t1": {Name: "t1"},
-				"t2": {Name: "t2"},
+				"t1": {Name: "t1", ID: 1},
+				"t2": {Name: "t2", ID: 2},
 			},
 		},
 		"db2": {
 			Name: "db2",
 			Tables: map[string]*checkpoints.TidbTableInfo{
-				"t3": {Name: "t3"},
+				"t3": {Name: "t3", ID: 3},
 			},
 		},
 	})
@@ -229,8 +229,8 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
-			sqlmock.NewRows([]string{"status", "alloc_base"}).
-				AddRow(60, 132861),
+			sqlmock.NewRows([]string{"status", "alloc_base", "table_id"}).
+				AddRow(60, 132861, int64(2)),
 		)
 	s.mock.ExpectCommit()
 
@@ -239,6 +239,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 	c.Assert(cp, DeepEquals, &checkpoints.TableCheckpoint{
 		Status:    checkpoints.CheckpointStatusAllWritten,
 		AllocBase: 132861,
+		TableID:  int64(2),
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {Status: checkpoints.CheckpointStatusLoaded},
 			0: {

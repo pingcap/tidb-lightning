@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -252,6 +253,11 @@ func (be *tidbBackend) ShouldPostProcess() bool {
 	return false
 }
 
+func (be *tidbBackend) CheckRequirements() error {
+	log.L().Info("skipping check requirements for tidb backend")
+	return nil
+}
+
 func (be *tidbBackend) NewEncoder(_ table.Table, options *SessionOptions) Encoder {
 	return tidbEncoder{mode: options.SQLMode}
 }
@@ -317,4 +323,47 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
 	})
 	return err
+}
+
+func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*model.TableInfo, err error) {
+	s := common.SQLWithRetry{
+		DB:     be.db,
+		Logger: log.L(),
+	}
+	err = s.Transact(context.Background(), "fetch table columns", func(c context.Context, tx *sql.Tx) error {
+		rows, e := tx.Query(`
+			SELECT table_name, group_concat(column_name SEPARATOR '\n')
+			FROM information_schema.columns
+			WHERE table_schema = ?
+			GROUP BY table_name;
+		`, schemaName)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var tableName, columnNamesConcat string
+			if e := rows.Scan(&tableName, &columnNamesConcat); e != nil {
+				return e
+			}
+			columnNames := strings.Split(columnNamesConcat, "\n")
+			columns := make([]*model.ColumnInfo, 0, len(columnNames))
+			for i, columnName := range columnNames {
+				columns = append(columns, &model.ColumnInfo{
+					Name:   model.NewCIStr(columnName),
+					Offset: i,
+					State:  model.StatePublic,
+				})
+			}
+			tables = append(tables, &model.TableInfo{
+				Name:       model.NewCIStr(tableName),
+				Columns:    columns,
+				State:      model.StatePublic,
+				PKIsHandle: true,
+			})
+		}
+		return rows.Err()
+	})
+	return
 }

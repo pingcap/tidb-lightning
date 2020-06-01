@@ -16,9 +16,10 @@ package backend
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
+	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/parser/model"
 	"io/ioutil"
 	"os"
 	"path"
@@ -55,6 +56,12 @@ const (
 	dialTimeout          = 5 * time.Second
 	bigValueSize         = 1 << 16 // 64K
 	engineMetaFileSuffix = ".meta"
+)
+
+var (
+	localMinTiDBVersion  = *semver.New("4.0.0")
+	localMinTiKVVersion  = *semver.New("4.0.0")
+	localMinPDVersion  = *semver.New("4.0.0")
 )
 
 // Range record start and end key for localStoreDir.DB
@@ -104,7 +111,8 @@ type local struct {
 	engines  sync.Map
 	grpcClis grpcClis
 	splitCli split.SplitClient
-	tlsConf  *tls.Config
+	tls  *common.TLS
+	pdAddr 	string
 
 	localStoreDir   string
 	regionSplitSize int64
@@ -129,11 +137,7 @@ func NewLocalBackend(
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
 	}
-	tlsConf := tls.TransToTlsConfig()
-	if err != nil {
-		return MakeBackend(nil), err
-	}
-	splitCli := split.NewSplitClient(pdCli, tlsConf)
+	splitCli := split.NewSplitClient(pdCli, tls.TransToTlsConfig())
 
 	shouldCreate := true
 	if enableCheckpoint {
@@ -156,7 +160,8 @@ func NewLocalBackend(
 	local := &local{
 		engines:  sync.Map{},
 		splitCli: splitCli,
-		tlsConf:  tlsConf,
+		tls:  	  tls,
+		pdAddr:pdAddr,
 
 		localStoreDir:   localFile,
 		regionSplitSize: regionSplitSize,
@@ -176,8 +181,8 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 		return nil, errors.Trace(err)
 	}
 	opt := grpc.WithInsecure()
-	if local.tlsConf != nil {
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(local.tlsConf))
+	if local.tls != nil {
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(local.tls.TransToTlsConfig()))
 	}
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	keepAlive := 10
@@ -975,6 +980,23 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 		log.L().Error("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 	}
 	return nil
+}
+
+func (local *local) CheckRequirements() error {
+	if err := checkTiDBVersion(local.tls, localMinTiDBVersion); err != nil {
+		return err
+	}
+	if err := checkPDVersion(local.tls, local.pdAddr, localMinPDVersion); err != nil {
+		return err
+	}
+	if err := checkTiKVVersion(local.tls, local.pdAddr, localMinTiKVVersion); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (local *local) FetchRemoteTableModels(schemaName string) ([]*model.TableInfo, error) {
+	return fetchRemoteTableModelsFromTLS(local.tls, schemaName)
 }
 
 func (local *local) WriteRows(
