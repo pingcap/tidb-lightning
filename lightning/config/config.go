@@ -407,6 +407,12 @@ func (cfg *Config) Adjust() error {
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
 
+	if cfg.TikvImporter.Backend == BackendLocal {
+		if len(cfg.TikvImporter.SortedKVDir) == 0 {
+			return errors.Errorf("tikv-importer.sorted-kv-dir must not be empty!")
+		}
+	}
+
 	if cfg.TikvImporter.Backend == BackendTiDB {
 		cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
 		switch cfg.TikvImporter.OnDuplicate {

@@ -27,8 +27,6 @@ const SplitRetryTimes = 32
 
 func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []Range) error {
 	if len(ranges) == 0 {
-		// TODO log
-
 		return nil
 	}
 
@@ -248,7 +246,7 @@ func needSplit(splitKey []byte, regions []*split.RegionInfo) *split.RegionInfo {
 }
 
 var (
-	tablePrefix  = []byte{'t'}
+	tablePrefix  = tablecodec.TablePrefix()
 	idLen        = 8
 	recordPrefix = []byte("_r")
 )

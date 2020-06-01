@@ -57,7 +57,7 @@ const (
 	engineMetaFileSuffix 			= ".meta"
 )
 
-// Range record start and end key for localFile.DB
+// Range record start and end key for localStoreDir.DB
 // so we can write it to tikv in streaming
 type Range struct {
 	start  []byte
@@ -106,12 +106,11 @@ type local struct {
 	splitCli split.SplitClient
 	tlsConf  *tls.Config
 
-	localFile       string
+	localStoreDir   string
 	regionSplitSize int64
 
-	rangeConcurrency *worker.Pool
-	sendKVPairs      int
-	pairPool         sync.Pool
+	rangeConcurrency  *worker.Pool
+	batchWriteKVPairs int
 	checkpointEnabled bool
 }
 
@@ -159,12 +158,11 @@ func NewLocalBackend(
 		splitCli: splitCli,
 		tlsConf:  tlsConf,
 
-		localFile:       localFile,
+		localStoreDir:   localFile,
 		regionSplitSize: regionSplitSize,
 
-		rangeConcurrency: worker.NewPool(ctx, rangeConcurrency, "range"),
-		sendKVPairs:      sendKVPairs,
-		pairPool:         sync.Pool{New: func() interface{} { return &sst.Pair{} }},
+		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
+		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
 	}
 	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
@@ -213,8 +211,8 @@ func (local *local) Close() {
 		return true
 	})
 
-	if !local.checkpointEnabled || common.IsEmptyDir(local.localFile) {
-		err := os.RemoveAll(local.localFile)
+	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
+		err := os.RemoveAll(local.localStoreDir)
 		if err != nil {
 			log.L().Error("remove local db file failed", zap.Error(err))
 		}
@@ -259,7 +257,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 	if readOnly {
 		opt.ReadOnly = true
 	}
-	dbPath := path.Join(local.localFile, engineUUID.String())
+	dbPath := path.Join(local.localStoreDir, engineUUID.String())
 	return pebble.Open(dbPath, opt)
 }
 
@@ -268,7 +266,7 @@ func (local *local) saveEngineMeta(engine *LocalFile) error {
 	if err != nil {
 		return err
 	}
-	metaPath := filepath.Join(local.localFile, engine.Uuid.String() + engineMetaFileSuffix)
+	metaPath := filepath.Join(local.localStoreDir, engine.Uuid.String() + engineMetaFileSuffix)
 	f, err := os.Create(metaPath)
 	if err != nil {
 		return err
@@ -278,7 +276,7 @@ func (local *local) saveEngineMeta(engine *LocalFile) error {
 }
 
 func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) {
-	mataPath := filepath.Join(local.localFile, engineUUID.String() + engineMetaFileSuffix)
+	mataPath := filepath.Join(local.localStoreDir, engineUUID.String() + engineMetaFileSuffix)
 	f, err := os.Open(mataPath)
 	var meta localFileMeta
 	if err != nil {
@@ -352,69 +350,6 @@ func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst
 	return sst.NewImportSSTClient(conn), nil
 }
 
-func (local *local) WriteToPeer(
-	ctx context.Context,
-	meta *sst.SSTMeta,
-	ts uint64,
-	peer *metapb.Peer,
-	pairs []*sst.Pair) (metas []*sst.SSTMeta, err error) {
-
-	select {
-	case <-ctx.Done():
-		return
-	default:
-	}
-
-	cli, err := local.getImportClient(ctx, peer)
-	if err != nil {
-		return
-	}
-
-	wstream, err := cli.Write(ctx)
-	if err != nil {
-		return
-	}
-
-	// Bind uuid for this write request
-	req := &sst.WriteRequest{
-		Chunk: &sst.WriteRequest_Meta{
-			Meta: meta,
-		},
-	}
-	if err = wstream.Send(req); err != nil {
-		return
-	}
-
-	startOffset := 0
-	step := local.sendKVPairs
-	for startOffset < len(pairs) {
-		endOffset := startOffset + step
-		if endOffset > len(pairs) {
-			endOffset = len(pairs)
-		}
-		req.Reset()
-		req.Chunk = &sst.WriteRequest_Batch{
-			Batch: &sst.WriteBatch{
-				CommitTs: ts,
-				Pairs:    pairs[startOffset:endOffset],
-			},
-		}
-		err = wstream.Send(req)
-		if err != nil {
-			return
-		}
-		startOffset += step
-	}
-
-	if resp, closeErr := wstream.CloseAndRecv(); closeErr != nil {
-		err = closeErr
-	} else {
-		metas = resp.Metas
-		log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", metas))
-	}
-	return
-}
-
 func (local *local) WriteToTiKV(
 	ctx context.Context,
 	engineFile *LocalFile,
@@ -438,20 +373,17 @@ func (local *local) WriteToTiKV(
 	defer iter.Close()
 
 	iter.First()
-	firstKey := append([]byte{}, iter.Key()...)
+	firstKey := codec.EncodeBytes([]byte{}, iter.Key())
 	iter.Last()
-	lastKey := append([]byte{}, iter.Key()...)
-
-	firstKeyE := codec.EncodeBytes([]byte{}, firstKey)
-	lastKeyE := codec.EncodeBytes([]byte{}, lastKey)
+	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
 
 	meta := &sst.SSTMeta{
 		Uuid:        uuid.NewV4().Bytes(),
 		RegionId:    region.Region.GetId(),
 		RegionEpoch: region.Region.GetRegionEpoch(),
 		Range: &sst.Range{
-			Start: firstKeyE,
-			End:   lastKeyE,
+			Start: firstKey,
+			End:   lastKey,
 		},
 	}
 
@@ -484,7 +416,7 @@ func (local *local) WriteToTiKV(
 
 	bytesBuf := newBytesBuffer()
 	defer bytesBuf.destroy()
-	pairs := make([]*sst.Pair, 0, local.sendKVPairs)
+	pairs := make([]*sst.Pair, 0, local.batchWriteKVPairs)
 	count := 0
 	size := int64(0)
 	totalCount := 0
@@ -503,7 +435,7 @@ func (local *local) WriteToTiKV(
 		count++
 		totalCount++
 
-		if count >= local.sendKVPairs {
+		if count >= local.batchWriteKVPairs {
 			for i := range clients {
 				requests[i].Reset()
 				requests[i].Chunk = &sst.WriteRequest_Batch{
@@ -591,46 +523,11 @@ func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split
 	return resp, nil
 }
 
-func (local *local) printSSTableInfos(tables [][]pebble.TableInfo, uid uuid.UUID) {
-	tableCount := 0
-	totalSize := uint64(0)
-	maxTableSize := uint64(0)
-	minTableSize := uint64(2 << 31)
-
-	zf := make([]zap.Field, 0)
-	zf = append(zf, zap.Stringer("uuid", uid))
-
-	for i, levelTables := range tables {
-		for idx, t := range levelTables {
-			tableCount++
-			totalSize += t.Size
-			sk := append([]byte{}, t.Smallest.UserKey...)
-			lk := append([]byte{}, t.Largest.UserKey...)
-			zf = append(zf, zap.Int("level", i))
-			zf = append(zf, zap.Int("idx", idx))
-			zf = append(zf, zap.Binary("start", sk))
-			zf = append(zf, zap.Binary("end", lk))
-			zf = append(zf, zap.Uint64("size", t.Size))
-			if t.Size > maxTableSize {
-				maxTableSize = t.Size
-			}
-			if t.Size < minTableSize {
-				minTableSize = t.Size
-			}
-		}
-	}
-	zf = append(zf, zap.Int("table count", tableCount))
-	zf = append(zf, zap.Uint64("max table size", maxTableSize))
-	zf = append(zf, zap.Uint64("min table size", minTableSize))
-	zf = append(zf, zap.Uint64("total table size", totalSize))
-	log.L().Info("ssttables summary infos", zf...)
-}
-
 func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid.UUID) ([]Range, error) {
 	if engineFile.Length == 0 {
 		return nil, nil
 	}
-	ranges := make([]Range, 0)
+
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
 
@@ -648,7 +545,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 
 	// <= 96MB no need to split into range
 	if engineFile.TotalSize <= local.regionSplitSize {
-		ranges = append(ranges, Range{start: startKey, end: nextKey(endKey), length: int(engineFile.Length)})
+		ranges := []Range{{start: startKey, end: nextKey(endKey), length: int(engineFile.Length)}}
 		return ranges, nil
 	}
 
@@ -657,6 +554,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 	// split data into n ranges, then seek n times to get n + 1 ranges
 	n := engineFile.TotalSize / local.regionSplitSize
 
+	ranges := make([]Range, 0, n + 1)
 	if tablecodec.IsIndexKey(startKey) {
 		// index engine
 		tableID, startIndexID, _, err := tablecodec.DecodeIndexKey(startKey)
@@ -715,9 +613,10 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 
 			keyPrefix := tablecodec.EncodeTableIndexPrefix(tableID, i)
 			for _, v := range values {
-				e := append([]byte{}, append(keyPrefix, v...)...)
-				ranges = append(ranges, Range{start: append([]byte{}, startKeyOfIndex...), end: nextKey(e)})
-				startKeyOfIndex = nextKey(e)
+				e := append(keyPrefix, v...)
+				rangeEnd := nextKey(e)
+				ranges = append(ranges, Range{start: startKeyOfIndex, end: rangeEnd})
+				startKeyOfIndex = rangeEnd
 			}
 		}
 	} else {
@@ -732,28 +631,28 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		}
 		step := (endHandle - startHandle) / n
 		index := int64(0)
-		var skey, ekey []byte
+		var sKey, eKey []byte
 
 		log.L().Info("data engine", zap.Int64("step", step),
 			zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
 
 		for i := startHandle; i+step <= endHandle; i += step {
-			skey = tablecodec.EncodeRowKeyWithHandle(tableID, i)
-			ekey = tablecodec.EncodeRowKeyWithHandle(tableID, i+step-1)
+			sKey = tablecodec.EncodeRowKeyWithHandle(tableID, i)
+			eKey = tablecodec.EncodeRowKeyWithHandle(tableID, i+step-1)
 			index = i
 			log.L().Debug("data engine append range", zap.Int64("start handle", i),
-				zap.Int64("end handle", i+step-1), zap.Binary("start key", skey),
-				zap.Binary("end key", ekey), zap.Int64("step", step))
+				zap.Int64("end handle", i+step-1), zap.Binary("start key", sKey),
+				zap.Binary("end key", eKey), zap.Int64("step", step))
 
-			ranges = append(ranges, Range{start: skey, end: nextKey(ekey)})
+			ranges = append(ranges, Range{start: sKey, end: nextKey(eKey)})
 		}
 		log.L().Debug("data engine append range at final",
 			zap.Int64("start handle", index+step), zap.Int64("end handle", endHandle),
-			zap.Binary("start key", skey), zap.Binary("end key", endKey),
+			zap.Binary("start key", sKey), zap.Binary("end key", endKey),
 			zap.Int64("step", endHandle-index-step+1))
 
-		skey = tablecodec.EncodeRowKeyWithHandle(tableID, index+step)
-		ranges = append(ranges, Range{start: skey, end: nextKey(endKey)})
+		sKey = tablecodec.EncodeRowKeyWithHandle(tableID, index+step)
+		ranges = append(ranges, Range{start: sKey, end: nextKey(endKey)})
 	}
 	return ranges, nil
 }
@@ -899,12 +798,6 @@ WriteAndIngest:
 		if err != nil || len(regions) == 0 {
 			log.L().Warn("scan region failed", zap.Error(err), zap.Int("region_len", len(regions)))
 			continue WriteAndIngest
-		}
-
-		if err != nil || bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
-			log.L().Warn("region endKey is smaller than pair endKey", zap.Binary("pairEndKey", endKey),
-				zap.Binary("regionsEndKey", regions[len(regions)-1].Region.EndKey), zap.Error(err))
-			continue
 		}
 
 		shouldWait := false
@@ -1073,7 +966,7 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 		if err != nil {
 			return err
 		}
-		err = localEngine.Cleanup(local.localFile)
+		err = localEngine.Cleanup(local.localStoreDir)
 		if err != nil {
 			return err
 		}
@@ -1113,14 +1006,12 @@ func (local *local) WriteRows(
 		wb.Set(pair.Key, pair.Val, wo)
 		size += int64(len(pair.Key) + len(pair.Val))
 	}
-	err := wb.Commit(wo)
-	if err != nil {
+	if err := wb.Commit(wo); err != nil {
 		return err
 	}
 	atomic.AddInt64(&engineFile.Length, int64(len(kvs)))
 	atomic.AddInt64(&engineFile.TotalSize, size)
 	engineFile.Ts = ts
-	//local.engines.Store(engineUUID, engineFile)
 	return
 }
 
@@ -1243,30 +1134,4 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 	res = append(res, end)
 
 	return res
-}
-
-// find last key that is less than target key
-func binarySearch(pairs []*sst.Pair, targetKey []byte) int {
-	if len(targetKey) == 0 {
-		// target is max, so return max index pair
-		return len(pairs) - 1
-	}
-	low := 0
-	high := len(pairs) - 1
-	for low <= high {
-		mid := low + (high-low)/2
-		midValue := pairs[mid]
-		compare := bytes.Compare(codec.EncodeBytes([]byte{}, midValue.Key), targetKey)
-		if compare < 0 {
-			if mid == len(pairs)-1 || bytes.Compare(codec.EncodeBytes([]byte{}, pairs[mid+1].Key), targetKey) > 0 {
-				return mid
-			}
-			low = mid + 1
-		} else if compare == 0 {
-			return mid - 1
-		} else {
-			high = mid - 1
-		}
-	}
-	return -1
 }
