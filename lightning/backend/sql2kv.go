@@ -186,7 +186,9 @@ func (kvcodec *tableKVEncoder) Encode(
 		if err != nil {
 			return nil, logKVConvertFailed(logger, row, j, col.ToInfo(), err)
 		}
+
 		record = append(record, value)
+
 		if isAutoRandom && isPk {
 			typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
 			incrementalBits := typeBitsLength - kvcodec.tbl.Meta().AutoRandomBits
@@ -214,7 +216,6 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = append(record, value)
 		kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.RowIDAllocType)
 	}
-
 	_, err = kvcodec.tbl.AddRecord(kvcodec.se, record)
 	if err != nil {
 		logger.Error("kv encode failed",
@@ -227,7 +228,6 @@ func (kvcodec *tableKVEncoder) Encode(
 
 	pairs := kvcodec.se.takeKvPairs()
 	kvcodec.recordCache = record[:0]
-
 	return kvPairs(pairs), nil
 }
 
