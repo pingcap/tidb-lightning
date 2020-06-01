@@ -1041,8 +1041,8 @@ func (t *TableRestore) restoreEngine(
 	closedDataEngine, err := dataEngine.Close(ctx)
 	// if checkpoint enabled, we must flush index engine to avoid data lose.
 	// this flush action import upto 10% of the performance, so we only do it if necessary.
-	if rc.cfg.Checkpoint.Enable == true {
-		if err := indexEngine.Flush(); err != nil {
+	if err == nil && rc.cfg.Checkpoint.Enable == true {
+		if err = indexEngine.Flush(); err != nil {
 			// If any error occurred, recycle worker immediately
 			rc.closedEngineLimit.Recycle(dataWorker)
 			return nil, nil, errors.Trace(err)
