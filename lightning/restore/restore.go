@@ -1026,12 +1026,15 @@ func (t *TableRestore) restoreEngine(
 		zap.Int64("read", totalSQLSize),
 		zap.Uint64("written", totalKVSize),
 	)
-	//
+
+	// in local mode, this check-point make no sense, because we don't do flush now,
+	// so there may be data lose if exit at here. So we don't write this checkpoint
+	// here like other mode.
 	if !rc.isLocalBackend() {
 		rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusAllWritten)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
+	}
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 
 	dataWorker := rc.closedEngineLimit.Apply()
@@ -1039,7 +1042,7 @@ func (t *TableRestore) restoreEngine(
 	// if checkpoint enabled, we must flush index engine to avoid data lose.
 	// this flush action import upto 10% of the performance, so we only do it if necessary.
 	if rc.cfg.Checkpoint.Enable == true {
-		if err = indexEngine.Flush(); err != nil {
+		if err := indexEngine.Flush(); err != nil {
 			// If any error occurred, recycle worker immediately
 			rc.closedEngineLimit.Recycle(dataWorker)
 			return nil, nil, errors.Trace(err)
