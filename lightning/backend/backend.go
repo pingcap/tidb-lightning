@@ -72,6 +72,12 @@ func makeLogger(tag string, engineUUID uuid.UUID) log.Logger {
 	)
 }
 
+func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
+	tag := makeTag(tableName, engineID)
+	engineUUID := uuid.NewV5(engineNamespace, tag)
+	return tag, engineUUID
+}
+
 var engineNamespace = uuid.Must(uuid.FromString("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf"))
 
 // AbstractBackend is the abstract interface behind Backend.
@@ -175,8 +181,7 @@ func (be Backend) ShouldPostProcess() bool {
 
 // OpenEngine opens an engine with the given table name and engine ID.
 func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int32) (*OpenedEngine, error) {
-	tag := makeTag(tableName, engineID)
-	engineUUID := uuid.NewV5(engineNamespace, tag)
+	tag, engineUUID := MakeUUID(tableName, engineID)
 	logger := makeLogger(tag, engineUUID)
 
 	if err := be.abstract.OpenEngine(ctx, engineUUID); err != nil {
@@ -251,8 +256,7 @@ outside:
 // knows via other ways that the engine has already been opened, e.g. when
 // resuming from a checkpoint.
 func (be Backend) UnsafeCloseEngine(ctx context.Context, tableName string, engineID int32) (*ClosedEngine, error) {
-	tag := makeTag(tableName, engineID)
-	engineUUID := uuid.NewV5(engineNamespace, tag)
+	tag, engineUUID := MakeUUID(tableName, engineID)
 	return be.UnsafeCloseEngineWithUUID(ctx, tag, engineUUID)
 }
 

@@ -71,24 +71,24 @@ type localFileMeta struct {
 	TotalSize int64 `json:"total_size"`
 }
 
-type localFile struct {
+type LocalFile struct {
 	localFileMeta
-	db        *pebble.DB
-	uuid uuid.UUID
+	db   *pebble.DB
+	Uuid uuid.UUID
 }
 
-func (e *localFile) Close() error {
+func (e *LocalFile) Close() error {
 	return e.db.Close()
 }
 
 // Cleanup remove meta and db files
-func (e *localFile) Cleanup(dataDir string) error {
-	metaPath := filepath.Join(dataDir, e.uuid.String() + engineMetaFileSuffix)
+	func (e *LocalFile) Cleanup(dataDir string) error {
+	metaPath := filepath.Join(dataDir, e.Uuid.String() + engineMetaFileSuffix)
 	err := os.Remove(metaPath)
 	if err != nil {
 		return err
 	}
-	dbPath := filepath.Join(dataDir, e.uuid.String())
+	dbPath := filepath.Join(dataDir, e.Uuid.String())
 	return os.RemoveAll(dbPath)
 }
 
@@ -206,7 +206,7 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 // Close the importer connection.
 func (local *local) Close() {
 	local.engines.Range(func(k, v interface{}) bool {
-		v.(*localFile).Close()
+		v.(*LocalFile).Close()
 		return true
 	})
 
@@ -220,7 +220,7 @@ func (local *local) Close() {
 
 func (local *local) Flush(engineId uuid.UUID) error {
 	if engine, ok := local.engines.Load(engineId); ok {
-		engineFile := engine.(*localFile)
+		engineFile := engine.(*LocalFile)
 		if err := engineFile.db.Flush(); err != nil {
 			return err
 		}
@@ -260,12 +260,12 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 	return pebble.Open(dbPath, opt)
 }
 
-func (local *local) saveEngineMeta(engine *localFile) error {
+func (local *local) saveEngineMeta(engine *LocalFile) error {
 	jsonBytes, err := json.Marshal(&engine.localFileMeta)
 	if err != nil {
 		return err
 	}
-	metaPath := filepath.Join(local.localFile, engine.uuid.String() + engineMetaFileSuffix)
+	metaPath := filepath.Join(local.localFile, engine.Uuid.String() + engineMetaFileSuffix)
 	f, err := os.Create(metaPath)
 	if err != nil {
 		return err
@@ -299,7 +299,7 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &localFile{localFileMeta:meta, db: db, uuid: engineUUID})
+	local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID})
 	return nil
 }
 
@@ -317,15 +317,15 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 		if err != nil {
 			return err
 		}
-		engineFile := &localFile{
+		engineFile := &LocalFile{
 			localFileMeta: meta,
-			uuid:engineUUID,
-			db: db,
+			Uuid:          engineUUID,
+			db:            db,
 		}
 		local.engines.Store(engineUUID, engineFile)
 		return nil
 	}
-	engineFile := engine.(*localFile)
+	engineFile := engine.(*LocalFile)
 	err := engineFile.db.Flush()
 	if err != nil {
 		return err
@@ -414,7 +414,7 @@ func (local *local) WriteToPeer(
 
 func (local *local) WriteToTiKV(
 	ctx context.Context,
-	engineFile *localFile,
+	engineFile *LocalFile,
 	region *split.RegionInfo) ([]*sst.SSTMeta, error) {
 
 	select {
@@ -623,7 +623,7 @@ func (local *local) printSSTableInfos(tables [][]pebble.TableInfo, uid uuid.UUID
 	log.L().Info("ssttables summary infos", zf...)
 }
 
-func (local *local) ReadAndSplitIntoRange(engineFile *localFile, engineUUID uuid.UUID) ([]Range, error) {
+func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid.UUID) ([]Range, error) {
 	if engineFile.Length == 0 {
 		return nil, nil
 	}
@@ -853,7 +853,7 @@ func (b *bytesBuffer) addBytes(bytes []byte) []byte {
 
 func (local *local) writeAndIngestByRange(
 	ctx context.Context,
-	engineFile *localFile,
+	engineFile *LocalFile,
 	start, end []byte) error {
 	select {
 	case <-ctx.Done():
@@ -951,7 +951,7 @@ WriteAndIngest:
 
 func (local *local) WriteAndIngestPairs(
 	ctx context.Context,
-	engineFile *localFile,
+	engineFile *LocalFile,
 	region *split.RegionInfo,
 ) error {
 	metas, err := local.WriteToTiKV(ctx, engineFile, region)
@@ -994,7 +994,7 @@ func (local *local) WriteAndIngestPairs(
 	return nil
 }
 
-func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *localFile, ranges []Range) error {
+func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range) error {
 	if engineFile.Length == 0 {
 		log.L().Error("the ranges is empty")
 		return nil
@@ -1041,7 +1041,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		return errors.Errorf("could not find engine %s in ImportEngine", engineUUID.String())
 	}
 	// split sorted file into range by 96MB size per file
-	ranges, err := local.ReadAndSplitIntoRange(engineFile.(*localFile), engineUUID)
+	ranges, err := local.ReadAndSplitIntoRange(engineFile.(*LocalFile), engineUUID)
 	if err != nil {
 		return err
 	}
@@ -1052,7 +1052,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		return err
 	}
 	// start to write to kv and ingest
-	err = local.WriteAndIngestByRanges(ctx, engineFile.(*localFile), ranges)
+	err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges)
 	if err != nil {
 		log.L().Error("write and ingest ranges failed", zap.Error(err))
 		return err
@@ -1065,7 +1065,7 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	// release this engine after import success
 	engineFile, ok := local.engines.Load(engineUUID)
 	if ok {
-		localEngine := engineFile.(*localFile)
+		localEngine := engineFile.(*LocalFile)
 		err := localEngine.Close()
 		if err != nil {
 			return err
@@ -1098,7 +1098,7 @@ func (local *local) WriteRows(
 	if !ok {
 		return errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
-	engineFile := e.(*localFile)
+	engineFile := e.(*LocalFile)
 
 	// write to go leveldb get get sorted kv
 	wb := engineFile.db.NewBatch()

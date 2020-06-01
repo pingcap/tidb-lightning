@@ -197,12 +197,6 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 	}
 	defer target.Close()
 
-	importer, err := kv.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer importer.Close()
-
 	targetTables, err := cpdb.DestroyErrorCheckpoint(ctx, tableName)
 	if err != nil {
 		return errors.Trace(err)
@@ -219,15 +213,37 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 		}
 	}
 
-	for _, table := range targetTables {
-		for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
-			fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
-			closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, engineID)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "* Encountered error while closing engine:", err)
-				lastErr = err
-			} else {
-				closedEngine.Cleanup(ctx)
+	if cfg.TikvImporter.Backend == "importer" {
+		importer, err := kv.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer importer.Close()
+
+		for _, table := range targetTables {
+			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
+				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
+				closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, engineID)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "* Encountered error while closing engine:", err)
+					lastErr = err
+				} else {
+					closedEngine.Cleanup(ctx)
+				}
+			}
+		}
+	}
+	if cfg.TikvImporter.Backend == "local" {
+		for _, table := range targetTables {
+			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
+				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
+				_, eID := kv.MakeUUID(table.TableName, engineID)
+				file := kv.LocalFile{Uuid: eID}
+				err := file.Cleanup(cfg.TikvImporter.SortedKVDir)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "* Encountered error while cleanup engine:", err)
+					lastErr = err
+				}
 			}
 		}
 	}
