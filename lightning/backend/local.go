@@ -52,9 +52,9 @@ import (
 )
 
 const (
-	dialTimeout             = 5 * time.Second
-	bigValueSize			= 1 << 16  // 64K
-	engineMetaFileSuffix 			= ".meta"
+	dialTimeout          = 5 * time.Second
+	bigValueSize         = 1 << 16 // 64K
+	engineMetaFileSuffix = ".meta"
 )
 
 // Range record start and end key for localStoreDir.DB
@@ -66,9 +66,9 @@ type Range struct {
 }
 
 type localFileMeta struct {
-	Ts uint64	`json:"ts"`
-	Length int64 `json:"length"`
-	TotalSize int64 `json:"total_size"`
+	Ts        uint64 `json:"ts"`
+	Length    int64  `json:"length"`
+	TotalSize int64  `json:"total_size"`
 }
 
 type LocalFile struct {
@@ -82,8 +82,8 @@ func (e *LocalFile) Close() error {
 }
 
 // Cleanup remove meta and db files
-	func (e *LocalFile) Cleanup(dataDir string) error {
-	metaPath := filepath.Join(dataDir, e.Uuid.String() + engineMetaFileSuffix)
+func (e *LocalFile) Cleanup(dataDir string) error {
+	metaPath := filepath.Join(dataDir, e.Uuid.String()+engineMetaFileSuffix)
 	if _, err := os.Stat(metaPath); err == nil {
 		err = os.Remove(metaPath)
 		if err != nil {
@@ -141,8 +141,8 @@ func NewLocalBackend(
 			if !os.IsNotExist(err) {
 				return MakeBackend(nil), err
 			}
-		} else if info.IsDir()  {
-				shouldCreate = false
+		} else if info.IsDir() {
+			shouldCreate = false
 		}
 	}
 
@@ -266,7 +266,7 @@ func (local *local) saveEngineMeta(engine *LocalFile) error {
 	if err != nil {
 		return err
 	}
-	metaPath := filepath.Join(local.localStoreDir, engine.Uuid.String() + engineMetaFileSuffix)
+	metaPath := filepath.Join(local.localStoreDir, engine.Uuid.String()+engineMetaFileSuffix)
 	f, err := os.Create(metaPath)
 	if err != nil {
 		return err
@@ -276,7 +276,7 @@ func (local *local) saveEngineMeta(engine *LocalFile) error {
 }
 
 func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) {
-	mataPath := filepath.Join(local.localStoreDir, engineUUID.String() + engineMetaFileSuffix)
+	mataPath := filepath.Join(local.localStoreDir, engineUUID.String()+engineMetaFileSuffix)
 	f, err := os.Open(mataPath)
 	var meta localFileMeta
 	if err != nil {
@@ -368,7 +368,7 @@ func (local *local) WriteToTiKV(
 	if len(region.Region.EndKey) > 0 {
 		_, endKey, _ = codec.DecodeBytes(region.Region.EndKey, []byte{})
 	}
-	opt := &pebble.IterOptions{LowerBound:startKey, UpperBound:endKey}
+	opt := &pebble.IterOptions{LowerBound: startKey, UpperBound: endKey}
 	iter := engineFile.db.NewIter(opt)
 	defer iter.Close()
 
@@ -554,7 +554,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 	// split data into n ranges, then seek n times to get n + 1 ranges
 	n := engineFile.TotalSize / local.regionSplitSize
 
-	ranges := make([]Range, 0, n + 1)
+	ranges := make([]Range, 0, n+1)
 	if tablecodec.IsIndexKey(startKey) {
 		// index engine
 		tableID, startIndexID, _, err := tablecodec.DecodeIndexKey(startKey)
@@ -670,7 +670,7 @@ var recycleChan *bytesRecycleChan
 
 func init() {
 	recycleChan = &bytesRecycleChan{
-		ch:make(chan []byte, 1024),
+		ch: make(chan []byte, 1024),
 	}
 }
 
@@ -693,9 +693,9 @@ func (c *bytesRecycleChan) Release(w []byte) {
 }
 
 type bytesBuffer struct {
-	bufs [][]byte
-	curBuf []byte
-	curIdx int
+	bufs      [][]byte
+	curBuf    []byte
+	curIdx    int
 	curBufIdx int
 	curBufLen int
 }
@@ -705,7 +705,7 @@ func newBytesBuffer() *bytesBuffer {
 }
 
 func (b *bytesBuffer) addBuf() {
-	if b.curBufIdx < len(b.bufs) - 1 {
+	if b.curBufIdx < len(b.bufs)-1 {
 		b.curBufIdx += 1
 		b.curBuf = b.bufs[b.curBufIdx]
 	} else {
@@ -736,14 +736,14 @@ func (b *bytesBuffer) destroy() {
 }
 
 func (b *bytesBuffer) totalSize() int64 {
-	return int64(len(b.bufs)) * int64(1 << 20)
+	return int64(len(b.bufs)) * int64(1<<20)
 }
 
 func (b *bytesBuffer) addBytes(bytes []byte) []byte {
 	if len(bytes) > bigValueSize {
 		return append([]byte{}, bytes...)
 	} else {
-		if b.curIdx + len(bytes) > b.curBufLen {
+		if b.curIdx+len(bytes) > b.curBufLen {
 			b.addBuf()
 		}
 		idx := b.curIdx
@@ -877,7 +877,7 @@ func (local *local) WriteAndIngestPairs(
 				return errIngest
 			}
 			// retry with not leader and epoch not match error
-			if newRegion != nil && i < maxRetryTimes - 1 {
+			if newRegion != nil && i < maxRetryTimes-1 {
 				region = newRegion
 			} else {
 				log.L().Warn("retry ingest due to",
@@ -922,7 +922,7 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *Loca
 		}(w)
 	}
 
-	for i := 0; i < len(ranges); i ++ {
+	for i := 0; i < len(ranges); i++ {
 		e := <-errCh
 		if e != nil {
 			return e
