@@ -25,7 +25,7 @@ for backend in tidb importer; do
     check_contains 'inc: 3'
 
     # auto random base is 4
-    run_sql "INSERT INTO `alter_random`.`t`" VALUES ();
+    run_sql "INSERT INTO `alter_random`.`t` VALUES ();"
     run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM `alter_random`.`t`"
     check_contains 'inc: 4'
 done
