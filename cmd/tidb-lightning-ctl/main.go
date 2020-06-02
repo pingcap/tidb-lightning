@@ -233,6 +233,11 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 			}
 		}
 	}
+	// For importer backend, engine was stored in importer's memory, we can retrieve it from alive importer process.
+	// But in local backend, if we want to use common API `UnsafeCloseEngine` and `Cleanup`,
+	// we need either lightning process alive or engine map persistent.
+	// both of them seems unnecessary if we only need to do is cleanup specify engine directory.
+	// so we didn't choose to use common API.
 	if cfg.TikvImporter.Backend == "local" {
 		for _, table := range targetTables {
 			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
