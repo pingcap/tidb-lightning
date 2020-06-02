@@ -77,12 +77,6 @@ func (m *MockBackend) Close() {
 	m.ctrl.Call(m, "Close")
 }
 
-func (m *MockBackend) Flush(engineUUID uuid.UUID) error {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Flush")
-	return nil
-}
-
 // Close indicates an expected call of Close
 func (mr *MockBackendMockRecorder) Close() *gomock.Call {
 	mr.mock.ctrl.T.Helper()

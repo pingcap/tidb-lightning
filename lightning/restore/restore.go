@@ -20,7 +20,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -752,43 +751,45 @@ func (t *TableRestore) restoreTable(
 		// In local mode, if lightning exit before engine close, kv-pairs may haven't
 		// been flush to disk, so some data may lost. Thus we clean current read positions and
 		// current_max_row_ids for all the chunks to read all the chunks from start to avoid data loss.
-		if rc.isLocalBackend() && cp.Status < CheckpointStatusClosed {
-			var prevRowIdMax, lastOffset int64
-			var prevFilePath string
-
-			idList := make([]int32, 0, len(cp.Engines))
-			for id := range cp.Engines {
-				idList = append(idList, id)
-			}
-			sort.Slice(idList, func(i, j int) bool {
-				return idList[i] < idList[j]
-			})
-
-			// for each none closed chunk, reset `PrevRowIDMax` to previous chunk `RowIDMax`;
-			// for chunks from the same data file, reset `Offset` to 0 for the first chunk,
-			// to previous chunk EndOffset otherwise.
-			for _, i := range idList {
-				e := cp.Engines[i]
-				// skip closed engines
-				if e.Status < CheckpointStatusClosed {
-					for _, c := range e.Chunks {
-						if c.Key.Path != prevFilePath {
-							lastOffset = 0
-							prevFilePath = c.Key.Path
-						}
-						c.Chunk.Offset = lastOffset
-						lastOffset = c.Chunk.EndOffset
-						c.Chunk.PrevRowIDMax = prevRowIdMax
-						prevRowIdMax = c.Chunk.RowIDMax
-					}
-				} else {
-					engineLastChunk := e.Chunks[len(e.Chunks)-1]
-					prevRowIdMax = engineLastChunk.Chunk.RowIDMax
-					lastOffset = engineLastChunk.Chunk.EndOffset
-					prevFilePath = engineLastChunk.Key.Path
-				}
-			}
-		}
+		//if rc.isLocalBackend() && cp.Status < CheckpointStatusClosed {
+		//	var prevRowIdMax, lastOffset int64
+		//	var prevFilePath string
+		//
+		//	idList := make([]int32, 0, len(cp.Engines))
+		//	for id := range cp.Engines {
+		//		idList = append(idList, id)
+		//	}
+		//	sort.Slice(idList, func(i, j int) bool {
+		//		return idList[i] < idList[j]
+		//	})
+		//
+		//	// for each none closed chunk, reset `PrevRowIDMax` to previous chunk `RowIDMax`;
+		//	// for chunks from the same data file, reset `Offset` to 0 for the first chunk,
+		//	// to previous chunk EndOffset otherwise.
+		//	for _, i := range idList {
+		//		e := cp.Engines[i]
+		//		// skip closed engines
+		//		if e.Status < CheckpointStatusClosed {
+		//			for _, c := range e.Chunks {
+		//				if c.Key.Path != prevFilePath {
+		//					lastOffset = 0
+		//					prevFilePath = c.Key.Path
+		//				}
+		//				c.Chunk.Offset = lastOffset
+		//				lastOffset = c.Chunk.EndOffset
+		//				c.Chunk.PrevRowIDMax = prevRowIdMax
+		//				prevRowIdMax = c.Chunk.RowIDMax
+		//			}
+		//		} else {
+		//			if len(e.Chunks) > 0 {
+		//				engineLastChunk := e.Chunks[len(e.Chunks)-1]
+		//				prevRowIdMax = engineLastChunk.Chunk.RowIDMax
+		//				lastOffset = engineLastChunk.Chunk.EndOffset
+		//				prevFilePath = engineLastChunk.Key.Path
+		//			}
+		//		}
+		//	}
+		//}
 	} else if cp.Status < CheckpointStatusAllWritten {
 		if err := t.populateChunks(rc, cp); err != nil {
 			return errors.Trace(err)
@@ -1046,13 +1047,17 @@ func (t *TableRestore) restoreEngine(
 
 	dataWorker := rc.closedEngineLimit.Apply()
 	closedDataEngine, err := dataEngine.Close(ctx)
-	// if checkpoint is enabled, we must flush index engine to avoid data loss.
+	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
 	// this flush action impact up to 10% of the performance, so we only do it if necessary.
-	if err == nil && rc.cfg.Checkpoint.Enable {
+	if err == nil && rc.cfg.Checkpoint.Enable && rc.isLocalBackend() {
 		if err = indexEngine.Flush(); err != nil {
 			// If any error occurred, recycle worker immediately
 			rc.closedEngineLimit.Recycle(dataWorker)
 			return nil, nil, errors.Trace(err)
+		}
+		// Currently we write all the checkpoints after data&index engine are flushed.
+		for _, chunk := range cp.Chunks {
+			SaveCheckpoint(rc, t, engineID, chunk)
 		}
 	}
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
@@ -1650,16 +1655,20 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = offset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
-		if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
+		// IN local mode, we should write these checkpoint after engine flushed
+		if !rc.isLocalBackend() && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
 			// No need to save checkpoint if nothing was delivered.
-			cr.saveCheckpoint(t, engineID, rc)
+			SaveCheckpoint(rc, t, engineID, cr.chunk)
 		}
+		// TODO: for local backend, we may save checkpoint more frequently, e.g. after writen
+		//10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
+		// can safely update current checkpoint.
 	}
 
 	return
 }
 
-func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *RestoreController) {
+func SaveCheckpoint(rc *RestoreController, t *TableRestore, engineID int32, chunk *ChunkCheckpoint) {
 	// We need to update the AllocBase every time we've finished a file.
 	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
 	// or integer primary key), which can only be obtained by reading all data.
@@ -1673,10 +1682,10 @@ func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *Rest
 		tableName: t.tableName,
 		merger: &ChunkCheckpointMerger{
 			EngineID: engineID,
-			Key:      cr.chunk.Key,
-			Checksum: cr.chunk.Checksum,
-			Pos:      cr.chunk.Chunk.Offset,
-			RowID:    cr.chunk.Chunk.PrevRowIDMax,
+			Key:      chunk.Key,
+			Checksum: chunk.Checksum,
+			Pos:      chunk.Chunk.Offset,
+			RowID:    chunk.Chunk.PrevRowIDMax,
 		},
 	}
 }

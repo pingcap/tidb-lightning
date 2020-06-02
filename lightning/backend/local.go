@@ -94,11 +94,8 @@ func (e *LocalFile) Close() error {
 // Cleanup remove meta and db files
 func (e *LocalFile) Cleanup(dataDir string) error {
 	metaPath := filepath.Join(dataDir, e.Uuid.String()+engineMetaFileSuffix)
-	if _, err := os.Stat(metaPath); err == nil {
-		err = os.Remove(metaPath)
-		if err != nil {
-			return err
-		}
+	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
+		return errors.Trace(err)
 	}
 
 	dbPath := filepath.Join(dataDir, e.Uuid.String())
@@ -218,8 +215,8 @@ func (local *local) Close() {
 		return true
 	})
 
-	// if checkpoint is enable and local store dir is not empty, then we shouldn't
-	// delete these data files so that we can continue from checkpoint after restart
+	// if checkpoint is disable or we finish load all data successfully, then files in this
+	// dir will be useless, so we clean up this dir and all files in it.
 	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
 		err := os.RemoveAll(local.localStoreDir)
 		if err != nil {
@@ -228,6 +225,7 @@ func (local *local) Close() {
 	}
 }
 
+// Flush ensure the written data is saved successfully, to make sure no data lose after restart
 func (local *local) Flush(engineId uuid.UUID) error {
 	if engine, ok := local.engines.Load(engineId); ok {
 		engineFile := engine.(*LocalFile)

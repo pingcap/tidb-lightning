@@ -88,9 +88,6 @@ type AbstractBackend interface {
 	// Close the connection to the backend.
 	Close()
 
-	// Flush ensure the written data is saved successfully, to make sure no data lose after restart
-	Flush(engineId uuid.UUID) error
-
 	// MakeEmptyRows creates an empty collection of encoded rows.
 	MakeEmptyRows() Rows
 
@@ -258,9 +255,12 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 	return closedEngine, err
 }
 
-// Flush current written data
+// Flush current written data for local backend
 func (engine *OpenedEngine) Flush() error {
-	return engine.backend.Flush(engine.uuid)
+	if l, ok := engine.backend.(*local); ok {
+		return l.Flush(engine.uuid)
+	}
+	return nil
 }
 
 // WriteRows writes a collection of encoded rows into the engine.

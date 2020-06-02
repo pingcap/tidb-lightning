@@ -230,10 +230,6 @@ func (be *tidbBackend) Close() {
 	// TidbManager, so we let the manager to close it.
 }
 
-func (be *tidbBackend) Flush(engineId uuid.UUID) error {
-	return nil
-}
-
 func (be *tidbBackend) MakeEmptyRows() Rows {
 	return tidbRows(nil)
 }
