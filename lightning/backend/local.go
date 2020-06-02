@@ -218,6 +218,8 @@ func (local *local) Close() {
 		return true
 	})
 
+	// if checkpoint is enable and local store dir is not empty, then we shouldn't
+	// delete these data files so that we can continue from checkpoint after restart
 	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
 		err := os.RemoveAll(local.localStoreDir)
 		if err != nil {
