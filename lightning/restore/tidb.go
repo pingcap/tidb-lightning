@@ -54,6 +54,10 @@ func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
 			"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
 			"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
 			"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
+
+			// after https://github.com/pingcap/tidb/pull/17102 merge,
+			// we need set session to true for insert auto_random value in TiDB Backend
+			"allow_auto_random_explicit_insert": "1",
 		},
 	}
 	db, err := param.Connect()
