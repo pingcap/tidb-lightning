@@ -89,6 +89,15 @@ func IsDirExists(name string) bool {
 	return f != nil && f.IsDir()
 }
 
+// IsEmptyDir checks if dir is empty.
+func IsEmptyDir(name string) bool {
+	entries, err := ioutil.ReadDir(name)
+	if err != nil {
+		return false
+	}
+	return len(entries) == 0
+}
+
 // SQLWithRetry constructs a retryable transaction.
 type SQLWithRetry struct {
 	DB           *sql.DB
@@ -301,12 +310,4 @@ type KvPair struct {
 	Key []byte
 	// Val is the value of the KV pair
 	Val []byte
-}
-
-func IsEmptyDir(name string) bool {
-	entries, err := ioutil.ReadDir(name)
-	if err != nil {
-		return false
-	}
-	return len(entries) == 0
 }

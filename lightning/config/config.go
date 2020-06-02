@@ -45,7 +45,7 @@ const (
 	// BackendImporter is a constant for choosing the "Importer" backend in the configuration.
 	BackendImporter = "importer"
 	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
-	// it means we should sort & split at Local so that we can remove importer backend
+	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.

@@ -649,7 +649,7 @@ type bytesRecycleChan struct {
 //
 // NOTE: we don't used a `sync.Pool` because when will sync.Pool release is depending on the
 // garbage collector which always release the memory so late. Use a fixed size chan to reuse
-// can decrease the memory use to 1/3 compare with sync.Pool.
+// can decrease the memory usage to 1/3 compare with sync.Pool.
 var recycleChan *bytesRecycleChan
 
 func init() {
@@ -995,7 +995,7 @@ func (local *local) WriteRows(
 	}
 	engineFile := e.(*LocalFile)
 
-	// write to go leveldb get get sorted kv
+	// write to pebble to make them sorted
 	wb := engineFile.db.NewBatch()
 	defer wb.Close()
 	wo := &pebble.WriteOptions{Sync: false}
