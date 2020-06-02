@@ -27,3 +27,15 @@ check_contains 'sum(a): 277151781'
 
 run_sql "SHOW TABLE STATUS FROM partitioned WHERE name = 'a';"
 check_contains 'Create_options: partitioned'
+
+# test local backend
+run_sql 'DROP DATABASE IF EXISTS partitioned;'
+
+run_lightning_local
+
+run_sql 'SELECT count(1), sum(a) FROM partitioned.a;'
+check_contains 'count(1): 7'
+check_contains 'sum(a): 277151781'
+
+run_sql "SHOW TABLE STATUS FROM partitioned WHERE name = 'a';"
+check_contains 'Create_options: partitioned'

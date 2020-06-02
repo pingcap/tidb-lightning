@@ -33,3 +33,23 @@ run_sql 'SELECT xx FROM defcol.u WHERE yy = 60'
 check_contains 'xx: 2'
 
 grep -q '\["column missing from data file, going to fill with default value"\] \[table=`defcol`\.`u`\].*\[colName=xx\]' "$TEST_DIR/defcol-errors.log"
+
+# test local backend
+run_sql 'DROP DATABASE IF EXISTS defcol'
+
+run_lightning_local --log-file "$TEST_DIR/defcol-errors.log"
+
+run_sql 'SELECT min(pk), count(pk) FROM defcol.t'
+check_contains 'min(pk): 1'
+check_contains 'count(pk): 9'
+
+run_sql 'SELECT pk FROM defcol.t WHERE x IS NOT NULL OR y <> 123 OR z IS NULL OR z NOT BETWEEN now() - INTERVAL 5 MINUTE AND now()'
+check_not_contains 'pk:'
+
+run_sql 'SELECT xx FROM defcol.u WHERE yy = 40'
+check_contains 'xx: 1'
+
+run_sql 'SELECT xx FROM defcol.u WHERE yy = 60'
+check_contains 'xx: 2'
+
+grep -q '\["column missing from data file, going to fill with default value"\] \[table=`defcol`\.`u`\].*\[colName=xx\]' "$TEST_DIR/defcol-errors.log"

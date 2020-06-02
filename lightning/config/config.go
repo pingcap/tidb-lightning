@@ -289,6 +289,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
 	cfg.TikvImporter.Addr = global.TikvImporter.Addr
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
+	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
 	cfg.Checkpoint.Enable = global.Checkpoint.Enable
 	cfg.PostRestore.Checksum = global.PostRestore.Checksum
 	cfg.PostRestore.Analyze = global.PostRestore.Analyze
