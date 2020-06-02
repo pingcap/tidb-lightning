@@ -109,3 +109,55 @@ check_contains "count(*): $TABLE_COUNT"
 # Ensure there is no dangling open engines
 ls -lA "$TEST_DIR"/importer/.temp/
 [ -z "$(ls -A "$TEST_DIR"/importer/.temp/)" ]
+
+# Test local backend
+
+# Start importing the tables.
+run_sql 'DROP DATABASE IF EXISTS cppk_tsr'
+run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test_cppk'
+run_sql 'DROP DATABASE IF EXISTS `tidb_lightning_checkpoint_test_cppk.1357924680.bak`'
+
+# panic after saving index engine checkpoint status before saving table checkpoint status
+set +e
+for i in $(seq "$TABLE_COUNT"); do
+    echo "******** Importing Table Now (step $i/$TABLE_COUNT) ********"
+    run_lightning_local -d "$DBPATH" --enable-checkpoint=1 2> /dev/null
+    [ $? -ne 0 ] || exit 1
+done
+set -e
+
+export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS"
+set +e
+for i in $(seq "$TABLE_COUNT"); do
+    echo "******** Importing Table Now (step $i/$TABLE_COUNT) ********"
+    run_lightning_local -d "$DBPATH" --enable-checkpoint=1 2> /dev/null
+done
+set -e
+
+# Start importing the tables.
+run_sql 'DROP DATABASE IF EXISTS cppk_tsr'
+run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test_cppk'
+run_sql 'DROP DATABASE IF EXISTS `tidb_lightning_checkpoint_test_cppk.1357924680.bak`'
+
+export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb-lightning/lightning/SetTaskID=return(1357924680);github.com/pingcap/tidb-lightning/lightning/restore/FailIfIndexEngineImported=return(1)"
+
+set +e
+for i in $(seq "$TABLE_COUNT"); do
+    echo "******** Importing Table Now (step $i/$TABLE_COUNT) ********"
+    run_lightning_local -d "$DBPATH" --enable-checkpoint=1 2> /dev/null
+    [ $? -ne 0 ] || exit 1
+done
+set -e
+
+# After everything is done, there should be no longer new calls to ImportEngine
+# (and thus `kill_lightning_after_one_import` will spare this final check)
+echo "******** Verify checkpoint no-op ********"
+run_lightning_local -d "$DBPATH" --enable-checkpoint=1
+run_sql "$PARTIAL_IMPORT_QUERY"
+check_contains "s: $(( (1000 * $CHUNK_COUNT + 1001) * $CHUNK_COUNT * $TABLE_COUNT ))"
+run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk.1357924680.bak`.table_v6 WHERE status >= 200'
+check_contains "count(*): $TABLE_COUNT"
+
+# Ensure there is no dangling open engines
+ls -lA "$TEST_DIR"/importer/.temp/
+[ -z "$(ls -A "$TEST_DIR"/importer/.temp/)" ]
