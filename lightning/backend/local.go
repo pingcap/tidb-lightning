@@ -20,9 +20,8 @@ import (
 	"encoding/json"
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/parser/model"
-	"io/ioutil"
+	"math"
 	"os"
-	"path"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -56,12 +55,16 @@ const (
 	dialTimeout          = 5 * time.Second
 	bigValueSize         = 1 << 16 // 64K
 	engineMetaFileSuffix = ".meta"
+
+	gRPCKeepAliveTime    = 10 * time.Second
+	gRPCKeepAliveTimeout = 3 * time.Second
+	gRPCBackOffMaxDelay  = 3 * time.Second
 )
 
 var (
-	localMinTiDBVersion  = *semver.New("4.0.0")
-	localMinTiKVVersion  = *semver.New("4.0.0")
-	localMinPDVersion  = *semver.New("4.0.0")
+	localMinTiDBVersion = *semver.New("4.0.0")
+	localMinTiKVVersion = *semver.New("4.0.0")
+	localMinPDVersion   = *semver.New("4.0.0")
 )
 
 // Range record start and end key for localStoreDir.DB
@@ -111,8 +114,8 @@ type local struct {
 	engines  sync.Map
 	grpcClis grpcClis
 	splitCli split.SplitClient
-	tls  *common.TLS
-	pdAddr 	string
+	tls      *common.TLS
+	pdAddr   string
 
 	localStoreDir   string
 	regionSplitSize int64
@@ -137,7 +140,7 @@ func NewLocalBackend(
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
 	}
-	splitCli := split.NewSplitClient(pdCli, tls.TransToTlsConfig())
+	splitCli := split.NewSplitClient(pdCli, tls.TLSConfig())
 
 	shouldCreate := true
 	if enableCheckpoint {
@@ -160,8 +163,8 @@ func NewLocalBackend(
 	local := &local{
 		engines:  sync.Map{},
 		splitCli: splitCli,
-		tls:  	  tls,
-		pdAddr:pdAddr,
+		tls:      tls,
+		pdAddr:   pdAddr,
 
 		localStoreDir:   localFile,
 		regionSplitSize: regionSplitSize,
@@ -181,22 +184,21 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 		return nil, errors.Trace(err)
 	}
 	opt := grpc.WithInsecure()
-	if local.tls.TransToTlsConfig() != nil {
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(local.tls.TransToTlsConfig()))
+	if local.tls.TLSConfig() != nil {
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(local.tls.TLSConfig()))
 	}
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
-	keepAlive := 10
-	keepAliveTimeout := 3
+
 	bfConf := backoff.DefaultConfig
-	bfConf.MaxDelay = time.Second * 3
+	bfConf.MaxDelay = gRPCBackOffMaxDelay
 	conn, err := grpc.DialContext(
 		ctx,
 		store.GetAddress(),
 		opt,
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                time.Duration(keepAlive) * time.Second,
-			Timeout:             time.Duration(keepAliveTimeout) * time.Second,
+			Time:                gRPCKeepAliveTime,
+			Timeout:             gRPCKeepAliveTimeout,
 			PermitWithoutStream: true,
 		}),
 	)
@@ -219,7 +221,7 @@ func (local *local) Close() {
 	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
 		err := os.RemoveAll(local.localStoreDir)
 		if err != nil {
-			log.L().Error("remove local db file failed", zap.Error(err))
+			log.L().Warn("remove local db file failed", zap.Error(err))
 		}
 	}
 }
@@ -231,9 +233,8 @@ func (local *local) Flush(engineId uuid.UUID) error {
 			return err
 		}
 		return local.saveEngineMeta(engineFile)
-	} else {
-		return errors.Errorf("engine '%s' not found", engineId.String())
 	}
+	return errors.Errorf("engine '%s' not found", engineId)
 }
 
 func (local *local) RetryImportDelay() time.Duration {
@@ -253,16 +254,14 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 	opt := &pebble.Options{
 		MemTableSize:             128 << 20,
 		MaxConcurrentCompactions: 16,
-		MinCompactionRate:        1024 << 20,
-		L0CompactionThreshold:    2 << 31, // set to max try to disable compaction
-		L0StopWritesThreshold:    2 << 31, // set to max try to disable compaction
+		MinCompactionRate:        1 << 30,
+		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
+		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		MaxOpenFiles:             10000,
 		DisableWAL:               true,
+		ReadOnly:                 readOnly,
 	}
-	if readOnly {
-		opt.ReadOnly = true
-	}
-	dbPath := path.Join(local.localStoreDir, engineUUID.String())
+	dbPath := filepath.Join(local.localStoreDir, engineUUID.String())
 	return pebble.Open(dbPath, opt)
 }
 
@@ -281,18 +280,14 @@ func (local *local) saveEngineMeta(engine *LocalFile) error {
 }
 
 func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) {
+	var meta localFileMeta
+
 	mataPath := filepath.Join(local.localStoreDir, engineUUID.String()+engineMetaFileSuffix)
 	f, err := os.Open(mataPath)
-	var meta localFileMeta
 	if err != nil {
 		return meta, err
 	}
-	fileBytes, err := ioutil.ReadAll(f)
-	if err != nil {
-		return meta, err
-	}
-
-	err = json.Unmarshal(fileBytes, &meta)
+	err = json.NewDecoder(f).Decode(&meta)
 	return meta, err
 }
 
@@ -359,13 +354,6 @@ func (local *local) WriteToTiKV(
 	ctx context.Context,
 	engineFile *LocalFile,
 	region *split.RegionInfo) ([]*sst.SSTMeta, error) {
-
-	select {
-	case <-ctx.Done():
-		return nil, nil
-	default:
-	}
-
 	var startKey, endKey []byte
 	if len(region.Region.StartKey) > 0 {
 		_, startKey, _ = codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -430,12 +418,8 @@ func (local *local) WriteToTiKV(
 		pair := &sst.Pair{
 			Key:   bytesBuf.addBytes(iter.Key()),
 			Value: bytesBuf.addBytes(iter.Value()),
-			//Key: append([]byte{}, iter.Key()...),
-			//Value:append([]byte{}, iter.Value()...),
 		}
-		if bytes.Compare(iter.Key(), startKey) < 0 {
-			log.L().Fatal("key out of order", zap.Binary("current", iter.Key()), zap.Binary("fist", startKey))
-		}
+
 		pairs = append(pairs, pair)
 		count++
 		totalCount++
@@ -495,13 +479,6 @@ func (local *local) WriteToTiKV(
 }
 
 func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
-
-	select {
-	case <-ctx.Done():
-		return nil, nil
-	default:
-	}
-
 	leader := region.Leader
 	if leader == nil {
 		leader = region.Region.GetPeers()[0]
@@ -540,12 +517,12 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 	if iter.First() {
 		startKey = append([]byte{}, iter.Key()...)
 	} else {
-		return nil, errors.Errorf("could not find first pair, this shouldn't happen")
+		return nil, errors.New("could not find first pair, this shouldn't happen")
 	}
 	if iter.Last() {
 		endKey = append([]byte{}, iter.Key()...)
 	} else {
-		return nil, errors.Errorf("could not find last pair, this shouldn't happen")
+		return nil, errors.New("could not find last pair, this shouldn't happen")
 	}
 
 	// <= 96MB no need to split into range
@@ -684,7 +661,7 @@ func (c *bytesRecycleChan) Acquire() []byte {
 	case b := <-c.ch:
 		return b
 	default:
-		return manual.New(2 << 20) // 1M
+		return manual.New(1 << 20) // 1M
 	}
 }
 
@@ -762,12 +739,6 @@ func (local *local) writeAndIngestByRange(
 	ctx context.Context,
 	engineFile *LocalFile,
 	start, end []byte) error {
-	select {
-	case <-ctx.Done():
-		return errors.New("context is cancel by other reason")
-	default:
-	}
-
 	ito := &pebble.IterOptions{
 		LowerBound: start,
 		UpperBound: end,
@@ -795,7 +766,11 @@ func (local *local) writeAndIngestByRange(
 WriteAndIngest:
 	for retry := 0; retry < maxRetryTimes; retry++ {
 		if retry != 0 {
-			time.Sleep(time.Second)
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 		startKey := codec.EncodeBytes([]byte{}, pairStart)
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))

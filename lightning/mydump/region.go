@@ -119,8 +119,6 @@ func AllocateEngineIDs(
 		n += 1.0
 	}
 
-	log.L().Info("current Batch", zap.Float64("cb", curBatchSize))
-
 	for i, dataFileSize := range dataFileSizes {
 		filesRegions[i].EngineID = curEngineID
 		curEngineSize += dataFileSize
@@ -201,7 +199,7 @@ func MakeTableRegions(
 		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
 	}
 
-	log.L().Info("in makeTableRegions",
+	log.L().Debug("in makeTableRegions",
 		zap.Int64("maxRegionSize", cfg.Mydumper.MaxRegionSize),
 		zap.Int("len fileRegions", len(filesRegions)))
 

@@ -15,12 +15,12 @@ package restore
 
 import (
 	"context"
-	"sync"
-	"time"
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
 	"sort"
+	"sync"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"

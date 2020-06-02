@@ -68,7 +68,11 @@ SplitRegions:
 					return errors.Trace(errSplit)
 				}
 				log.L().Warn("split regions", zap.Error(errSplit))
-				time.Sleep(time.Second)
+				select {
+				case <-time.After(time.Second):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 				continue SplitRegions
 			}
 			scatterRegions = append(scatterRegions, newRegions...)
@@ -159,7 +163,11 @@ func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
 		if ok {
 			break
 		}
-		time.Sleep(time.Second)
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
@@ -175,7 +183,11 @@ func (local *local) waitForScatterRegion(ctx context.Context, regionInfo *split.
 		if ok {
 			break
 		}
-		time.Sleep(time.Second)
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 

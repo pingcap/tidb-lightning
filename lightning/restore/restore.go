@@ -364,7 +364,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int32, err error, statusIfSucceed CheckpointStatus) {
 	merger := &StatusCheckpointMerger{Status: statusIfSucceed, EngineID: engineID}
 
-	log.L().Info("update checkpoint", zap.String("table", tableName), zap.Int32("engine_id", engineID),
+	log.L().Debug("update checkpoint", zap.String("table", tableName), zap.Int32("engine_id", engineID),
 		zap.Uint8("new_status", uint8(statusIfSucceed)), zap.Error(err))
 
 	switch {
@@ -749,6 +749,9 @@ func (t *TableRestore) restoreTable(
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
 
+		// In local mode, if lightning exit before engine close, kv-pairs may haven't
+		// been flush to disk, so some data may lost. Thus we clean current read positions and
+		// current_max_row_ids for all the chunks to read all the chunks from start to avoid data loss.
 		if rc.isLocalBackend() && cp.Status < CheckpointStatusClosed {
 			var prevRowIdMax, lastOffset int64
 			var prevFilePath string
@@ -761,12 +764,15 @@ func (t *TableRestore) restoreTable(
 				return idList[i] < idList[j]
 			})
 
+			// for each none closed chunk, reset `PrevRowIDMax` to previous chunk `RowIDMax`;
+			// for chunks from the same data file, reset `Offset` to 0 for the first chunk,
+			// to previous chunk EndOffset otherwise.
 			for _, i := range idList {
 				e := cp.Engines[i]
+				// skip closed engines
 				if e.Status < CheckpointStatusClosed {
 					for _, c := range e.Chunks {
 						if c.Key.Path != prevFilePath {
-							prevRowIdMax = 0
 							lastOffset = 0
 							prevFilePath = c.Key.Path
 						}
@@ -776,9 +782,10 @@ func (t *TableRestore) restoreTable(
 						prevRowIdMax = c.Chunk.RowIDMax
 					}
 				} else {
-					prevRowIdMax = e.Chunks[len(e.Chunks)-1].Chunk.RowIDMax
-					lastOffset = e.Chunks[len(e.Chunks)-1].Chunk.EndOffset
-					prevFilePath = e.Chunks[len(e.Chunks)-1].Key.Path
+					engineLastChunk := e.Chunks[len(e.Chunks)-1]
+					prevRowIdMax = engineLastChunk.Chunk.RowIDMax
+					lastOffset = engineLastChunk.Chunk.EndOffset
+					prevFilePath = engineLastChunk.Key.Path
 				}
 			}
 		}
@@ -1039,9 +1046,9 @@ func (t *TableRestore) restoreEngine(
 
 	dataWorker := rc.closedEngineLimit.Apply()
 	closedDataEngine, err := dataEngine.Close(ctx)
-	// if checkpoint enabled, we must flush index engine to avoid data lose.
-	// this flush action import upto 10% of the performance, so we only do it if necessary.
-	if err == nil && rc.cfg.Checkpoint.Enable == true {
+	// if checkpoint is enabled, we must flush index engine to avoid data loss.
+	// this flush action impact up to 10% of the performance, so we only do it if necessary.
+	if err == nil && rc.cfg.Checkpoint.Enable {
 		if err = indexEngine.Flush(); err != nil {
 			// If any error occurred, recycle worker immediately
 			rc.closedEngineLimit.Recycle(dataWorker)
