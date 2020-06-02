@@ -190,13 +190,13 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = append(record, value)
 
 		if isAutoRandom && isPk {
-			typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
+			typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[col.Tp] * 8)
 			incrementalBits := typeBitsLength - kvcodec.tbl.Meta().AutoRandomBits
 			hasSignBit := !mysql.HasUnsignedFlag(col.Flag)
 			if hasSignBit {
 				incrementalBits -= 1
 			}
-			kvcodec.tbl.RebaseAutoID(kvcodec.se, int64(incrementalBits), false, autoid.AutoRandomType)
+			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64()&((1 << incrementalBits) - 1), false, autoid.AutoRandomType)
 		}
 		if isAutoIncCol {
 			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.AutoIncrementType)
