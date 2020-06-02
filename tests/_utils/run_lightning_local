@@ -21,7 +21,7 @@ bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out" DEV
     --ca "$TEST_DIR/tls/ca.pem" \
     --cert "$TEST_DIR/tls/lightning.pem" \
     --key "$TEST_DIR/tls/lightning.key" \
-    --log-file "$TEST_DIR/lightning.log" \
+    --log-file "$TEST_DIR/lightning-local.log" \
     --tidb-port 4000 \
     --pd-urls '127.0.0.1:2379' \
     --config "tests/$TEST_NAME/config.toml" \

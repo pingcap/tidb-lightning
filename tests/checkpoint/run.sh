@@ -112,6 +112,11 @@ ls -lA "$TEST_DIR"/importer/.temp/
 
 # Test local backend
 
+# Set the failpoint to kill the lightning instance as soon as one table is imported
+# If checkpoint does work, this should only kill 9 instances of lightnings.
+SLOWDOWN_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/SlowDownImport=sleep(500)'
+export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb-lightning/lightning/restore/FailBeforeIndexEngineImported=return"
+
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS cppk_tsr'
 run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test_cppk'
