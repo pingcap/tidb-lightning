@@ -747,49 +747,6 @@ func (t *TableRestore) restoreTable(
 			zap.Int("enginesCnt", len(cp.Engines)),
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
-
-		// In local mode, if lightning exit before engine close, kv-pairs may haven't
-		// been flush to disk, so some data may lost. Thus we clean current read positions and
-		// current_max_row_ids for all the chunks to read all the chunks from start to avoid data loss.
-		//if rc.isLocalBackend() && cp.Status < CheckpointStatusClosed {
-		//	var prevRowIdMax, lastOffset int64
-		//	var prevFilePath string
-		//
-		//	idList := make([]int32, 0, len(cp.Engines))
-		//	for id := range cp.Engines {
-		//		idList = append(idList, id)
-		//	}
-		//	sort.Slice(idList, func(i, j int) bool {
-		//		return idList[i] < idList[j]
-		//	})
-		//
-		//	// for each none closed chunk, reset `PrevRowIDMax` to previous chunk `RowIDMax`;
-		//	// for chunks from the same data file, reset `Offset` to 0 for the first chunk,
-		//	// to previous chunk EndOffset otherwise.
-		//	for _, i := range idList {
-		//		e := cp.Engines[i]
-		//		// skip closed engines
-		//		if e.Status < CheckpointStatusClosed {
-		//			for _, c := range e.Chunks {
-		//				if c.Key.Path != prevFilePath {
-		//					lastOffset = 0
-		//					prevFilePath = c.Key.Path
-		//				}
-		//				c.Chunk.Offset = lastOffset
-		//				lastOffset = c.Chunk.EndOffset
-		//				c.Chunk.PrevRowIDMax = prevRowIdMax
-		//				prevRowIdMax = c.Chunk.RowIDMax
-		//			}
-		//		} else {
-		//			if len(e.Chunks) > 0 {
-		//				engineLastChunk := e.Chunks[len(e.Chunks)-1]
-		//				prevRowIdMax = engineLastChunk.Chunk.RowIDMax
-		//				lastOffset = engineLastChunk.Chunk.EndOffset
-		//				prevFilePath = engineLastChunk.Key.Path
-		//			}
-		//		}
-		//	}
-		//}
 	} else if cp.Status < CheckpointStatusAllWritten {
 		if err := t.populateChunks(rc, cp); err != nil {
 			return errors.Trace(err)
@@ -870,30 +827,32 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 				continue
 			}
 
-			wg.Add(1)
+			if engine.Status < CheckpointStatusImported {
+				wg.Add(1)
 
-			// Note: We still need tableWorkers to control the concurrency of tables.
-			// In the future, we will investigate more about
-			// the difference between restoring tables concurrently and restoring tables one by one.
-			restoreWorker := rc.tableWorkers.Apply()
+				// Note: We still need tableWorkers to control the concurrency of tables.
+				// In the future, we will investigate more about
+				// the difference between restoring tables concurrently and restoring tables one by one.
+				restoreWorker := rc.tableWorkers.Apply()
 
-			go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
-				defer wg.Done()
+				go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
+					defer wg.Done()
 
-				engineLogTask := t.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
-				dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
-				engineLogTask.End(zap.ErrorLevel, err)
-				rc.tableWorkers.Recycle(w)
-				if err != nil {
-					engineErr.Set(err)
-					return
-				}
+					engineLogTask := t.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
+					dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
+					engineLogTask.End(zap.ErrorLevel, err)
+					rc.tableWorkers.Recycle(w)
+					if err != nil {
+						engineErr.Set(err)
+						return
+					}
 
-				defer rc.closedEngineLimit.Recycle(dataWorker)
-				if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
-					engineErr.Set(err)
-				}
-			}(restoreWorker, engineID, engine)
+					defer rc.closedEngineLimit.Recycle(dataWorker)
+					if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
+						engineErr.Set(err)
+					}
+				}(restoreWorker, engineID, engine)
+			}
 		}
 
 		wg.Wait()
