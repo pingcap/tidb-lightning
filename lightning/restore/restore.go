@@ -749,10 +749,10 @@ func (t *TableRestore) restoreTable(
 		// rebase the allocator so it exceeds the number of rows.
 		if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
 			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoRandID)
-			t.alloc[2].Rebase(t.tableInfo.ID, cp.AllocBase, false)
+			t.alloc.Get(autoid.AutoRandomType).Rebase(t.tableInfo.ID, cp.AllocBase, false)
 		} else {
 			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoIncID)
-			t.alloc[0].Rebase(t.tableInfo.ID, cp.AllocBase, false)
+			t.alloc.Get(autoid.AutoIncrementType).Rebase(t.tableInfo.ID, cp.AllocBase, false)
 		}
 		rc.saveCpCh <- saveCp{
 			tableName: t.tableName,
@@ -1046,9 +1046,9 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		rc.alterTableLock.Lock()
 		var err error
 		if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
-			err = AlterAutoRandom(ctx, rc.tidbMgr.db, t.tableName, t.alloc[2].Base()+1)
+			err = AlterAutoRandom(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Get(autoid.AutoRandomType).Base()+1)
 		} else {
-			err = AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc[0].Base()+1)
+			err = AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Get(autoid.AutoIncrementType).Base()+1)
 		}
 		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
@@ -1596,9 +1596,9 @@ func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *Rest
 
 	var base int64
 	if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
-		base = t.alloc[2].Base() + 1
+		base = t.alloc.Get(autoid.AutoRandomType).Base() + 1
 	} else {
-		base = t.alloc[0].Base() + 1
+		base = t.alloc.Get(autoid.AutoIncrementType).Base() + 1
 	}
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
