@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/parser/model"
+	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -268,15 +269,10 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 func (local *local) saveEngineMeta(engine *LocalFile) error {
 	jsonBytes, err := json.Marshal(&engine.localFileMeta)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	metaPath := filepath.Join(local.localStoreDir, engine.Uuid.String()+engineMetaFileSuffix)
-	f, err := os.Create(metaPath)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(jsonBytes)
-	return err
+	return errors.Trace(ioutil.WriteFile(metaPath, jsonBytes, 0666))
 }
 
 func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) {
@@ -582,7 +578,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 
 			if startIndexID != endIndexID {
 				// this shouldn't happen
-				log.L().Error("index ID not match",
+				log.L().DPanic("index ID not match",
 					zap.Int64("startID", startIndexID), zap.Int64("endID", endIndexID))
 				return nil, errors.New("index ID not match")
 			}
@@ -622,8 +618,9 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		index := int64(0)
 		var sKey, eKey []byte
 
-		log.L().Info("data engine", zap.Int64("step", step),
-			zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
+		log.L().Info("split data ranges", zap.Int64("step", step),
+			zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle),
+			zap.String("engine", engineUUID.String()))
 
 		for i := startHandle; i+step <= endHandle; i += step {
 			sKey = tablecodec.EncodeRowKeyWithHandle(tableID, i)

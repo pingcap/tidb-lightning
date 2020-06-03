@@ -406,6 +406,9 @@ func (cfg *Config) Adjust() error {
 		if cfg.TikvImporter.RangeConcurrency == 0 {
 			cfg.TikvImporter.RangeConcurrency = 32
 		}
+		if cfg.TikvImporter.RegionSplitSize == 0 {
+			cfg.TikvImporter.RegionSplitSize = SplitRegionSize
+		}
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}

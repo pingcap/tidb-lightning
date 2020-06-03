@@ -1016,7 +1016,7 @@ func (t *TableRestore) restoreEngine(
 		}
 		// Currently we write all the checkpoints after data&index engine are flushed.
 		for _, chunk := range cp.Chunks {
-			SaveCheckpoint(rc, t, engineID, chunk)
+			saveCheckpoint(rc, t, engineID, chunk)
 		}
 	}
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
@@ -1617,7 +1617,7 @@ func (cr *chunkRestore) deliverLoop(
 		// IN local mode, we should write these checkpoint after engine flushed
 		if !rc.isLocalBackend() && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
 			// No need to save checkpoint if nothing was delivered.
-			SaveCheckpoint(rc, t, engineID, cr.chunk)
+			saveCheckpoint(rc, t, engineID, cr.chunk)
 		}
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after writen
 		//10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
@@ -1627,7 +1627,7 @@ func (cr *chunkRestore) deliverLoop(
 	return
 }
 
-func SaveCheckpoint(rc *RestoreController, t *TableRestore, engineID int32, chunk *ChunkCheckpoint) {
+func saveCheckpoint(rc *RestoreController, t *TableRestore, engineID int32, chunk *ChunkCheckpoint) {
 	// We need to update the AllocBase every time we've finished a file.
 	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
 	// or integer primary key), which can only be obtained by reading all data.
