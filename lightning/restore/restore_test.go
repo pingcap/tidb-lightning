@@ -621,7 +621,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData(c *C) {
 	// Deliver nothing.
 
 	cfg := &config.Config{}
-	rc := &RestoreController{cfg:cfg, backend: importer}
+	rc := &RestoreController{cfg: cfg, backend: importer}
 
 	kvsCh := make(chan []deliveredKVs, 1)
 	kvsCh <- []deliveredKVs{}

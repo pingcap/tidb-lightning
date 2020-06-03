@@ -304,6 +304,9 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	return nil
 }
 
+// Close backend engine by uuid
+// NOTE: we will return nil if engine is not exist. This will happen if engine import&cleanup successfully
+// but exit before update checkpoint. Thus after restart, we will try to import this engine again.
 func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// flush mem table to storage, to free memory,
 	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
@@ -312,6 +315,10 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 		// recovery mode, we should reopen this engine file
 		meta, err := local.LoadEngineMeta(engineUUID)
 		if err != nil {
+			// if engine meta not exist, just skip
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		db, err := local.openEngineDB(engineUUID, true)
@@ -914,7 +921,8 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *Loca
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	engineFile, ok := local.engines.Load(engineUUID)
 	if !ok {
-		return errors.Errorf("could not find engine %s in ImportEngine", engineUUID.String())
+		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
+		return nil
 	}
 	// split sorted file into range by 96MB size per file
 	ranges, err := local.ReadAndSplitIntoRange(engineFile.(*LocalFile), engineUUID)
