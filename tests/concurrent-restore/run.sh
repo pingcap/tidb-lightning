@@ -46,18 +46,3 @@ done
 # check tikv_gc_life_time is recovered to the original value
 run_sql 'select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME = "tikv_gc_life_time"';
 check_contains "VARIABLE_VALUE: $ORIGINAL_TIKV_GC_LIFE_TIME"
-
-# Start importing with local backend
-run_sql 'DROP DATABASE IF EXISTS restore_conc'
-run_lightning_local -d "$DBPATH"
-echo "Import finished"
-
-# Verify all data are imported
-for i in $(seq "$TABLE_COUNT"); do
-    run_sql "SELECT sum(i) FROM restore_conc.tbl$i;"
-    check_contains 'sum(i): 1'
-done
-
-# check tikv_gc_life_time is recovered to the original value
-run_sql 'select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME = "tikv_gc_life_time"';
-check_contains "VARIABLE_VALUE: $ORIGINAL_TIKV_GC_LIFE_TIME"

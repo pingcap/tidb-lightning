@@ -15,7 +15,7 @@
 
 set -eu
 
-for backend in tidb importer; do
+for backend in tidb importer local; do
     run_sql 'DROP DATABASE IF EXISTS issue282;'
     run_lightning --backend $backend
 
