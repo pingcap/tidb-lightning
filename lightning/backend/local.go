@@ -542,11 +542,11 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 	ranges := make([]Range, 0, n+1)
 	if tablecodec.IsIndexKey(startKey) {
 		// index engine
-		tableID, startIndexID, _, err := tablecodec.DecodeIndexKey(startKey)
+		tableID, startIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(startKey)
 		if err != nil {
 			return nil, err
 		}
-		tableID, endIndexID, _, err := tablecodec.DecodeIndexKey(endKey)
+		tableID, endIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(endKey)
 		if err != nil {
 			return nil, err
 		}
