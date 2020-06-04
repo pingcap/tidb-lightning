@@ -16,16 +16,19 @@
 set -eux
 
 do_run_lightning() {
-    run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-engines.log" --config "tests/$TEST_NAME/$1.toml"
+    run_lightning --backend $1 --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-engines.log" --config "tests/$TEST_NAME/$2.toml"
 }
+
+for BACKEND in importer local; do
 
 # First, verify that a normal operation is fine.
 
 rm -f "$TEST_DIR/lightning-checkpoint-engines.log"
 rm -f "/tmp/tidb_lightning_checkpoint.pb"
 run_sql 'DROP DATABASE IF EXISTS cpeng;'
+export GO_FAILPOINTS=""
 
-do_run_lightning config
+do_run_lightning $BACKEND config
 
 # Check that we have indeed opened 6 engines (index + data engine)
 DATA_ENGINE_COUNT=4
@@ -54,13 +57,13 @@ export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/SlowDo
 set +e
 for i in $(seq "$ENGINE_COUNT"); do
     echo "******** Importing Table Now (step $i/$ENGINE_COUNT) ********"
-    do_run_lightning config 2> /dev/null
+    do_run_lightning $BACKEND config 2> /dev/null
     [ $? -ne 0 ] || exit 1
 done
 set -e
 
 echo "******** Verify checkpoint no-op ********"
-do_run_lightning config
+do_run_lightning $BACKEND config
 
 run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
 check_contains 'count(*): 4'
@@ -78,13 +81,13 @@ run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint;'
 set +e
 for i in $(seq "$ENGINE_COUNT"); do
     echo "******** Importing Table Now (step $i/$ENGINE_COUNT) ********"
-    do_run_lightning mysql 2> /dev/null
+    do_run_lightning $BACKEND mysql 2> /dev/null
     [ $? -ne 0 ] || exit 1
 done
 set -e
 
 echo "******** Verify checkpoint no-op ********"
-do_run_lightning mysql
+do_run_lightning $BACKEND mysql
 
 run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
 check_contains 'count(*): 4'
@@ -93,3 +96,5 @@ check_contains 'sum(c): 10'
 run_sql 'SELECT count(*), sum(c) FROM cpeng.b'
 check_contains 'count(*): 4'
 check_contains 'sum(c): 46'
+
+done
