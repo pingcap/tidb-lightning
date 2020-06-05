@@ -19,6 +19,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/parser/model"
 	"io/ioutil"
 	"math"
@@ -849,6 +851,14 @@ func (local *local) WriteAndIngestPairs(
 					zap.Reflect("region", region))
 				continue
 			}
+			failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
+				switch val.(string) {
+				case "notleader": resp.Error.NotLeader = &errorpb.NotLeader{
+					RegionId:region.Region.Id, Leader: region.Leader}
+				case "epochnotmatch": resp.Error.EpochNotMatch = &errorpb.EpochNotMatch{
+					CurrentRegions: []*metapb.Region{region.Region}}
+				}
+			})
 			needRetry, newRegion, errIngest := isIngestRetryable(resp, region, meta)
 			if errIngest == nil {
 				// ingest next meta
