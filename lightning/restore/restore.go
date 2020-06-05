@@ -847,6 +847,10 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 						return
 					}
 
+					failpoint.Inject("FailBeforeDataEngineImported", func() {
+						panic("forcing failure due to FailBeforeDataEngineImported")
+					})
+
 					defer rc.closedEngineLimit.Recycle(dataWorker)
 					if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
 						engineErr.Set(err)
