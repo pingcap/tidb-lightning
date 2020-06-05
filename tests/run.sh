@@ -122,6 +122,8 @@ ssl-key = "$TT/tidb.key"
 cluster-ssl-ca = "$TT/ca.pem"
 cluster-ssl-cert = "$TT/tidb.pem"
 cluster-ssl-key = "$TT/tidb.key"
+[experimental]
+allow-auto-random = true
 EOF
     echo "Starting TiDB..."
     bin/tidb-server --config "$TEST_DIR/tidb-config.toml" &

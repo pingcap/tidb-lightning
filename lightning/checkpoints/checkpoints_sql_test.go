@@ -239,7 +239,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 	c.Assert(cp, DeepEquals, &checkpoints.TableCheckpoint{
 		Status:    checkpoints.CheckpointStatusAllWritten,
 		AllocBase: 132861,
-		TableID:  int64(2),
+		TableID:   int64(2),
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {Status: checkpoints.CheckpointStatusLoaded},
 			0: {

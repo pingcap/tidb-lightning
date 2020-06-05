@@ -314,6 +314,19 @@ func (s *tidbSuite) TestAlterAutoInc(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *tidbSuite) TestAlterAutoRandom(c *C) {
+	ctx := context.Background()
+
+	s.mockDB.
+		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_RANDOM_BASE=12345\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
+		ExpectClose()
+
+	err := AlterAutoRandom(ctx, s.timgr.db, "`db`.`table`", 12345)
+	c.Assert(err, IsNil)
+}
+
 func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 	ctx := context.Background()
 

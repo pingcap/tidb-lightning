@@ -54,6 +54,10 @@ func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
 			"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
 			"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
 			"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
+
+			// after https://github.com/pingcap/tidb/pull/17102 merge,
+			// we need set session to true for insert auto_random value in TiDB Backend
+			"allow_auto_random_explicit_insert": "1",
 		},
 	}
 	db, err := param.Connect()
@@ -241,6 +245,24 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr 
 	if err != nil {
 		task.Error(
 			"alter table auto_increment failed, please perform the query manually (this is needed no matter the table has an auto-increment column or not)",
+			zap.String("query", query),
+		)
+	}
+	return errors.Annotatef(err, "%s", query)
+}
+
+func AlterAutoRandom(ctx context.Context, db *sql.DB, tableName string, randomBase int64) error {
+	sql := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.With(zap.String("table", tableName), zap.Int64("auto_random", randomBase)),
+	}
+	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
+	task := sql.Logger.Begin(zap.InfoLevel, "alter table auto_random")
+	err := sql.Exec(ctx, "alter table auto_random_base", query)
+	task.End(zap.ErrorLevel, err)
+	if err != nil {
+		task.Error(
+			"alter table auto_random_base failed, please perform the query manually (this is needed no matter the table has an auto-random column or not)",
 			zap.String("query", query),
 		)
 	}
