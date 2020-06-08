@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	pd "github.com/pingcap/pd/v4/client"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -616,14 +617,16 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		}
 	} else {
 		// data engine
-		tableID, startHandle, err := tablecodec.DecodeRecordKey(startKey)
+		tableID, startHandleInterface, err := tablecodec.DecodeRecordKey(startKey)
 		if err != nil {
 			return nil, err
 		}
-		endHandle, err := tablecodec.DecodeRowKey(endKey)
+		endHandleInterface, err := tablecodec.DecodeRowKey(endKey)
 		if err != nil {
 			return nil, err
 		}
+		endHandle := endHandleInterface.IntValue()
+		startHandle := startHandleInterface.IntValue()
 		step := (endHandle - startHandle) / n
 		index := int64(0)
 		var sKey, eKey []byte
@@ -633,8 +636,8 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 			zap.String("engine", engineUUID.String()))
 
 		for i := startHandle; i+step <= endHandle; i += step {
-			sKey = tablecodec.EncodeRowKeyWithHandle(tableID, i)
-			eKey = tablecodec.EncodeRowKeyWithHandle(tableID, i+step-1)
+			sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i))
+			eKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i+step-1))
 			index = i
 			log.L().Debug("data engine append range", zap.Int64("start handle", i),
 				zap.Int64("end handle", i+step-1), zap.Binary("start key", sKey),
@@ -647,7 +650,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 			zap.Binary("start key", sKey), zap.Binary("end key", endKey),
 			zap.Int64("step", endHandle-index-step+1))
 
-		sKey = tablecodec.EncodeRowKeyWithHandle(tableID, index+step)
+		sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(index+step))
 		ranges = append(ranges, Range{start: sKey, end: nextKey(endKey)})
 	}
 	return ranges, nil

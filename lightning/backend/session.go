@@ -18,10 +18,11 @@ import (
 	"strconv"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+
+	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 // invalidIterator is a trimmed down Iterator type which is invalid.
@@ -42,7 +43,20 @@ func (*invalidIterator) Close() {
 // new KV pair.
 type transaction struct {
 	kv.Transaction
-	kvPairs []common.KvPair
+	kvPairs     []common.KvPair
+}
+
+func (t *transaction) NewStagingBuffer() kv.MemBuffer {
+	return t
+}
+
+func (t *transaction) Discard() {
+	// do nothing
+}
+
+func (t *transaction) Flush() (int, error) {
+	// do nothing
+	return 0, nil
 }
 
 // Reset implements the kv.MemBuffer interface
@@ -112,7 +126,6 @@ func newSession(options *SessionOptions) *session {
 		txn:  transaction{},
 		vars: vars,
 	}
-	s.vars.GetWriteStmtBufs().BufStore = &kv.BufferStore{MemBuffer: &s.txn}
 
 	return s
 }
@@ -134,4 +147,4 @@ func (se *session) GetSessionVars() *variable.SessionVars {
 }
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface
-func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle int64) {}
+func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle) {}
