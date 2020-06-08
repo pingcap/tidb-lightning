@@ -196,7 +196,7 @@ func (kvcodec *tableKVEncoder) Encode(
 			if hasSignBit {
 				incrementalBits -= 1
 			}
-			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64()&((1 << incrementalBits) - 1), false, autoid.AutoRandomType)
+			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64()&((1<<incrementalBits)-1), false, autoid.AutoRandomType)
 		}
 		if isAutoIncCol {
 			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.AutoIncrementType)
