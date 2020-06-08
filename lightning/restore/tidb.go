@@ -20,6 +20,9 @@ import (
 	"strconv"
 	"strings"
 
+	tmysql "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/parser/terror"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -38,6 +41,25 @@ import (
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
+}
+
+// GetSQLErrCode returns error code if err is a mysql error
+func GetSQLErrCode(err error) (terror.ErrCode, bool) {
+	mysqlErr, ok := errors.Cause(err).(*tmysql.MySQLError)
+	if !ok {
+		return -1, false
+	}
+
+	return terror.ErrCode(mysqlErr.Number), true
+}
+
+func isUnknownSystemVariableErr(err error) bool {
+	code, ok := GetSQLErrCode(err)
+	if !ok {
+		return strings.Contains(err.Error(), "Unknown system variable")
+	}
+	// ErrUnknownSystemVariable
+	return code == 1193
 }
 
 func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
@@ -62,7 +84,16 @@ func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
 	}
 	db, err := param.Connect()
 	if err != nil {
-		return nil, errors.Trace(err)
+		if isUnknownSystemVariableErr(err) {
+			// not support allow_auto_random_explicit_insert
+			delete(param.Vars, "allow_auto_random_explicit_insert")
+			db, err = param.Connect()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	return NewTiDBManagerWithDB(db, dsn.SQLMode), nil
