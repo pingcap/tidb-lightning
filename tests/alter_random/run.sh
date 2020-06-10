@@ -15,7 +15,11 @@
 
 set -eu
 
-for backend in tidb importer; do
+for backend in tidb importer local; do
+    if [ "$backend" = 'local' -a "$CLUSTER_VERSION_MAJOR" -lt 4 ]; then
+        continue
+    fi
+
     run_sql 'DROP DATABASE IF EXISTS alter_random;'
     run_lightning --backend $backend
 
