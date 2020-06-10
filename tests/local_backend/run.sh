@@ -15,6 +15,8 @@
 
 set -eux
 
+check_cluster_version 4 0 0 'local backend' || exit 0
+
 ENGINE_COUNT=6
 
 # First, verify that inject with not leader error is fine.

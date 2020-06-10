@@ -20,6 +20,10 @@ do_run_lightning() {
 }
 
 for BACKEND in importer local; do
+  if [ "$BACKEND" = 'local' ]; then
+    check_cluster_version 4 0 0 'local backend' || continue
+  fi
+
   # First, verify that a normal operation is fine.
   rm -f "$TEST_DIR/lightning-checkpoint-engines.log"
   rm -f "/tmp/tidb_lightning_checkpoint.pb"

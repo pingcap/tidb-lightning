@@ -15,9 +15,12 @@
 
 set -eu
 
+# FIXME: auto-random is only stable on master currently.
+check_cluster_version 4 0 0 AUTO_RANDOM || exit 0
+
 for backend in tidb importer local; do
-    if [ "$backend" = 'local' -a "$CLUSTER_VERSION_MAJOR" -lt 4 ]; then
-        continue
+    if [ "$backend" = 'local' ]; then
+        check_cluster_version 4 0 0 'local backend' || continue
     fi
 
     run_sql 'DROP DATABASE IF EXISTS alter_random;'
