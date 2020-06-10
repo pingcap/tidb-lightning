@@ -163,7 +163,7 @@ if [ "${1-}" = '--debug' ]; then
     read line
 fi
 
-for script in tests/*/run.sh; do
+for script in tests/${TEST_NAME-*}/run.sh; do
     echo "\x1b[32;1m@@@@@@@ Running test $script...\x1b[0m"
     TEST_DIR="$TEST_DIR" \
     TEST_NAME="$(basename "$(dirname "$script")")" \
