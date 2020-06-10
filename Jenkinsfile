@@ -53,6 +53,8 @@ if (m4) {
 m4 = null
 println "TIKV_IMPORTER_BRANCH=${TIKV_IMPORTER_BRANCH}"
 
+def test_case_names = []
+
 catchError {
     stage('Prepare') {
         node ("${GO_TEST_SLAVE}") {
@@ -82,6 +84,10 @@ catchError {
                         cp -R /home/jenkins/agent/git/tidb-lightning/. ./
                         git checkout -f ${ghprbActualCommit}
                     """
+
+                    // Collect test case names.
+                    def list = sh(script: "find tests/ -mindepth 2 -maxdepth 2 -name run.sh | cut -d / -f 2", returnStdout:true).trim()
+                    test_case_names = list.split("\\n")
                 }
 
                 stash includes: "go/src/github.com/pingcap/tidb-lightning/**", name: "tidb-lightning", useDefaultExcludes: false
@@ -104,78 +110,80 @@ catchError {
         }
     }
 
-    stage('Integration Test') {
-        def tests = [:]
+    stage('Unit test') {
+        node("${GO_TEST_SLAVE}") {
+            container("golang") {
+                println "kubectl -n jenkins-ci exec -ti ${NODE_NAME} bash"
+                def ws = pwd()
+                deleteDir()
+                unstash 'tidb-lightning'
+                dir("go/src/github.com/pingcap/tidb-lightning") {
+                    timeout(2) {
+                        sh """
+                            rm -rf /tmp/lightning_test_result
+                            mkdir -p /tmp/lightning_test_result
+                            GO111MODULE=on  PATH=\$GOPATH/go:${ws}/go/bin:\$PATH make test
+                            rm -rf cov_dir
+                            mkdir -p cov_dir
+                            ls /tmp
+                            ls /tmp/lightning_test_result
+                            cp /tmp/lightning_test_result/cov*out cov_dir
+                        """
+                    }
+                }
 
-        tests["Integration Test"] = {
-            node("${GO_TEST_SLAVE}") {
-                container("golang") {
-                    println "kubectl -n jenkins-ci exec -ti ${NODE_NAME} bash"
+                stash includes: "go/src/github.com/pingcap/tidb-lightning/cov_dir/**", name: "unit-cov"
+            }
+        }
+    }
 
-                    def ws = pwd()
-                    deleteDir()
-                    unstash 'tidb-lightning'
-                    unstash 'binaries'
+    stage('Integration tests') {
+        def test_cases = [:]
 
-                    dir("go/src/github.com/pingcap/tidb-lightning") {
-                        sh "mv ${ws}/bin ./bin/"
-                        try {
-                            timeout(15) {
-                                sh """
-                                rm -rf /tmp/lightning_test_result
-                                mkdir -p /tmp/lightning_test_result
-                                GO111MODULE=on PATH=\$GOPATH/bin:${ws}/go/bin:\$PATH make integration_test
-                                rm -rf cov_dir
-                                mkdir -p cov_dir
-                                ls /tmp
-                                ls /tmp/lightning_test_result
-                                cp /tmp/lightning_test_result/cov*out cov_dir
-                                """
+        test_case_names.each { test_name ->
+            test_cases["integration test ${test_name}"] = {
+                node("${GO_TEST_SLAVE}") {
+                    container("golang") {
+                        println "kubectl -n jenkins-ci exec -ti ${NODE_NAME} bash"
+
+                        def ws = pwd()
+                        deleteDir()
+                        unstash 'tidb-lightning'
+                        unstash 'binaries'
+
+                        dir("go/src/github.com/pingcap/tidb-lightning") {
+                            sh "mv ${ws}/bin ./bin/"
+                            try {
+                                timeout(10) {
+                                    sh """
+                                    rm -rf /tmp/lightning_test_result
+                                    mkdir -p /tmp/lightning_test_result
+                                    GO111MODULE=on PATH=\$GOPATH/bin:${ws}/go/bin:\$PATH TEST_NAME=${test_name} make integration_test
+                                    rm -rf cov_dir
+                                    mkdir -p cov_dir
+                                    ls /tmp
+                                    ls /tmp/lightning_test_result
+                                    cp /tmp/lightning_test_result/cov*out cov_dir || true
+                                    """
+                                }
+                            } catch (Exception e) {
+                                sh "cat '/tmp/lightning_test_result/pd.log' || true"
+                                sh "cat '/tmp/lightning_test_result/tikv.log' || true"
+                                sh "cat '/tmp/lightning_test_result/tidb.log' || true"
+                                sh "cat '/tmp/lightning_test_result/importer.log' || true"
+                                sh "cat '/tmp/lightning_test_result/lightning.log' || true"
+                                sh "echo 'build failed'"
+                                throw e;
                             }
-                        } catch (Exception e) {
-                            sh "cat '/tmp/lightning_test_result/pd.log' || true"
-                            sh "cat '/tmp/lightning_test_result/tikv.log' || true"
-                            sh "cat '/tmp/lightning_test_result/tidb.log' || true"
-                            sh "cat '/tmp/lightning_test_result/importer.log' || true"
-                            sh "cat '/tmp/lightning_test_result/lightning.log' || true"
-                            sh "echo 'build failed'"
-                            throw e;
                         }
-                    }
 
-                    stash includes: "go/src/github.com/pingcap/tidb-lightning/cov_dir/**", name: "intergration-cov"
+                        stash includes: "go/src/github.com/pingcap/tidb-lightning/cov_dir/**", name: "intergration-${test_name}-cov", useDefaultExcludes: false, allowEmpty: true
+                    }
                 }
             }
         }
 
-        tests["Unit Test"] = {
-            node("${GO_TEST_SLAVE}") {
-                container("golang") {
-                    println "kubectl -n jenkins-ci exec -ti ${NODE_NAME} bash"
-                    def ws = pwd()
-                    deleteDir()
-                    unstash 'tidb-lightning'
-                    dir("go/src/github.com/pingcap/tidb-lightning") {
-                        timeout(15) {
-                            sh """
-                                rm -rf /tmp/lightning_test_result
-                                mkdir -p /tmp/lightning_test_result
-                                GO111MODULE=on  PATH=\$GOPATH/go:${ws}/go/bin:\$PATH make test
-                                rm -rf cov_dir
-                                mkdir -p cov_dir
-                                ls /tmp
-                                ls /tmp/lightning_test_result
-                                cp /tmp/lightning_test_result/cov*out cov_dir
-                            """
-                        }
-                    }
-
-                    stash includes: "go/src/github.com/pingcap/tidb-lightning/cov_dir/**", name: "unit-cov"
-                }
-            }
-        }
-
-        parallel tests
+        parallel test_cases
     }
 
     if (!params.containsKey("release_test")) {
@@ -185,12 +193,14 @@ catchError {
             def ws = pwd()
             deleteDir()
             unstash 'tidb-lightning'
-            unstash 'intergration-cov'
+            test_case_names.each { test_name ->
+                unstash "intergration-${test_name}-cov"
+            }
             unstash 'unit-cov'
 
             dir("go/src/github.com/pingcap/tidb-lightning") {
                 container("golang") {
-                    timeout(30) {
+                    timeout(3) {
                         sh """
                         rm -rf /tmp/lightning_test_result
                         mkdir -p /tmp/lightning_test_result
