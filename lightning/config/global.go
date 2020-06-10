@@ -54,8 +54,9 @@ type GlobalMydumper struct {
 }
 
 type GlobalImporter struct {
-	Addr    string `toml:"addr" json:"addr"`
-	Backend string `toml:"backend" json:"backend"`
+	Addr        string `toml:"addr" json:"addr"`
+	Backend     string `toml:"backend" json:"backend"`
+	SortedKVDir string `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
 }
 
 type GlobalConfig struct {
@@ -145,7 +146,8 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
 	dataSrcPath := fs.String("d", "", "Directory of the dump to import")
 	importerAddr := fs.String("importer", "", "address (host:port) to connect to tikv-importer")
-	backend := fs.String("backend", "", `delivery backend ("importer" or "tidb")`)
+	backend := fs.String("backend", "", `delivery backend ("importer" or "tidb" or "local")`)
+	sortedKVDir := fs.String("sorted-kv-dir", "", "path for KV pairs when local backend enabled")
 	enableCheckpoint := fs.Bool("enable-checkpoint", true, "whether to enable checkpoints")
 	noSchema := fs.Bool("no-schema", false, "ignore schema files, get schema directly from TiDB instead")
 	checksum := fs.Bool("checksum", true, "compare checksum after importing")
@@ -219,6 +221,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if *backend != "" {
 		cfg.TikvImporter.Backend = *backend
+	}
+	if *sortedKVDir != "" {
+		cfg.TikvImporter.SortedKVDir = *sortedKVDir
 	}
 	if !*enableCheckpoint {
 		cfg.Checkpoint.Enable = false

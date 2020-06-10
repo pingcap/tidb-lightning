@@ -73,6 +73,12 @@ func makeLogger(tag string, engineUUID uuid.UUID) log.Logger {
 	)
 }
 
+func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
+	tag := makeTag(tableName, engineID)
+	engineUUID := uuid.NewV5(engineNamespace, tag)
+	return tag, engineUUID
+}
+
 var engineNamespace = uuid.Must(uuid.FromString("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf"))
 
 // AbstractBackend is the abstract interface behind Backend.
@@ -134,6 +140,15 @@ type AbstractBackend interface {
 	//     * Offset (must be 0, 1, 2, ...)
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
 	FetchRemoteTableModels(schemaName string) ([]*model.TableInfo, error)
+}
+
+func fetchRemoteTableModelsFromTLS(tls *common.TLS, schema string) ([]*model.TableInfo, error) {
+	var tables []*model.TableInfo
+	err := tls.GetJSON("/schema/"+schema, &tables)
+	if err != nil {
+		return nil, errors.Annotatef(err, "cannot read schema '%s' from remote", schema)
+	}
+	return tables, nil
 }
 
 // Backend is the delivery target for Lightning
@@ -199,8 +214,7 @@ func (be Backend) FetchRemoteTableModels(schemaName string) ([]*model.TableInfo,
 
 // OpenEngine opens an engine with the given table name and engine ID.
 func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int32) (*OpenedEngine, error) {
-	tag := makeTag(tableName, engineID)
-	engineUUID := uuid.NewV5(engineNamespace, tag)
+	tag, engineUUID := MakeUUID(tableName, engineID)
 	logger := makeLogger(tag, engineUUID)
 
 	if err := be.abstract.OpenEngine(ctx, engineUUID); err != nil {
@@ -241,6 +255,14 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 	return closedEngine, err
 }
 
+// Flush current written data for local backend
+func (engine *OpenedEngine) Flush() error {
+	if l, ok := engine.backend.(*local); ok {
+		return l.Flush(engine.uuid)
+	}
+	return nil
+}
+
 // WriteRows writes a collection of encoded rows into the engine.
 func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
 	var err error
@@ -270,8 +292,7 @@ outside:
 // knows via other ways that the engine has already been opened, e.g. when
 // resuming from a checkpoint.
 func (be Backend) UnsafeCloseEngine(ctx context.Context, tableName string, engineID int32) (*ClosedEngine, error) {
-	tag := makeTag(tableName, engineID)
-	engineUUID := uuid.NewV5(engineNamespace, tag)
+	tag, engineUUID := MakeUUID(tableName, engineID)
 	return be.UnsafeCloseEngineWithUUID(ctx, tag, engineUUID)
 }
 

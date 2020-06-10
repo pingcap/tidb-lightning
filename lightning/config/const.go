@@ -19,9 +19,10 @@ const (
 	_G = _M << 10
 
 	// mydumper
-	ReadBlockSize int64 = 64 * _K
-	MinRegionSize int64 = 256 * _M
-	MaxRegionSize int64 = 256 * _M
+	ReadBlockSize   int64 = 64 * _K
+	MinRegionSize   int64 = 256 * _M
+	MaxRegionSize   int64 = 256 * _M
+	SplitRegionSize int64 = 96 * _M
 
 	BufferSizeScale = 5
 

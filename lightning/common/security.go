@@ -22,15 +22,19 @@ import (
 	"net/http/httptest"
 
 	"github.com/pingcap/errors"
+	pd "github.com/pingcap/pd/v4/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
 
 // TLS
 type TLS struct {
-	inner  *tls.Config
-	client *http.Client
-	url    string
+	caPath   string
+	certPath string
+	keyPath  string
+	inner    *tls.Config
+	client   *http.Client
+	url      string
 }
 
 // ToTLSConfig constructs a `*tls.Config` from the CA, certification and key
@@ -90,9 +94,12 @@ func NewTLS(caPath, certPath, keyPath, host string) (*TLS, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = inner
 	return &TLS{
-		inner:  inner,
-		client: &http.Client{Transport: transport},
-		url:    "https://" + host,
+		caPath:   caPath,
+		certPath: certPath,
+		keyPath:  keyPath,
+		inner:    inner,
+		client:   &http.Client{Transport: transport},
+		url:      "https://" + host,
 	}, nil
 }
 
@@ -140,4 +147,16 @@ func (tc *TLS) WrapListener(l net.Listener) net.Listener {
 // GetJSON obtains JSON result with the HTTP GET method.
 func (tc *TLS) GetJSON(path string, v interface{}) error {
 	return GetJSON(tc.client, tc.url+path, v)
+}
+
+func (tc *TLS) ToPDSecurityOption() pd.SecurityOption {
+	return pd.SecurityOption{
+		CAPath:   tc.caPath,
+		CertPath: tc.certPath,
+		KeyPath:  tc.keyPath,
+	}
+}
+
+func (tc *TLS) TLSConfig() *tls.Config {
+	return tc.inner
 }

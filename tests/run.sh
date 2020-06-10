@@ -169,5 +169,3 @@ for script in tests/*/run.sh; do
     TEST_NAME="$(basename "$(dirname "$script")")" \
     sh "$script"
 done
-
-

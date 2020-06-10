@@ -197,12 +197,6 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 	}
 	defer target.Close()
 
-	importer, err := kv.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer importer.Close()
-
 	targetTables, err := cpdb.DestroyErrorCheckpoint(ctx, tableName)
 	if err != nil {
 		return errors.Trace(err)
@@ -219,15 +213,42 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 		}
 	}
 
-	for _, table := range targetTables {
-		for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
-			fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
-			closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, engineID)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "* Encountered error while closing engine:", err)
-				lastErr = err
-			} else {
-				closedEngine.Cleanup(ctx)
+	if cfg.TikvImporter.Backend == "importer" {
+		importer, err := kv.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer importer.Close()
+
+		for _, table := range targetTables {
+			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
+				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
+				closedEngine, err := importer.UnsafeCloseEngine(ctx, table.TableName, engineID)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "* Encountered error while closing engine:", err)
+					lastErr = err
+				} else {
+					closedEngine.Cleanup(ctx)
+				}
+			}
+		}
+	}
+	// For importer backend, engine was stored in importer's memory, we can retrieve it from alive importer process.
+	// But in local backend, if we want to use common API `UnsafeCloseEngine` and `Cleanup`,
+	// we need either lightning process alive or engine map persistent.
+	// both of them seems unnecessary if we only need to do is cleanup specify engine directory.
+	// so we didn't choose to use common API.
+	if cfg.TikvImporter.Backend == "local" {
+		for _, table := range targetTables {
+			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
+				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
+				_, eID := kv.MakeUUID(table.TableName, engineID)
+				file := kv.LocalFile{Uuid: eID}
+				err := file.Cleanup(cfg.TikvImporter.SortedKVDir)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "* Encountered error while cleanup engine:", err)
+					lastErr = err
+				}
 			}
 		}
 	}
