@@ -41,7 +41,6 @@ var (
 	requiredTiDBVersion = *semver.New("2.1.0")
 	requiredPDVersion   = *semver.New("2.1.0")
 	requiredTiKVVersion = *semver.New("2.1.0")
-	// ^ TODO: remember to use 4.0.0 for "local" backend.
 )
 
 // importer represents a gRPC connection to tikv-importer. This type is
@@ -336,10 +335,5 @@ func checkVersion(component string, expected, actual semver.Version) error {
 }
 
 func (importer *importer) FetchRemoteTableModels(schema string) ([]*model.TableInfo, error) {
-	var tables []*model.TableInfo
-	err := importer.tls.GetJSON("/schema/"+schema, &tables)
-	if err != nil {
-		return nil, errors.Annotatef(err, "cannot read schema '%s' from remote", schema)
-	}
-	return tables, nil
+	return fetchRemoteTableModelsFromTLS(importer.tls, schema)
 }

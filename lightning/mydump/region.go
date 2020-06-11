@@ -199,6 +199,10 @@ func MakeTableRegions(
 		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
 	}
 
+	log.L().Debug("in makeTableRegions",
+		zap.Int64("maxRegionSize", cfg.Mydumper.MaxRegionSize),
+		zap.Int("len fileRegions", len(filesRegions)))
+
 	AllocateEngineIDs(filesRegions, dataFileSizes, float64(cfg.Mydumper.BatchSize), cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
 	return filesRegions, nil
 }

@@ -620,7 +620,8 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData(c *C) {
 
 	// Deliver nothing.
 
-	rc := &RestoreController{backend: importer}
+	cfg := &config.Config{}
+	rc := &RestoreController{cfg: cfg, backend: importer}
 
 	kvsCh := make(chan []deliveredKVs, 1)
 	kvsCh <- []deliveredKVs{}
@@ -705,7 +706,8 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 		close(kvsCh)
 	}()
 
-	rc := &RestoreController{saveCpCh: saveCpCh, backend: importer}
+	cfg := &config.Config{}
+	rc := &RestoreController{cfg: cfg, saveCpCh: saveCpCh, backend: importer}
 
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataEngine, indexEngine, rc)
 	c.Assert(err, IsNil)

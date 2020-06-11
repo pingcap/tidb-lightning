@@ -180,6 +180,13 @@ func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDat
 		}
 	case config.BackendTiDB:
 		backend = kv.NewTiDBBackend(tidbMgr.db, cfg.TikvImporter.OnDuplicate)
+	case config.BackendLocal:
+		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, cfg.TikvImporter.RegionSplitSize,
+			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
+			cfg.Checkpoint.Enable)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
 	}
@@ -355,6 +362,9 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 
 func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int32, err error, statusIfSucceed CheckpointStatus) {
 	merger := &StatusCheckpointMerger{Status: statusIfSucceed, EngineID: engineID}
+
+	log.L().Debug("update checkpoint", zap.String("table", tableName), zap.Int32("engine_id", engineID),
+		zap.Uint8("new_status", uint8(statusIfSucceed)), zap.Error(err))
 
 	switch {
 	case err == nil:
@@ -789,6 +799,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 	if indexEngineCp.Status < CheckpointStatusImported && cp.Status < CheckpointStatusIndexImported {
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
+
 		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, indexEngineID)
 		if err != nil {
 			return errors.Trace(err)
@@ -821,30 +832,36 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 				continue
 			}
 
-			wg.Add(1)
+			if engine.Status < CheckpointStatusImported {
+				wg.Add(1)
 
-			// Note: We still need tableWorkers to control the concurrency of tables.
-			// In the future, we will investigate more about
-			// the difference between restoring tables concurrently and restoring tables one by one.
-			restoreWorker := rc.tableWorkers.Apply()
+				// Note: We still need tableWorkers to control the concurrency of tables.
+				// In the future, we will investigate more about
+				// the difference between restoring tables concurrently and restoring tables one by one.
+				restoreWorker := rc.tableWorkers.Apply()
 
-			go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
-				defer wg.Done()
+				go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
+					defer wg.Done()
 
-				engineLogTask := t.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
-				dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
-				engineLogTask.End(zap.ErrorLevel, err)
-				rc.tableWorkers.Recycle(w)
-				if err != nil {
-					engineErr.Set(err)
-					return
-				}
+					engineLogTask := t.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
+					dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
+					engineLogTask.End(zap.ErrorLevel, err)
+					rc.tableWorkers.Recycle(w)
+					if err != nil {
+						engineErr.Set(err)
+						return
+					}
 
-				defer rc.closedEngineLimit.Recycle(dataWorker)
-				if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
-					engineErr.Set(err)
-				}
-			}(restoreWorker, engineID, engine)
+					failpoint.Inject("FailBeforeDataEngineImported", func() {
+						panic("forcing failure due to FailBeforeDataEngineImported")
+					})
+
+					defer rc.closedEngineLimit.Recycle(dataWorker)
+					if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
+						engineErr.Set(err)
+					}
+				}(restoreWorker, engineID, engine)
+			}
 		}
 
 		wg.Wait()
@@ -872,9 +889,13 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		var err error
 		if indexEngineCp.Status < CheckpointStatusImported {
 			// the lock ensures the import() step will not be concurrent.
-			rc.postProcessLock.Lock()
+			if !rc.isLocalBackend() {
+				rc.postProcessLock.Lock()
+			}
 			err = t.importKV(ctx, closedIndexEngine)
-			rc.postProcessLock.Unlock()
+			if !rc.isLocalBackend() {
+				rc.postProcessLock.Unlock()
+			}
 			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
 		}
 
@@ -981,13 +1002,32 @@ func (t *TableRestore) restoreEngine(
 		zap.Int64("read", totalSQLSize),
 		zap.Uint64("written", totalKVSize),
 	)
-	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusAllWritten)
+
+	// in local mode, this check-point make no sense, because we don't do flush now,
+	// so there may be data lose if exit at here. So we don't write this checkpoint
+	// here like other mode.
+	if !rc.isLocalBackend() {
+		rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusAllWritten)
+	}
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
 	dataWorker := rc.closedEngineLimit.Apply()
 	closedDataEngine, err := dataEngine.Close(ctx)
+	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
+	// this flush action impact up to 10% of the performance, so we only do it if necessary.
+	if err == nil && rc.cfg.Checkpoint.Enable && rc.isLocalBackend() {
+		if err = indexEngine.Flush(); err != nil {
+			// If any error occurred, recycle worker immediately
+			rc.closedEngineLimit.Recycle(dataWorker)
+			return nil, nil, errors.Trace(err)
+		}
+		// Currently we write all the checkpoints after data&index engine are flushed.
+		for _, chunk := range cp.Chunks {
+			saveCheckpoint(rc, t, engineID, chunk)
+		}
+	}
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
 	if err != nil {
 		// If any error occurred, recycle worker immediately
@@ -1012,9 +1052,13 @@ func (t *TableRestore) importEngine(
 	// FIXME: flush is an asynchronous operation, what if flush failed?
 
 	// the lock ensures the import() step will not be concurrent.
-	rc.postProcessLock.Lock()
+	if !rc.isLocalBackend() {
+		rc.postProcessLock.Lock()
+	}
 	err := t.importKV(ctx, closedEngine)
-	rc.postProcessLock.Unlock()
+	if !rc.isLocalBackend() {
+		rc.postProcessLock.Unlock()
+	}
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
 		return errors.Trace(err)
@@ -1185,6 +1229,10 @@ func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
 	}
 	task.End(zap.ErrorLevel, err)
 	return errors.Annotate(err, "clean checkpoints")
+}
+
+func (rc *RestoreController) isLocalBackend() bool {
+	return rc.cfg.TikvImporter.Backend == "local"
 }
 
 type chunkRestore struct {
@@ -1580,16 +1628,20 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = offset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
-		if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
+		// IN local mode, we should write these checkpoint after engine flushed
+		if !rc.isLocalBackend() && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
 			// No need to save checkpoint if nothing was delivered.
-			cr.saveCheckpoint(t, engineID, rc)
+			saveCheckpoint(rc, t, engineID, cr.chunk)
 		}
+		// TODO: for local backend, we may save checkpoint more frequently, e.g. after writen
+		//10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
+		// can safely update current checkpoint.
 	}
 
 	return
 }
 
-func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *RestoreController) {
+func saveCheckpoint(rc *RestoreController, t *TableRestore, engineID int32, chunk *ChunkCheckpoint) {
 	// We need to update the AllocBase every time we've finished a file.
 	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
 	// or integer primary key), which can only be obtained by reading all data.
@@ -1610,10 +1662,10 @@ func (cr *chunkRestore) saveCheckpoint(t *TableRestore, engineID int32, rc *Rest
 		tableName: t.tableName,
 		merger: &ChunkCheckpointMerger{
 			EngineID: engineID,
-			Key:      cr.chunk.Key,
-			Checksum: cr.chunk.Checksum,
-			Pos:      cr.chunk.Chunk.Offset,
-			RowID:    cr.chunk.Chunk.PrevRowIDMax,
+			Key:      chunk.Key,
+			Checksum: chunk.Checksum,
+			Pos:      chunk.Chunk.Offset,
+			RowID:    chunk.Chunk.PrevRowIDMax,
 		},
 	}
 }

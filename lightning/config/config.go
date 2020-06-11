@@ -44,6 +44,9 @@ const (
 	BackendTiDB = "tidb"
 	// BackendImporter is a constant for choosing the "Importer" backend in the configuration.
 	BackendImporter = "importer"
+	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
+	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
+	BackendLocal = "local"
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -150,10 +153,14 @@ type MydumperRuntime struct {
 }
 
 type TikvImporter struct {
-	Addr        string `toml:"addr" json:"addr"`
-	Backend     string `toml:"backend" json:"backend"`
-	OnDuplicate string `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs  int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	Addr             string `toml:"addr" json:"addr"`
+	Backend          string `toml:"backend" json:"backend"`
+	OnDuplicate      string `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs       int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	SendKVPairs      int    `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	RegionSplitSize  int64  `toml:"region-split-size" json:"region-split-size"`
+	SortedKVDir      string `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	RangeConcurrency int    `toml:"range-concurrency" json:"range-concurrency"`
 }
 
 type Checkpoint struct {
@@ -252,9 +259,11 @@ func NewConfig() *Config {
 			MaxRegionSize: MaxRegionSize,
 		},
 		TikvImporter: TikvImporter{
-			Backend:     BackendImporter,
-			OnDuplicate: ReplaceOnDup,
-			MaxKVPairs:  32,
+			Backend:         BackendImporter,
+			OnDuplicate:     ReplaceOnDup,
+			MaxKVPairs:      32,
+			SendKVPairs:     100000,
+			RegionSplitSize: SplitRegionSize,
 		},
 		PostRestore: PostRestore{
 			Checksum: true,
@@ -280,6 +289,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
 	cfg.TikvImporter.Addr = global.TikvImporter.Addr
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
+	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
 	cfg.Checkpoint.Enable = global.Checkpoint.Enable
 	cfg.PostRestore.Checksum = global.PostRestore.Checksum
 	cfg.PostRestore.Analyze = global.PostRestore.Analyze
@@ -386,15 +396,27 @@ func (cfg *Config) Adjust() error {
 			cfg.App.TableConcurrency = cfg.App.RegionConcurrency
 		}
 		mustHaveInternalConnections = false
-	case BackendImporter:
+	case BackendImporter, BackendLocal:
 		if cfg.App.IndexConcurrency == 0 {
 			cfg.App.IndexConcurrency = 2
 		}
 		if cfg.App.TableConcurrency == 0 {
 			cfg.App.TableConcurrency = 6
 		}
+		if cfg.TikvImporter.RangeConcurrency == 0 {
+			cfg.TikvImporter.RangeConcurrency = 32
+		}
+		if cfg.TikvImporter.RegionSplitSize == 0 {
+			cfg.TikvImporter.RegionSplitSize = SplitRegionSize
+		}
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
+	}
+
+	if cfg.TikvImporter.Backend == BackendLocal {
+		if len(cfg.TikvImporter.SortedKVDir) == 0 {
+			return errors.Errorf("tikv-importer.sorted-kv-dir must not be empty!")
+		}
 	}
 
 	if cfg.TikvImporter.Backend == BackendTiDB {
