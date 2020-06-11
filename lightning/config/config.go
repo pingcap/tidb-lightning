@@ -136,7 +136,6 @@ type CSVConfig struct {
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	Null            string `toml:"null" json:"null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
-	MaxRegionSize   int64  `toml:"max-region-size" json:"max-region-size"`
 }
 
 type MydumperRuntime struct {
