@@ -43,7 +43,7 @@ func (*invalidIterator) Close() {
 // new KV pair.
 type transaction struct {
 	kv.Transaction
-	kvPairs     []common.KvPair
+	kvPairs []common.KvPair
 }
 
 func (t *transaction) NewStagingBuffer() kv.MemBuffer {
