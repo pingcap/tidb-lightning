@@ -79,16 +79,16 @@ addr = "127.0.0.1:8287"
 #  - ignore: keep the old record and ignore the new record (i.e. insert rows using "INSERT IGNORE INTO")
 #  - error: stop Lightning and report an error (i.e. insert rows using "INSERT INTO")
 #on-duplicate = "replace"
-# split regions into this size according to the importing data. This should be set to the same as tikv region size
-# to avoid tikv further split region. The default value is 96M.
-# region-split-size = 100663296
+# Maximum KV size of SST files produced in the 'local' backend. This should be the same as
+# the TiKV region size to avoid further region splitting. The default value is 96 MiB.
+#region-split-size = 100_663_296
 # write key-values pairs to tikv batch size
-# send-kv-pairs = 100000
+#send-kv-pairs = 100000
 # local storage directory used in "local" backend. Put this direcory in a different disk from `data-source-dir`
 # can make lightning run faster.
-# sorted-kv-dir = ""
+#sorted-kv-dir = ""
 # range-concurrency controls the maximum ingest concurrently while writing to tikv, It can affect the network traffic.
-# range-concurrency = 16
+#range-concurrency = 16
 
 [mydumper]
 # block size of file reading
@@ -123,12 +123,12 @@ no-schema=false
 # different objects. Currently only affects [[routes]].
 case-sensitive = false
 
-# if strict-format is ture, lightning will use '\r\n' to determine the end of each line. Make sure your data
-# doesn't contain '\r\n' if strict-format is enabled, or csv parser may parse incorrect result.
+# if strict-format is ture, lightning will use '\r' and '\n' to determine the end of each line. Make sure your data
+# doesn't contain '\r' or '\n' if strict-format is enabled, or csv parser may parse incorrect result.
 strict-format = false
-# if strict-format is true, large csv files will be split to multi regions, each region size is `max-region-size`,
-# thus lightning can restore these regions in parallel. The defalut values is 256M.
-# max-region-size = 268435456
+# if strict-format is true, large CSV files will be split to multiple chunks, which Lightning
+# will restore in parallel. The size of each chunk is `max-region-size`, where the default is 256 MiB.
+#max-region-size = 268_435_456
 
 # CSV files are imported according to MySQL's LOAD DATA INFILE rules.
 [mydumper.csv]
