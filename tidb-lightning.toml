@@ -70,7 +70,7 @@ driver = "file"
 #keep-after-success = false
 
 [tikv-importer]
-# Delivery backend, can be "importer" or "tidb".
+# Delivery backend, can be "importer", "local" or "tidb".
 backend = "importer"
 # Address of tikv-importer when the backend is 'importer'
 addr = "127.0.0.1:8287"
@@ -79,6 +79,16 @@ addr = "127.0.0.1:8287"
 #  - ignore: keep the old record and ignore the new record (i.e. insert rows using "INSERT IGNORE INTO")
 #  - error: stop Lightning and report an error (i.e. insert rows using "INSERT INTO")
 #on-duplicate = "replace"
+# Maximum KV size of SST files produced in the 'local' backend. This should be the same as
+# the TiKV region size to avoid further region splitting. The default value is 96 MiB.
+#region-split-size = 100_663_296
+# write key-values pairs to tikv batch size
+#send-kv-pairs = 100000
+# local storage directory used in "local" backend. Put this direcory in a different disk from `data-source-dir`
+# can make lightning run faster.
+#sorted-kv-dir = ""
+# range-concurrency controls the maximum ingest concurrently while writing to tikv, It can affect the network traffic.
+#range-concurrency = 16
 
 [mydumper]
 # block size of file reading
@@ -112,6 +122,13 @@ no-schema=false
 # make table and database names case-sensitive, i.e. treats `DB`.`TBL` and `db`.`tbl` as two
 # different objects. Currently only affects [[routes]].
 case-sensitive = false
+
+# if strict-format is ture, lightning will use '\r' and '\n' to determine the end of each line. Make sure your data
+# doesn't contain '\r' or '\n' if strict-format is enabled, or csv parser may parse incorrect result.
+strict-format = false
+# if strict-format is true, large CSV files will be split to multiple chunks, which Lightning
+# will restore in parallel. The size of each chunk is `max-region-size`, where the default is 256 MiB.
+#max-region-size = 268_435_456
 
 # CSV files are imported according to MySQL's LOAD DATA INFILE rules.
 [mydumper.csv]
