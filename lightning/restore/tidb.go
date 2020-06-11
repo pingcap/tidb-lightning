@@ -59,8 +59,7 @@ func isUnknownSystemVariableErr(err error) bool {
 	if !ok {
 		return strings.Contains(err.Error(), "Unknown system variable")
 	}
-	// ErrUnknownSystemVariable
-	return code == 1193
+	return code == mysql.ErrUnknownSystemVariable
 }
 
 func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
