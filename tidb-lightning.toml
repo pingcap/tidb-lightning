@@ -130,6 +130,9 @@ strict-format = false
 # will restore in parallel. The size of each chunk is `max-region-size`, where the default is 256 MiB.
 #max-region-size = 268_435_456
 
+# only import tables if the wildcard rules are matched. See documention for details.
+filter = ['*.*']
+
 # CSV files are imported according to MySQL's LOAD DATA INFILE rules.
 [mydumper.csv]
 # separator between fields, should be an ASCII character.
@@ -210,22 +213,9 @@ switch-mode = "5m"
 # the duration which the an import progress will be printed to the log.
 log-progress = "5m"
 
-## Table filter options. See the documentation for details
-# [black-white-list]
-# do-dbs = ["patterns"]
-# ignore-dbs = ["patterns"]
-#
-# [[black-white-list.do-tables]]
-# db-name = "db-pattern"
-# table-name = "table-pattern"
-#
-# [[black-white-list.ignore-tables]]
-# db-name = "db-pattern"
-# table-name = "table-pattern"
-
 ## Rules to rename existing databases/tables and possibly merge them together.
 ## The patterns support wildcards with `*` and `?`.
-## Routes are applied _after_ black-white-list.
+## Routes are applied _after_ filter.
 # [[routes]]
 # schema-pattern = "shard_db_*"
 # table-pattern = "shard_table_*"

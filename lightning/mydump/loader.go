@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/pingcap/tidb-tools/pkg/filter"
+	"github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"go.uber.org/zap"
 )
@@ -64,7 +64,7 @@ type MDLoader struct {
 	dir      string
 	noSchema bool
 	dbs      []*MDDatabaseMeta
-	filter   *filter.Filter
+	filter   filter.Filter
 	router   *router.Table
 	charSet  string
 }
@@ -80,17 +80,26 @@ type mdLoaderSetup struct {
 
 func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	var r *router.Table
+	var err error
 	if len(cfg.Routes) > 0 {
-		var err error
 		r, err = router.NewTableRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
-	f, err := filter.New(false, cfg.BWList)
+	// use the legacy black-white-list if defined. otherwise use the new filter.
+	var f filter.Filter
+	if cfg.HasLegacyBlackWhiteList() {
+		f, err = filter.ParseMySQLReplicationRules(&cfg.BWList)
+	} else {
+		f, err = filter.Parse(cfg.Mydumper.Filter)
+	}
 	if err != nil {
 		return nil, err
+	}
+	if !cfg.Mydumper.CaseSensitive {
+		f = filter.CaseInsensitive(f)
 	}
 
 	mdl := &MDLoader{
@@ -297,7 +306,10 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 }
 
 func (l *MDLoader) shouldSkip(table *filter.Table) bool {
-	return len(l.filter.ApplyOn([]*filter.Table{table})) == 0
+	if len(table.Name) == 0 {
+		return !l.filter.MatchSchema(table.Schema)
+	}
+	return !l.filter.MatchTable(table.Schema, table.Name)
 }
 
 func (s *mdLoaderSetup) route() error {

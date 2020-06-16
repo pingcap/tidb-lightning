@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/carlmjohnson/flagext"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -49,8 +50,9 @@ type GlobalTiDB struct {
 }
 
 type GlobalMydumper struct {
-	SourceDir string `toml:"data-source-dir" json:"data-source-dir"`
-	NoSchema  bool   `toml:"no-schema" json:"no-schema"`
+	SourceDir string   `toml:"data-source-dir" json:"data-source-dir"`
+	NoSchema  bool     `toml:"no-schema" json:"no-schema"`
+	Filter    []string `toml:"filter" json:"filter"`
 }
 
 type GlobalImporter struct {
@@ -95,6 +97,9 @@ func NewGlobalConfig() *GlobalConfig {
 			StatusPort: 10080,
 			LogLevel:   "error",
 		},
+		Mydumper: GlobalMydumper{
+			Filter: []string{"*.*"},
+		},
 		TikvImporter: GlobalImporter{
 			Backend: "importer",
 		},
@@ -136,7 +141,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	fs.StringVar(&configFilePath, "config", "", "tidb-lightning configuration file")
 	printVersion := fs.Bool("V", false, "print version of lightning")
 
-	logLevel := fs.String("L", "", `log level: info, debug, warn, error, fatal (default "info")`)
+	logLevel := flagext.ChoiceVar(fs, "L", "", `log level: info, debug, warn, error, fatal (default info)`, "", "info", "debug", "warn", "warning", "error", "fatal")
 	logFilePath := fs.String("log-file", timestampLogFileName(), "log file path")
 	tidbHost := fs.String("tidb-host", "", "TiDB server host")
 	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
@@ -146,7 +151,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	pdAddr := fs.String("pd-urls", "", "PD endpoint address")
 	dataSrcPath := fs.String("d", "", "Directory of the dump to import")
 	importerAddr := fs.String("importer", "", "address (host:port) to connect to tikv-importer")
-	backend := fs.String("backend", "", `delivery backend ("importer" or "tidb" or "local")`)
+	backend := flagext.ChoiceVar(fs, "backend", "", `delivery backend: importer, tidb, local (default importer)`, "", "importer", "tidb", "local")
 	sortedKVDir := fs.String("sorted-kv-dir", "", "path for KV pairs when local backend enabled")
 	enableCheckpoint := fs.Bool("enable-checkpoint", true, "whether to enable checkpoints")
 	noSchema := fs.Bool("no-schema", false, "ignore schema files, get schema directly from TiDB instead")
@@ -159,6 +164,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
+
+	var filter []string
+	flagext.StringsVar(fs, &filter, "f", "select tables to import")
 
 	if extraFlags != nil {
 		extraFlags(fs)
@@ -251,6 +259,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if *tlsKeyPath != "" {
 		cfg.Security.KeyPath = *tlsKeyPath
+	}
+	if len(filter) > 0 {
+		cfg.Mydumper.Filter = filter
 	}
 
 	if cfg.App.StatusAddr == "" && cfg.App.ServerMode {
