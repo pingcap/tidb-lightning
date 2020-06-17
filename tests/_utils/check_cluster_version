@@ -15,15 +15,12 @@
 
 set -eu
 
-for backend in tidb importer local; do
-    if [ "$backend" = 'local' ]; then
-        check_cluster_version 4 0 0 'local backend' || continue
-    fi
+if [ "$CLUSTER_VERSION_MAJOR" -gt "$1" ] || [ "$CLUSTER_VERSION_MAJOR" -eq "$1" ] && ( \
+    [ "$CLUSTER_VERSION_MINOR" -gt "$2" ] || \
+    [ "$CLUSTER_VERSION_MINOR" -eq "$2" ] && [ "$CLUSTER_VERSION_REVISION" -gt "$3" ] )
+then
+    exit 0
+fi
 
-    run_sql 'DROP DATABASE IF EXISTS issue282;'
-    run_lightning --backend $backend
-
-    run_sql "SELECT hex(accessKey) FROM issue282.t_access3"
-    check_contains 'hex(accessKey): 405026464C415348534841'
-    check_contains 'hex(accessKey): 1A'
-done
+echo "$4 requires v$1.$2.$3, but current cluster is v$CLUSTER_VERSION_MAJOR.$CLUSTER_VERSION_MINOR.$CLUSTER_VERSION_REVISION. Skipping test."
+exit 1
