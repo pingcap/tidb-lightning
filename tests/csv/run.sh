@@ -3,6 +3,9 @@
 set -eu
 
 for BACKEND in importer tidb local; do
+  if [ "$BACKEND" = 'local' ]; then
+    check_cluster_version 4 0 0 'local backend' || continue
+  fi
 
   run_sql 'DROP DATABASE IF EXISTS csv'
 

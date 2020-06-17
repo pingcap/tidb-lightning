@@ -15,7 +15,14 @@
 
 set -eu
 
-for backend in tidb importer; do
+# FIXME: auto-random is only stable on master currently.
+check_cluster_version 4 0 0 AUTO_RANDOM || exit 0
+
+for backend in tidb importer local; do
+    if [ "$backend" = 'local' ]; then
+        check_cluster_version 4 0 0 'local backend' || continue
+    fi
+
     run_sql 'DROP DATABASE IF EXISTS alter_random;'
     run_lightning --backend $backend
 

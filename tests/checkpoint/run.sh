@@ -56,6 +56,9 @@ done
 PARTIAL_IMPORT_QUERY="$PARTIAL_IMPORT_QUERY AS s;"
 
 for BACKEND in importer tidb local; do
+  if [ "$BACKEND" = 'local' ]; then
+    check_cluster_version 4 0 0 'local backend' || continue
+  fi
 
   # Set the failpoint to kill the lightning instance as soon as one table is imported
   # If checkpoint does work, this should only kill 9 instances of lightnings.

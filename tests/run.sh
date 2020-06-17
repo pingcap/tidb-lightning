@@ -16,6 +16,7 @@
 set -eu
 
 TEST_DIR=/tmp/lightning_test_result
+SELECTED_TEST_NAME="${TEST_NAME-*}"
 export PATH="tests/_utils:$PATH"
 
 stop_services() {
@@ -122,8 +123,6 @@ ssl-key = "$TT/tidb.key"
 cluster-ssl-ca = "$TT/ca.pem"
 cluster-ssl-cert = "$TT/tidb.pem"
 cluster-ssl-key = "$TT/tidb.key"
-[experimental]
-allow-auto-random = true
 EOF
     echo "Starting TiDB..."
     bin/tidb-server --config "$TEST_DIR/tidb-config.toml" &
@@ -158,14 +157,22 @@ EOF
 trap stop_services EXIT
 start_services
 
+# Intermediate file needed because `read` can be used as a pipe target.
+# https://stackoverflow.com/q/2746553/
+run_curl 'https://127.0.0.1:2379/pd/api/v1/version' | grep -o 'v[0-9.]\+' > "$TEST_DIR/cluster_version.txt"
+IFS='.' read CLUSTER_VERSION_MAJOR CLUSTER_VERSION_MINOR CLUSTER_VERSION_REVISION < "$TEST_DIR/cluster_version.txt"
+
 if [ "${1-}" = '--debug' ]; then
     echo 'You may now debug from another terminal. Press [ENTER] to continue.'
     read line
 fi
 
-for script in tests/*/run.sh; do
+for script in tests/$SELECTED_TEST_NAME/run.sh; do
     echo "\x1b[32;1m@@@@@@@ Running test $script...\x1b[0m"
     TEST_DIR="$TEST_DIR" \
     TEST_NAME="$(basename "$(dirname "$script")")" \
+    CLUSTER_VERSION_MAJOR="${CLUSTER_VERSION_MAJOR#v}" \
+    CLUSTER_VERSION_MINOR="$CLUSTER_VERSION_MINOR" \
+    CLUSTER_VERSION_REVISION="$CLUSTER_VERSION_REVISION" \
     sh "$script"
 done
