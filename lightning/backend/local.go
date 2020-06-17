@@ -413,6 +413,11 @@ func (local *local) WriteToTiKV(
 		if err = wstream.Send(req); err != nil {
 			return nil, err
 		}
+		req.Chunk = &sst.WriteRequest_Batch{
+			Batch: &sst.WriteBatch{
+				CommitTs: engineFile.Ts,
+			},
+		}
 		clients = append(clients, wstream)
 		requests = append(requests, req)
 	}
@@ -423,8 +428,20 @@ func (local *local) WriteToTiKV(
 	count := 0
 	size := int64(0)
 	totalCount := 0
+	firstLoop := true
 	for iter.First(); iter.Valid(); iter.Next() {
 		size += int64(len(iter.Key()) + len(iter.Value()))
+		// here we reuse the `*sst.Pair`s to optimize object allocation
+		if firstLoop {
+			pair := &sst.Pair{
+				Key:   bytesBuf.addBytes(iter.Key()),
+				Value: bytesBuf.addBytes(iter.Value()),
+			}
+			pairs = append(pairs, pair)
+		} else {
+			pairs[count].Key = bytesBuf.addBytes(iter.Key())
+			pairs[count].Value = bytesBuf.addBytes(iter.Value())
+		}
 		pair := &sst.Pair{
 			Key:   bytesBuf.addBytes(iter.Key()),
 			Value: bytesBuf.addBytes(iter.Value()),
@@ -436,13 +453,7 @@ func (local *local) WriteToTiKV(
 
 		if count >= local.batchWriteKVPairs {
 			for i := range clients {
-				requests[i].Reset()
-				requests[i].Chunk = &sst.WriteRequest_Batch{
-					Batch: &sst.WriteBatch{
-						CommitTs: engineFile.Ts,
-						Pairs:    pairs,
-					},
-				}
+				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs
 				if err := clients[i].Send(requests[i]); err != nil {
 					return nil, err
 				}
@@ -450,18 +461,13 @@ func (local *local) WriteToTiKV(
 			count = 0
 			pairs = pairs[:0]
 			bytesBuf.reset()
+			firstLoop = false
 		}
 	}
 
 	if count > 0 {
 		for i := range clients {
-			requests[i].Reset()
-			requests[i].Chunk = &sst.WriteRequest_Batch{
-				Batch: &sst.WriteBatch{
-					CommitTs: engineFile.Ts,
-					Pairs:    pairs,
-				},
-			}
+			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
 				return nil, err
 			}
