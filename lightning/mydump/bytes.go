@@ -22,48 +22,30 @@ type asciiSet [8]uint32
 // makeASCIISet creates a set of ASCII characters and reports whether all
 // characters in chars are ASCII.
 func makeASCIISet(chars string) (as asciiSet, ok bool) {
-    for i := 0; i < len(chars); i++ {
-        c := chars[i]
-        if c >= utf8.RuneSelf {
-            return as, false
-        }
-        as[c>>5] |= 1 << uint(c&31)
-    }
-    return as, true
+	for i := 0; i < len(chars); i++ {
+		c := chars[i]
+		if c >= utf8.RuneSelf {
+			return as, false
+		}
+		as[c>>5] |= 1 << uint(c&31)
+	}
+	return as, true
 }
 
 // contains reports whether c is inside the set.
 func (as *asciiSet) contains(c byte) bool {
-    return (as[c>>5] & (1 << uint(c&31))) != 0
+	return (as[c>>5] & (1 << uint(c&31))) != 0
 }
 
 // IndexAnyAscii returns the byte index of the first occurrence in s of any of the Unicode
 // code points in chars. It returns -1 if  there is no code
 // point in common.
 func IndexAnyAscii(s []byte, as *asciiSet) int {
-    for i, c := range s {
-        if as.contains(c) {
-            return i
-        }
-    }
-    return -1
+	for i, c := range s {
+		if as.contains(c) {
+			return i
+		}
+	}
+	return -1
 
-}
-
-func IndexAnyUtf8(s []byte, chars string) int {
-    var width int
-    for i := 0; i < len(s); i += width {
-        r := rune(s[i])
-        if r < utf8.RuneSelf {
-            width = 1
-        } else {
-            r, width = utf8.DecodeRune(s[i:])
-        }
-        for _, ch := range chars {
-            if r == ch {
-                return i
-            }
-        }
-    }
-    return -1
 }

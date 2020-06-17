@@ -89,14 +89,10 @@ func NewCSVParser(
 }
 
 func makeBytesIndexFunc(chars string) func([]byte) int {
-	if as, ok := makeASCIISet(chars); ok {
-		return func(s []byte) int {
-			return IndexAnyAscii(s, &as)
-		}
-	} else {
-		return func(s []byte) int {
-			return IndexAnyUtf8(s, chars)
-		}
+	// chars are guaranteed to be ascii str, so this call will always success
+	as, _ := makeASCIISet(chars)
+	return func(s []byte) int {
+		return IndexAnyAscii(s, &as)
 	}
 }
 
