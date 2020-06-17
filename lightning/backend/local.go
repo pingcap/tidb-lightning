@@ -442,12 +442,6 @@ func (local *local) WriteToTiKV(
 			pairs[count].Key = bytesBuf.addBytes(iter.Key())
 			pairs[count].Value = bytesBuf.addBytes(iter.Value())
 		}
-		pair := &sst.Pair{
-			Key:   bytesBuf.addBytes(iter.Key()),
-			Value: bytesBuf.addBytes(iter.Value()),
-		}
-
-		pairs = append(pairs, pair)
 		count++
 		totalCount++
 
