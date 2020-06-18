@@ -257,7 +257,7 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize:             128 << 20,
+		MemTableSize:             512 << 20,
 		MaxConcurrentCompactions: 16,
 		MinCompactionRate:        1 << 30,
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
