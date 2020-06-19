@@ -5,15 +5,15 @@ go 1.13
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.4.1
-	github.com/cockroachdb/pebble v0.0.0-20200601233547-7956a7440a70
+	github.com/cockroachdb/pebble v0.0.0-20200617141519-3b241b76ed3b
 	github.com/coreos/go-semver v0.3.0
 	github.com/dgraph-io/ristretto v0.0.2-0.20200115201040-8f368f2f2ab3 // indirect
-	github.com/go-bindata/go-bindata v3.1.2+incompatible // indirect
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/mock v1.4.3
-	github.com/jeremywohl/flatten v0.0.0-20190921043622-d936035e55cf // indirect
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
+	github.com/juju/loggo v0.0.0-20180524022052-584905176618 // indirect
+	github.com/onsi/ginkgo v1.13.0 // indirect
 	github.com/pingcap/br v0.0.0-20200521085655-53201addd4ad
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
@@ -30,8 +30,11 @@ require (
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	go.uber.org/zap v1.15.0
+	golang.org/x/net v0.0.0-20200602114024-627f9648deb9 // indirect
 	golang.org/x/sync v0.0.0-20200317015054-43a5402ce75a
-	golang.org/x/text v0.3.2
+	golang.org/x/sys v0.0.0-20200615200032-f1bc736245b1 // indirect
+	golang.org/x/text v0.3.3
 	google.golang.org/grpc v1.26.0
+	gopkg.in/mgo.v2 v2.0.0-20180705113604-9856a29383ce // indirect
 	modernc.org/mathutil v1.0.0
 )
