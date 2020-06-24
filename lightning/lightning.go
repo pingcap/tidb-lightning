@@ -292,6 +292,8 @@ func (l *Lightning) handleGetTask(w http.ResponseWriter) {
 
 	if l.taskCfgs != nil {
 		response.QueuedIDs = l.taskCfgs.AllIDs()
+	} else {
+		response.QueuedIDs = []int64{}
 	}
 
 	l.cancelLock.Lock()
