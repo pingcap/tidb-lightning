@@ -58,7 +58,10 @@ func (s *lightningSuite) TestRun(c *C) {
 	c.Assert(err, ErrorMatches, ".*mydumper dir does not exist")
 
 	err = lightning.run(&config.Config{
-		Mydumper: config.MydumperRuntime{SourceDir: "."},
+		Mydumper: config.MydumperRuntime{
+			SourceDir: ".",
+			Filter:    []string{"*.*"},
+		},
 		Checkpoint: config.Checkpoint{
 			Enable: true,
 			Driver: "invalid",
@@ -67,7 +70,10 @@ func (s *lightningSuite) TestRun(c *C) {
 	c.Assert(err, ErrorMatches, "Unknown checkpoint driver invalid")
 
 	err = lightning.run(&config.Config{
-		Mydumper: config.MydumperRuntime{SourceDir: "."},
+		Mydumper: config.MydumperRuntime{
+			SourceDir: ".",
+			Filter:    []string{"*.*"},
+		},
 		Checkpoint: config.Checkpoint{
 			Enable: true,
 			Driver: "file",

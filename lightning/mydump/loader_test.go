@@ -38,8 +38,17 @@ type testMydumpLoaderSuite struct {
 func (s *testMydumpLoaderSuite) SetUpSuite(c *C)    {}
 func (s *testMydumpLoaderSuite) TearDownSuite(c *C) {}
 
+func newConfigWithSourceDir(sourceDir string) *config.Config {
+	return &config.Config{
+		Mydumper: config.MydumperRuntime{
+			SourceDir: sourceDir,
+			Filter:    []string{"*.*"},
+		},
+	}
+}
+
 func (s *testMydumpLoaderSuite) SetUpTest(c *C) {
-	s.cfg = &config.Config{Mydumper: config.MydumperRuntime{SourceDir: c.MkDir()}}
+	s.cfg = newConfigWithSourceDir(c.MkDir())
 }
 
 func (s *testMydumpLoaderSuite) touch(c *C, filename ...string) string {
@@ -59,11 +68,11 @@ func (s *testMydumpLoaderSuite) mkdir(c *C, dirname string) {
 }
 
 func (s *testMydumpLoaderSuite) TestLoader(c *C) {
-	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./not-exists"}}
+	cfg := newConfigWithSourceDir("./not-exists")
 	_, err := md.NewMyDumpLoader(cfg)
 	c.Assert(err, NotNil)
 
-	cfg = &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
+	cfg = newConfigWithSourceDir("./examples")
 	mdl, err := md.NewMyDumpLoader(cfg)
 	c.Assert(err, IsNil)
 

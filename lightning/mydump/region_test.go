@@ -59,7 +59,7 @@ func getFileSize(file string) (int64, error) {
 	TODO : test with specified 'regionBlockSize' ...
 */
 func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
-	cfg := &config.Config{Mydumper: config.MydumperRuntime{SourceDir: "./examples"}}
+	cfg := newConfigWithSourceDir("./examples")
 	loader, _ := NewMyDumpLoader(cfg)
 	dbMeta := loader.GetDatabases()[0]
 
@@ -216,6 +216,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 				BackslashEscape: true,
 			},
 			StrictFormat: true,
+			Filter:       []string{"*.*"},
 		},
 	}
 	filePath := "./csv/split_large_file.csv"

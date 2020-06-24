@@ -5,6 +5,7 @@ go 1.13
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.4.1
+	github.com/carlmjohnson/flagext v0.0.11
 	github.com/cockroachdb/pebble v0.0.0-20200617141519-3b241b76ed3b
 	github.com/coreos/go-semver v0.3.0
 	github.com/dgraph-io/ristretto v0.0.2-0.20200115201040-8f368f2f2ab3 // indirect
@@ -23,7 +24,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20200522094936-3b720a0512a6
 	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181
 	github.com/pingcap/tidb v1.1.0-beta.0.20200527030457-572bba0499e1
-	github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200514040632-f76b3e428e19+incompatible
+	github.com/pingcap/tidb-tools v4.0.1+incompatible
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/satori/go.uuid v1.2.0
