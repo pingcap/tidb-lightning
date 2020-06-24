@@ -83,11 +83,12 @@ addr = "127.0.0.1:8287"
 # the TiKV region size to avoid further region splitting. The default value is 96 MiB.
 #region-split-size = 100_663_296
 # write key-values pairs to tikv batch size
-#send-kv-pairs = 100000
-# local storage directory used in "local" backend. Put this direcory in a different disk from `data-source-dir`
-# can make lightning run faster.
+#send-kv-pairs = 32768
+# local storage directory used in "local" backend.
 #sorted-kv-dir = ""
 # range-concurrency controls the maximum ingest concurrently while writing to tikv, It can affect the network traffic.
+# this default config can make full use of a 10Gib bandwidth network, if the newwork bandwidth is higher, you can increate
+# this to gain better performance. Bigger config value will also increate the memory usage slightly.
 #range-concurrency = 16
 
 [mydumper]

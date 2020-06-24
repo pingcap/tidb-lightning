@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/pingcap/tidb-tools/pkg/table-filter"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"go.uber.org/zap"
@@ -264,7 +264,7 @@ func NewConfig() *Config {
 			Backend:         BackendImporter,
 			OnDuplicate:     ReplaceOnDup,
 			MaxKVPairs:      32,
-			SendKVPairs:     100000,
+			SendKVPairs:     32768,
 			RegionSplitSize: SplitRegionSize,
 		},
 		PostRestore: PostRestore{
@@ -406,7 +406,7 @@ func (cfg *Config) Adjust() error {
 			cfg.App.TableConcurrency = 6
 		}
 		if cfg.TikvImporter.RangeConcurrency == 0 {
-			cfg.TikvImporter.RangeConcurrency = 32
+			cfg.TikvImporter.RangeConcurrency = 16
 		}
 		if cfg.TikvImporter.RegionSplitSize == 0 {
 			cfg.TikvImporter.RegionSplitSize = SplitRegionSize
