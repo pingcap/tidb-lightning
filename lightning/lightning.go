@@ -219,7 +219,6 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	defer procedure.Close()
 
 	err = procedure.Run(ctx)
-	procedure.Wait()
 	return errors.Trace(err)
 }
 

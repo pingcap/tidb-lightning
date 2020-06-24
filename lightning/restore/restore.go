@@ -239,11 +239,6 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 	}
 }
 
-func (rc *RestoreController) Wait() {
-	close(rc.saveCpCh)
-	rc.checkpointsWg.Wait()
-}
-
 func (rc *RestoreController) Close() {
 	rc.backend.Close()
 	rc.tidbMgr.Close()
@@ -1211,6 +1206,10 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 }
 
 func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
+	// wait checkpoint process finish so that we can do cleanup safely
+	close(rc.saveCpCh)
+	rc.checkpointsWg.Wait()
+
 	if !rc.cfg.Checkpoint.Enable {
 		return nil
 	}
