@@ -17,8 +17,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"go.uber.org/zap"
@@ -40,10 +42,15 @@ type tableKVEncoder struct {
 
 func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
-
+	se := newSession(options)
+	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
+	txn, _ := se.Txn(true)
+	store := kv.NewStagingBufferStore(txn)
+	recordCtx := tables.NewCommonAddRecordCtx(len(tbl.Cols()), store)
+	tables.SetAddRecordCtx(se, recordCtx)
 	return &tableKVEncoder{
 		tbl: tbl,
-		se:  newSession(options),
+		se:  se,
 	}
 }
 
@@ -175,7 +182,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		if j >= 0 && j < len(row) {
 			value, err = table.CastValue(kvcodec.se, row[j], col.ToInfo(), false, false)
 			if err == nil {
-				value, err = col.HandleBadNull(value, kvcodec.se.vars.StmtCtx)
+				err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx)
 			}
 		} else if isAutoIncCol {
 			// we still need a conversion, e.g. to catch overflow with a TINYINT column.

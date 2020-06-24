@@ -453,7 +453,6 @@ func (local *local) WriteToTiKV(
 				}
 			}
 			count = 0
-			pairs = pairs[:0]
 			bytesBuf.reset()
 			firstLoop = false
 		}
