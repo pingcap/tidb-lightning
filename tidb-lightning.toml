@@ -83,11 +83,12 @@ addr = "127.0.0.1:8287"
 # the TiKV region size to avoid further region splitting. The default value is 96 MiB.
 #region-split-size = 100_663_296
 # write key-values pairs to tikv batch size
-#send-kv-pairs = 100000
-# local storage directory used in "local" backend. Put this direcory in a different disk from `data-source-dir`
-# can make lightning run faster.
+#send-kv-pairs = 32768
+# local storage directory used in "local" backend.
 #sorted-kv-dir = ""
 # range-concurrency controls the maximum ingest concurrently while writing to tikv, It can affect the network traffic.
+# this default config can make full use of a 10Gib bandwidth network, if the network bandwidth is higher, you can increase
+# this to gain better performance. Larger value will also increase the memory usage slightly.
 #range-concurrency = 16
 
 [mydumper]
@@ -95,7 +96,7 @@ addr = "127.0.0.1:8287"
 read-block-size = 65536 # Byte (default = 64 KB)
 # minimum size (in terms of source data file) of each batch of import.
 # Lightning will split a large table into multiple engine files according to this size.
-batch-size = 107_374_182_400 # Byte (default = 100 GiB)
+#batch-size = 107_374_182_400 # Byte (default = 100 GiB)
 
 # Engine file needs to be imported sequentially. Due to table-concurrency, multiple engines will be
 # imported nearly the same time, and this will create a queue and this wastes resources. Therefore,

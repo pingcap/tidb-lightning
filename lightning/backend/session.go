@@ -15,11 +15,13 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+
+	"github.com/pingcap/tidb/sessionctx"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -97,6 +99,8 @@ type session struct {
 	sessionctx.Context
 	txn  transaction
 	vars *variable.SessionVars
+	// currently, we only set `CommonAddRecordCtx`
+	values map[fmt.Stringer]interface{}
 }
 
 // SessionOptions is the initial configuration of the session.
@@ -123,8 +127,9 @@ func newSession(options *SessionOptions) *session {
 	vars.TxnCtx = nil
 
 	s := &session{
-		txn:  transaction{},
-		vars: vars,
+		txn:    transaction{},
+		vars:   vars,
+		values: make(map[fmt.Stringer]interface{}, 1),
 	}
 
 	return s
@@ -144,6 +149,16 @@ func (se *session) Txn(active bool) (kv.Transaction, error) {
 // GetSessionVars implements the sessionctx.Context interface
 func (se *session) GetSessionVars() *variable.SessionVars {
 	return se.vars
+}
+
+// SetValue saves a value associated with this context for key.
+func (se *session) SetValue(key fmt.Stringer, value interface{}) {
+	se.values[key] = value
+}
+
+// Value returns the value associated with this context for key.
+func (se *session) Value(key fmt.Stringer) interface{} {
+	return se.values[key]
 }
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface
