@@ -5,5 +5,8 @@ table-concurrency = 1
 enable = true
 driver = "file"
 
+[tikv-importer]
+send-kv-pairs = 2
+
 [mydumper]
 batch-size = 50 # force splitting the data into 4 batches
