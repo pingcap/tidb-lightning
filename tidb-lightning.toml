@@ -87,8 +87,8 @@ addr = "127.0.0.1:8287"
 # local storage directory used in "local" backend.
 #sorted-kv-dir = ""
 # range-concurrency controls the maximum ingest concurrently while writing to tikv, It can affect the network traffic.
-# this default config can make full use of a 10Gib bandwidth network, if the newwork bandwidth is higher, you can increate
-# this to gain better performance. Bigger config value will also increate the memory usage slightly.
+# this default config can make full use of a 10Gib bandwidth network, if the network bandwidth is higher, you can increase
+# this to gain better performance. Larger value will also increase the memory usage slightly.
 #range-concurrency = 16
 
 [mydumper]
