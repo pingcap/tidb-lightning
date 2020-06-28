@@ -96,7 +96,7 @@ addr = "127.0.0.1:8287"
 read-block-size = 65536 # Byte (default = 64 KB)
 # minimum size (in terms of source data file) of each batch of import.
 # Lightning will split a large table into multiple engine files according to this size.
-batch-size = 107_374_182_40 # Byte (default = 10 GiB)
+#batch-size = 107_374_182_400 # Byte (default = 100 GiB)
 
 # Engine file needs to be imported sequentially. Due to table-concurrency, multiple engines will be
 # imported nearly the same time, and this will create a queue and this wastes resources. Therefore,
