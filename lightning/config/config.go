@@ -504,7 +504,13 @@ func (cfg *Config) Adjust() error {
 
 	// handle mydumper
 	if cfg.Mydumper.BatchSize <= 0 {
-		cfg.Mydumper.BatchSize = 10 * _G
+		// a smaller batch size can improve performance by about 5% in local mode.
+		if cfg.TikvImporter.Backend == BackendLocal {
+			cfg.Mydumper.BatchSize = 10 * _G
+		} else {
+			cfg.Mydumper.BatchSize = 100 * _G
+		}
+
 	}
 	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
 		cfg.Mydumper.BatchImportRatio = 0.75
