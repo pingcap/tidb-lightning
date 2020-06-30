@@ -17,7 +17,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"go.uber.org/zap"
@@ -39,10 +42,15 @@ type tableKVEncoder struct {
 
 func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
-
+	se := newSession(options)
+	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
+	txn, _ := se.Txn(true)
+	store := kv.NewStagingBufferStore(txn)
+	recordCtx := tables.NewCommonAddRecordCtx(len(tbl.Cols()), store)
+	tables.SetAddRecordCtx(se, recordCtx)
 	return &tableKVEncoder{
 		tbl: tbl,
-		se:  newSession(options),
+		se:  se,
 	}
 }
 
@@ -162,33 +170,50 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = make([]types.Datum, 0, len(cols)+1)
 	}
 
+	isAutoRandom := false
+	if kvcodec.tbl.Meta().PKIsHandle && kvcodec.tbl.Meta().ContainsAutoRandomBits() {
+		isAutoRandom = true
+	}
+
 	for i, col := range cols {
 		j := columnPermutation[i]
 		isAutoIncCol := mysql.HasAutoIncrementFlag(col.Flag)
+		isPk := mysql.HasPriKeyFlag(col.Flag)
 		if j >= 0 && j < len(row) {
-			value, err = table.CastValue(kvcodec.se, row[j], col.ToInfo())
+			value, err = table.CastValue(kvcodec.se, row[j], col.ToInfo(), false, false)
 			if err == nil {
-				value, err = col.HandleBadNull(value, kvcodec.se.vars.StmtCtx)
+				err = col.HandleBadNull(&value, kvcodec.se.vars.StmtCtx)
 			}
 		} else if isAutoIncCol {
 			// we still need a conversion, e.g. to catch overflow with a TINYINT column.
-			value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo())
+			value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo(), false, false)
 		} else {
 			value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 		}
 		if err != nil {
 			return nil, logKVConvertFailed(logger, row, j, col.ToInfo(), err)
 		}
+
 		record = append(record, value)
+
+		if isAutoRandom && isPk {
+			typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[col.Tp] * 8)
+			incrementalBits := typeBitsLength - kvcodec.tbl.Meta().AutoRandomBits
+			hasSignBit := !mysql.HasUnsignedFlag(col.Flag)
+			if hasSignBit {
+				incrementalBits -= 1
+			}
+			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64()&((1<<incrementalBits)-1), false, autoid.AutoRandomType)
+		}
 		if isAutoIncCol {
-			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false)
+			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.AutoIncrementType)
 		}
 	}
 
 	if !kvcodec.tbl.Meta().PKIsHandle {
 		j := columnPermutation[len(cols)]
 		if j >= 0 && j < len(row) {
-			value, err = table.CastValue(kvcodec.se, row[j], extraHandleColumnInfo)
+			value, err = table.CastValue(kvcodec.se, row[j], extraHandleColumnInfo, false, false)
 		} else {
 			value, err = types.NewIntDatum(rowID), nil
 		}
@@ -196,9 +221,8 @@ func (kvcodec *tableKVEncoder) Encode(
 			return nil, logKVConvertFailed(logger, row, j, extraHandleColumnInfo, err)
 		}
 		record = append(record, value)
-		kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false)
+		kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.RowIDAllocType)
 	}
-
 	_, err = kvcodec.tbl.AddRecord(kvcodec.se, record)
 	if err != nil {
 		logger.Error("kv encode failed",
@@ -211,7 +235,6 @@ func (kvcodec *tableKVEncoder) Encode(
 
 	pairs := kvcodec.se.takeKvPairs()
 	kvcodec.recordCache = record[:0]
-
 	return kvPairs(pairs), nil
 }
 

@@ -20,24 +20,46 @@ import (
 	"strconv"
 	"strings"
 
+	tmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+
 	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
+
 	"go.uber.org/zap"
 )
 
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
+}
+
+// getSQLErrCode returns error code if err is a mysql error
+func getSQLErrCode(err error) (terror.ErrCode, bool) {
+	mysqlErr, ok := errors.Cause(err).(*tmysql.MySQLError)
+	if !ok {
+		return -1, false
+	}
+
+	return terror.ErrCode(mysqlErr.Number), true
+}
+
+func isUnknownSystemVariableErr(err error) bool {
+	code, ok := getSQLErrCode(err)
+	if !ok {
+		return strings.Contains(err.Error(), "Unknown system variable")
+	}
+	return code == mysql.ErrUnknownSystemVariable
 }
 
 func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
@@ -54,11 +76,24 @@ func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
 			"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
 			"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
 			"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
+
+			// after https://github.com/pingcap/tidb/pull/17102 merge,
+			// we need set session to true for insert auto_random value in TiDB Backend
+			"allow_auto_random_explicit_insert": "1",
 		},
 	}
 	db, err := param.Connect()
 	if err != nil {
-		return nil, errors.Trace(err)
+		if isUnknownSystemVariableErr(err) {
+			// not support allow_auto_random_explicit_insert, retry connect
+			delete(param.Vars, "allow_auto_random_explicit_insert")
+			db, err = param.Connect()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	return NewTiDBManagerWithDB(db, dsn.SQLMode), nil
@@ -241,6 +276,24 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr 
 	if err != nil {
 		task.Error(
 			"alter table auto_increment failed, please perform the query manually (this is needed no matter the table has an auto-increment column or not)",
+			zap.String("query", query),
+		)
+	}
+	return errors.Annotatef(err, "%s", query)
+}
+
+func AlterAutoRandom(ctx context.Context, db *sql.DB, tableName string, randomBase int64) error {
+	sql := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.With(zap.String("table", tableName), zap.Int64("auto_random", randomBase)),
+	}
+	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
+	task := sql.Logger.Begin(zap.InfoLevel, "alter table auto_random")
+	err := sql.Exec(ctx, "alter table auto_random_base", query)
+	task.End(zap.ErrorLevel, err)
+	if err != nil {
+		task.Error(
+			"alter table auto_random_base failed, please perform the query manually (this is needed no matter the table has an auto-random column or not)",
 			zap.String("query", query),
 		)
 	}

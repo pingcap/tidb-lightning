@@ -219,7 +219,6 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	defer procedure.Close()
 
 	err = procedure.Run(ctx)
-	procedure.Wait()
 	return errors.Trace(err)
 }
 
@@ -293,6 +292,8 @@ func (l *Lightning) handleGetTask(w http.ResponseWriter) {
 
 	if l.taskCfgs != nil {
 		response.QueuedIDs = l.taskCfgs.AllIDs()
+	} else {
+		response.QueuedIDs = []int64{}
 	}
 
 	l.cancelLock.Lock()

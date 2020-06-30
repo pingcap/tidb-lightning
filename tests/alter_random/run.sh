@@ -15,15 +15,24 @@
 
 set -eu
 
+# FIXME: auto-random is only stable on master currently.
+check_cluster_version 4 0 0 AUTO_RANDOM || exit 0
+
 for backend in tidb importer local; do
     if [ "$backend" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi
 
-    run_sql 'DROP DATABASE IF EXISTS issue282;'
+    run_sql 'DROP DATABASE IF EXISTS alter_random;'
     run_lightning --backend $backend
 
-    run_sql "SELECT hex(accessKey) FROM issue282.t_access3"
-    check_contains 'hex(accessKey): 405026464C415348534841'
-    check_contains 'hex(accessKey): 1A'
+    run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM alter_random.t"
+    check_contains 'inc: 1'
+    check_contains 'inc: 2'
+    check_contains 'inc: 3'
+
+    # auto random base is 4
+    run_sql "INSERT INTO alter_random.t VALUES ();"
+    run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM alter_random.t"
+    check_contains 'inc: 4'
 done

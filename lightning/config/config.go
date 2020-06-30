@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/pingcap/tidb-tools/pkg/filter"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"go.uber.org/zap"
@@ -91,12 +91,13 @@ type Config struct {
 
 	Checkpoint   Checkpoint          `toml:"checkpoint" json:"checkpoint"`
 	Mydumper     MydumperRuntime     `toml:"mydumper" json:"mydumper"`
-	BWList       *filter.Rules       `toml:"black-white-list" json:"black-white-list"`
 	TikvImporter TikvImporter        `toml:"tikv-importer" json:"tikv-importer"`
 	PostRestore  PostRestore         `toml:"post-restore" json:"post-restore"`
 	Cron         Cron                `toml:"cron" json:"cron"`
 	Routes       []*router.TableRule `toml:"routes" json:"routes"`
 	Security     Security            `toml:"security" json:"security"`
+
+	BWList filter.MySQLReplicationRules `toml:"black-white-list" json:"black-white-list"`
 }
 
 func (c *Config) String() string {
@@ -136,7 +137,6 @@ type CSVConfig struct {
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	Null            string `toml:"null" json:"null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
-	MaxRegionSize   int64  `toml:"max-region-size" json:"max-region-size"`
 }
 
 type MydumperRuntime struct {
@@ -150,6 +150,7 @@ type MydumperRuntime struct {
 	CaseSensitive    bool      `toml:"case-sensitive" json:"case-sensitive"`
 	StrictFormat     bool      `toml:"strict-format" json:"strict-format"`
 	MaxRegionSize    int64     `toml:"max-region-size" json:"max-region-size"`
+	Filter           []string  `toml:"filter" json:"filter"`
 }
 
 type TikvImporter struct {
@@ -257,19 +258,19 @@ func NewConfig() *Config {
 			},
 			StrictFormat:  false,
 			MaxRegionSize: MaxRegionSize,
+			Filter:        []string{"*.*"},
 		},
 		TikvImporter: TikvImporter{
 			Backend:         BackendImporter,
 			OnDuplicate:     ReplaceOnDup,
 			MaxKVPairs:      32,
-			SendKVPairs:     100000,
+			SendKVPairs:     32768,
 			RegionSplitSize: SplitRegionSize,
 		},
 		PostRestore: PostRestore{
 			Checksum: true,
 			Analyze:  true,
 		},
-		BWList: &filter.Rules{},
 	}
 }
 
@@ -287,6 +288,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.TiDB.PdAddr = global.TiDB.PdAddr
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
 	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
+	cfg.Mydumper.Filter = global.Mydumper.Filter
 	cfg.TikvImporter.Addr = global.TikvImporter.Addr
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
 	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
@@ -404,7 +406,7 @@ func (cfg *Config) Adjust() error {
 			cfg.App.TableConcurrency = 6
 		}
 		if cfg.TikvImporter.RangeConcurrency == 0 {
-			cfg.TikvImporter.RangeConcurrency = 32
+			cfg.TikvImporter.RangeConcurrency = 16
 		}
 		if cfg.TikvImporter.RegionSplitSize == 0 {
 			cfg.TikvImporter.RegionSplitSize = SplitRegionSize
@@ -455,12 +457,13 @@ func (cfg *Config) Adjust() error {
 		return errors.Errorf("invalid config: unsupported `tidb.tls` config %s", cfg.TiDB.TLS)
 	}
 
-	cfg.BWList.IgnoreDBs = append(cfg.BWList.IgnoreDBs,
-		"mysql",
-		"information_schema",
-		"performance_schema",
-		"sys",
-	)
+	// mydumper.filter and black-white-list cannot co-exist.
+	if cfg.HasLegacyBlackWhiteList() {
+		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
+		if !(len(cfg.Mydumper.Filter) == 1 && cfg.Mydumper.Filter[0] == "*.*") {
+			return errors.New("invalid config: `mydumper.filter` and `black-white-list` cannot be simultaneously defined")
+		}
+	}
 
 	for _, rule := range cfg.Routes {
 		if !cfg.Mydumper.CaseSensitive {
@@ -501,7 +504,13 @@ func (cfg *Config) Adjust() error {
 
 	// handle mydumper
 	if cfg.Mydumper.BatchSize <= 0 {
-		cfg.Mydumper.BatchSize = 100 * _G
+		// a smaller batch size can improve performance by about 5% in local mode.
+		if cfg.TikvImporter.Backend == BackendLocal {
+			cfg.Mydumper.BatchSize = 10 * _G
+		} else {
+			cfg.Mydumper.BatchSize = 100 * _G
+		}
+
 	}
 	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
 		cfg.Mydumper.BatchImportRatio = 0.75
@@ -538,4 +547,10 @@ func (cfg *Config) Adjust() error {
 	}
 
 	return nil
+}
+
+// HasLegacyBlackWhiteList checks whether the deprecated [black-white-list] section
+// was defined.
+func (cfg *Config) HasLegacyBlackWhiteList() bool {
+	return len(cfg.BWList.DoTables) != 0 || len(cfg.BWList.DoDBs) != 0 || len(cfg.BWList.IgnoreTables) != 0 || len(cfg.BWList.IgnoreDBs) != 0
 }

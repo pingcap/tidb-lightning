@@ -13,33 +13,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Check if black-white-list works.
-
 set -eux
 
-run_sql 'DROP DATABASE IF EXISTS firstdb;'
-run_sql 'DROP DATABASE IF EXISTS seconddb;'
-run_lightning --config "tests/$TEST_NAME/firstdb-only.toml"
-run_sql 'SHOW DATABASES;'
-check_contains 'Database: firstdb'
-check_not_contains 'Database: seconddb'
-run_sql 'SHOW TABLES IN firstdb;'
-check_contains 'Tables_in_firstdb: first'
-check_contains 'Tables_in_firstdb: second'
-run_sql 'SHOW TABLES IN mysql;'
-check_not_contains 'Tables_in_mysql: testtable'
+drop_dbs() {
+    run_sql 'DROP DATABASE IF EXISTS firstdb;'
+    run_sql 'DROP DATABASE IF EXISTS seconddb;'
+}
 
-run_sql 'DROP DATABASE IF EXISTS firstdb;'
-run_sql 'DROP DATABASE IF EXISTS seconddb;'
+check_firstdb_only() {
+    run_sql 'SHOW DATABASES;'
+    check_contains 'Database: firstdb'
+    check_not_contains 'Database: seconddb'
+    run_sql 'SHOW TABLES IN firstdb;'
+    check_contains 'Tables_in_firstdb: first'
+    check_contains 'Tables_in_firstdb: second'
+    run_sql 'SHOW TABLES IN mysql;'
+    check_not_contains 'Tables_in_mysql: testtable'
+}
+
+check_even_table_only() {
+    run_sql 'SHOW DATABASES;'
+    check_contains 'Database: firstdb'
+    check_contains 'Database: seconddb'
+    run_sql 'SHOW TABLES IN firstdb;'
+    check_not_contains 'Tables_in_firstdb: first'
+    check_contains 'Tables_in_firstdb: second'
+    run_sql 'SHOW TABLES IN seconddb;'
+    check_not_contains 'Tables_in_seconddb: third'
+    check_contains 'Tables_in_seconddb: fourth'
+    run_sql 'SHOW TABLES IN mysql;'
+    check_not_contains 'Tables_in_mysql: testtable'
+}
+
+# Check if black-white-list works.
+
+drop_dbs
+run_lightning --config "tests/$TEST_NAME/firstdb-only.toml"
+check_firstdb_only
+
+drop_dbs
 run_lightning --config "tests/$TEST_NAME/even-table-only.toml"
-run_sql 'SHOW DATABASES;'
-check_contains 'Database: firstdb'
-check_contains 'Database: seconddb'
-run_sql 'SHOW TABLES IN firstdb;'
-check_not_contains 'Tables_in_firstdb: first'
-check_contains 'Tables_in_firstdb: second'
-run_sql 'SHOW TABLES IN seconddb;'
-check_not_contains 'Tables_in_seconddb: third'
-check_contains 'Tables_in_seconddb: fourth'
-run_sql 'SHOW TABLES IN mysql;'
-check_not_contains 'Tables_in_mysql: testtable'
+check_even_table_only
+
+# Check the same for table-filter
+
+drop_dbs
+run_lightning -f 'f*.*'
+check_firstdb_only
+
+drop_dbs
+run_lightning -f '!firstdb.*' -f '*.second' -f 'seconddb.fourth'
+check_even_table_only

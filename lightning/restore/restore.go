@@ -239,11 +239,6 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 	}
 }
 
-func (rc *RestoreController) Wait() {
-	close(rc.saveCpCh)
-	rc.checkpointsWg.Wait()
-}
-
 func (rc *RestoreController) Close() {
 	rc.backend.Close()
 	rc.tidbMgr.Close()
@@ -759,8 +754,13 @@ func (t *TableRestore) restoreTable(
 		web.BroadcastTableCheckpoint(t.tableName, cp)
 
 		// rebase the allocator so it exceeds the number of rows.
-		cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoIncID)
-		t.alloc[0].Rebase(t.tableInfo.ID, cp.AllocBase, false)
+		if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
+			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoRandID)
+			t.alloc.Get(autoid.AutoRandomType).Rebase(t.tableInfo.ID, cp.AllocBase, false)
+		} else {
+			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, t.tableInfo.Core.AutoIncID)
+			t.alloc.Get(autoid.RowIDAllocType).Rebase(t.tableInfo.ID, cp.AllocBase, false)
+		}
 		rc.saveCpCh <- saveCp{
 			tableName: t.tableName,
 			merger: &RebaseCheckpointMerger{
@@ -780,9 +780,9 @@ func (t *TableRestore) restoreTable(
 }
 
 type ImportEngine struct {
-	engine *kv.ClosedEngine
-	engineID int32
-	cp *EngineCheckpoint
+	engine         *kv.ClosedEngine
+	engineID       int32
+	cp             *EngineCheckpoint
 	triggerCompact bool
 }
 
@@ -800,7 +800,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 	// when kill lightning after saving index engine checkpoint status before saving
 	// table checkpoint status.
 	var closedIndexEngine *kv.ClosedEngine
-	if cp.Status < CheckpointStatusIndexImported {
+	if indexEngineCp.Status < CheckpointStatusImported && cp.Status < CheckpointStatusIndexImported {
 		//indexWorker := rc.indexWorkers.Apply()
 		//defer rc.indexWorkers.Recycle(indexWorker)
 
@@ -823,7 +823,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 
 		var engineErr common.OnceError
 
-		importChan := make(chan *ImportEngine, len(cp.Engines) + 1)
+		importChan := make(chan *ImportEngine, len(cp.Engines)+1)
 		importCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		go func() {
@@ -870,7 +870,6 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 				// In the future, we will investigate more about
 				// the difference between restoring tables concurrently and restoring tables one by one.
 				restoreWorker := rc.tableWorkers.Apply()
-
 				importWg.Add(1)
 				go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
 					defer restoreWg.Done()
@@ -884,7 +883,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 						return
 					}
 
-					importChan <- &ImportEngine{triggerCompact:true, engine:dataClosedEngine, engineID:eid, cp:ecp}
+					importChan <- &ImportEngine{triggerCompact: true, engine: dataClosedEngine, engineID: eid, cp: ecp}
 				}(restoreWorker, engineID, engine)
 			}
 		}
@@ -908,8 +907,9 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		importWg.Add(1)
-		importChan <- &ImportEngine{triggerCompact:true, engine:closedIndexEngine, engineID:indexEngineID, cp:indexEngineCp}
+		importChan <- &ImportEngine{triggerCompact: true, engine: closedIndexEngine, engineID: indexEngineID, cp: indexEngineCp}
 
 		importWg.Wait()
 		close(importChan)
@@ -1078,7 +1078,12 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
-		err := AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc[0].Base()+1)
+		var err error
+		if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
+			err = AlterAutoRandom(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Get(autoid.AutoRandomType).Base()+1)
+		} else {
+			err = AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Get(autoid.RowIDAllocType).Base()+1)
+		}
 		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
@@ -1196,6 +1201,10 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 }
 
 func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
+	// wait checkpoint process finish so that we can do cleanup safely
+	close(rc.saveCpCh)
+	rc.checkpointsWg.Wait()
+
 	if !rc.cfg.Checkpoint.Enable {
 		return nil
 	}
@@ -1631,10 +1640,17 @@ func saveCheckpoint(rc *RestoreController, t *TableRestore, engineID int32, chun
 	// We need to update the AllocBase every time we've finished a file.
 	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
 	// or integer primary key), which can only be obtained by reading all data.
+
+	var base int64
+	if t.tableInfo.Core.PKIsHandle && t.tableInfo.Core.ContainsAutoRandomBits() {
+		base = t.alloc.Get(autoid.AutoRandomType).Base() + 1
+	} else {
+		base = t.alloc.Get(autoid.RowIDAllocType).Base() + 1
+	}
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &RebaseCheckpointMerger{
-			AllocBase: t.alloc[0].Base() + 1,
+			AllocBase: base,
 		},
 	}
 	rc.saveCpCh <- saveCp{

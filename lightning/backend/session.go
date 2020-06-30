@@ -15,13 +15,16 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+
+	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 // invalidIterator is a trimmed down Iterator type which is invalid.
@@ -43,6 +46,19 @@ func (*invalidIterator) Close() {
 type transaction struct {
 	kv.Transaction
 	kvPairs []common.KvPair
+}
+
+func (t *transaction) NewStagingBuffer() kv.MemBuffer {
+	return t
+}
+
+func (t *transaction) Discard() {
+	// do nothing
+}
+
+func (t *transaction) Flush() (int, error) {
+	// do nothing
+	return 0, nil
 }
 
 // Reset implements the kv.MemBuffer interface
@@ -83,6 +99,8 @@ type session struct {
 	sessionctx.Context
 	txn  transaction
 	vars *variable.SessionVars
+	// currently, we only set `CommonAddRecordCtx`
+	values map[fmt.Stringer]interface{}
 }
 
 // SessionOptions is the initial configuration of the session.
@@ -109,10 +127,10 @@ func newSession(options *SessionOptions) *session {
 	vars.TxnCtx = nil
 
 	s := &session{
-		txn:  transaction{},
-		vars: vars,
+		txn:    transaction{},
+		vars:   vars,
+		values: make(map[fmt.Stringer]interface{}, 1),
 	}
-	s.vars.GetWriteStmtBufs().BufStore = &kv.BufferStore{MemBuffer: &s.txn}
 
 	return s
 }
@@ -133,5 +151,15 @@ func (se *session) GetSessionVars() *variable.SessionVars {
 	return se.vars
 }
 
+// SetValue saves a value associated with this context for key.
+func (se *session) SetValue(key fmt.Stringer, value interface{}) {
+	se.values[key] = value
+}
+
+// Value returns the value associated with this context for key.
+func (se *session) Value(key fmt.Stringer) interface{} {
+	return se.values[key]
+}
+
 // StmtAddDirtyTableOP implements the sessionctx.Context interface
-func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle int64) {}
+func (se *session) StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle) {}
