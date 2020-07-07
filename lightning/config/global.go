@@ -51,6 +51,9 @@ type GlobalTiDB struct {
 
 type GlobalMydumper struct {
 	SourceDir string   `toml:"data-source-dir" json:"data-source-dir"`
+	Source    []string `toml:"data-source" json:"data-source"`
+	FromTable string   `toml:"from-table" json:"from-table"`
+	FromDB    string   `toml:"from-db" json:"from-db"`
 	NoSchema  bool     `toml:"no-schema" json:"no-schema"`
 	Filter    []string `toml:"filter" json:"filter"`
 }
@@ -165,6 +168,14 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
 
+	var dataFiles []string
+	flagext.StringsVar(fs, &dataFiles, "from-file", "File of the dump to import")
+
+	// at user site, it seems load "TO" a db/table.
+	// but at the lightning site, as it's a field of MDRuntime, it implies that the source is "FROM" which table.
+	fromTable := fs.String("to-table", "", "(When singal file specified, i.e. 'from-file' flag used) which table that file is from")
+	fromDB := fs.String("to-db", "", "(When singal file specified, i.e. 'from-file' flag used) which database that file is from")
+
 	var filter []string
 	flagext.StringsVar(fs, &filter, "f", "select tables to import")
 
@@ -262,6 +273,11 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if len(filter) > 0 {
 		cfg.Mydumper.Filter = filter
+	}
+	if len(dataFiles) > 0 {
+		cfg.Mydumper.Source = dataFiles
+		cfg.Mydumper.FromDB = *fromDB
+		cfg.Mydumper.FromTable = *fromTable
 	}
 
 	if cfg.App.StatusAddr == "" && cfg.App.ServerMode {

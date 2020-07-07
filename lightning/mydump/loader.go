@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/pingcap/tidb-tools/pkg/table-filter"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"go.uber.org/zap"
 )
@@ -116,10 +116,17 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 		tableIndexMap: make(map[filter.Table]int),
 	}
 
+	if len(cfg.Mydumper.Source) > 0 {
+		if err := setup.loadFromSource(cfg.Mydumper.Source, cfg.Mydumper.FromTable, cfg.Mydumper.FromDB); err != nil {
+			return nil, errors.Trace(err)
+		}
+		// when load from file, skip setup from folder.
+		return mdl, nil
+	}
+
 	if err := setup.setup(mdl.dir); err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	return mdl, nil
 }
 
@@ -219,16 +226,32 @@ func (s *mdLoaderSetup) setup(dir string) error {
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.path)
 		tableMeta.TotalSize += fileInfo.size
 	}
+	s.SortTables()
+	return nil
+}
 
-	// Put the small table in the front of the slice which can avoid large table
-	// take a long time to import and block small table to release index worker.
+func (s *mdLoaderSetup) loadFromSource(sources []string, table, db string) error {
+	tableMeta, _, _ := s.insertTable(filter.Table{Schema: db, Name: table}, "")
+	for _, source := range sources {
+		tableMeta.DataFiles = append(tableMeta.DataFiles, source)
+		stat, err := os.Lstat(source)
+		if err != nil {
+			return err
+		}
+		tableMeta.TotalSize += stat.Size()
+	}
+	s.SortTables()
+	return nil
+}
+
+// SortTables puts the small table in the front of the slice which can avoid large table
+// take a long time to import and block small table to release index worker.
+func (s *mdLoaderSetup) SortTables() {
 	for _, dbMeta := range s.loader.dbs {
 		sort.SliceStable(dbMeta.Tables, func(i, j int) bool {
 			return dbMeta.Tables[i].TotalSize < dbMeta.Tables[j].TotalSize
 		})
 	}
-
-	return nil
 }
 
 func (s *mdLoaderSetup) listFiles(dir string) error {

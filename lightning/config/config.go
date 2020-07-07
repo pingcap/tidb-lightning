@@ -144,6 +144,9 @@ type MydumperRuntime struct {
 	BatchSize        int64     `toml:"batch-size" json:"batch-size"`
 	BatchImportRatio float64   `toml:"batch-import-ratio" json:"batch-import-ratio"`
 	SourceDir        string    `toml:"data-source-dir" json:"data-source-dir"`
+	Source           []string  `toml:"data-source" json:"data-source"`
+	FromTable        string    `toml:"from-table" json:"from-table"`
+	FromDB           string    `toml:"from-db" json:"from-db"`
 	NoSchema         bool      `toml:"no-schema" json:"no-schema"`
 	CharacterSet     string    `toml:"character-set" json:"character-set"`
 	CSV              CSVConfig `toml:"csv" json:"csv"`
@@ -289,6 +292,9 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
 	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
 	cfg.Mydumper.Filter = global.Mydumper.Filter
+	cfg.Mydumper.Source = global.Mydumper.Source
+	cfg.Mydumper.FromTable = global.Mydumper.FromTable
+	cfg.Mydumper.FromDB = global.Mydumper.FromDB
 	cfg.TikvImporter.Addr = global.TikvImporter.Addr
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
 	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
@@ -544,6 +550,12 @@ func (cfg *Config) Adjust() error {
 		case CheckpointDriverFile:
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
+	}
+	if len(cfg.Mydumper.Source) > 0 {
+		if len(cfg.Mydumper.FromTable) == 0 || len(cfg.Mydumper.FromDB) == 0 {
+			return errors.New("using -from-file but missing -to-db or -to-table")
+		}
+		cfg.Mydumper.NoSchema = true
 	}
 
 	return nil
