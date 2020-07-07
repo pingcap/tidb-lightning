@@ -62,6 +62,8 @@ const (
 	gRPCKeepAliveTime    = 10 * time.Second
 	gRPCKeepAliveTimeout = 3 * time.Second
 	gRPCBackOffMaxDelay  = 3 * time.Second
+
+	LocalMemoryTableSize = 512 << 20
 )
 
 var (
@@ -257,7 +259,7 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize:             512 << 20,
+		MemTableSize:             LocalMemoryTableSize,
 		MaxConcurrentCompactions: 16,
 		MinCompactionRate:        1 << 30,
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction

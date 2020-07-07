@@ -17,11 +17,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime/debug"
 	"syscall"
-
-	"github.com/pingcap/errors"
 
 	"github.com/pingcap/tidb-lightning/lightning"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -32,12 +29,6 @@ import (
 func main() {
 	cfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
 	fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s.\n\n", cfg.App.Config.File)
-	err := checkSystemRequirement(cfg)
-	if err != nil {
-		log.L().Error("check system requirements failed", zap.Error(err))
-		fmt.Fprintln(os.Stderr, "check system requirements failed:", err)
-		return
-	}
 
 	app := lightning.New(cfg)
 
@@ -75,7 +66,7 @@ func main() {
 		}
 	}
 
-	err = app.GoServe()
+	err := app.GoServe()
 	if err != nil {
 		logger.Error("failed to start HTTP server", zap.Error(err))
 		fmt.Fprintln(os.Stderr, "failed to start HTTP server:", err)
@@ -104,48 +95,4 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	}
-}
-
-func checkSystemRequirement(cfg *config.GlobalConfig) error {
-	if cfg.TikvImporter.Backend == config.BackendLocal {
-		// in local mode, we need to read&write a lot of L0 sst files, so we need to check
-		// system max open files limit
-		var totalSize uint64
-		err := filepath.Walk(cfg.Mydumper.SourceDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if !info.IsDir() && info.Size() > 0 {
-				totalSize += uint64(info.Size())
-			}
-			return err
-		})
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// we estimate each sst as 50MB, this is a fairly coarse predict, the actual fd needed is
-		// depend on chunk&import concurrency and each data&index key-value size
-		estimateMaxFiles := totalSize / (50 * 1024 * 1024)
-		var rLimit syscall.Rlimit
-		err = syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if rLimit.Cur >= estimateMaxFiles {
-			return nil
-		}
-		if rLimit.Max < estimateMaxFiles {
-			// If the process is not started by privileged user, this will fail.
-			rLimit.Max = estimateMaxFiles
-		}
-		prevLimit := rLimit.Cur
-		rLimit.Cur = estimateMaxFiles
-		err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("the maximum number of open file descriptors is too small, got %d, expect greater or equal to %d", prevLimit, estimateMaxFiles))
-		}
-	}
-
-	return nil
 }
