@@ -177,19 +177,6 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 		log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 	})
 
-	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
-	var mdl *mydump.MDLoader
-	mdl, err = mydump.NewMyDumpLoader(taskCfg)
-	loadTask.End(zap.ErrorLevel, err)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
-	if err != nil {
-		log.L().Error("check system requirements failed", zap.Error(err))
-		return errors.Trace(err)
-	}
-
 	ctx, cancel := context.WithCancel(l.ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
@@ -216,6 +203,18 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 		return nil
 	})
 
+	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
+	var mdl *mydump.MDLoader
+	mdl, err = mydump.NewMyDumpLoader(taskCfg)
+	loadTask.End(zap.ErrorLevel, err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
+	if err != nil {
+		log.L().Error("check system requirements failed", zap.Error(err))
+		return errors.Trace(err)
+	}
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
