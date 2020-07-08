@@ -197,7 +197,10 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	if *logFilePath != "" {
 		cfg.App.Config.File = *logFilePath
 	}
-	if cfg.App.Config.File == "" {
+	// "-" is a special config for log to stdout
+	if cfg.App.Config.File == "-" {
+		cfg.App.Config.File = ""
+	} else if cfg.App.Config.File == "" {
 		cfg.App.Config.File = timestampLogFileName()
 	}
 	if *tidbHost != "" {
