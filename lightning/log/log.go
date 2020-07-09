@@ -77,16 +77,18 @@ var (
 func InitLogger(cfg *Config, tidbLoglevel string) error {
 	logutil.InitLogger(&logutil.LogConfig{Config: pclog.Config{Level: tidbLoglevel}})
 
-	logger, props, err := pclog.InitLogger(&pclog.Config{
+	logCfg := &pclog.Config{
 		Level: cfg.Level,
-		File: pclog.FileLogConfig{
+	}
+	if len(cfg.File) > 0 {
+		logCfg.File = pclog.FileLogConfig{
 			Filename:   cfg.File,
 			MaxSize:    cfg.FileMaxSize,
 			MaxDays:    cfg.FileMaxDays,
 			MaxBackups: cfg.FileMaxBackups,
-		},
-	})
-
+		}
+	}
+	logger, props, err := pclog.InitLogger(logCfg)
 	if err != nil {
 		return err
 	}

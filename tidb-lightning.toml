@@ -35,6 +35,8 @@ table-concurrency = 6
 
 # logging
 level = "info"
+# file path for log. If set to empty, log will be written to /tmp/lightning.log.{timestamp}
+# Set to "-" to write logs to stdout.
 file = "tidb-lightning.log"
 max-size = 128 # MB
 max-days = 28
