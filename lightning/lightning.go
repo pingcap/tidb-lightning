@@ -238,9 +238,7 @@ func logEnvVariables() {
 	// log http proxy settings, it will be used in gRPC connection by default
 	proxyCfg := httpproxy.FromEnvironment()
 	if proxyCfg.HTTPProxy != "" || proxyCfg.HTTPSProxy != "" {
-		common.PrintInfo("lightning", func() {
-			log.L().Info("environment variables", zap.Reflect("httpproxy", proxyCfg))
-		})
+		log.L().Info("environment variables", zap.Reflect("httpproxy", proxyCfg))
 	}
 }
 
