@@ -2,36 +2,38 @@ package backend
 
 import (
 	"context"
-	"encoding/binary"
+	"fmt"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	uuid "github.com/satori/go.uuid"
-	"time"
 )
 
 type tikvBackend struct {
-	kvClient *tikv.RawKVClient
-	tls *common.TLS
+	tikvStore kv.Storage
+	tls       *common.TLS
 }
 
 func NewTiKVBackend(pdAddr string, tls *common.TLS) (Backend, error) {
-	client, err := tikv.NewRawKVClient([]string{pdAddr}, config.Security{})
+	driver := &tikv.Driver{}
+	store, err := driver.Open(fmt.Sprintf("tikv://%s", pdAddr))
 	if err != nil {
 		return MakeBackend(nil), err
 	}
 	return MakeBackend(&tikvBackend{
-		kvClient:client,
-		tls: tls,
+		tikvStore: store,
+		tls:       tls,
 	}), nil
 }
 
 func (be *tikvBackend) Close() {
-	_ = be.kvClient.Close()
+	_ = be.tikvStore.Close()
 }
 
 func (be *tikvBackend) MakeEmptyRows() Rows {
@@ -82,81 +84,18 @@ func (be *tikvBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 		return nil
 	}
 
-	keysDefault := make([][]byte, 0)
-	valuesDefault := make([][]byte, 0)
-	keysWrite := make([][]byte, 0)
-	valuesWrite := make([][]byte, 0)
-	for _, pair := range kvs {
-		key := encodeKeyWithTs(pair.Key, ts)
-		if isShortValue(pair.Val) {
-			value := encodeValue(pair.Val, ts)
-			keysWrite = append(keysWrite, key)
-			valuesWrite = append(valuesWrite, value)
-		} else {
-			value := encodeValue([]byte{}, ts)
-			keysWrite = append(keysWrite, key)
-			valuesWrite = append(valuesWrite, value)
-			keysDefault = append(keysDefault, key)
-			valuesDefault = append(valuesDefault, pair.Val)
-		}
-	}
-
-	err := be.kvClient.BatchPutCf(keysWrite, valuesWrite, "write")
+	tsn, err := be.tikvStore.Begin()
 	if err != nil {
 		return err
 	}
 
-	if len(keysDefault) > 0 {
-		err = be.kvClient.BatchPutCf(keysDefault, valuesDefault, "default")
-		if err != nil {
+	for _, pair := range kvs {
+		if err = tsn.Set(pair.Key, pair.Val); err != nil {
 			return err
 		}
 	}
 
-	return err
-}
-
-func encodeKeyWithTs(key []byte, ts uint64) []byte {
-	keyLen := len(key)
-	index := 0
-	res := make([]byte, 0, maxEncodedBytesSize(len(key)))
-	padBytes := []byte{0, 0, 0, 0, 0, 0, 0, 0}
-	for ; index < keyLen; index += 8 {
-		remain := keyLen - index
-		pad := 0
-		if remain >= 8 {
-			res = append(res, key[index:index+8]...)
-		} else {
-			pad = 8 - remain
-			res = append(res, key[index:]...)
-			res = append(res, padBytes[:pad]...)
-		}
-		res = append(res, byte(255 - pad))
-	}
-	keyLen = len(res)
-	res = append(res, padBytes...)
-	binary.BigEndian.PutUint64(res[keyLen:], ^ts)
-	return res
-}
-
-func maxEncodedBytesSize(n int) int {
-	return (n / 8 + 1) * (8 + 1)
-}
-
-func encodeValue(value []byte, ts uint64) []byte {
-	buf := make([]byte, 9, 1 + 10 + len(value) + 2)
-	buf[0] = 'P'
-	length := binary.PutUvarint(buf[1:], ts)
-	buf = buf[:length+1]
-	if len(value) > 0 {
-		buf = append(buf, 'v', uint8(len(value)))
-		buf = append(buf, value...)
-	}
-	return buf
-}
-
-func isShortValue(value []byte) bool {
-	return len(value) <= 255
+	return tsn.Commit(ctx)
 }
 
 func (be *tikvBackend) FetchRemoteTableModels(schemaName string) ([]*model.TableInfo, error) {
