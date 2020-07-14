@@ -434,10 +434,10 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 		{
 			Tables: []*mydump.MDTableMeta{
 				{
-					TotalSize: 240 << 20, //500000MB
+					TotalSize: 240 << 20,
 				},
 				{
-					TotalSize: 124_000 << 20, //500000MB
+					TotalSize: 124_000 << 20,
 				},
 			},
 		},
