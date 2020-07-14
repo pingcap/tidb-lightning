@@ -30,14 +30,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pingcap/tidb-lightning/lightning/backend"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
+	"golang.org/x/net/http/httpproxy"
 
+	"github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -177,6 +177,8 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 		log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 	})
 
+	logEnvVariables()
+
 	ctx, cancel := context.WithCancel(l.ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
@@ -235,6 +237,15 @@ func (l *Lightning) Stop() {
 		log.L().Warn("failed to shutdown HTTP server", log.ShortError(err))
 	}
 	l.shutdown()
+}
+
+// logEnvVariables add related environment variables to log
+func logEnvVariables() {
+	// log http proxy settings, it will be used in gRPC connection by default
+	proxyCfg := httpproxy.FromEnvironment()
+	if proxyCfg.HTTPProxy != "" || proxyCfg.HTTPSProxy != "" {
+		log.L().Info("environment variables", zap.Reflect("httpproxy", proxyCfg))
+	}
 }
 
 func writeJSONError(w http.ResponseWriter, code int, prefix string, err error) {

@@ -549,7 +549,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 	log.L().Info("ReadAndSplitIntoRange", zap.Binary("start", startKey), zap.Binary("end", endKey))
 
 	// split data into n ranges, then seek n times to get n + 1 ranges
-	n := engineFile.TotalSize / local.regionSplitSize
+	n := (engineFile.TotalSize + local.regionSplitSize - 1) / local.regionSplitSize
 
 	ranges := make([]Range, 0, n+1)
 	if tablecodec.IsIndexKey(startKey) {
@@ -566,6 +566,9 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 
 		// each index has to split into n / indexCount ranges
 		indexRangeCount := n / indexCount
+		if indexRangeCount == 0 {
+			indexRangeCount = 1
+		}
 
 		for i := startIndexID; i <= endIndexID; i++ {
 			k := tablecodec.EncodeTableIndexPrefix(tableID, i)

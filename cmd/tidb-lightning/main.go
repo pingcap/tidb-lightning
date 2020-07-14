@@ -87,9 +87,12 @@ func main() {
 		fmt.Fprintln(os.Stdout, "tidb lightning exit")
 	}
 
-	syncErr := logger.Sync()
-	if syncErr != nil {
-		fmt.Fprintln(os.Stderr, "sync log failed", syncErr)
+	// call Sync() with log to stdout may return error in some case, so just skip it
+	if cfg.App.File != "" {
+		syncErr := logger.Sync()
+		if syncErr != nil {
+			fmt.Fprintln(os.Stderr, "sync log failed", syncErr)
+		}
 	}
 
 	if err != nil {
