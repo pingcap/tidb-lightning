@@ -592,7 +592,6 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		cp *TableCheckpoint
 	}
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
-	defer close(taskCh)
 
 	restoreChan := make(chan *tableEngine, rc.cfg.App.TableConcurrency)
 	importChan := make(chan *importEngine, rc.cfg.App.TableConcurrency*2)
@@ -601,20 +600,20 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	manager := newGCLifeTimeManager()
 	ctx2, cancel := context.WithCancel(context.WithValue(ctx, &gcLifeTimeKey, manager))
 	defer cancel()
-	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
-		go func() {
-			for task := range taskCh {
-				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
-				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
-				err := task.tr.restoreTable(ctx2, rc, task.cp, restoreChan, importChan)
-				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
-				tableLogTask.End(zap.ErrorLevel, err)
-				web.BroadcastError(task.tr.tableName, err)
-				metric.RecordTableCount("completed", err)
-				restoreErr.Set(err)
-			}
-		}()
-	}
+
+	go func() {
+		defer close(restoreChan)
+		for task := range taskCh {
+			tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
+			web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
+			err := task.tr.restoreTable(ctx2, rc, task.cp, restoreChan, importChan)
+			err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
+			tableLogTask.End(zap.ErrorLevel, err)
+			web.BroadcastError(task.tr.tableName, err)
+			metric.RecordTableCount("completed", err)
+			restoreErr.Set(err)
+		}
+	}()
 
 	// start restore tasks
 	wg.Add(1)
@@ -738,14 +737,15 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			tableName := common.UniqueTable(dbInfo.Name, tableInfo.Name)
 			cp, err := rc.checkpointsDB.Get(ctx, tableName)
 			if err != nil {
+				close(taskCh)
 				return errors.Trace(err)
 			}
 			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp)
 			if err != nil {
+				close(taskCh)
 				return errors.Trace(err)
 			}
 
-			wg.Add(1)
 			select {
 			case taskCh <- task{tr: tr, cp: cp}:
 			case <-ctx.Done():
@@ -753,6 +753,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			}
 		}
 	}
+	close(taskCh)
 
 	wg.Wait()
 	close(stopPeriodicActions)
@@ -775,7 +776,6 @@ func (t *TableRestore) restoreTable(
 	importChan chan *importEngine,
 ) error {
 	// 1. Load the table info.
-	t.engineCount = int32(len(cp.Engines))
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -812,6 +812,8 @@ func (t *TableRestore) restoreTable(
 			},
 		}
 	}
+	t.engineCount = int32(len(cp.Engines)) - 1
+	fmt.Printf("table: %s engine count: %d\n", t.tableName, t.engineCount)
 
 	// 2. Restore engines (if still needed)
 	//err := t.restoreEngines(ctx, rc, cp)
@@ -862,12 +864,18 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 					if err == nil {
 						return err
 					}
-					indexChan <- &importEngine{engine: closedIndexEngine, engineID: engineID, cp: indexEngineCp, tr: t, tableCp: cp, triggerCompact: false}
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case indexChan <- &importEngine{engine: closedIndexEngine, engineID: engineID, cp: indexEngineCp, tr: t, tableCp: cp, triggerCompact: false}:
+					}
 				}
-			}
-
-			if engine.Status < CheckpointStatusImported {
-				restoreChan <- &tableEngine{engineId: engineID, tr: t, indexEngine: indexEngine, dataEngineCp: engine, indexEngineCp: indexEngineCp, tableCp: cp}
+			} else if engine.Status < CheckpointStatusImported {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case restoreChan <- &tableEngine{engineId: engineID, tr: t, indexEngine: indexEngine, dataEngineCp: engine, indexEngineCp: indexEngineCp, tableCp: cp}:
+				}
 			}
 		}
 	}
