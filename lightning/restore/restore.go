@@ -1087,7 +1087,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		var err error
 		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
 			err = AlterAutoRandom(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Get(autoid.AutoRandomType).Base()+1)
-		} else if (common.TableHasAutoRowID(tblInfo)) || tblInfo.GetAutoIncrementColInfo() != nil {
+		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle
 			err = AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Get(autoid.RowIDAllocType).Base()+1)
 		}
