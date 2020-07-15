@@ -601,18 +601,28 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	ctx2, cancel := context.WithCancel(context.WithValue(ctx, &gcLifeTimeKey, manager))
 	defer cancel()
 
+	// acutually, this task is quite fast, but we use multi routine to try to run multi
+	// table in parallel, to minimize the split region conflict in import phase
+	var taskWg sync.WaitGroup
+	taskWg.Add(rc.cfg.App.IndexConcurrency)
+	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
+		go func() {
+			defer taskWg.Done()
+			for task := range taskCh {
+				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
+				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
+				err := task.tr.restoreTable(ctx2, rc, task.cp, restoreChan, importChan)
+				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
+				tableLogTask.End(zap.ErrorLevel, err)
+				web.BroadcastError(task.tr.tableName, err)
+				metric.RecordTableCount("completed", err)
+				restoreErr.Set(err)
+			}
+		}()
+	}
 	go func() {
-		defer close(restoreChan)
-		for task := range taskCh {
-			tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
-			web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
-			err := task.tr.restoreTable(ctx2, rc, task.cp, restoreChan, importChan)
-			err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
-			tableLogTask.End(zap.ErrorLevel, err)
-			web.BroadcastError(task.tr.tableName, err)
-			metric.RecordTableCount("completed", err)
-			restoreErr.Set(err)
-		}
+		taskWg.Wait()
+		close(restoreChan)
 	}()
 
 	// start restore tasks
@@ -631,7 +641,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	go func() {
 		defer wg.Done()
 		defer close(postProcessChan)
-		if err := rc.importEngines(ctx2, importChan); err != nil {
+		if err := rc.importEngines(ctx2, importChan, postProcessChan); err != nil {
 			restoreErr.Set(err)
 			return
 		}
@@ -642,10 +652,14 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	go func() {
 		defer wg.Done()
 		for task := range postProcessChan {
-			if err := task.tr.postProcess(ctx2, rc, task.cp); err != nil {
-				restoreErr.Set(err)
-				return
-			}
+			wg.Add(1)
+			go func(t *importedTable) {
+				defer wg.Done()
+				if err := t.tr.postProcess(ctx2, rc, t.cp); err != nil {
+					restoreErr.Set(err)
+				}
+			}(task)
+
 		}
 	}()
 
@@ -1217,6 +1231,7 @@ func (rc *RestoreController) restoreEngines(
 func (rc *RestoreController) importEngines(
 	ctx context.Context,
 	importChan <-chan *importEngine,
+	postProcessChan chan *importedTable,
 ) error {
 	var wg sync.WaitGroup
 	importCtx, cancel := context.WithCancel(ctx)
@@ -1234,6 +1249,9 @@ func (rc *RestoreController) importEngines(
 				// data and index engine
 				if importedCount == task.tr.engineCount+1 {
 					rc.saveStatusCheckpoint(task.tr.tableName, WholeTableEngineID, err, CheckpointStatusIndexImported)
+					if err == nil {
+						postProcessChan <- &importedTable{cp: task.tableCp, tr: task.tr}
+					}
 				}
 				if err != nil {
 					select {
@@ -1609,7 +1627,7 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 // The argument `columns` _must_ be in lower case.
 func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
 	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
-	shouldIncludeRowID := !t.tableInfo.Core.PKIsHandle
+	shouldIncludeRowID := !t.tableInfo.Core.PKIsHandle && !t.tableInfo.Core.IsCommonHandle
 
 	if len(columns) == 0 {
 		// no provided columns, so use identity permutation.
