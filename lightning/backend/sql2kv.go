@@ -210,7 +210,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		}
 	}
 
-	if !kvcodec.tbl.Meta().PKIsHandle && !kvcodec.tbl.Meta().IsCommonHandle {
+	if common.TableHasAutoRowID(kvcodec.tbl.Meta()) {
 		j := columnPermutation[len(cols)]
 		if j >= 0 && j < len(row) {
 			value, err = table.CastValue(kvcodec.se, row[j], extraHandleColumnInfo, false, false)

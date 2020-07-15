@@ -1087,7 +1087,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		var err error
 		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
 			err = AlterAutoRandom(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Get(autoid.AutoRandomType).Base()+1)
-		} else if (!tblInfo.PKIsHandle && !tblInfo.IsCommonHandle) || tblInfo.GetAutoIncrementColInfo() != nil {
+		} else if (common.TableHasAutoRowID(tblInfo)) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle
 			err = AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Get(autoid.RowIDAllocType).Base()+1)
 		}
@@ -1368,7 +1368,7 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 // The argument `columns` _must_ be in lower case.
 func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
 	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
-	shouldIncludeRowID := !t.tableInfo.Core.PKIsHandle && !t.tableInfo.Core.IsCommonHandle
+	shouldIncludeRowID := common.TableHasAutoRowID(t.tableInfo.Core)
 
 	if len(columns) == 0 {
 		// no provided columns, so use identity permutation.
