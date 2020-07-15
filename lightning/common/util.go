@@ -33,6 +33,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/tidb/errno"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -310,4 +311,9 @@ type KvPair struct {
 	Key []byte
 	// Val is the value of the KV pair
 	Val []byte
+}
+
+// TableHasAutoRowID return whether table has auto generated row id
+func TableHasAutoRowID(info *model.TableInfo) bool {
+	return !info.PKIsHandle && !info.IsCommonHandle
 }
