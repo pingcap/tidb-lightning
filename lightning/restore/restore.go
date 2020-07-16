@@ -601,7 +601,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	ctx2, cancel := context.WithCancel(context.WithValue(ctx, &gcLifeTimeKey, manager))
 	defer cancel()
 
-	// acutually, this task is quite fast, but we use multi routine to try to run multi
+	// actually, this task is quite fast, but we use multi routine to try to run multi
 	// table in parallel, to minimize the split region conflict in import phase
 	var taskWg sync.WaitGroup
 	taskWg.Add(rc.cfg.App.IndexConcurrency)
@@ -609,11 +609,10 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		go func() {
 			defer taskWg.Done()
 			for task := range taskCh {
-				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
+				task.tr.restoreLogTask = task.tr.logger.Begin(zap.InfoLevel, "load table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 				err := task.tr.restoreTable(ctx2, rc, task.cp, restoreChan, importChan)
 				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
-				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
 				restoreErr.Set(err)
@@ -655,11 +654,12 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			wg.Add(1)
 			go func(t *importedTable) {
 				defer wg.Done()
-				if err := t.tr.postProcess(ctx2, rc, t.cp); err != nil {
+				err := t.tr.postProcess(ctx2, rc, t.cp)
+				if err != nil {
 					restoreErr.Set(err)
 				}
+				task.tr.restoreLogTask.End(zap.ErrorLevel, err)
 			}(task)
-
 		}
 	}()
 
@@ -896,135 +896,6 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 	return err
 }
 
-func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
-	indexEngineCp := cp.Engines[indexEngineID]
-	if indexEngineCp == nil {
-		return errors.Errorf("table %v index engine dataEngineCp not found", t.tableName)
-	}
-
-	// The table dataEngineCp status set to `CheckpointStatusIndexImported` only if
-	// both all data engines and the index engine had been imported to TiKV.
-	// But persist index engine dataEngineCp status and table dataEngineCp status are
-	// not an atomic operation, so `cp.Status < CheckpointStatusIndexImported`
-	// but `indexEngineCp.Status == CheckpointStatusImported` could happen
-	// when kill lightning after saving index engine dataEngineCp status before saving
-	// table dataEngineCp status.
-	var closedIndexEngine *kv.ClosedEngine
-	if indexEngineCp.Status < CheckpointStatusImported && cp.Status < CheckpointStatusIndexImported {
-		indexWorker := rc.indexWorkers.Apply()
-		defer rc.indexWorkers.Recycle(indexWorker)
-
-		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, indexEngineID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// The table dataEngineCp status less than `CheckpointStatusIndexImported` implies
-		// that index engine dataEngineCp status less than `CheckpointStatusImported`.
-		// So the index engine must be found in above process
-		if indexEngine == nil {
-			return errors.Errorf("table dataEngineCp status %v incompitable with index engine dataEngineCp status %v",
-				cp.Status, indexEngineCp.Status)
-		}
-
-		logTask := t.logger.Begin(zap.InfoLevel, "import whole table")
-		var wg sync.WaitGroup
-		var engineErr common.OnceError
-
-		for engineID, engine := range cp.Engines {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-			if engineErr.Get() != nil {
-				break
-			}
-
-			// Should skip index engine
-			if engineID < 0 {
-				continue
-			}
-
-			if engine.Status < CheckpointStatusImported {
-				wg.Add(1)
-
-				// Note: We still need tableWorkers to control the concurrency of tables.
-				// In the future, we will investigate more about
-				// the difference between restoring tables concurrently and restoring tables one by one.
-				restoreWorker := rc.tableWorkers.Apply()
-
-				go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
-					defer wg.Done()
-
-					engineLogTask := t.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
-					dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
-					engineLogTask.End(zap.ErrorLevel, err)
-					rc.tableWorkers.Recycle(w)
-					if err != nil {
-						engineErr.Set(err)
-						return
-					}
-
-					failpoint.Inject("FailBeforeDataEngineImported", func() {
-						panic("forcing failure due to FailBeforeDataEngineImported")
-					})
-
-					defer rc.closedEngineLimit.Recycle(dataWorker)
-					if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
-						engineErr.Set(err)
-					}
-				}(restoreWorker, engineID, engine)
-			}
-		}
-
-		wg.Wait()
-
-		err = engineErr.Get()
-		logTask.End(zap.ErrorLevel, err)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// If index engine file has been closed but not imported only if context cancel occurred
-		// when `importKV()` execution, so `UnsafeCloseEngine` and continue import it.
-		if indexEngineCp.Status == CheckpointStatusClosed {
-			closedIndexEngine, err = rc.backend.UnsafeCloseEngine(ctx, t.tableName, indexEngineID)
-		} else {
-			closedIndexEngine, err = indexEngine.Close(ctx)
-			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusClosed)
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if cp.Status < CheckpointStatusIndexImported {
-		var err error
-		if indexEngineCp.Status < CheckpointStatusImported {
-			// the lock ensures the import() step will not be concurrent.
-			if !rc.isLocalBackend() {
-				rc.postProcessLock.Lock()
-			}
-			err = t.importKV(ctx, closedIndexEngine)
-			if !rc.isLocalBackend() {
-				rc.postProcessLock.Unlock()
-			}
-			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
-		}
-
-		failpoint.Inject("FailBeforeIndexEngineImported", func() {
-			panic("forcing failure due to FailBeforeIndexEngineImported")
-		})
-
-		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusIndexImported)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
 func (t *TableRestore) restoreEngine(
 	ctx context.Context,
 	rc *RestoreController,
@@ -1245,7 +1116,7 @@ func (rc *RestoreController) importEngines(
 			defer wg.Done()
 			for task := range importChan {
 				err := task.tr.importEngine(importCtx, task.engine, rc, task.engineID, task.cp)
-				importedCount := atomic.AddInt32(&task.tr.finishedImportEngne, 1)
+				importedCount := atomic.AddInt32(&task.tr.finishedImportEngine, 1)
 				// data and index engine
 				if importedCount == task.tr.engineCount+1 {
 					rc.saveStatusCheckpoint(task.tr.tableName, WholeTableEngineID, err, CheckpointStatusIndexImported)
@@ -1534,16 +1405,18 @@ func (cr *chunkRestore) close() {
 
 type TableRestore struct {
 	// The unique table name in the form "`db`.`tbl`".
-	tableName           string
-	dbInfo              *TidbDBInfo
-	tableInfo           *TidbTableInfo
-	tableMeta           *mydump.MDTableMeta
-	encTable            table.Table
-	alloc               autoid.Allocators
-	logger              log.Logger
-	engineCount         int32
-	finishRestoreEngine int32
-	finishedImportEngne int32
+	tableName            string
+	dbInfo               *TidbDBInfo
+	tableInfo            *TidbTableInfo
+	tableMeta            *mydump.MDTableMeta
+	encTable             table.Table
+	alloc                autoid.Allocators
+	logger               log.Logger
+	engineCount          int32
+	finishRestoreEngine  int32
+	finishedImportEngine int32
+
+	restoreLogTask *log.Task
 }
 
 func NewTableRestore(
