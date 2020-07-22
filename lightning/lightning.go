@@ -23,19 +23,21 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
-
-	"golang.org/x/net/http/httpproxy"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
+	"golang.org/x/net/http/httpproxy"
 
+	"github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -210,7 +212,11 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
+	if err != nil {
+		log.L().Error("check system requirements failed", zap.Error(err))
+		return errors.Trace(err)
+	}
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
@@ -528,4 +534,59 @@ func handleResume(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Allow", http.MethodPut)
 		writeJSONError(w, http.StatusMethodNotAllowed, "only PUT is allowed", nil)
 	}
+}
+
+func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) error {
+	// in local mode, we need to read&write a lot of L0 sst files, so we need to check system max open files limit
+	if cfg.TikvImporter.Backend == config.BackendLocal {
+		// estimate max open files = {top N(TableConcurrency) table sizes} / {MemoryTableSize}
+		tableTotalSizes := make([]int64, 0)
+		for _, dbs := range dbsMeta {
+			for _, tb := range dbs.Tables {
+				tableTotalSizes = append(tableTotalSizes, tb.TotalSize)
+			}
+		}
+		sort.Slice(tableTotalSizes, func(i, j int) bool {
+			return tableTotalSizes[i] > tableTotalSizes[j]
+		})
+		topNTotalSize := int64(0)
+		for i := 0; i < len(tableTotalSizes) && i < cfg.App.TableConcurrency; i++ {
+			topNTotalSize += tableTotalSizes[i]
+		}
+
+		estimateMaxFiles := uint64(topNTotalSize / backend.LocalMemoryTableSize)
+		var rLimit syscall.Rlimit
+		err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+		failpoint.Inject("GetRlimitValue", func(v failpoint.Value) {
+			limit := uint64(v.(int))
+			rLimit.Cur = limit
+			rLimit.Max = limit
+			err = nil
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if rLimit.Cur >= estimateMaxFiles {
+			return nil
+		}
+		if rLimit.Max < estimateMaxFiles {
+			// If the process is not started by privileged user, this will fail.
+			rLimit.Max = estimateMaxFiles
+		}
+		prevLimit := rLimit.Cur
+		rLimit.Cur = estimateMaxFiles
+		failpoint.Inject("SetRlimitError", func(v failpoint.Value) {
+			if v.(bool) {
+				err = errors.New("Setrlimit Injected Error")
+			}
+		})
+		if err == nil {
+			err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+		}
+		if err != nil {
+			return errors.Annotatef(err, "the maximum number of open file descriptors is too small, got %d, expect greater or equal to %d", prevLimit, estimateMaxFiles)
+		}
+	}
+
+	return nil
 }
