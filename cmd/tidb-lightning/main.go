@@ -28,7 +28,7 @@ import (
 
 func main() {
 	cfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
-	fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s.\n\n", cfg.App.Config.File)
+	fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s\n\n", cfg.App.Config.File)
 
 	app := lightning.New(cfg)
 
