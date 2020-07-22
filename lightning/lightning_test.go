@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb-lightning/lightning/mydump"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -398,4 +400,64 @@ func (s *lightningServerSuite) TestHTTPAPIOutsideServerMode(c *C) {
 
 	// ... and the task should be canceled now.
 	c.Assert(<-errCh, Equals, context.Canceled)
+}
+
+func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
+	cfg := config.NewConfig()
+	cfg.App.TableConcurrency = 4
+	cfg.TikvImporter.Backend = config.BackendLocal
+
+	dbMetas := []*mydump.MDDatabaseMeta{
+		{
+			Tables: []*mydump.MDTableMeta{
+				{
+					TotalSize: 500 << 20,
+				},
+				{
+					TotalSize: 150_000 << 20,
+				},
+			},
+		},
+		{
+			Tables: []*mydump.MDTableMeta{
+				{
+					TotalSize: 150_800 << 20,
+				},
+				{
+					TotalSize: 35 << 20,
+				},
+				{
+					TotalSize: 100_000 << 20,
+				},
+			},
+		},
+		{
+			Tables: []*mydump.MDTableMeta{
+				{
+					TotalSize: 240 << 20,
+				},
+				{
+					TotalSize: 124_000 << 20,
+				},
+			},
+		},
+	}
+
+	// with max open files 1024, the max table size will be: 524288MB
+	err := failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/GetRlimitValue", "return(1024)")
+	c.Assert(err, IsNil)
+	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/SetRlimitError", "return(true)")
+	c.Assert(err, IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/SetRlimitError")
+	// with this dbMetas, the estimated fds will be 1025, so should return error
+	err = checkSystemRequirement(cfg, dbMetas)
+	c.Assert(err, NotNil)
+	err = failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/GetRlimitValue")
+	c.Assert(err, IsNil)
+
+	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/GetRlimitValue", "return(1025)")
+	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/GetRlimitValue")
+	c.Assert(err, IsNil)
+	err = checkSystemRequirement(cfg, dbMetas)
+	c.Assert(err, IsNil)
 }
