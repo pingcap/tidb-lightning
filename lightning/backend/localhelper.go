@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
-const SplitRetryTimes = 32
+const SplitRetryTimes = 8
 
 // TODO remove this file and use br internal functions
 // This File include region split & scatter operation just like br.
@@ -38,25 +38,26 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 		zap.Binary("maxKey", maxKey),
 	)
 
-	regions, err := paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
-	if err != nil {
-		return err
-	}
-
-	splitKeyMap := getSplitKeys(ranges, regions)
-
-	regionMap := make(map[uint64]*split.RegionInfo)
-	for _, region := range regions {
-		regionMap[region.Region.GetId()] = region
-	}
-
+	var errSplit error
 	scatterRegions := make([]*split.RegionInfo, 0)
 SplitRegions:
 	for i := 0; i < SplitRetryTimes; i++ {
+		scatterRegions := scatterRegions[:0]
+		regions, err := paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
+		if err != nil {
+			return err
+		}
+
+		regionMap := make(map[uint64]*split.RegionInfo)
+		for _, region := range regions {
+			regionMap[region.Region.GetId()] = region
+		}
+
+		splitKeyMap := getSplitKeys(ranges, regions)
 		for regionID, keys := range splitKeyMap {
 			var newRegions []*split.RegionInfo
 			region := regionMap[regionID]
-			newRegions, errSplit := local.BatchSplitRegions(ctx, region, keys)
+			newRegions, errSplit = local.BatchSplitRegions(ctx, region, keys)
 			if errSplit != nil {
 				if strings.Contains(errSplit.Error(), "no valid key") {
 					for _, key := range keys {
@@ -78,6 +79,9 @@ SplitRegions:
 			scatterRegions = append(scatterRegions, newRegions...)
 		}
 		break
+	}
+	if errSplit != nil {
+		return errors.Trace(errSplit)
 	}
 
 	startTime := time.Now()
@@ -109,7 +113,7 @@ func paginateScanRegion(
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
-	regions := []*split.RegionInfo{}
+	var regions []*split.RegionInfo
 	for {
 		batch, err := client.ScanRegions(ctx, startKey, endKey, limit)
 		if err != nil {
