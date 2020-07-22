@@ -175,9 +175,10 @@ func (enc tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum) error 
 
 	case types.KindBinaryLiteral:
 		value := datum.GetBinaryLiteral()
-		sb.Grow(2 + 2*len(value))
-		sb.WriteString("0x")
+		sb.Grow(3 + 2*len(value))
+		sb.WriteString("x'")
 		hex.NewEncoder(sb).Write(value)
+		sb.WriteByte('\'')
 
 	case types.KindMysqlBit:
 		var buffer [20]byte
