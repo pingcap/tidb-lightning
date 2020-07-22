@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,9 +41,8 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 
 	var errSplit error
 	scatterRegions := make([]*split.RegionInfo, 0)
-SplitRegions:
+	var retryKeys [][]byte
 	for i := 0; i < SplitRetryTimes; i++ {
-		scatterRegions := scatterRegions[:0]
 		regions, err := paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
 		if err != nil {
 			return err
@@ -53,7 +53,14 @@ SplitRegions:
 			regionMap[region.Region.GetId()] = region
 		}
 
-		splitKeyMap := getSplitKeys(ranges, regions)
+		var splitKeyMap map[uint64][][]byte
+		if len(retryKeys) > 0 {
+			splitKeyMap = getSplitKeys(retryKeys, regions)
+			retryKeys = retryKeys[:0]
+		} else {
+			splitKeyMap = getSplitKeysByRanges(ranges, regions)
+		}
+
 		for regionID, keys := range splitKeyMap {
 			var newRegions []*split.RegionInfo
 			region := regionMap[regionID]
@@ -74,11 +81,20 @@ SplitRegions:
 				case <-ctx.Done():
 					return ctx.Err()
 				}
-				continue SplitRegions
+				retryKeys = append(retryKeys, keys...)
+			} else {
+				scatterRegions = append(scatterRegions, newRegions...)
 			}
-			scatterRegions = append(scatterRegions, newRegions...)
 		}
-		break
+		if len(retryKeys) == 0 {
+			break
+		} else {
+			sort.Slice(retryKeys, func(i, j int) bool {
+				return bytes.Compare(retryKeys[i], retryKeys[j]) < 0
+			})
+			minKey = retryKeys[0]
+			maxKey = retryKeys[len(retryKeys)-1]
+		}
 	}
 	if errSplit != nil {
 		return errors.Trace(errSplit)
@@ -213,12 +229,16 @@ func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64
 	return ok, nil
 }
 
-func getSplitKeys(ranges []Range, regions []*split.RegionInfo) map[uint64][][]byte {
-	splitKeyMap := make(map[uint64][][]byte)
+func getSplitKeysByRanges(ranges []Range, regions []*split.RegionInfo) map[uint64][][]byte {
 	checkKeys := make([][]byte, 0)
 	for _, rg := range ranges {
 		checkKeys = append(checkKeys, truncateRowKey(rg.end))
 	}
+	return getSplitKeys(checkKeys, regions)
+}
+
+func getSplitKeys(checkKeys [][]byte, regions []*split.RegionInfo) map[uint64][][]byte {
+	splitKeyMap := make(map[uint64][][]byte)
 	for _, key := range checkKeys {
 		if region := needSplit(key, regions); region != nil {
 			splitKeys, ok := splitKeyMap[region.Region.GetId()]
