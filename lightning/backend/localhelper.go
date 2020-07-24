@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,7 +20,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
-const SplitRetryTimes = 32
+const SplitRetryTimes = 8
 
 // TODO remove this file and use br internal functions
 // This File include region split & scatter operation just like br.
@@ -38,25 +39,32 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 		zap.Binary("maxKey", maxKey),
 	)
 
-	regions, err := paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
-	if err != nil {
-		return err
-	}
-
-	splitKeyMap := getSplitKeys(ranges, regions)
-
-	regionMap := make(map[uint64]*split.RegionInfo)
-	for _, region := range regions {
-		regionMap[region.Region.GetId()] = region
-	}
-
+	var errSplit error
 	scatterRegions := make([]*split.RegionInfo, 0)
-SplitRegions:
+	var retryKeys [][]byte
 	for i := 0; i < SplitRetryTimes; i++ {
+		regions, err := paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
+		if err != nil {
+			return err
+		}
+
+		regionMap := make(map[uint64]*split.RegionInfo)
+		for _, region := range regions {
+			regionMap[region.Region.GetId()] = region
+		}
+
+		var splitKeyMap map[uint64][][]byte
+		if len(retryKeys) > 0 {
+			splitKeyMap = getSplitKeys(retryKeys, regions)
+			retryKeys = retryKeys[:0]
+		} else {
+			splitKeyMap = getSplitKeysByRanges(ranges, regions)
+		}
+
 		for regionID, keys := range splitKeyMap {
 			var newRegions []*split.RegionInfo
 			region := regionMap[regionID]
-			newRegions, errSplit := local.BatchSplitRegions(ctx, region, keys)
+			newRegions, errSplit = local.BatchSplitRegions(ctx, region, keys)
 			if errSplit != nil {
 				if strings.Contains(errSplit.Error(), "no valid key") {
 					for _, key := range keys {
@@ -73,11 +81,23 @@ SplitRegions:
 				case <-ctx.Done():
 					return ctx.Err()
 				}
-				continue SplitRegions
+				retryKeys = append(retryKeys, keys...)
+			} else {
+				scatterRegions = append(scatterRegions, newRegions...)
 			}
-			scatterRegions = append(scatterRegions, newRegions...)
 		}
-		break
+		if len(retryKeys) == 0 {
+			break
+		} else {
+			sort.Slice(retryKeys, func(i, j int) bool {
+				return bytes.Compare(retryKeys[i], retryKeys[j]) < 0
+			})
+			minKey = retryKeys[0]
+			maxKey = retryKeys[len(retryKeys)-1]
+		}
+	}
+	if errSplit != nil {
+		return errors.Trace(errSplit)
 	}
 
 	startTime := time.Now()
@@ -109,7 +129,7 @@ func paginateScanRegion(
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
-	regions := []*split.RegionInfo{}
+	var regions []*split.RegionInfo
 	for {
 		batch, err := client.ScanRegions(ctx, startKey, endKey, limit)
 		if err != nil {
@@ -209,12 +229,16 @@ func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64
 	return ok, nil
 }
 
-func getSplitKeys(ranges []Range, regions []*split.RegionInfo) map[uint64][][]byte {
-	splitKeyMap := make(map[uint64][][]byte)
+func getSplitKeysByRanges(ranges []Range, regions []*split.RegionInfo) map[uint64][][]byte {
 	checkKeys := make([][]byte, 0)
 	for _, rg := range ranges {
 		checkKeys = append(checkKeys, truncateRowKey(rg.end))
 	}
+	return getSplitKeys(checkKeys, regions)
+}
+
+func getSplitKeys(checkKeys [][]byte, regions []*split.RegionInfo) map[uint64][][]byte {
+	splitKeyMap := make(map[uint64][][]byte)
 	for _, key := range checkKeys {
 		if region := needSplit(key, regions); region != nil {
 			splitKeys, ok := splitKeyMap[region.Region.GetId()]
