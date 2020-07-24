@@ -611,8 +611,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			for task := range taskCh {
 				task.tr.restoreLogTask = task.tr.logger.Begin(zap.InfoLevel, "load table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
-				err := task.tr.restoreTable(ctx2, rc, task.cp, restoreChan, importChan)
-				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
+				err := task.tr.loadTableTasks(ctx2, rc, task.cp, restoreChan, importChan)
+				err = errors.Annotatef(err, "load table %s tasks failed", task.tr.tableName)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
 				restoreErr.Set(err)
@@ -782,7 +782,7 @@ type importedTable struct {
 	cp *TableCheckpoint
 }
 
-func (t *TableRestore) restoreTable(
+func (t *TableRestore) loadTableTasks(
 	ctx context.Context,
 	rc *RestoreController,
 	cp *TableCheckpoint,
@@ -829,14 +829,6 @@ func (t *TableRestore) restoreTable(
 	t.engineCount = int32(len(cp.Engines)) - 1
 	fmt.Printf("table: %s engine count: %d\n", t.tableName, t.engineCount)
 
-	// 2. Restore engines (if still needed)
-	//err := t.restoreEngines(ctx, rc, cp)
-	//if err != nil {
-	//	return errors.Trace(err)
-	//}
-	//
-	//// 3. Post-process
-	//return errors.Trace(t.postProcess(ctx, rc, cp))
 	return t.addRestoreTasks(ctx, rc, cp, restoreChan, importChan)
 }
 
