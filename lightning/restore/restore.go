@@ -841,7 +841,7 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 	// both all data engines and the index engine had been imported to TiKV.
 	// But persist index engine checkpoint status and table checkpoint status are
 	// not an atomic operation, so `cp.Status < CheckpointStatusIndexImported`
-	// but `checkpoint.Status == CheckpointStatusImported` could happen
+	// but `indexEngineCp.Status == CheckpointStatusImported` could happen
 	// when kill lightning after saving index engine checkpoint status before saving
 	// table checkpoint status.
 	var indexEngine *backend.OpenedEngine
