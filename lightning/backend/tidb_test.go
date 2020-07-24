@@ -51,7 +51,7 @@ func (s *mysqlSuite) TearDownTest(c *C) {
 
 func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 	s.mockDB.
-		ExpectExec("\\QREPLACE INTO `foo`.`bar`(`a`,`b`,`c`,`d`,`e`,`f`,`g`,`h`,`i`,`j`,`k`,`l`,`m`,`n`,`o`) VALUES(18446744073709551615,-9223372036854775808,0,NULL,7.5,5e-324,1.7976931348623157e+308,0,'甲乙丙\\r\\n\\0\\Z''\"\\\\`',0x000000abcdef,2557891634,'12.5',51)\\E").
+		ExpectExec("\\QREPLACE INTO `foo`.`bar`(`a`,`b`,`c`,`d`,`e`,`f`,`g`,`h`,`i`,`j`,`k`,`l`,`m`,`n`,`o`) VALUES(18446744073709551615,-9223372036854775808,0,NULL,7.5,5e-324,1.7976931348623157e+308,0,'甲乙丙\\r\\n\\0\\Z''\"\\\\`',x'000000abcdef',2557891634,'12.5',51)\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	ctx := context.Background()
