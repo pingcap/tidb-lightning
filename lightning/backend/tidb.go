@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	uuid "github.com/satori/go.uuid"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -38,6 +40,14 @@ import (
 type tidbRow string
 
 type tidbRows []tidbRow
+
+// MarshalLogArray implements the zapcore.ArrayMarshaler interface
+func (row tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
+	for _, r := range row {
+		encoder.AppendString(string(r))
+	}
+	return nil
+}
 
 type tidbEncoder struct {
 	mode mysql.SQLMode
@@ -316,10 +326,14 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 
 	// Retry will be done externally, so we're not going to retry here.
 	_, err := be.db.ExecContext(ctx, insertStmt.String())
+	if err != nil {
+		log.L().Error("execute statement failed",
+			zap.Array("rows", rows), zap.String("stmt", insertStmt.String()), zap.Error(err))
+	}
 	failpoint.Inject("FailIfImportedSomeRows", func() {
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
 	})
-	return err
+	return errors.Trace(err)
 }
 
 func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*model.TableInfo, err error) {
