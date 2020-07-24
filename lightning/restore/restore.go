@@ -236,7 +236,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 		return NewFileCheckpointsDB(cfg.Checkpoint.DSN), nil
 
 	default:
-		return nil, errors.Errorf("Unknown dataEngineCp driver %s", cfg.Checkpoint.Driver)
+		return nil, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
 	}
 }
 
@@ -359,7 +359,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int32, err error, statusIfSucceed CheckpointStatus) {
 	merger := &StatusCheckpointMerger{Status: statusIfSucceed, EngineID: engineID}
 
-	log.L().Debug("update dataEngineCp", zap.String("table", tableName), zap.Int32("engine_id", engineID),
+	log.L().Debug("update checkpoint", zap.String("table", tableName), zap.Int32("engine_id", engineID),
 		zap.Uint8("new_status", uint8(statusIfSucceed)), zap.Error(err))
 
 	switch {
@@ -663,9 +663,9 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		}
 	}()
 
-	// first collect all tables where the dataEngineCp is invalid
+	// first collect all tables where the checkpoint is invalid
 	allInvalidCheckpoints := make(map[string]CheckpointStatus)
-	// collect all tables whose dataEngineCp's tableID can't match current tableID
+	// collect all tables whose checkpoint's tableID can't match current tableID
 	allDirtyCheckpoints := make(map[string]struct{})
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo, ok := rc.dbInfos[dbMeta.Name]
@@ -701,7 +701,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		for tableName, status := range allInvalidCheckpoints {
 			failedStep := status * 10
 			var action strings.Builder
-			action.WriteString("./tidb-lightning-ctl --dataEngineCp-error-")
+			action.WriteString("./tidb-lightning-ctl --checkpoint-error-")
 			switch failedStep {
 			case CheckpointStatusAlteredAutoInc, CheckpointStatusAnalyzed:
 				action.WriteString("ignore")
@@ -720,7 +720,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			)
 		}
 
-		logger.Info("You may also run `./tidb-lightning-ctl --dataEngineCp-error-destroy=all --config=...` to start from scratch")
+		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch")
 		logger.Info("For details of this failure, read the log file from the PREVIOUS run")
 
 		return errors.New("TiDB Lightning has failed last time; please resolve these errors first")
@@ -735,11 +735,11 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		for tableName := range allDirtyCheckpoints {
 			logger.Info("-",
 				zap.String("table", tableName),
-				zap.String("recommendedAction", "./tidb-lightning-ctl --dataEngineCp-remove='"+tableName+"' --config=..."),
+				zap.String("recommendedAction", "./tidb-lightning-ctl --checkpoint-remove='"+tableName+"' --config=..."),
 			)
 		}
 
-		logger.Info("You may also run `./tidb-lightning-ctl --dataEngineCp-remove=all --config=...` to start from scratch")
+		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-remove=all --config=...` to start from scratch")
 
 		return errors.New("TiDB Lightning has detected tables with illegal checkpoints; please remove these checkpoints first")
 	}
@@ -798,7 +798,7 @@ func (t *TableRestore) loadTableTasks(
 
 	// no need to do anything if the chunks are already populated
 	if len(cp.Engines) > 0 {
-		t.logger.Info("reusing engines and files info from dataEngineCp",
+		t.logger.Info("reusing engines and files info from checkpoint",
 			zap.Int("enginesCnt", len(cp.Engines)),
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
@@ -826,8 +826,7 @@ func (t *TableRestore) loadTableTasks(
 			},
 		}
 	}
-	t.engineCount = int32(len(cp.Engines)) - 1
-	fmt.Printf("table: %s engine count: %d\n", t.tableName, t.engineCount)
+	t.engineCount = int32(len(cp.Engines))
 
 	return t.addRestoreTasks(ctx, rc, cp, restoreChan, importChan)
 }
@@ -835,16 +834,16 @@ func (t *TableRestore) loadTableTasks(
 func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, restoreChan chan *tableEngine, indexChan chan *importEngine) error {
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
-		return errors.Errorf("table %v index engine dataEngineCp not found", t.tableName)
+		return errors.Errorf("table %v index engine checkpoint not found", t.tableName)
 	}
 
-	// The table dataEngineCp status set to `CheckpointStatusIndexImported` only if
+	// The table checkpoint status set to `CheckpointStatusIndexImported` only if
 	// both all data engines and the index engine had been imported to TiKV.
-	// But persist index engine dataEngineCp status and table dataEngineCp status are
+	// But persist index engine checkpoint status and table checkpoint status are
 	// not an atomic operation, so `cp.Status < CheckpointStatusIndexImported`
-	// but `indexEngineCp.Status == CheckpointStatusImported` could happen
-	// when kill lightning after saving index engine dataEngineCp status before saving
-	// table dataEngineCp status.
+	// but `checkpoint.Status == CheckpointStatusImported` could happen
+	// when kill lightning after saving index engine checkpoint status before saving
+	// table checkpoint status.
 	var indexEngine *backend.OpenedEngine
 	var err error
 	if cp.Status < CheckpointStatusIndexImported {
@@ -853,11 +852,11 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// The table dataEngineCp status less than `CheckpointStatusIndexImported` implies
-			// that index engine dataEngineCp status less than `CheckpointStatusImported`.
+			// The table checkpoint status less than `CheckpointStatusIndexImported` implies
+			// that index engine checkpoint status less than `CheckpointStatusImported`.
 			// So the index engine must be found in above process
 			if indexEngine == nil {
-				return errors.Errorf("table dataEngineCp status %v incompitable with index engine dataEngineCp status %v",
+				return errors.Errorf("table checkpoint status %v incompitable with index engine checkpoint status %v",
 					cp.Status, indexEngineCp.Status)
 			}
 		}
@@ -894,23 +893,21 @@ func (t *TableRestore) restoreEngine(
 	indexEngine *kv.OpenedEngine,
 	engineID int32,
 	cp *EngineCheckpoint,
-) (*kv.ClosedEngine, *worker.Worker, error) {
+) (*kv.ClosedEngine, error) {
 	if cp.Status >= CheckpointStatusClosed {
-		w := rc.closedEngineLimit.Apply()
 		closedEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
-			rc.closedEngineLimit.Recycle(w)
-			return closedEngine, nil, errors.Trace(err)
+			return closedEngine, errors.Trace(err)
 		}
-		return closedEngine, w, nil
+		return closedEngine, nil
 	}
 
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 
 	dataEngine, err := rc.backend.OpenEngine(ctx, t.tableName, engineID)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	var wg sync.WaitGroup
@@ -924,7 +921,7 @@ func (t *TableRestore) restoreEngine(
 
 		select {
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+			return nil, ctx.Err()
 		default:
 		}
 
@@ -940,7 +937,7 @@ func (t *TableRestore) restoreEngine(
 
 		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Inc()
 
@@ -981,24 +978,22 @@ func (t *TableRestore) restoreEngine(
 	)
 
 	// in local mode, this check-point make no sense, because we don't do flush now,
-	// so there may be data lose if exit at here. So we don't write this dataEngineCp
+	// so there may be data lose if exit at here. So we don't write this checkpoint
 	// here like other mode.
 	if !rc.isLocalBackend() {
 		rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusAllWritten)
 	}
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
-	//dataWorker := rc.closedEngineLimit.Apply()
 	closedDataEngine, err := dataEngine.Close(ctx)
-	// For local backend, if dataEngineCp is enabled, we must flush index engine to avoid data loss.
+	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
 	// this flush action impact up to 10% of the performance, so we only do it if necessary.
 	if err == nil && rc.cfg.Checkpoint.Enable && rc.isLocalBackend() {
 		if err = indexEngine.Flush(); err != nil {
 			// If any error occurred, recycle worker immediately
-			//rc.closedEngineLimit.Recycle(dataWorker)
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		// Currently we write all the checkpoints after data&index engine are flushed.
 		for _, chunk := range cp.Chunks {
@@ -1008,10 +1003,9 @@ func (t *TableRestore) restoreEngine(
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
 	if err != nil {
 		// If any error occurred, recycle worker immediately
-		//rc.closedEngineLimit.Recycle(dataWorker)
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return closedDataEngine, nil, nil
+	return closedDataEngine, nil
 }
 
 type tableEngine struct {
@@ -1048,7 +1042,7 @@ func (rc *RestoreController) restoreEngines(
 			defer wg.Done()
 			for task := range taskChan {
 				engineLogTask := task.tr.logger.With(zap.Int32("engineNumber", task.engineId)).Begin(zap.InfoLevel, "restore engine")
-				closedEngine, _, err := task.tr.restoreEngine(restoreCtx, rc, task.indexEngine, task.engineId, task.dataEngineCp)
+				closedEngine, err := task.tr.restoreEngine(restoreCtx, rc, task.indexEngine, task.engineId, task.dataEngineCp)
 				engineLogTask.End(zap.ErrorLevel, err)
 				if err == nil {
 					importChan <- &importEngine{triggerCompact: true, engine: closedEngine, engineID: task.engineId, cp: task.dataEngineCp, tr: task.tr, tableCp: task.tableCp}
@@ -1059,7 +1053,8 @@ func (rc *RestoreController) restoreEngines(
 				// If index engine file has been closed but not imported only if context cancel occurred
 				// when `importKV()` execution, so `UnsafeCloseEngine` and continue import it.
 				finishedCount := atomic.AddInt32(&task.tr.finishRestoreEngine, 1)
-				if finishedCount == task.tr.engineCount {
+				// all data engine restore finished
+				if finishedCount == task.tr.engineCount-1 {
 					var closedIndexEngine *kv.ClosedEngine
 					closedIndexEngine, err = task.indexEngine.Close(restoreCtx)
 					rc.saveStatusCheckpoint(task.tr.tableName, indexEngineID, err, CheckpointStatusClosed)
@@ -1104,13 +1099,15 @@ func (rc *RestoreController) importEngines(
 	errorChan := make(chan error, concurrency)
 	wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
-		go func() {
+		w := rc.closedEngineLimit.Apply()
+		go func(w *worker.Worker) {
 			defer wg.Done()
+			defer rc.closedEngineLimit.Recycle(w)
 			for task := range importChan {
 				err := task.tr.importEngine(importCtx, task.engine, rc, task.engineID, task.cp)
 				importedCount := atomic.AddInt32(&task.tr.finishedImportEngine, 1)
 				// data and index engine
-				if importedCount == task.tr.engineCount+1 {
+				if importedCount == task.tr.engineCount {
 					rc.saveStatusCheckpoint(task.tr.tableName, WholeTableEngineID, err, CheckpointStatusIndexImported)
 					if err == nil {
 						postProcessChan <- &importedTable{cp: task.tableCp, tr: task.tr}
@@ -1134,7 +1131,7 @@ func (rc *RestoreController) importEngines(
 					}()
 				}
 			}
-		}()
+		}(w)
 	}
 	go func() {
 		wg.Wait()
@@ -1329,7 +1326,7 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 }
 
 func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
-	// wait dataEngineCp process finish so that we can do cleanup safely
+	// wait checkpoint process finish so that we can do cleanup safely
 	close(rc.saveCpCh)
 	rc.checkpointsWg.Wait()
 
@@ -1469,7 +1466,7 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 			})
 		}
 
-		// Add index engine dataEngineCp
+		// Add index engine checkpoint
 		cp.Engines[indexEngineID] = &EngineCheckpoint{Status: CheckpointStatusLoaded}
 	}
 	task.End(zap.ErrorLevel, err,
@@ -1748,21 +1745,21 @@ func (cr *chunkRestore) deliverLoop(
 		dataKVs = dataKVs.Clear()
 		indexKVs = indexKVs.Clear()
 
-		// Update the table, and save a dataEngineCp.
+		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)
 		// No need to apply a lock since this is the only thread updating these variables.
 		cr.chunk.Checksum.Add(&dataChecksum)
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = offset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
-		// IN local mode, we should write these dataEngineCp after engine flushed
+		// IN local mode, we should write these checkpoint after engine flushed
 		if !rc.isLocalBackend() && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
-			// No need to save dataEngineCp if nothing was delivered.
+			// No need to save checkpoint if nothing was delivered.
 			saveCheckpoint(rc, t, engineID, cr.chunk)
 		}
-		// TODO: for local backend, we may save dataEngineCp more frequently, e.g. after writen
+		// TODO: for local backend, we may save checkpoint more frequently, e.g. after writen
 		//10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
-		// can safely update current dataEngineCp.
+		// can safely update current checkpoint.
 	}
 
 	return
