@@ -68,8 +68,8 @@ for BACKEND in importer tidb local; do
   check_contains 'ref: 41'
 
   run_sql 'SELECT count(pk), hex(min(pk)), hex(max(pk)) FROM vt.binary'
-  check_contains 'count(pk): 50'
-  check_contains 'hex(min(pk)): 090ABBB2F22E4F97A4FEA52EB1A80A0B'
+  check_contains 'count(pk): 51'
+  check_contains 'hex(min(pk)): '
   check_contains 'hex(max(pk)): FDE1328C409C43A8B1B08C35C8000F92'
   run_sql "SELECT ref FROM vt.binary WHERE pk = x'55dc0343db6a420898729096305b8c07'"
   check_contains 'ref: 41'
