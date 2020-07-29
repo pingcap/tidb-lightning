@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mydump_test
+package mydump
 
 import (
 	"context"
@@ -20,9 +20,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/pingcap/br/pkg/storage"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
@@ -60,19 +61,19 @@ func getFileSize(file string) (int64, error) {
 */
 func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	cfg := newConfigWithSourceDir("./examples")
-	loader, _ := NewMyDumpLoader(cfg)
+	loader, _ := NewMyDumpLoader(context.Background(), cfg)
 	dbMeta := loader.GetDatabases()[0]
 
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
 	for _, meta := range dbMeta.Tables {
-		regions, err := MakeTableRegions(meta, 1, cfg, ioWorkers)
+		regions, err := MakeTableRegions(context.Background(), meta, 1, cfg, ioWorkers, loader.store)
 		c.Assert(err, IsNil)
 
 		table := meta.Name
 		fmt.Printf("[%s] region count ===============> %d\n", table, len(regions))
 		for _, region := range regions {
 			fname := filepath.Base(region.File)
-			fmt.Printf("[%s] rowID = %5d / rows = %5d / offset = %10d / size = %10d \n",
+			fmt.Printf("[%s] rowID = %5d / rows = %5d / offset = %10d / Size = %10d \n",
 				fname,
 				region.RowIDMin(),
 				region.Rows(),
@@ -80,12 +81,11 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 				region.Size())
 		}
 
-		// check - region-size vs file-size
+		// check - region-Size vs file-Size
 		var tolFileSize int64 = 0
 		for _, file := range meta.DataFiles {
-			fileSize, err := getFileSize(file)
 			c.Assert(err, IsNil)
-			tolFileSize += fileSize
+			tolFileSize += file.Size
 		}
 		var tolRegionSize int64 = 0
 		for _, region := range regions {
@@ -135,7 +135,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 		c.Assert(actual, DeepEquals, expected, Commentf("%s", what))
 	}
 
-	// Batch size > Total size => Everything in the zero batch.
+	// Batch Size > Total Size => Everything in the zero batch.
 	AllocateEngineIDs(filesRegions, dataFileSizes, 1000, 0.5, 1000)
 	checkEngineSizes("no batching", map[int32]int{
 		0: 700,
@@ -143,7 +143,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 	// Allocate 3 engines.
 	AllocateEngineIDs(filesRegions, dataFileSizes, 200, 0.5, 1000)
-	checkEngineSizes("batch size = 200", map[int32]int{
+	checkEngineSizes("batch Size = 200", map[int32]int{
 		0: 170,
 		1: 213,
 		2: 317,
@@ -151,7 +151,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 	// Allocate 3 engines with an alternative ratio
 	AllocateEngineIDs(filesRegions, dataFileSizes, 200, 0.6, 1000)
-	checkEngineSizes("batch size = 200, ratio = 0.6", map[int32]int{
+	checkEngineSizes("batch Size = 200, ratio = 0.6", map[int32]int{
 		0: 160,
 		1: 208,
 		2: 332,
@@ -159,7 +159,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 	// Allocate 5 engines.
 	AllocateEngineIDs(filesRegions, dataFileSizes, 100, 0.5, 1000)
-	checkEngineSizes("batch size = 100", map[int32]int{
+	checkEngineSizes("batch Size = 100", map[int32]int{
 		0: 93,
 		1: 105,
 		2: 122,
@@ -169,7 +169,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 	// Number of engines > table concurrency
 	AllocateEngineIDs(filesRegions, dataFileSizes, 50, 0.5, 4)
-	checkEngineSizes("batch size = 50, limit table conc = 4", map[int32]int{
+	checkEngineSizes("batch Size = 50, limit table conc = 4", map[int32]int{
 		0:  50,
 		1:  59,
 		2:  73,
@@ -187,7 +187,7 @@ func (s *testMydumpRegionSuite) TestAllocateEngineIDs(c *C) {
 
 	// Zero ratio = Uniform
 	AllocateEngineIDs(filesRegions, dataFileSizes, 100, 0.0, 1000)
-	checkEngineSizes("batch size = 100, ratio = 0", map[int32]int{
+	checkEngineSizes("batch Size = 100, ratio = 0", map[int32]int{
 		0: 100,
 		1: 100,
 		2: 100,
@@ -242,7 +242,11 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		cfg.Mydumper.MaxRegionSize = tc.maxRegionSize
 		prevRowIdxMax := int64(0)
 		ioWorker := worker.NewPool(context.Background(), 4, "io")
-		_, regions, _, err := SplitLargeFile(meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker)
+
+		store, err := storage.NewLocalStorage("./csv")
+		c.Assert(err, IsNil)
+
+		_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker, store)
 		c.Assert(err, IsNil)
 		c.Assert(len(regions), Equals, tc.chkCnt)
 		for i := range tc.offsets {

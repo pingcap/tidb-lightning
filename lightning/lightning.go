@@ -30,6 +30,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pingcap/br/pkg/storage"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -205,9 +207,16 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 		return nil
 	})
 
+	backendOptions := &storage.BackendOptions{S3: taskCfg.Mydumper.S3}
+	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, backendOptions)
+	if err != nil {
+		return err
+	}
+	s, err := storage.Create(ctx, u, true)
+
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
-	mdl, err = mydump.NewMyDumpLoader(taskCfg)
+	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, taskCfg, s)
 	loadTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return errors.Trace(err)
@@ -221,7 +230,7 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	web.BroadcastInitProgress(dbMetas)
 
 	var procedure *restore.RestoreController
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg)
+	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)

@@ -17,7 +17,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -44,9 +43,7 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
 	se := newSession(options)
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
-	txn, _ := se.Txn(true)
-	store := kv.NewStagingBufferStore(txn)
-	recordCtx := tables.NewCommonAddRecordCtx(len(tbl.Cols()), store)
+	recordCtx := tables.NewCommonAddRecordCtx(len(tbl.Cols()))
 	tables.SetAddRecordCtx(se, recordCtx)
 	return &tableKVEncoder{
 		tbl: tbl,

@@ -25,6 +25,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/br/pkg/storage"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -145,13 +147,14 @@ type RestoreController struct {
 	checkpointsWg sync.WaitGroup
 
 	closedEngineLimit *worker.Pool
+	store             storage.ExternalStorage
 }
 
-func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
-	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, DeliverPauser)
+func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, s storage.ExternalStorage) (*RestoreController, error) {
+	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, s, DeliverPauser)
 }
 
-func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, pauser *common.Pauser) (*RestoreController, error) {
+func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, s storage.ExternalStorage, pauser *common.Pauser) (*RestoreController, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
@@ -208,6 +211,8 @@ func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDat
 		checkpointsDB:     cpdb,
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
+
+		store: s,
 	}
 
 	return rc, nil
@@ -296,7 +301,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 
 			tablesSchema := make(map[string]string)
 			for _, tblMeta := range dbMeta.Tables {
-				tablesSchema[tblMeta.Name] = tblMeta.GetSchema()
+				tablesSchema[tblMeta.Name] = tblMeta.GetSchema(rc.store)
 			}
 			err = tidbMgr.InitSchema(ctx, dbMeta.Name, tablesSchema)
 
@@ -335,14 +340,12 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	estimatedChunkCount := 0
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
-			for _, tablePath := range tableMeta.DataFiles {
-				isCsvFile := strings.HasSuffix(strings.ToLower(tablePath), ".csv")
+			for _, tableInfo := range tableMeta.DataFiles {
+				isCsvFile := strings.HasSuffix(strings.ToLower(tableInfo.Path), ".csv")
 				if isCsvFile {
-					f, _ := os.Stat(tablePath)
-					dataFileSize := f.Size()
 					cfg := rc.cfg.Mydumper
-					if dataFileSize > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += int(dataFileSize / cfg.MaxRegionSize)
+					if tableInfo.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += int(tableInfo.Size / cfg.MaxRegionSize)
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -743,7 +746,7 @@ func (t *TableRestore) restoreTable(
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
 	} else if cp.Status < CheckpointStatusAllWritten {
-		if err := t.populateChunks(rc, cp); err != nil {
+		if err := t.populateChunks(ctx, rc, cp); err != nil {
 			return errors.Trace(err)
 		}
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, t.tableName, cp.Engines); err != nil {
@@ -956,7 +959,7 @@ func (t *TableRestore) restoreEngine(
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers)
+		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1243,14 +1246,16 @@ type chunkRestore struct {
 }
 
 func newChunkRestore(
+	ctx context.Context,
 	index int,
 	cfg *config.Config,
 	chunk *ChunkCheckpoint,
 	ioWorkers *worker.Pool,
+	store storage.ExternalStorage,
 ) (*chunkRestore, error) {
 	blockBufSize := cfg.Mydumper.ReadBlockSize
 
-	reader, err := os.Open(chunk.Key.Path)
+	reader, err := store.Open(ctx, chunk.Key.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1316,9 +1321,9 @@ func (tr *TableRestore) Close() {
 	tr.logger.Info("restore done")
 }
 
-func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint) error {
+func (t *TableRestore) populateChunks(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
 	task := t.logger.Begin(zap.InfoLevel, "load engines and files")
-	chunks, err := mydump.MakeTableRegions(t.tableMeta, len(t.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers)
+	chunks, err := mydump.MakeTableRegions(ctx, t.tableMeta, len(t.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers, rc.store)
 	if err == nil {
 		timestamp := time.Now().Unix()
 		failpoint.Inject("PopulateChunkTimestamp", func(v failpoint.Value) {

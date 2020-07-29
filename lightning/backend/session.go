@@ -45,11 +45,12 @@ func (*invalidIterator) Close() {
 // new KV pair.
 type transaction struct {
 	kv.Transaction
-	kvPairs []common.KvPair
+	kvPairs   []common.KvPair
+	memBuffer kv.MemBuffer
 }
 
 func (t *transaction) NewStagingBuffer() kv.MemBuffer {
-	return t
+	return t.memBuffer
 }
 
 func (t *transaction) Discard() {
@@ -126,8 +127,12 @@ func newSession(options *SessionOptions) *session {
 	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
 	vars.TxnCtx = nil
 
+	// use this union store to fetch MemBuffer
+	store := kv.NewUnionStore(nil)
+	txn := transaction{memBuffer: store.GetMemBuffer()}
+
 	s := &session{
-		txn:    transaction{},
+		txn:    txn,
 		vars:   vars,
 		values: make(map[fmt.Stringer]interface{}, 1),
 	}

@@ -14,11 +14,12 @@
 package mydump
 
 import (
+	"context"
 	"math"
-	"os"
 	"strings"
 
-	"github.com/pingcap/errors"
+	"github.com/pingcap/br/pkg/storage"
+
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -80,7 +81,7 @@ func AllocateEngineIDs(
 		totalDataFileSize += dataFileSize
 	}
 
-	// No need to batch if the size is too small :)
+	// No need to batch if the Size is too small :)
 	if totalDataFileSize <= batchSize {
 		return
 	}
@@ -91,7 +92,7 @@ func AllocateEngineIDs(
 
 	// import() step will not be concurrent.
 	// If multiple Batch end times are close, it will result in multiple
-	// Batch import serials. We need use a non-uniform batch size to create a pipeline effect.
+	// Batch import serials. We need use a non-uniform batch Size to create a pipeline effect.
 	// Here we calculate the total number of engines, which is needed to compute the scale up
 	//
 	//     Total/B1 = 1/(1-R) * (N - 1/beta(N, R))
@@ -111,7 +112,7 @@ func AllocateEngineIDs(
 		}
 		realRatio := n - invBetaNR
 		if realRatio >= ratio {
-			// we don't have enough engines. reduce the batch size to keep the pipeline smooth.
+			// we don't have enough engines. reduce the batch Size to keep the pipeline smooth.
 			curBatchSize = totalDataFileSize * (1 - batchImportRatio) / realRatio
 			break
 		}
@@ -128,7 +129,7 @@ func AllocateEngineIDs(
 			curEngineID++
 
 			i := float64(curEngineID)
-			// calculate the non-uniform batch size
+			// calculate the non-uniform batch Size
 			if i >= n {
 				curBatchSize = batchSize
 			} else {
@@ -140,35 +141,32 @@ func AllocateEngineIDs(
 }
 
 func MakeTableRegions(
+	ctx context.Context,
 	meta *MDTableMeta,
 	columns int,
 	cfg *config.Config,
 	ioWorkers *worker.Pool,
+	store storage.ExternalStorage,
 ) ([]*TableRegion, error) {
 	// Split files into regions
 	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
 	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
 	prevRowIDMax := int64(0)
+	var err error
 	for _, dataFile := range meta.DataFiles {
-		dataFileInfo, err := os.Stat(dataFile)
-		if err != nil {
-			return nil, errors.Annotatef(err, "cannot stat %s", dataFile)
-		}
-		dataFileSize := dataFileInfo.Size()
-
 		divisor := int64(columns)
-		isCsvFile := strings.HasSuffix(strings.ToLower(dataFile), ".csv")
+		isCsvFile := strings.HasSuffix(strings.ToLower(dataFile.Path), ".csv")
 		if !isCsvFile {
 			divisor += 2
 		}
 		// If a csv file is overlarge, we need to split it into mutiple regions.
 		// Note: We can only split a csv file whose format is strict and header is empty.
-		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat && !cfg.Mydumper.CSV.Header {
+		if isCsvFile && dataFile.Size > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat && !cfg.Mydumper.CSV.Header {
 			var (
 				regions      []*TableRegion
 				subFileSizes []float64
 			)
-			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(meta, cfg, dataFile, dataFileSize, divisor, prevRowIDMax, ioWorkers)
+			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(ctx, meta, cfg, dataFile.Path, dataFile.Size, divisor, prevRowIDMax, ioWorkers, store)
 			if err != nil {
 				return nil, err
 			}
@@ -176,14 +174,14 @@ func MakeTableRegions(
 			filesRegions = append(filesRegions, regions...)
 			continue
 		}
-		rowIDMax := prevRowIDMax + dataFileSize/divisor
+		rowIDMax := prevRowIDMax + dataFile.Size/divisor
 		tableRegion := &TableRegion{
 			DB:    meta.DB,
 			Table: meta.Name,
-			File:  dataFile,
+			File:  dataFile.Path,
 			Chunk: Chunk{
 				Offset:       0,
-				EndOffset:    dataFileSize,
+				EndOffset:    dataFile.Size,
 				PrevRowIDMax: prevRowIDMax,
 				RowIDMax:     rowIDMax,
 			},
@@ -192,11 +190,11 @@ func MakeTableRegions(
 		if tableRegion.Size() > tableRegionSizeWarningThreshold {
 			log.L().Warn(
 				"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
-				zap.String("file", dataFile),
-				zap.Int64("size", dataFileSize))
+				zap.String("file", dataFile.Path),
+				zap.Int64("Size", dataFile.Size))
 		}
 		prevRowIDMax = rowIDMax
-		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
+		dataFileSizes = append(dataFileSizes, float64(dataFile.Size))
 	}
 
 	log.L().Debug("in makeTableRegions",
@@ -207,7 +205,7 @@ func MakeTableRegions(
 	return filesRegions, nil
 }
 
-// SplitLargeFile splits a large csv file into multiple regions, the size of
+// SplitLargeFile splits a large csv file into multiple regions, the Size of
 // each regions is specified by `config.MaxRegionSize`.
 // Note: We split the file coarsely, thus the format of csv file is needed to be
 // strict.
@@ -215,6 +213,7 @@ func MakeTableRegions(
 // - CSV file with header is invalid
 // - a complete tuple split into multiple lines is invalid
 func SplitLargeFile(
+	ctx context.Context,
 	meta *MDTableMeta,
 	cfg *config.Config,
 	dataFilePath string,
@@ -222,6 +221,7 @@ func SplitLargeFile(
 	divisor int64,
 	prevRowIdxMax int64,
 	ioWorker *worker.Pool,
+	store storage.ExternalStorage,
 ) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := cfg.Mydumper.MaxRegionSize
 	dataFileSizes = make([]float64, 0, dataFileSize/maxRegionSize+1)
@@ -230,7 +230,7 @@ func SplitLargeFile(
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFileSize {
-			reader, err := os.Open(dataFilePath)
+			reader, err := store.Open(ctx, dataFilePath)
 			if err != nil {
 				return 0, nil, nil, err
 			}

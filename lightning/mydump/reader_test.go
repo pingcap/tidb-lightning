@@ -11,14 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mydump_test
+package mydump
 
 import (
 	"io/ioutil"
 	"os"
 
+	"github.com/pingcap/br/pkg/storage"
+
 	. "github.com/pingcap/check"
-	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
 //////////////////////////////////////////////////////////
@@ -35,12 +36,17 @@ func (s *testMydumpReaderSuite) TestExportStatementNoTrailingNewLine(c *C) {
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
+	store, err := storage.NewLocalStorage(os.TempDir())
+	c.Assert(err, IsNil)
+
 	_, err = file.Write([]byte("CREATE DATABASE whatever;"))
 	c.Assert(err, IsNil)
 	err = file.Close()
 	c.Assert(err, IsNil)
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name(), "auto")
+	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
@@ -64,7 +70,13 @@ func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name(), "auto")
+	store, err := storage.NewLocalStorage(os.TempDir())
+	c.Assert(err, IsNil)
+
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
+
+	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
@@ -87,7 +99,12 @@ func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name(), "auto")
+	store, err := storage.NewLocalStorage(os.TempDir())
+	c.Assert(err, IsNil)
+
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
+	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
@@ -107,7 +124,12 @@ func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name(), "auto")
+	store, err := storage.NewLocalStorage(os.TempDir())
+	c.Assert(err, IsNil)
+
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
+	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE TABLE a (b int(11) COMMENT '总案例');"))
 }
@@ -122,7 +144,13 @@ func (s *testMydumpReaderSuite) TestExportStatementGibberishError(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name(), "auto")
+	store, err := storage.NewLocalStorage(os.TempDir())
+	c.Assert(err, IsNil)
+
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
+
+	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
 	c.Assert(data, IsNil)
 	c.Assert(err, NotNil)
 }

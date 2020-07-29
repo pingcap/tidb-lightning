@@ -21,6 +21,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/spf13/pflag"
+
+	"github.com/pingcap/br/pkg/storage"
+
 	"github.com/BurntSushi/toml"
 	"github.com/carlmjohnson/flagext"
 	"github.com/pingcap/errors"
@@ -50,9 +54,10 @@ type GlobalTiDB struct {
 }
 
 type GlobalMydumper struct {
-	SourceDir string   `toml:"data-source-dir" json:"data-source-dir"`
-	NoSchema  bool     `toml:"no-schema" json:"no-schema"`
-	Filter    []string `toml:"filter" json:"filter"`
+	SourceDir string                   `toml:"data-source-dir" json:"data-source-dir"`
+	NoSchema  bool                     `toml:"no-schema" json:"no-schema"`
+	Filter    []string                 `toml:"filter" json:"filter"`
+	S3        storage.S3BackendOptions `toml:"s3" json:"s3"`
 }
 
 type GlobalImporter struct {
@@ -172,12 +177,20 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 		extraFlags(fs)
 	}
 
-	if err := fs.Parse(args); err != nil {
+	pfs := pflag.NewFlagSet("", pflag.ContinueOnError)
+	pfs.AddGoFlagSet(fs)
+	storage.DefineS3Flags(pfs)
+
+	if err := pfs.Parse(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if *printVersion {
 		fmt.Println(common.GetRawInfo())
 		return nil, flag.ErrHelp
+	}
+
+	if err := cfg.Mydumper.S3.ParseFromFlags(pfs); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if len(configFilePath) > 0 {

@@ -16,10 +16,12 @@ package mydump
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
-	"os"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/pingcap/br/pkg/storage"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -65,21 +67,17 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 	return data, nil
 }
 
-func ExportStatement(sqlFile string, characterSet string) ([]byte, error) {
-	fd, err := os.Open(sqlFile)
+func ExportStatement(store storage.ExternalStorage, sqlFile fileInfo, characterSet string) ([]byte, error) {
+	fd, err := store.Open(context.Background(), sqlFile.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer fd.Close()
 
 	br := bufio.NewReader(fd)
-	f, err := os.Stat(sqlFile)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 
-	data := make([]byte, 0, f.Size()+1)
-	buffer := make([]byte, 0, f.Size()+1)
+	data := make([]byte, 0, sqlFile.Size+1)
+	buffer := make([]byte, 0, sqlFile.Size+1)
 	for {
 		line, err := br.ReadString('\n')
 		if errors.Cause(err) == io.EOF && len(line) == 0 { // it will return EOF if there is no trailing new line.
@@ -107,7 +105,7 @@ func ExportStatement(sqlFile string, characterSet string) ([]byte, error) {
 	if err != nil {
 		log.L().Error("cannot decode input file, please convert to target encoding manually",
 			zap.String("encoding", characterSet),
-			zap.String("path", sqlFile),
+			zap.String("Path", sqlFile.Path),
 		)
 		return nil, errors.Annotatef(err, "failed to decode %s as %s", sqlFile, characterSet)
 	}
