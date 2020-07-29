@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -66,7 +67,7 @@ const (
 
 var (
 	defaultConfigPaths    = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
-	supportedStorageTypes = []string{"", "file", "local", "s3"}
+	supportedStorageTypes = []string{"file", "local", "s3"}
 )
 
 type DBStore struct {
@@ -558,6 +559,19 @@ func (cfg *Config) Adjust() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// convert path and relative path to a valid file url
+	if u.Scheme == "" {
+		absPath, err := filepath.Abs(cfg.Mydumper.SourceDir)
+		if err != nil {
+			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
+		}
+		cfg.Mydumper.SourceDir = fmt.Sprintf("file://%s", absPath)
+		u, err = url.Parse(cfg.Mydumper.SourceDir)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	found := false
 	for _, t := range supportedStorageTypes {
 		if u.Scheme == t {

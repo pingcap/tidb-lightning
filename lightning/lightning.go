@@ -210,9 +210,12 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	backendOptions := &storage.BackendOptions{S3: taskCfg.Mydumper.S3}
 	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, backendOptions)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	s, err := storage.Create(ctx, u, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
