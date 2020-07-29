@@ -15,6 +15,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -41,16 +42,72 @@ func (*invalidIterator) Valid() bool {
 func (*invalidIterator) Close() {
 }
 
+type kvMemBuf struct {
+	kv.MemBuffer
+	kvPairs []common.KvPair
+	size    int
+}
+
+func (mb *kvMemBuf) Set(k kv.Key, v []byte) error {
+	mb.kvPairs = append(mb.kvPairs, common.KvPair{
+		Key: k.Clone(),
+		Val: append([]byte{}, v...),
+	})
+	mb.size += len(k) + len(v)
+	return nil
+}
+
+func (mb *kvMemBuf) SetWithFlags(k kv.Key, f kv.KeyFlags, v []byte) error {
+	return mb.Set(k, v)
+}
+
+func (mb *kvMemBuf) Delete(k kv.Key) error {
+	return errors.New("unsupported operation")
+}
+
+// Release publish all modifications in the latest staging buffer to upper level.
+func (mb *kvMemBuf) Release(h kv.StagingHandle) (int, error) {
+	return 0, nil
+}
+
+// Cleanup cleanup the resources referenced by the StagingHandle.
+// If the changes are not published by `Release`, they will be discarded.
+func (mb *kvMemBuf) Cleanup(h kv.StagingHandle) {}
+
+// Size returns sum of keys and values length.
+func (mb *kvMemBuf) Size() int {
+	return mb.size
+}
+
+// Len returns the number of entries in the DB.
+func (t *transaction) Len() int {
+	return t.GetMemBuffer().Len()
+}
+
+type kvUnionStore struct {
+	*kvMemBuf
+	kv.UnionStore
+}
+
+func (s *kvUnionStore) GetMemBuffer() kv.MemBuffer {
+	return s.kvMemBuf
+}
+
 // transaction is a trimmed down Transaction type which only supports adding a
 // new KV pair.
 type transaction struct {
 	kv.Transaction
-	kvPairs   []common.KvPair
-	memBuffer kv.MemBuffer
+	kvUnionStore
 }
 
-func (t *transaction) NewStagingBuffer() kv.MemBuffer {
-	return t.memBuffer
+func NewTransaction() *transaction {
+	return &transaction{
+		kvUnionStore: kvUnionStore{kvMemBuf: &kvMemBuf{}},
+	}
+}
+
+func (t *transaction) GetMemBuffer() kv.MemBuffer {
+	return t.kvUnionStore.kvMemBuf
 }
 
 func (t *transaction) Discard() {
@@ -77,11 +134,7 @@ func (t *transaction) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 
 // Set implements the kv.Mutator interface
 func (t *transaction) Set(k kv.Key, v []byte) error {
-	t.kvPairs = append(t.kvPairs, common.KvPair{
-		Key: k.Clone(),
-		Val: append([]byte{}, v...),
-	})
-	return nil
+	return t.kvMemBuf.Set(k, v)
 }
 
 // SetOption implements the kv.Transaction interface
@@ -92,6 +145,14 @@ func (t *transaction) DelOption(kv.Option) {}
 
 // SetAssertion implements the kv.Transaction interface
 func (t *transaction) SetAssertion(kv.Key, kv.AssertionType) {}
+
+func (t *transaction) Staging() kv.StagingHandle {
+	return 0
+}
+
+func (t *transaction) GetUnionStore() kv.UnionStore {
+	return &t.kvUnionStore
+}
 
 // session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
@@ -127,12 +188,7 @@ func newSession(options *SessionOptions) *session {
 	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
 	vars.TxnCtx = nil
 
-	// use this union store to fetch MemBuffer
-	store := kv.NewUnionStore(nil)
-	txn := transaction{memBuffer: store.GetMemBuffer()}
-
 	s := &session{
-		txn:    txn,
 		vars:   vars,
 		values: make(map[fmt.Stringer]interface{}, 1),
 	}
@@ -141,8 +197,9 @@ func newSession(options *SessionOptions) *session {
 }
 
 func (se *session) takeKvPairs() []common.KvPair {
-	pairs := se.txn.kvPairs
-	se.txn.kvPairs = make([]common.KvPair, 0, len(pairs))
+	pairs := se.txn.kvMemBuf.kvPairs
+	se.txn.kvMemBuf.kvPairs = make([]common.KvPair, 0, len(pairs))
+	se.txn.kvMemBuf.size = 0
 	return pairs
 }
 
