@@ -163,18 +163,25 @@ func MakeTableRegions(
 		}
 		// If a csv file is overlarge, we need to split it into mutiple regions.
 		// Note: We can only split a csv file whose format is strict and header is empty.
-		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat && !cfg.Mydumper.CSV.Header {
-			var (
-				regions      []*TableRegion
-				subFileSizes []float64
-			)
-			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(meta, cfg, dataFile, dataFileSize, divisor, prevRowIDMax, ioWorkers)
-			if err != nil {
-				return nil, err
+		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat {
+			if cfg.Mydumper.CSV.Header {
+				log.L().Warn(
+					"not splitting large CSV because mydumper.csv.header = true",
+					zap.String("file", dataFile),
+					zap.Int64("size", dataFileSize))
+			} else {
+				var (
+					regions      []*TableRegion
+					subFileSizes []float64
+				)
+				prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(meta, cfg, dataFile, dataFileSize, divisor, prevRowIDMax, ioWorkers)
+				if err != nil {
+					return nil, err
+				}
+				dataFileSizes = append(dataFileSizes, subFileSizes...)
+				filesRegions = append(filesRegions, regions...)
+				continue
 			}
-			dataFileSizes = append(dataFileSizes, subFileSizes...)
-			filesRegions = append(filesRegions, regions...)
-			continue
 		}
 		rowIDMax := prevRowIDMax + dataFileSize/divisor
 		tableRegion := &TableRegion{
