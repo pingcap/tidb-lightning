@@ -25,7 +25,6 @@ require (
 	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200714122454-1a64f969cb3c
 	github.com/pingcap/tidb v1.1.0-beta.0.20200721005019-f5c6e59f0daf
 	github.com/pingcap/tidb-tools v4.0.1+incompatible
-	github.com/pingcap/tipb v0.0.0-20200615034523-dcfcea0b5965
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/satori/go.uuid v1.2.0
@@ -42,4 +41,4 @@ require (
 	modernc.org/mathutil v1.0.0
 )
 
-replace github.com/pingcap/br => github.com/glorv/br v0.0.0-20200729030121-568b53aea3d0
+replace github.com/pingcap/br => github.com/glorv/br v0.0.0-20200729055130-3cc77d5550f7
