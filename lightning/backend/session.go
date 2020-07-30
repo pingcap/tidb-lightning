@@ -70,6 +70,14 @@ func (mb *kvMemBuf) Release(h kv.StagingHandle) (int, error) {
 	return 0, nil
 }
 
+func (mb *kvMemBuf) Staging() kv.StagingHandle {
+	return 0
+}
+
+func (mb *kvMemBuf) GetStagingBuffer(h kv.StagingHandle) kv.StagingBuffer {
+	return mb
+}
+
 // Cleanup cleanup the resources referenced by the StagingHandle.
 // If the changes are not published by `Release`, they will be discarded.
 func (mb *kvMemBuf) Cleanup(h kv.StagingHandle) {}
@@ -85,12 +93,12 @@ func (t *transaction) Len() int {
 }
 
 type kvUnionStore struct {
-	*kvMemBuf
+	kvMemBuf
 	kv.UnionStore
 }
 
 func (s *kvUnionStore) GetMemBuffer() kv.MemBuffer {
-	return s.kvMemBuf
+	return &s.kvMemBuf
 }
 
 // transaction is a trimmed down Transaction type which only supports adding a
@@ -102,12 +110,12 @@ type transaction struct {
 
 func NewTransaction() *transaction {
 	return &transaction{
-		kvUnionStore: kvUnionStore{kvMemBuf: &kvMemBuf{}},
+		kvUnionStore: kvUnionStore{},
 	}
 }
 
 func (t *transaction) GetMemBuffer() kv.MemBuffer {
-	return t.kvUnionStore.kvMemBuf
+	return &t.kvUnionStore.kvMemBuf
 }
 
 func (t *transaction) Discard() {
@@ -145,10 +153,6 @@ func (t *transaction) DelOption(kv.Option) {}
 
 // SetAssertion implements the kv.Transaction interface
 func (t *transaction) SetAssertion(kv.Key, kv.AssertionType) {}
-
-func (t *transaction) Staging() kv.StagingHandle {
-	return 0
-}
 
 func (t *transaction) GetUnionStore() kv.UnionStore {
 	return &t.kvUnionStore

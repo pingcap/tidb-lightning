@@ -1268,7 +1268,9 @@ func newChunkRestore(
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	}
 
-	parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax)
+	if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	return &chunkRestore{
 		parser: parser,

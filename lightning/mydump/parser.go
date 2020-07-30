@@ -103,7 +103,7 @@ const (
 
 type Parser interface {
 	Pos() (pos int64, rowID int64)
-	SetPos(pos int64, rowID int64)
+	SetPos(pos int64, rowID int64) error
 	Close() error
 	ReadRow() error
 	LastRow() Row
@@ -135,10 +135,17 @@ func NewChunkParser(
 }
 
 // SetPos changes the reported position and row ID.
-func (parser *blockParser) SetPos(pos int64, rowID int64) {
-	parser.reader.Seek(pos, io.SeekStart)
+func (parser *blockParser) SetPos(pos int64, rowID int64) error {
+	p, err := parser.reader.Seek(pos, io.SeekStart)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if p != pos {
+		return errors.Errorf("set pos failed, required position: %d, got: %d", pos, p)
+	}
 	parser.pos = pos
 	parser.lastRow.RowID = rowID
+	return nil
 }
 
 // Pos returns the current file offset.
