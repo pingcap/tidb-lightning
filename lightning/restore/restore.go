@@ -956,7 +956,7 @@ func (t *TableRestore) restoreEngine(
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers)
+		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers, t.tableInfo)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1247,6 +1247,7 @@ func newChunkRestore(
 	cfg *config.Config,
 	chunk *ChunkCheckpoint,
 	ioWorkers *worker.Pool,
+	tableInfo *TidbTableInfo,
 ) (*chunkRestore, error) {
 	blockBufSize := cfg.Mydumper.ReadBlockSize
 
@@ -1261,6 +1262,10 @@ func newChunkRestore(
 		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers)
 	default:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+	}
+
+	if len(chunk.ColumnPermutation) > 0 {
+		parser.SetColumns(getColumnNames(tableInfo.Core, chunk.ColumnPermutation))
 	}
 
 	parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax)
@@ -1403,6 +1408,17 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 	}
 
 	ccp.ColumnPermutation = colPerm
+}
+
+func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
+	names := make([]string, 0, len(permutation))
+	for _, idx := range permutation {
+		// skip columns with index -1
+		if idx >= 0 {
+			names = append(names, tableInfo.Columns[idx].Name.O)
+		}
+	}
+	return names
 }
 
 func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
