@@ -42,7 +42,7 @@ check_contains "count(*): 1"
 
 export GO_FAILPOINTS=
 set +e
-run_lightning -d "$DBPATH" --backend $BACKEND --enable-checkpoint=1 2> /dev/null
+run_lightning -d "$DBPATH" --backend tidb --enable-checkpoint=1 2> /dev/null
 set -e
 
 run_sql 'SELECT count(*) FROM `cp_tsr`.tbl'
