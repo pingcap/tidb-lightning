@@ -1650,6 +1650,10 @@ func (cr *chunkRestore) deliverLoop(
 			// No need to save checkpoint if nothing was delivered.
 			saveCheckpoint(rc, t, engineID, cr.chunk)
 		}
+		failpoint.Inject("FailAfterWriteRows", func() {
+			time.Sleep(time.Second)
+			panic("forcing failure due to FailAfterWriteRows")
+		})
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after writen
 		//10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
 		// can safely update current checkpoint.
