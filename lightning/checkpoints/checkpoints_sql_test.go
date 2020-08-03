@@ -111,7 +111,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 		ExpectPrepare("REPLACE INTO `mock-schema`\\.chunk_v\\d+ .+")
 	insertChunkStmt.
 		ExpectExec().
-		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, 12, 102400, 1, 5000, 1234567890).
+		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, []byte("null"), 12, 102400, 1, 5000, 1234567890).
 		WillReturnResult(sqlmock.NewResult(10, 1))
 	s.mock.ExpectCommit()
 
@@ -173,7 +173,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 		ExpectPrepare("UPDATE `mock-schema`\\.chunk_v\\d+ SET pos = .+").
 		ExpectExec().
 		WithArgs(
-			55904, 681, 4491, 586, 486070148917,
+			55904, 681, 4491, 586, 486070148917, []byte("null"),
 			"`db1`.`t2`", 0, "/tmp/path/1.sql", 0,
 		).
 		WillReturnResult(sqlmock.NewResult(11, 1))
