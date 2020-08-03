@@ -11,6 +11,6 @@ keep-after-success = true
 [mydumper]
 read-block-size = 1
 
-[tikv_importer]
+[tikv-importer]
 max-kv-pairs = 0
 

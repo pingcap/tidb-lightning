@@ -24,7 +24,7 @@ mkdir -p $DBPATH
 echo 'CREATE DATABASE cp_tsr;' > "$DBPATH/cp_tsr-schema-create.sql"
 PARTIAL_IMPORT_QUERY='SELECT 0'
 
-echo "CREATE TABLE tbl(i TINYINT PRIMIARY KEY, j INT);" > "$DBPATH/cp_tsr.tbl-schema.sql"
+echo "CREATE TABLE tbl(i TINYINT PRIMARY KEY, j INT);" > "$DBPATH/cp_tsr.tbl-schema.sql"
 echo "INSERT INTO tbl VALUES (1),(2);" > "$DBPATH/cp_tsr.tbl.sql"
 
 # Set the failpoint to kill the lightning instance as soon as one row is write
