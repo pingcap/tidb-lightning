@@ -177,9 +177,10 @@ func (cp *TableCheckpoint) CountChunks() int {
 }
 
 type chunkCheckpointDiff struct {
-	pos      int64
-	rowID    int64
-	checksum verify.KVChecksum
+	pos               int64
+	rowID             int64
+	checksum          verify.KVChecksum
+	columnPermutation []int
 }
 
 type engineCheckpointDiff struct {
@@ -290,20 +291,22 @@ func (merger *StatusCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 }
 
 type ChunkCheckpointMerger struct {
-	EngineID int32
-	Key      ChunkCheckpointKey
-	Checksum verify.KVChecksum
-	Pos      int64
-	RowID    int64
+	EngineID          int32
+	Key               ChunkCheckpointKey
+	Checksum          verify.KVChecksum
+	Pos               int64
+	RowID             int64
+	ColumnPermutation []int
 }
 
 func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.insertEngineCheckpointDiff(merger.EngineID, engineCheckpointDiff{
 		chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
 			merger.Key: {
-				pos:      merger.Pos,
-				rowID:    merger.RowID,
-				checksum: merger.Checksum,
+				pos:               merger.Pos,
+				rowID:             merger.RowID,
+				checksum:          merger.Checksum,
+				columnPermutation: merger.ColumnPermutation,
 			},
 		},
 	})
@@ -624,7 +627,7 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 				kvc_bytes, kvc_kvs, kvc_checksum, create_time
 			) VALUES (
 				?, ?,
-				?, ?, '[]', FALSE,
+				?, ?, ?, FALSE,
 				?, ?, ?, ?,
 				0, 0, 0, from_unixtime(?)
 			);
@@ -640,9 +643,13 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 				return errors.Trace(err)
 			}
 			for _, value := range engine.Chunks {
+				columnPerm, err := json.Marshal(value.ColumnPermutation)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				_, err = chunkStmt.ExecContext(
 					c, tableName, engineID,
-					value.Key.Path, value.Key.Offset,
+					value.Key.Path, value.Key.Offset, columnPerm,
 					value.Chunk.Offset, value.Chunk.EndOffset, value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax,
 					value.Timestamp,
 				)
@@ -663,7 +670,7 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 
 func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
 	chunkQuery := fmt.Sprintf(`
-		UPDATE %s.%s SET pos = ?, prev_rowid_max = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ?
+		UPDATE %s.%s SET pos = ?, prev_rowid_max = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ?, columns = ?
 		WHERE (table_name, engine_id, path, offset) = (?, ?, ?, ?);
 	`, cpdb.schema, CheckpointTableNameChunk)
 	rebaseQuery := fmt.Sprintf(`
@@ -717,10 +724,14 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 					}
 				}
 				for key, diff := range engineDiff.chunks {
+					columnPerm, err := json.Marshal(diff.columnPermutation)
+					if err != nil {
+						return errors.Trace(err)
+					}
 					if _, e := chunkStmt.ExecContext(
 						c,
 						diff.pos, diff.rowID, diff.checksum.SumSize(), diff.checksum.SumKVS(), diff.checksum.Sum(),
-						tableName, engineID, key.Path, key.Offset,
+						columnPerm, tableName, engineID, key.Path, key.Offset,
 					); e != nil {
 						return errors.Trace(e)
 					}
@@ -901,6 +912,14 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			chunk.PrevRowidMax = value.Chunk.PrevRowIDMax
 			chunk.RowidMax = value.Chunk.RowIDMax
 			chunk.Timestamp = value.Timestamp
+			if len(value.ColumnPermutation) > 0 {
+				permutation := make([]int32, len(value.ColumnPermutation))
+				for _, p := range value.ColumnPermutation {
+					permutation = append(permutation, int32(p))
+				}
+				chunk.ColumnPermutation = permutation
+			}
+
 		}
 		tableModel.Engines[engineID] = engineModel
 	}
@@ -933,6 +952,7 @@ func (cpdb *FileCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoin
 				chunkModel.KvcBytes = diff.checksum.SumSize()
 				chunkModel.KvcKvs = diff.checksum.SumKVS()
 				chunkModel.KvcChecksum = diff.checksum.Sum()
+				chunkModel.ColumnPermutation = intSlice2Int32Slice(diff.columnPermutation)
 			}
 		}
 	}
@@ -1292,4 +1312,20 @@ func (cpdb *FileCheckpointsDB) DumpEngines(context.Context, io.Writer) error {
 
 func (cpdb *FileCheckpointsDB) DumpChunks(context.Context, io.Writer) error {
 	return errors.Errorf("dumping file checkpoint into CSV not unsupported, you may copy %s instead", cpdb.path)
+}
+
+func intSlice2Int32Slice(s []int) []int32 {
+	res := make([]int32, len(s))
+	for _, i := range s {
+		res = append(res, int32(i))
+	}
+	return res
+}
+
+func int32Slice2IntSlice(s []int32) []int {
+	res := make([]int, len(s))
+	for _, i := range s {
+		res = append(res, int(i))
+	}
+	return res
 }

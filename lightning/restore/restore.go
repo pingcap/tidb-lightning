@@ -1686,11 +1686,12 @@ func saveCheckpoint(rc *RestoreController, t *TableRestore, engineID int32, chun
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &ChunkCheckpointMerger{
-			EngineID: engineID,
-			Key:      chunk.Key,
-			Checksum: chunk.Checksum,
-			Pos:      chunk.Chunk.Offset,
-			RowID:    chunk.Chunk.PrevRowIDMax,
+			EngineID:          engineID,
+			Key:               chunk.Key,
+			Checksum:          chunk.Checksum,
+			Pos:               chunk.Chunk.Offset,
+			RowID:             chunk.Chunk.PrevRowIDMax,
+			ColumnPermutation: chunk.ColumnPermutation,
 		},
 	}
 }
