@@ -74,7 +74,7 @@ func init() {
 	cfg.Log.SlowThreshold = 3000
 	// used in integration tests
 	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
-		minDeliverBytes = v.(int)
+		minDeliverBytes = uint64(v.(int))
 	})
 }
 
@@ -1558,8 +1558,8 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
 ////////////////////////////////////////////////////////////////
 
 var (
-	maxKVQueueSize  = 128   // Cache at most this number of rows before blocking the encode loop
-	minDeliverBytes = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
+	maxKVQueueSize         = 128   // Cache at most this number of rows before blocking the encode loop
+	minDeliverBytes uint64 = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
 )
 
 type deliveredKVs struct {
