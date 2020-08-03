@@ -72,6 +72,10 @@ var DeliverPauser = common.NewPauser()
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
+	// used in integration tests
+	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
+		minDeliverBytes = v.(int)
+	})
 }
 
 type saveCp struct {
@@ -1553,7 +1557,7 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
 
 ////////////////////////////////////////////////////////////////
 
-const (
+var (
 	maxKVQueueSize  = 128   // Cache at most this number of rows before blocking the encode loop
 	minDeliverBytes = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
 )

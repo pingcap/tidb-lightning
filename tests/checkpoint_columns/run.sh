@@ -28,7 +28,7 @@ echo "CREATE TABLE tbl(i TINYINT PRIMARY KEY, j INT);" > "$DBPATH/cp_tsr.tbl-sch
 echo "INSERT INTO tbl (i) VALUES (1),(2);" > "$DBPATH/cp_tsr.tbl.sql"
 
 # Set the failpoint to kill the lightning instance as soon as one row is write
-export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/FailAfterWriteRows=return"
+export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/FailAfterWriteRows=return;github.com/pingcap/tidb-lightning/lightning/restore/SetMinDeliverBytes=return(1);"
 
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS cp_tsr'
