@@ -1337,7 +1337,7 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 				}
 				cp.Engines[chunk.EngineID] = engine
 			}
-			engine.Chunks = append(engine.Chunks, &ChunkCheckpoint{
+			ccp := &ChunkCheckpoint{
 				Key: ChunkCheckpointKey{
 					Path:   chunk.File,
 					Offset: chunk.Chunk.Offset,
@@ -1345,7 +1345,11 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 				ColumnPermutation: nil,
 				Chunk:             chunk.Chunk,
 				Timestamp:         timestamp,
-			})
+			}
+			if len(chunk.Chunk.Columns) > 0 {
+				ccp.ColumnPermutation = parseColumnPermutations(t.tableInfo.Core, chunk.Chunk.Columns)
+			}
+			engine.Chunks = append(engine.Chunks, ccp)
 		}
 
 		// Add index engine checkpoint
@@ -1372,10 +1376,11 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 //
 // The argument `columns` _must_ be in lower case.
 func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
-	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
-	shouldIncludeRowID := common.TableHasAutoRowID(t.tableInfo.Core)
-
+	var colPerm []int
 	if len(columns) == 0 {
+		colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
+		shouldIncludeRowID := common.TableHasAutoRowID(t.tableInfo.Core)
+
 		// no provided columns, so use identity permutation.
 		for i := range t.tableInfo.Core.Columns {
 			colPerm = append(colPerm, i)
@@ -1384,30 +1389,37 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 			colPerm = append(colPerm, -1)
 		}
 	} else {
-		columnMap := make(map[string]int)
-		for i, column := range columns {
-			columnMap[column] = i
-		}
-		for _, colInfo := range t.tableInfo.Core.Columns {
-			if i, ok := columnMap[colInfo.Name.L]; ok {
-				colPerm = append(colPerm, i)
-			} else {
-				t.logger.Warn("column missing from data file, going to fill with default value",
-					zap.Stringer("path", &ccp.Key),
-					zap.String("colName", colInfo.Name.O),
-					zap.Stringer("colType", &colInfo.FieldType),
-				)
-				colPerm = append(colPerm, -1)
-			}
-		}
-		if i, ok := columnMap[model.ExtraHandleName.L]; ok {
-			colPerm = append(colPerm, i)
-		} else if shouldIncludeRowID {
-			colPerm = append(colPerm, -1)
-		}
+		colPerm = parseColumnPermutations(t.tableInfo.Core, columns)
 	}
 
 	ccp.ColumnPermutation = colPerm
+}
+
+func parseColumnPermutations(tableInfo *model.TableInfo, columns []string) []int {
+	colPerm := make([]int, 0, len(tableInfo.Columns)+1)
+
+	columnMap := make(map[string]int)
+	for i, column := range columns {
+		columnMap[column] = i
+	}
+	for _, colInfo := range tableInfo.Columns {
+		if i, ok := columnMap[colInfo.Name.L]; ok {
+			colPerm = append(colPerm, i)
+		} else {
+			log.L().Warn("column missing from data file, going to fill with default value",
+				zap.String("colName", colInfo.Name.O),
+				zap.Stringer("colType", &colInfo.FieldType),
+			)
+			colPerm = append(colPerm, -1)
+		}
+	}
+	if i, ok := columnMap[model.ExtraHandleName.L]; ok {
+		colPerm = append(colPerm, i)
+	} else if common.TableHasAutoRowID(tableInfo) {
+		colPerm = append(colPerm, -1)
+	}
+
+	return colPerm
 }
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {

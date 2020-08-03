@@ -328,14 +328,8 @@ func (parser *CSVParser) ReadRow() error {
 
 	// skip the header first
 	if parser.pos == 0 && parser.cfg.Header {
-		columns, err := parser.readRecord(nil)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		parser.columns = make([]string, 0, len(columns))
-		for _, colName := range columns {
-			colName, _ = parser.unescapeString(colName)
-			parser.columns = append(parser.columns, strings.ToLower(colName))
+		if err := parser.ReadColumns(); err != nil {
+			return err
 		}
 	}
 
@@ -367,6 +361,19 @@ func (parser *CSVParser) ReadRow() error {
 		}
 	}
 
+	return nil
+}
+
+func (parser *CSVParser) ReadColumns() error {
+	columns, err := parser.readRecord(nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	parser.columns = make([]string, 0, len(columns))
+	for _, colName := range columns {
+		colName, _ = parser.unescapeString(colName)
+		parser.columns = append(parser.columns, strings.ToLower(colName))
+	}
 	return nil
 }
 
