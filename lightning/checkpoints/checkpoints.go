@@ -913,11 +913,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			chunk.RowidMax = value.Chunk.RowIDMax
 			chunk.Timestamp = value.Timestamp
 			if len(value.ColumnPermutation) > 0 {
-				permutation := make([]int32, len(value.ColumnPermutation))
-				for _, p := range value.ColumnPermutation {
-					permutation = append(permutation, int32(p))
-				}
-				chunk.ColumnPermutation = permutation
+				chunk.ColumnPermutation = intSlice2Int32Slice(value.ColumnPermutation)
 			}
 
 		}
@@ -1318,14 +1314,6 @@ func intSlice2Int32Slice(s []int) []int32 {
 	res := make([]int32, len(s))
 	for _, i := range s {
 		res = append(res, int32(i))
-	}
-	return res
-}
-
-func int32Slice2IntSlice(s []int32) []int {
-	res := make([]int, len(s))
-	for _, i := range s {
-		res = append(res, int(i))
 	}
 	return res
 }

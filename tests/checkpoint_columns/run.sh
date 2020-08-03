@@ -16,18 +16,15 @@
 set -euE
 
 # Populate the mydumper source
-DBPATH="$TEST_DIR/cppk.mydump"
-TABLE_COUNT=1
-CHUNK_COUNT=50
+DBPATH="$TEST_DIR/cp.mydump"
 
 mkdir -p $DBPATH
 echo 'CREATE DATABASE cp_tsr;' > "$DBPATH/cp_tsr-schema-create.sql"
-PARTIAL_IMPORT_QUERY='SELECT 0'
-
 echo "CREATE TABLE tbl(i TINYINT PRIMARY KEY, j INT);" > "$DBPATH/cp_tsr.tbl-schema.sql"
 echo "INSERT INTO tbl (i) VALUES (1),(2);" > "$DBPATH/cp_tsr.tbl.sql"
 
-# Set the failpoint to kill the lightning instance as soon as one row is write
+# Set minDeliverBytes to a small enough number to only write only 1 row each time
+# Set the failpoint to kill the lightning instance as soon as one row is written
 export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/FailAfterWriteRows=return;github.com/pingcap/tidb-lightning/lightning/restore/SetMinDeliverBytes=return(1)"
 
 # Start importing the tables.
@@ -40,6 +37,7 @@ set -e
 run_sql 'SELECT count(*) FROM `cp_tsr`.tbl'
 check_contains "count(*): 1"
 
+# restart lightning from checkpoint, the second line should be written successfully
 export GO_FAILPOINTS=
 set +e
 run_lightning -d "$DBPATH" --backend tidb --enable-checkpoint=1 2> /dev/null
