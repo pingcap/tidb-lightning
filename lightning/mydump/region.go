@@ -163,7 +163,7 @@ func MakeTableRegions(
 		}
 		// If a csv file is overlarge, we need to split it into mutiple regions.
 		// Note: We can only split a csv file whose format is strict and header is empty.
-		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat && !cfg.Mydumper.CSV.Header {
+		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat {
 			var (
 				regions      []*TableRegion
 				subFileSizes []float64
