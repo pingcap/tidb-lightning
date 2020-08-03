@@ -21,7 +21,8 @@ DBPATH="$TEST_DIR/cp.mydump"
 mkdir -p $DBPATH
 echo 'CREATE DATABASE cp_tsr;' > "$DBPATH/cp_tsr-schema-create.sql"
 echo "CREATE TABLE tbl(i TINYINT PRIMARY KEY, j INT);" > "$DBPATH/cp_tsr.tbl-schema.sql"
-echo "INSERT INTO tbl (i) VALUES (1),(2);" > "$DBPATH/cp_tsr.tbl.sql"
+# the column orders in data file is different from table schema order.
+echo "INSERT INTO tbl (j, i) VALUES (3, 1),(4, 2);" > "$DBPATH/cp_tsr.tbl.sql"
 
 # Set minDeliverBytes to a small enough number to only write only 1 row each time
 # Set the failpoint to kill the lightning instance as soon as one row is written
@@ -43,5 +44,5 @@ set +e
 run_lightning -d "$DBPATH" --backend tidb --enable-checkpoint=1 2> /dev/null
 set -e
 
-run_sql 'SELECT count(*) FROM `cp_tsr`.tbl'
-check_contains "count(*): 2"
+run_sql 'SELECT j FROM `cp_tsr`.tbl WHERE i = 2;'
+check_contains "j: 4"
