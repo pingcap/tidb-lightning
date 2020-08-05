@@ -184,6 +184,7 @@ func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
 	parser.fieldIndexes = parser.fieldIndexes[:0]
 
 	isEmptyLine := true
+	whitespaceLine := true
 outside:
 	for {
 		firstByte, err := parser.readByte()
@@ -198,11 +199,12 @@ outside:
 		switch firstByte {
 		case parser.comma:
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
-
+			whitespaceLine = false
 		case parser.quote:
 			if err := parser.readQuotedField(); err != nil {
 				return nil, err
 			}
+			whitespaceLine = false
 
 		case '\r', '\n':
 			// new line = end of record (ignore empty lines)
@@ -210,7 +212,7 @@ outside:
 				continue
 			}
 			// skip lines only contain whitespaces
-			if len(bytes.TrimFunc(parser.recordBuffer, unicode.IsSpace)) == 0 {
+			if err == nil && whitespaceLine && len(bytes.TrimFunc(parser.recordBuffer, unicode.IsSpace)) == 0 {
 				parser.recordBuffer = parser.recordBuffer[:0]
 				continue
 			}
