@@ -405,6 +405,53 @@ func (s *testMydumpCSVParserSuite) TestTSV(c *C) {
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 }
 
+func (s *testMydumpCSVParserSuite) TestCsvWithWhiteSpaceLine(c *C) {
+	cfg := config.CSVConfig{
+		Separator: ",",
+		Delimiter: `"`,
+	}
+	data := " \r\n\r\n0,,abc\r\n \r\n123,1999-12-31,test\r\n"
+	parser := mydump.NewCSVParser(&cfg, mydump.NewStringReader(data), config.ReadBlockSize, s.ioWorkers, false)
+	c.Assert(parser.ReadRow(), IsNil)
+	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum("0"),
+			nullDatum,
+			types.NewStringDatum("abc"),
+		},
+	})
+
+	c.Assert(parser, posEq, 12, 1)
+	c.Assert(parser.ReadRow(), IsNil)
+	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+		RowID: 2,
+		Row: []types.Datum{
+			types.NewStringDatum("123"),
+			types.NewStringDatum("1999-12-31"),
+			types.NewStringDatum("test"),
+		},
+	})
+	c.Assert(parser.Close(), IsNil)
+
+	cfg.Header = true
+	data = " \r\na,b,c\r\n0,,abc\r\n"
+	parser = mydump.NewCSVParser(&cfg, mydump.NewStringReader(data), config.ReadBlockSize, s.ioWorkers, true)
+	c.Assert(parser.ReadRow(), IsNil)
+	c.Assert(parser.Columns(), DeepEquals, []string{"a", "b", "c"})
+	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum("0"),
+			nullDatum,
+			types.NewStringDatum("abc"),
+		},
+	})
+
+	c.Assert(parser, posEq, 17, 1)
+	c.Assert(parser.Close(), IsNil)
+}
+
 func (s *testMydumpCSVParserSuite) TestEmpty(c *C) {
 	cfg := config.CSVConfig{
 		Separator: ",",
