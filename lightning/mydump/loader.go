@@ -18,13 +18,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	"github.com/pingcap/tidb-tools/pkg/table-filter"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"go.uber.org/zap"
 )
@@ -61,12 +60,13 @@ func (m *MDTableMeta) GetSchema() string {
 	Mydumper File Loader
 */
 type MDLoader struct {
-	dir      string
-	noSchema bool
-	dbs      []*MDDatabaseMeta
-	filter   filter.Filter
-	router   *router.Table
-	charSet  string
+	dir        string
+	noSchema   bool
+	dbs        []*MDDatabaseMeta
+	filter     filter.Filter
+	router     *router.Table
+	fileRouter FileRouter
+	charSet    string
 }
 
 type mdLoaderSetup struct {
@@ -102,12 +102,26 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 		f = filter.CaseInsensitive(f)
 	}
 
+	fileRouteRules := cfg.Mydumper.FileRouters
+	if cfg.Mydumper.DefaultFileRules {
+		fileRouteRules = append(fileRouteRules, defaultFileRouteRules...)
+	}
+	if len(fileRouteRules) == 0 {
+		return nil, errors.New("not file route rules. You may set 'mydumper.default-route-rules' to true or add 'mydumper.files' configs")
+	}
+
+	fileRouter, err := Parse(fileRouteRules)
+	if err != nil {
+		return nil, err
+	}
+
 	mdl := &MDLoader{
-		dir:      cfg.Mydumper.SourceDir,
-		noSchema: cfg.Mydumper.NoSchema,
-		filter:   f,
-		router:   r,
-		charSet:  cfg.Mydumper.CharacterSet,
+		dir:        cfg.Mydumper.SourceDir,
+		noSchema:   cfg.Mydumper.NoSchema,
+		filter:     f,
+		router:     r,
+		charSet:    cfg.Mydumper.CharacterSet,
+		fileRouter: fileRouter,
 	}
 
 	setup := mdLoaderSetup{
@@ -232,6 +246,7 @@ func (s *mdLoaderSetup) setup(dir string) error {
 }
 
 func (s *mdLoaderSetup) listFiles(dir string) error {
+	fr := s.loader.fileRouter
 	// `filepath.Walk` yields the paths in a deterministic (lexicographical) order,
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
@@ -244,61 +259,32 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 			return nil
 		}
 
-		fname := strings.TrimSpace(f.Name())
-		lowerFName := strings.ToLower(fname)
-
-		info := fileInfo{path: path, size: f.Size()}
 		logger := log.With(zap.String("path", path))
 
-		var (
-			ftype         fileType
-			qualifiedName string
-		)
-		switch {
-		case strings.HasSuffix(lowerFName, "-schema-create.sql"):
-			ftype = fileTypeDatabaseSchema
-			qualifiedName = fname[:len(fname)-18] + "."
-
-		case strings.HasSuffix(lowerFName, "-schema.sql"):
-			ftype = fileTypeTableSchema
-			qualifiedName = fname[:len(fname)-11]
-
-			// ignore functionality :
-			// 		- view
-			//		- triggers
-		case strings.HasSuffix(lowerFName, "-schema-view.sql"),
-			strings.HasSuffix(lowerFName, "-schema-trigger.sql"),
-			strings.HasSuffix(lowerFName, "-schema-post.sql"):
-			logger.Warn("[loader] ignore unsupport view/trigger")
-			return nil
-		case strings.HasSuffix(lowerFName, ".sql"), strings.HasSuffix(lowerFName, ".csv"):
-			ftype = fileTypeTableData
-			qualifiedName = fname[:len(fname)-4]
-		default:
+		res := fr.Route(path)
+		if res == nil {
+			logger.Info("[loader] file is filtered by file router")
 			return nil
 		}
 
-		matchRes := tableNameRegexp.FindStringSubmatch(qualifiedName)
-		if len(matchRes) != 3 {
-			logger.Debug("[loader] ignore almost " + ftype.String() + " file")
-			return nil
+		info := fileInfo{
+			tableName: filter.Table{Schema: res.Schema, Name: res.Name},
+			path:      path,
+			size:      f.Size(),
 		}
-		info.tableName.Schema = matchRes[1]
-		info.tableName.Name = matchRes[2]
-
-		if s.loader.shouldSkip(&info.tableName) {
-			logger.Debug("[filter] ignoring table file")
-			return nil
-		}
-
-		switch ftype {
-		case fileTypeDatabaseSchema:
+		info.tableName.Schema = res.Schema
+		switch res.Type {
+		case SourceTypeSchemaSchema:
 			s.dbSchemas = append(s.dbSchemas, info)
-		case fileTypeTableSchema:
+		case SourceTypeTableSchema:
 			s.tableSchemas = append(s.tableSchemas, info)
-		case fileTypeTableData:
+		case SourceTypeSQL | SourceTypeCSV:
 			s.tableDatas = append(s.tableDatas, info)
 		}
+
+		logger.Info("file route result", zap.String("schema", res.Schema),
+			zap.String("table", res.Name), zap.Stringer("type", res.Type))
+
 		return nil
 	})
 
