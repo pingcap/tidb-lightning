@@ -248,7 +248,7 @@ func SplitLargeFile(
 			if err != nil {
 				return 0, nil, nil, err
 			}
-			parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker)
+			parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker, false)
 			parser.SetPos(endOffset, prevRowIdMax)
 			pos, err := parser.ReadUntilTokNewLine()
 			if err != nil {
