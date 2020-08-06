@@ -250,10 +250,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 			c.Assert(regions[i].Chunk.Offset, Equals, tc.offsets[i][0])
 			c.Assert(regions[i].Chunk.EndOffset, Equals, tc.offsets[i][1])
 			c.Assert(len(regions[i].Chunk.Columns), Equals, len(columns))
-			for j := range columns {
-				c.Assert(regions[i].Chunk.Columns[j], Equals, columns[j])
-			}
-
+			c.Assert(regions[i].Chunk.Columns, DeepEquals, columns)
 		}
 	}
 }
