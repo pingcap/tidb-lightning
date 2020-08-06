@@ -81,6 +81,11 @@ type mdLoaderSetup struct {
 func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	var r *router.Table
 	var err error
+
+	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
+		return nil, errors.New("table route is deprecated, can't both config [routes] and [mydumper.files]")
+	}
+
 	if len(cfg.Routes) > 0 {
 		r, err = router.NewTableRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
 		if err != nil {
