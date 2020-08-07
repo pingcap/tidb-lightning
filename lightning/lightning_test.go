@@ -63,8 +63,9 @@ func (s *lightningSuite) TestRun(c *C) {
 
 	err = lightning.run(&config.Config{
 		Mydumper: config.MydumperRuntime{
-			SourceDir: ".",
-			Filter:    []string{"*.*"},
+			SourceDir:        ".",
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
 		},
 		Checkpoint: config.Checkpoint{
 			Enable: true,
