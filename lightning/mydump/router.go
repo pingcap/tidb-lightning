@@ -92,11 +92,11 @@ var (
 var (
 	defaultFileRouteRules = []*config.FileRouteRule{
 		// db schema create file pattern, matches files like '{schema}-schema-create.sql'
-		{`(?i)^(?:[^/]*/)([^/.]+)-schema-create\.sql`, "$1", "", SchemaSchema, "", ""},
+		{`(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql`, "$1", "", SchemaSchema, "", ""},
 		// table schema create file pattern, matches files like '{schema}.{table}-schema.sql'
-		{`(?i)^(?:[^/]*/)([^/.]+)\.([^/.]+)-schema\.sql`, "$1", "$2", TableSchema, "", ""},
+		{`(?i)^(?:[^/]*/)*([^/.]+)\.([^/.]+)-schema\.sql`, "$1", "$2", TableSchema, "", ""},
 		// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}'
-		{`(?i)^(?:[^/]*/)([^/.]+)\.([^/.]+)(?:\.([0-9]+))?\.(sql|csv)$`, "$1", "$2", "$4", "$3", ""},
+		{`(?i)^(?:[^/]*/)*([^/.]+)\.([^/.]+)(?:\.([0-9]+))?\.(sql|csv)$`, "$1", "$2", "$4", "$3", ""},
 	}
 )
 
