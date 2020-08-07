@@ -581,7 +581,7 @@ func (s *chunkRestoreSuite) SetUpTest(c *C) {
 	}
 
 	var err error
-	s.cr, err = newChunkRestore(1, s.cfg, &chunk, w)
+	s.cr, err = newChunkRestore(1, s.cfg, &chunk, w, nil)
 	c.Assert(err, IsNil)
 }
 
