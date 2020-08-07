@@ -19,8 +19,8 @@ set -euE
 DBPATH="$TEST_DIR/cp.mydump"
 
 mkdir -p $DBPATH $DBPATH/fr
-echo 'CREATE DATABASE fr;' > "$DBPATH/fr-schema-create.sql"
-echo "CREATE TABLE tbl(i TINYINT PRIMARY KEY, j INT);" > "$DBPATH/fr/tbl.schema.sql"
+echo 'CREATE DATABASE fr;' > "$DBPATH/fr/schema.sql"
+echo "CREATE TABLE tbl(i TINYINT PRIMARY KEY, j INT);" > "$DBPATH/fr/tbl-schema.sql"
 # the column orders in data file is different from table schema order.
 echo "INSERT INTO tbl (i, j) VALUES (1, 1),(2, 2);" > "$DBPATH/fr/tbl1.sql"
 echo "INSERT INTO tbl (i, j) VALUES (3, 3),(4, 4);" > "$DBPATH/fr/tbl2.sql"

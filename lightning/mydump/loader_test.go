@@ -348,8 +348,77 @@ func (s *testMydumpLoaderSuite) TestBadRouterRule(c *C) {
 		TargetSchema:  "ab",
 	}}
 
-	s.touch(c, "a1b-schema-create.sql")
-
 	_, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, ErrorMatches, `.*pattern a\*b not valid`)
+}
+
+func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
+	s.cfg.Mydumper.DefaultFileRules = false
+	s.cfg.Mydumper.FileRouters = []*config.FileRouteRule{
+		{
+			Pattern: `(?i)^(?:[^./]*/)*([a-z0-9_]+)/schema\.sql$`,
+			Schema:  "$1",
+			Type:    "schema-schema",
+		},
+		{
+			Pattern: `(?i)^(?:[^./]*/)*([a-z0-9]+)/([a-z0-9_]+)-table\.sql$`,
+			Schema:  "$1",
+			Table:   "$2",
+			Type:    "table-schema",
+		},
+		{
+			Pattern: `(?i)^(?:[^./]*/)*([a-z][a-z0-9_]*)/([a-z]+)[0-9]*(?:\.([0-9]+))?\.(sql|csv)$`,
+			Schema:  "$1",
+			Table:   "$2",
+			Type:    "$4",
+		},
+		{
+			Pattern: `^(?:[^./]*/)*([a-z]+)(?:\.([0-9]+))?\.(sql|csv)$`,
+			Schema:  "d2",
+			Table:   "$1",
+			Type:    "$3",
+		},
+	}
+
+	s.mkdir(c, "d1")
+	s.mkdir(c, "d2")
+	d1Schema := s.touch(c, "d1/schema.sql")
+	d1TestTable := s.touch(c, "d1/test-table.sql")
+	d1TestData0 := s.touch(c, "d1/test0.sql")
+	d1TestData1 := s.touch(c, "d1/test1.sql")
+	d1TestData2 := s.touch(c, "d1/test2.001.sql")
+	_ = s.touch(c, "d1/t1-schema-create.sql")
+	d2Schema := s.touch(c, "d2/schema.sql")
+	d2TestTable := s.touch(c, "d2/abc-table.sql")
+	d2AbcData0 := s.touch(c, "abc.1.sql")
+
+	mdl, err := md.NewMyDumpLoader(s.cfg)
+	c.Assert(err, IsNil)
+
+	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
+		{
+			Name:       "d1",
+			SchemaFile: d1Schema,
+			Tables: []*md.MDTableMeta{
+				{
+					DB:         "d1",
+					Name:       "test",
+					SchemaFile: d1TestTable,
+					DataFiles:  []string{d1TestData0, d1TestData1, d1TestData2},
+				},
+			},
+		},
+		{
+			Name:       "d2",
+			SchemaFile: d2Schema,
+			Tables: []*md.MDTableMeta{
+				{
+					DB:         "d2",
+					Name:       "abc",
+					SchemaFile: d2TestTable,
+					DataFiles:  []string{d2AbcData0},
+				},
+			},
+		},
+	})
 }

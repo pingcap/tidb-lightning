@@ -230,9 +230,9 @@ func (s *mdLoaderSetup) setup(dir string) error {
 		tableMeta, dbExists, tableExists := s.insertTable(fileInfo.tableName, "")
 		if !s.loader.noSchema {
 			if !dbExists {
-				return errors.Errorf("invalid data file, miss host db - %s", fileInfo.path)
+				return errors.Errorf("invalid data file,  miss host db '%s' - %s", fileInfo.tableName.Schema, fileInfo.path)
 			} else if !tableExists {
-				return errors.Errorf("invalid data file, miss host table - %s", fileInfo.path)
+				return errors.Errorf("invalid data file, miss host table '%s' - %s", fileInfo.tableName.Name, fileInfo.path)
 			}
 		}
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.path)
