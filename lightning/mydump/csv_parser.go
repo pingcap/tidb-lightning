@@ -14,8 +14,10 @@
 package mydump
 
 import (
+	"bytes"
 	"io"
 	"strings"
+	"unicode"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -51,6 +53,9 @@ type CSVParser struct {
 	fieldIndexes []int
 
 	lastRecord []string
+
+	// if set to true, csv parser will treat the first non-empty line as header line
+	shouldParseHeader bool
 }
 
 func NewCSVParser(
@@ -58,6 +63,7 @@ func NewCSVParser(
 	reader ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
+	shouldParseHeader bool,
 ) *CSVParser {
 	quote := byte(0)
 	if len(cfg.Delimiter) > 0 {
@@ -78,13 +84,14 @@ func NewCSVParser(
 	}
 
 	return &CSVParser{
-		blockParser:      makeBlockParser(reader, blockBufSize, ioWorkers),
-		cfg:              cfg,
-		comma:            cfg.Separator[0],
-		quote:            quote,
-		escFlavor:        escFlavor,
-		quoteIndexFunc:   makeBytesIndexFunc(quoteStopSet),
-		unquoteIndexFunc: makeBytesIndexFunc(unquoteStopSet),
+		blockParser:       makeBlockParser(reader, blockBufSize, ioWorkers),
+		cfg:               cfg,
+		comma:             cfg.Separator[0],
+		quote:             quote,
+		escFlavor:         escFlavor,
+		quoteIndexFunc:    makeBytesIndexFunc(quoteStopSet),
+		unquoteIndexFunc:  makeBytesIndexFunc(unquoteStopSet),
+		shouldParseHeader: shouldParseHeader,
 	}
 }
 
@@ -177,6 +184,7 @@ func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
 	parser.fieldIndexes = parser.fieldIndexes[:0]
 
 	isEmptyLine := true
+	whitespaceLine := true
 outside:
 	for {
 		firstByte, err := parser.readByte()
@@ -191,15 +199,21 @@ outside:
 		switch firstByte {
 		case parser.comma:
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
-
+			whitespaceLine = false
 		case parser.quote:
 			if err := parser.readQuotedField(); err != nil {
 				return nil, err
 			}
+			whitespaceLine = false
 
 		case '\r', '\n':
 			// new line = end of record (ignore empty lines)
 			if isEmptyLine {
+				continue
+			}
+			// skip lines only contain whitespaces
+			if err == nil && whitespaceLine && len(bytes.TrimFunc(parser.recordBuffer, unicode.IsSpace)) == 0 {
+				parser.recordBuffer = parser.recordBuffer[:0]
 				continue
 			}
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
@@ -327,7 +341,7 @@ func (parser *CSVParser) ReadRow() error {
 	row.RowID++
 
 	// skip the header first
-	if parser.pos == 0 && parser.cfg.Header {
+	if parser.shouldParseHeader {
 		columns, err := parser.readRecord(nil)
 		if err != nil {
 			return errors.Trace(err)
@@ -337,6 +351,7 @@ func (parser *CSVParser) ReadRow() error {
 			colName, _ = parser.unescapeString(colName)
 			parser.columns = append(parser.columns, strings.ToLower(colName))
 		}
+		parser.shouldParseHeader = false
 	}
 
 	records, err := parser.readRecord(parser.lastRecord)

@@ -1258,7 +1258,8 @@ func newChunkRestore(
 	var parser mydump.Parser
 	switch path.Ext(strings.ToLower(chunk.Key.Path)) {
 	case ".csv":
-		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers)
+		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
+		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
 	default:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	}
