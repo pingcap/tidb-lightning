@@ -276,7 +276,13 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 			path:      path,
 			size:      f.Size(),
 		}
-		info.tableName.Schema = res.Schema
+
+		if s.loader.shouldSkip(&info.tableName) {
+			logger.Debug("[filter] ignoring table file")
+
+			return nil
+		}
+
 		switch res.Type {
 		case SourceTypeSchemaSchema:
 			s.dbSchemas = append(s.dbSchemas, info)
