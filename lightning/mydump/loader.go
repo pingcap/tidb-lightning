@@ -16,7 +16,6 @@ package mydump
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 
 	"github.com/pingcap/errors"
@@ -169,7 +168,7 @@ type fileInfo struct {
 	size      int64
 }
 
-var tableNameRegexp = regexp.MustCompile(`^([^.]+)\.(.*?)(?:\.[0-9]+)?$`)
+// var tableNameRegexp = regexp.MustCompile(`^([^.]+)\.(.*?)(?:\.[0-9]+)?$`)
 
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
 //
@@ -218,7 +217,7 @@ func (s *mdLoaderSetup) setup(dir string) error {
 		for _, fileInfo := range s.tableSchemas {
 			_, dbExists, tableExists := s.insertTable(fileInfo.tableName, fileInfo.path)
 			if !dbExists {
-				return errors.Errorf("invalid table schema file, cannot find db - %s", fileInfo.path)
+				return errors.Errorf("invalid table schema file, cannot find db '%s' - %s", fileInfo.tableName.Schema, fileInfo.path)
 			} else if tableExists && s.loader.router == nil {
 				return errors.Errorf("invalid table schema file, duplicated item - %s", fileInfo.path)
 			}
@@ -230,7 +229,7 @@ func (s *mdLoaderSetup) setup(dir string) error {
 		tableMeta, dbExists, tableExists := s.insertTable(fileInfo.tableName, "")
 		if !s.loader.noSchema {
 			if !dbExists {
-				return errors.Errorf("invalid data file,  miss host db '%s' - %s", fileInfo.tableName.Schema, fileInfo.path)
+				return errors.Errorf("invalid data file, miss host db '%s' - %s", fileInfo.tableName.Schema, fileInfo.path)
 			} else if !tableExists {
 				return errors.Errorf("invalid data file, miss host table '%s' - %s", fileInfo.tableName.Name, fileInfo.path)
 			}

@@ -27,6 +27,7 @@ const (
 	TableSchema  = "table-schema"
 	TypeSQL      = "sql"
 	TypeCSV      = "csv"
+	TypeIgnore   = "ignore"
 )
 
 type Compression int
@@ -65,7 +66,7 @@ func (s SourceType) String() string {
 	case SourceTypeSQL:
 		return TypeSQL
 	default:
-		return "ignored"
+		return TypeIgnore
 	}
 }
 
@@ -91,12 +92,14 @@ var (
 
 var (
 	defaultFileRouteRules = []*config.FileRouteRule{
+		// ignore *-schema-view.sql,-schema-trigger.sql,-schema-post.sql files
+		{Pattern: `(?i).*(-schema-view|-schema-trigger|-schema-post)\.sql`, Type: "ignore"},
 		// db schema create file pattern, matches files like '{schema}-schema-create.sql'
-		{`(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql`, "$1", "", SchemaSchema, "", ""},
+		{`(?i)^(?:[^/]*/)*([a-z0-9_.]+)-schema-create\.sql`, "$1", "", SchemaSchema, "", ""},
 		// table schema create file pattern, matches files like '{schema}.{table}-schema.sql'
-		{`(?i)^(?:[^/]*/)*([^/.]+)\.([^/.]+)-schema\.sql`, "$1", "$2", TableSchema, "", ""},
+		{`(?i)^(?:[^/]*/)*([a-z0-9_]+)\.([a-z0-9_.]+)-schema\.sql`, "$1", "$2", TableSchema, "", ""},
 		// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}'
-		{`(?i)^(?:[^/]*/)*([^/.]+)\.([^/.]+)(?:\.([0-9]+))?\.(sql|csv)$`, "$1", "$2", "$4", "$3", ""},
+		{`(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(\.[0-9]+)?\.(sql|csv)$`, "$1", "$2", "$4", "$3", ""},
 	}
 )
 
@@ -110,20 +113,13 @@ type FileRouter interface {
 type chainRouters []FileRouter
 
 func (c chainRouters) Route(path string) *RouteResult {
-	var result *RouteResult
 	for _, r := range c {
 		res := r.Route(path)
 		if res != nil {
-			// SourceTypeIgnore means not match, so try to find other matches.
-			if res.Type != SourceTypeIgnore {
-				return res
-			}
-			if result == nil {
-				result = res
-			}
+			return res
 		}
 	}
-	return result
+	return nil
 }
 
 func Parse(cfg []*config.FileRouteRule) (FileRouter, error) {
@@ -172,6 +168,17 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 	}
 	p.rule.pattern = pattern
 
+	err = p.parseFieldExtractor(p.r.Type, func(result *RouteResult, value string) {
+		result.Type = parseSourceType(value)
+	})
+	if err != nil {
+		return err
+	}
+	// ignore pattern needn't parse other fields
+	if p.r.Type == TypeIgnore {
+		return nil
+	}
+
 	err = p.parseFieldExtractor(p.r.Schema, func(result *RouteResult, value string) {
 		result.Schema = value
 	})
@@ -187,13 +194,6 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 		if err != nil {
 			return err
 		}
-
-	}
-	err = p.parseFieldExtractor(p.r.Type, func(result *RouteResult, value string) {
-		result.Type = parseSourceType(value)
-	})
-	if err != nil {
-		return err
 	}
 
 	if len(p.r.Key) > 0 {

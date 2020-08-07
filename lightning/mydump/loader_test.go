@@ -41,8 +41,9 @@ func (s *testMydumpLoaderSuite) TearDownSuite(c *C) {}
 func newConfigWithSourceDir(sourceDir string) *config.Config {
 	return &config.Config{
 		Mydumper: config.MydumperRuntime{
-			SourceDir: sourceDir,
-			Filter:    []string{"*.*"},
+			SourceDir:        sourceDir,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
 		},
 	}
 }
@@ -134,7 +135,7 @@ func (s *testMydumpLoaderSuite) TestTableNoHostDB(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid table schema file, cannot find db - .*[/\\]db\.tbl-schema\.sql`)
+	c.Assert(err, ErrorMatches, `invalid table schema file, cannot find db 'db' - .*[/\\]db\.tbl-schema\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDuplicatedTable(c *C) {
@@ -168,7 +169,7 @@ func (s *testMydumpLoaderSuite) TestDataNoHostDB(c *C) {
 	s.touch(c, "db.tbl.sql")
 
 	_, err := md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid data file, miss host db - .*[/\\]db\.tbl\.sql`)
+	c.Assert(err, ErrorMatches, `invalid data file, miss host db 'db' - .*[/\\]db\.tbl\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
@@ -182,7 +183,7 @@ func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
 	s.touch(c, "db.tbl.sql")
 
 	_, err := md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid data file, miss host table - .*[/\\]db\.tbl\.sql`)
+	c.Assert(err, ErrorMatches, `invalid data file, miss host table 'tbl' - .*[/\\]db\.tbl\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
