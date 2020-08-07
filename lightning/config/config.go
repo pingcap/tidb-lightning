@@ -267,9 +267,10 @@ func NewConfig() *Config {
 				BackslashEscape: true,
 				TrimLastSep:     false,
 			},
-			StrictFormat:  false,
-			MaxRegionSize: MaxRegionSize,
-			Filter:        []string{"*.*"},
+			StrictFormat:     false,
+			MaxRegionSize:    MaxRegionSize,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
 		},
 		TikvImporter: TikvImporter{
 			Backend:         BackendImporter,
