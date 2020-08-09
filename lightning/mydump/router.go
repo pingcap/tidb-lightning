@@ -168,7 +168,7 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 	}
 	p.rule.pattern = pattern
 
-	err = p.parseFieldExtractor(p.r.Type, func(result *RouteResult, value string) {
+	err = p.parseFieldExtractor("type", p.r.Type, func(result *RouteResult, value string) {
 		result.Type = parseSourceType(value)
 	})
 	if err != nil {
@@ -179,7 +179,7 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 		return nil
 	}
 
-	err = p.parseFieldExtractor(p.r.Schema, func(result *RouteResult, value string) {
+	err = p.parseFieldExtractor("schema", p.r.Schema, func(result *RouteResult, value string) {
 		result.Schema = value
 	})
 	if err != nil {
@@ -188,7 +188,7 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 
 	// special case: when the pattern is for db schema, should not parse table name
 	if p.r.Type != SchemaSchema {
-		err = p.parseFieldExtractor(p.r.Table, func(result *RouteResult, value string) {
+		err = p.parseFieldExtractor("table", p.r.Table, func(result *RouteResult, value string) {
 			result.Name = value
 		})
 		if err != nil {
@@ -197,7 +197,7 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 	}
 
 	if len(p.r.Key) > 0 {
-		err = p.parseFieldExtractor(p.r.Key, func(result *RouteResult, value string) {
+		err = p.parseFieldExtractor("key", p.r.Key, func(result *RouteResult, value string) {
 			result.Key = value
 		})
 		if err != nil {
@@ -206,7 +206,7 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 	}
 
 	if len(p.r.Compression) > 0 {
-		err = p.parseFieldExtractor(p.r.Compression, func(result *RouteResult, value string) {
+		err = p.parseFieldExtractor("compression", p.r.Compression, func(result *RouteResult, value string) {
 			result.Compression = parseCompressionType(value)
 		})
 		if err != nil {
@@ -218,12 +218,13 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 }
 
 func (p *regexRuleParser) parseFieldExtractor(
+	field,
 	fieldPattern string,
 	applyFn func(result *RouteResult, value string),
 ) error {
 	// pattern is empty, return default rule
 	if len(fieldPattern) == 0 {
-		return errors.New("match pattern can't be empty")
+		return errors.Errorf("field '{}' match pattern can't be empty", field)
 	}
 
 	// template is const string, return directly
