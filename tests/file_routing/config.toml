@@ -15,6 +15,7 @@ type = "schema-schema"
 [[mydumper.files]]
 pattern = "(?i)^(?:[^./]*/)*([a-z0-9]+)/([a-z0-9]+)-table\\.sql$"
 schema = "$1"
+table = "$2"
 type = "table-schema"
 
 [[mydumper.files]]
