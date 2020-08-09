@@ -174,5 +174,5 @@ for script in tests/$SELECTED_TEST_NAME/run.sh; do
     CLUSTER_VERSION_MAJOR="${CLUSTER_VERSION_MAJOR#v}" \
     CLUSTER_VERSION_MINOR="$CLUSTER_VERSION_MINOR" \
     CLUSTER_VERSION_REVISION="$CLUSTER_VERSION_REVISION" \
-    sh "$script" || exit -1
+    sh "$script" || (echo "\x1b[32;1m@@@@@@@ Running test Failed: $script ...\x1b[0m" && exit -1)
 done
