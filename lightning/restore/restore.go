@@ -72,6 +72,10 @@ var DeliverPauser = common.NewPauser()
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
+	// used in integration tests
+	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
+		minDeliverBytes = uint64(v.(int))
+	})
 }
 
 type saveCp struct {
@@ -1434,6 +1438,17 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 	return names
 }
 
+func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
+	names := make([]string, 0, len(permutation))
+	for _, idx := range permutation {
+		// skip columns with index -1
+		if idx >= 0 {
+			names = append(names, tableInfo.Columns[idx].Name.O)
+		}
+	}
+	return names
+}
+
 func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 
@@ -1566,9 +1581,9 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
 
 ////////////////////////////////////////////////////////////////
 
-const (
-	maxKVQueueSize  = 128   // Cache at most this number of rows before blocking the encode loop
-	minDeliverBytes = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
+var (
+	maxKVQueueSize         = 128   // Cache at most this number of rows before blocking the encode loop
+	minDeliverBytes uint64 = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
 )
 
 type deliveredKVs struct {
@@ -1695,11 +1710,12 @@ func saveCheckpoint(rc *RestoreController, t *TableRestore, engineID int32, chun
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &ChunkCheckpointMerger{
-			EngineID: engineID,
-			Key:      chunk.Key,
-			Checksum: chunk.Checksum,
-			Pos:      chunk.Chunk.Offset,
-			RowID:    chunk.Chunk.PrevRowIDMax,
+			EngineID:          engineID,
+			Key:               chunk.Key,
+			Checksum:          chunk.Checksum,
+			Pos:               chunk.Chunk.Offset,
+			RowID:             chunk.Chunk.PrevRowIDMax,
+			ColumnPermutation: chunk.ColumnPermutation,
 		},
 	}
 }
