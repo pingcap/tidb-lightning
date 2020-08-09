@@ -1438,17 +1438,6 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 	return names
 }
 
-func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
-	names := make([]string, 0, len(permutation))
-	for _, idx := range permutation {
-		// skip columns with index -1
-		if idx >= 0 {
-			names = append(names, tableInfo.Columns[idx].Name.O)
-		}
-	}
-	return names
-}
-
 func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 
