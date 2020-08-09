@@ -1383,7 +1383,7 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
 	var colPerm []int
 	if len(columns) == 0 {
-		colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
+		colPerm = make([]int, 0, len(t.tableInfo.Core.Columns)+1)
 		shouldIncludeRowID := common.TableHasAutoRowID(t.tableInfo.Core)
 
 		// no provided columns, so use identity permutation.
