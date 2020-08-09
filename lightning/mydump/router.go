@@ -224,7 +224,7 @@ func (p *regexRuleParser) parseFieldExtractor(
 ) error {
 	// pattern is empty, return default rule
 	if len(fieldPattern) == 0 {
-		return errors.Errorf("field '{}' match pattern can't be empty", field)
+		return errors.Errorf("field '%s' match pattern can't be empty", field)
 	}
 
 	// template is const string, return directly
