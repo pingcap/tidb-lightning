@@ -565,11 +565,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		indexCount := (endIndexID - startIndexID) + 1
 
 		// each index has to split into n / indexCount ranges
-		indexRangeCount := n / indexCount
-		if indexRangeCount == 0 {
-			indexRangeCount = 1
-		}
-
+		indexRangeCount := (n + indexCount - 1) / indexCount
 		for i := startIndexID; i <= endIndexID; i++ {
 			k := tablecodec.EncodeTableIndexPrefix(tableID, i)
 			iter.SeekGE(k)
@@ -636,7 +632,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 			// handle value, can split as int value
 			endHandle := endHandleInterface.IntValue()
 			startHandle := startHandleInterface.IntValue()
-			step := (endHandle - startHandle) / n
+			step := (endHandle - startHandle + n - 1) / n
 			index := int64(0)
 			var sKey, eKey []byte
 
@@ -646,7 +642,11 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 
 			for i := startHandle; i+step <= endHandle; i += step {
 				sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i))
-				eKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i+step-1))
+				endValue := i + step - 1
+				if endValue > endHandle {
+					endValue = endHandle
+				}
+				eKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(endValue))
 				index = i
 				log.L().Debug("data engine append range", zap.Int64("start handle", i),
 					zap.Int64("end handle", i+step-1), zap.Binary("start key", sKey),
