@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -159,7 +160,8 @@ func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionI
 		// Wait for a while until the regions successfully splits.
 		local.waitForSplit(ctx, region.Region.Id)
 		if err = local.splitCli.ScatterRegion(ctx, region); err != nil {
-			log.L().Warn("scatter region failed", zap.Stringer("region", region.Region), zap.Error(err))
+			// the scatter operation likely fails because region replicate not finish yet
+			log.L().Debug("scatter region failed", zap.Stringer("region", region.Region), zap.Error(err))
 		}
 	}
 	return newRegions, nil
@@ -220,6 +222,11 @@ func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64
 	if respErr := resp.GetHeader().GetError(); respErr != nil {
 		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
 			return true, nil
+		}
+		// don't return error if region replicate not complete
+		matches, _ := regexp.MatchString("region \\d+ is not fully replicated", respErr.Message)
+		if matches {
+			return false, nil
 		}
 		return false, errors.Errorf("get operator error: %s", respErr.GetType())
 	}

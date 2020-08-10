@@ -520,7 +520,39 @@ func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split
 	return resp, nil
 }
 
-func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid.UUID) ([]Range, error) {
+func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid.UUID) ([]Range, error) {
+	ranges, err := local.doReadAndSplitIntoRange(engineFile, engineUUID)
+	if len(ranges) <= 1 || err != nil {
+		return ranges, err
+	}
+
+	// adjust ranges, remove empty ranges
+	opt := &pebble.IterOptions{
+		LowerBound: ranges[0].start,
+		UpperBound: ranges[len(ranges)-1].end,
+	}
+	iter := engineFile.db.NewIter(opt)
+	defer iter.Close()
+	res := make([]Range, 0, len(ranges))
+	currentLower := ranges[0].start
+	idx := 0
+	for idx < len(ranges) {
+		exists := iter.SeekGE(currentLower)
+		if !exists {
+			return nil, errors.New("invalid ranges, cannot seek to lower bound")
+		}
+		if bytes.Compare(iter.Value(), ranges[idx].end) < 0 {
+			res = append(res, Range{start: currentLower, end: ranges[idx].end})
+			if idx < len(ranges)-1 {
+				currentLower = ranges[idx+1].start
+			}
+		}
+		idx++
+	}
+	return res, nil
+}
+
+func (local *local) doReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid.UUID) ([]Range, error) {
 	if engineFile.Length == 0 {
 		return nil, nil
 	}
@@ -546,7 +578,7 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		return ranges, nil
 	}
 
-	log.L().Info("ReadAndSplitIntoRange", zap.Binary("start", startKey), zap.Binary("end", endKey))
+	log.L().Info("doReadAndSplitIntoRange", zap.Binary("start", startKey), zap.Binary("end", endKey))
 
 	// split data into n ranges, then seek n times to get n + 1 ranges
 	n := (engineFile.TotalSize + local.regionSplitSize - 1) / local.regionSplitSize
@@ -949,7 +981,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		return nil
 	}
 	// split sorted file into range by 96MB size per file
-	ranges, err := local.ReadAndSplitIntoRange(engineFile.(*LocalFile), engineUUID)
+	ranges, err := local.readAndSplitIntoRange(engineFile.(*LocalFile), engineUUID)
 	if err != nil {
 		return err
 	}
