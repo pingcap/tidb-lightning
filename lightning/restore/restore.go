@@ -460,15 +460,21 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 	rc.checkpointsWg.Done()
 }
 
-func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}) {
-	switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
-	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
-	defer func() {
-		switchModeTicker.Stop()
-		logProgressTicker.Stop()
-	}()
+func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}, shouldSwitchMode bool) {
 
-	rc.switchToImportMode(ctx)
+	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
+	defer logProgressTicker.Stop()
+
+	var switchModeChan <-chan time.Time
+	if shouldSwitchMode {
+		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
+		defer switchModeTicker.Stop()
+		switchModeChan = switchModeTicker.C
+
+		rc.switchToImportMode(ctx)
+	} else {
+		switchModeChan = make(chan time.Time)
+	}
 
 	start := time.Now()
 
@@ -481,7 +487,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			log.L().Info("everything imported, stopping periodic actions")
 			return
 
-		case <-switchModeTicker.C:
+		case <-switchModeChan:
 			// periodically switch to import mode, as requested by TiKV 3.0
 			rc.switchToImportMode(ctx)
 
@@ -588,7 +594,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	var restoreErr common.OnceError
 
 	stopPeriodicActions := make(chan struct{})
-	go rc.runPeriodicActions(ctx, stopPeriodicActions)
+	shouldSwitchMode := rc.cfg.TikvImporter.Backend != config.BackendTiDB
+	go rc.runPeriodicActions(ctx, stopPeriodicActions, shouldSwitchMode)
 
 	type task struct {
 		tr *TableRestore
