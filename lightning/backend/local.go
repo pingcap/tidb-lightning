@@ -554,11 +554,11 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 	ranges := make([]Range, 0, n+1)
 	if tablecodec.IsIndexKey(startKey) {
 		// index engine
-		tableID, startIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(startKey)
+		tableID, startIndexID, _, err := tablecodec.DecodeKeyHead(startKey)
 		if err != nil {
 			return nil, err
 		}
-		tableID, endIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(endKey)
+		tableID, endIndexID, _, err := tablecodec.DecodeKeyHead(endKey)
 		if err != nil {
 			return nil, err
 		}
@@ -582,14 +582,16 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 
 			lastKeyOfIndex := append([]byte{}, iter.Key()...)
 
-			_, startIndexID, startValues, err := tablecodec.DecodeIndexKeyPrefix(startKeyOfIndex)
+			_, startIndexID, _, err := tablecodec.DecodeKeyHead(startKeyOfIndex)
 			if err != nil {
 				return nil, err
 			}
-			_, endIndexID, endValues, err := tablecodec.DecodeIndexKeyPrefix(lastKeyOfIndex)
+			startValues := tablecodec.CutIndexPrefix(startKeyOfIndex)
+			_, endIndexID, _, err := tablecodec.DecodeKeyHead(lastKeyOfIndex)
 			if err != nil {
 				return nil, err
 			}
+			endValues := tablecodec.CutIndexPrefix(lastKeyOfIndex)
 
 			if startIndexID != endIndexID {
 				// this shouldn't happen
