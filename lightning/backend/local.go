@@ -629,33 +629,50 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		if err != nil {
 			return nil, err
 		}
-		endHandle := endHandleInterface.IntValue()
-		startHandle := startHandleInterface.IntValue()
-		step := (endHandle - startHandle) / n
-		index := int64(0)
-		var sKey, eKey []byte
+		// common handle, should split by bytes value
+		if !startHandleInterface.IsInt() {
+			log.L().Info("split common handle to range",
+				zap.Binary("startKey", startKey), zap.Binary("endKey", endKey))
 
-		log.L().Info("split data ranges", zap.Int64("step", step),
-			zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle),
-			zap.String("engine", engineUUID.String()))
+			values := splitValuesToRange(startHandleInterface.Encoded(), endHandleInterface.Encoded(), n)
 
-		for i := startHandle; i+step <= endHandle; i += step {
-			sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i))
-			eKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i+step-1))
-			index = i
-			log.L().Debug("data engine append range", zap.Int64("start handle", i),
-				zap.Int64("end handle", i+step-1), zap.Binary("start key", sKey),
-				zap.Binary("end key", eKey), zap.Int64("step", step))
+			start := startKey
+			for _, v := range values {
+				e := tablecodec.EncodeRowKey(tableID, v)
+				rangeEnd := nextKey(e)
+				ranges = append(ranges, Range{start: start, end: rangeEnd})
+				start = rangeEnd
+			}
+		} else {
+			// handle value, can split as int value
+			endHandle := endHandleInterface.IntValue()
+			startHandle := startHandleInterface.IntValue()
+			step := (endHandle - startHandle) / n
+			index := int64(0)
+			var sKey, eKey []byte
 
-			ranges = append(ranges, Range{start: sKey, end: nextKey(eKey)})
+			log.L().Info("split data ranges", zap.Int64("step", step),
+				zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle),
+				zap.String("engine", engineUUID.String()))
+
+			for i := startHandle; i+step <= endHandle; i += step {
+				sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i))
+				eKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i+step-1))
+				index = i
+				log.L().Debug("data engine append range", zap.Int64("start handle", i),
+					zap.Int64("end handle", i+step-1), zap.Binary("start key", sKey),
+					zap.Binary("end key", eKey), zap.Int64("step", step))
+
+				ranges = append(ranges, Range{start: sKey, end: nextKey(eKey)})
+			}
+			log.L().Debug("data engine append range at final",
+				zap.Int64("start handle", index+step), zap.Int64("end handle", endHandle),
+				zap.Binary("start key", sKey), zap.Binary("end key", endKey),
+				zap.Int64("step", endHandle-index-step+1))
+
+			sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(index+step))
+			ranges = append(ranges, Range{start: sKey, end: nextKey(endKey)})
 		}
-		log.L().Debug("data engine append range at final",
-			zap.Int64("start handle", index+step), zap.Int64("end handle", endHandle),
-			zap.Binary("start key", sKey), zap.Binary("end key", endKey),
-			zap.Int64("step", endHandle-index-step+1))
-
-		sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(index+step))
-		ranges = append(ranges, Range{start: sKey, end: nextKey(endKey)})
 	}
 	return ranges, nil
 }
