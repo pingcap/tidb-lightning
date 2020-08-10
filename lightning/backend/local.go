@@ -629,21 +629,8 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		if err != nil {
 			return nil, err
 		}
-		// common handle, should split by bytes value
-		if !startHandleInterface.IsInt() {
-			log.L().Info("split common handle to range",
-				zap.Binary("startKey", startKey), zap.Binary("endKey", endKey))
 
-			values := splitValuesToRange(startHandleInterface.Encoded(), endHandleInterface.Encoded(), n)
-
-			start := startKey
-			for _, v := range values {
-				e := tablecodec.EncodeRowKey(tableID, v)
-				rangeEnd := nextKey(e)
-				ranges = append(ranges, Range{start: start, end: rangeEnd})
-				start = rangeEnd
-			}
-		} else {
+		if startHandleInterface.IsInt() {
 			// handle value, can split as int value
 			endHandle := endHandleInterface.IntValue()
 			startHandle := startHandleInterface.IntValue()
@@ -672,6 +659,19 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 
 			sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(index+step))
 			ranges = append(ranges, Range{start: sKey, end: nextKey(endKey)})
+		} else {
+			// common handle, should split by bytes value
+			log.L().Info("split common handle to range",
+				zap.Binary("startKey", startKey), zap.Binary("endKey", endKey))
+
+			values := splitValuesToRange(startHandleInterface.Encoded(), endHandleInterface.Encoded(), n)
+			start := startKey
+			for _, v := range values {
+				e := tablecodec.EncodeRowKey(tableID, v)
+				rangeEnd := nextKey(e)
+				ranges = append(ranges, Range{start: start, end: rangeEnd})
+				start = rangeEnd
+			}
 		}
 	}
 	return ranges, nil
