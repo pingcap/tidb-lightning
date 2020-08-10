@@ -549,6 +549,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		}
 		idx++
 	}
+	log.L().Info("adjust ranges", zap.Reflect("origin", ranges), zap.Reflect("res", res))
 	return res, nil
 }
 
