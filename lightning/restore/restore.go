@@ -460,13 +460,13 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 	rc.checkpointsWg.Done()
 }
 
-func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}, shouldSwitchMode bool) {
-
+func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}) {
 	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
 	defer logProgressTicker.Stop()
 
 	var switchModeChan <-chan time.Time
-	if shouldSwitchMode {
+	// tide backend don't need to switch tikv to import mode
+	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
 		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 		defer switchModeTicker.Stop()
 		switchModeChan = switchModeTicker.C
@@ -594,8 +594,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	var restoreErr common.OnceError
 
 	stopPeriodicActions := make(chan struct{})
-	shouldSwitchMode := rc.cfg.TikvImporter.Backend != config.BackendTiDB
-	go rc.runPeriodicActions(ctx, stopPeriodicActions, shouldSwitchMode)
+	go rc.runPeriodicActions(ctx, stopPeriodicActions)
 
 	type task struct {
 		tr *TableRestore
