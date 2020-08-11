@@ -44,3 +44,6 @@ set -e
 run_sql 'SELECT count(*), sum(i) FROM `ch`.t'
 check_contains "count(*): 5"
 check_contains "sum(i): 15"
+
+# restore global variables, other tests needs this to handle the _tidb_row_id column
+run_sql 'set @@global.tidb_enable_clustered_index = 0' || echo ""
