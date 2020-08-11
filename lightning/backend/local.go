@@ -377,8 +377,6 @@ func (local *local) WriteToTiKV(
 	iter := engineFile.db.NewIter(opt)
 	defer iter.Close()
 
-	iter.First()
-	firstKey := codec.EncodeBytes([]byte{}, iter.Key())
 	iter.Last()
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
 
@@ -387,108 +385,140 @@ func (local *local) WriteToTiKV(
 		RegionId:    region.Region.GetId(),
 		RegionEpoch: region.Region.GetRegionEpoch(),
 		Range: &sst.Range{
-			Start: firstKey,
-			End:   lastKey,
+			End: lastKey,
 		},
 	}
 
 	leaderID := region.Leader.GetId()
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
 	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
-	for _, peer := range region.Region.GetPeers() {
-		cli, err := local.getImportClient(ctx, peer)
-		if err != nil {
-			return nil, err
-		}
-
-		wstream, err := cli.Write(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		// Bind uuid for this write request
-		req := &sst.WriteRequest{
-			Chunk: &sst.WriteRequest_Meta{
-				Meta: meta,
-			},
-		}
-		if err = wstream.Send(req); err != nil {
-			return nil, err
-		}
-		req.Chunk = &sst.WriteRequest_Batch{
-			Batch: &sst.WriteBatch{
-				CommitTs: engineFile.Ts,
-			},
-		}
-		clients = append(clients, wstream)
-		requests = append(requests, req)
-	}
+	var leaderPeerMetas []*sst.SSTMeta
 
 	bytesBuf := newBytesBuffer()
 	defer bytesBuf.destroy()
-	pairs := make([]*sst.Pair, 0, local.batchWriteKVPairs)
-	count := 0
+	iter.First()
 	size := int64(0)
 	totalCount := 0
 	firstLoop := true
-	for iter.First(); iter.Valid(); iter.Next() {
-		size += int64(len(iter.Key()) + len(iter.Value()))
-		// here we reuse the `*sst.Pair`s to optimize object allocation
-		if firstLoop {
-			pair := &sst.Pair{
-				Key:   bytesBuf.addBytes(iter.Key()),
-				Value: bytesBuf.addBytes(iter.Value()),
-			}
-			pairs = append(pairs, pair)
-		} else {
-			pairs[count].Key = bytesBuf.addBytes(iter.Key())
-			pairs[count].Value = bytesBuf.addBytes(iter.Value())
-		}
-		count++
-		totalCount++
+	regionCount := 0
 
-		if count >= local.batchWriteKVPairs {
+	for {
+		clients = clients[:0]
+		requests = requests[:0]
+		currentKey := iter.Key()
+		meta.Range.Start = currentKey
+		for _, peer := range region.Region.GetPeers() {
+			cli, err := local.getImportClient(ctx, peer)
+			if err != nil {
+				return nil, err
+			}
+
+			wstream, err := cli.Write(ctx)
+			if err != nil {
+				return nil, err
+			}
+
+			// Bind uuid for this write request
+			req := &sst.WriteRequest{
+				Chunk: &sst.WriteRequest_Meta{
+					Meta: meta,
+				},
+			}
+			if err = wstream.Send(req); err != nil {
+				return nil, err
+			}
+			req.Chunk = &sst.WriteRequest_Batch{
+				Batch: &sst.WriteBatch{
+					CommitTs: engineFile.Ts,
+				},
+			}
+			clients = append(clients, wstream)
+			requests = append(requests, req)
+		}
+		pairs := make([]*sst.Pair, 0, local.batchWriteKVPairs)
+		regionBytes := int64(0)
+		count := 0
+		kvCount := 0
+		for ; iter.Valid(); iter.Next() {
+			regionBytes += int64(len(iter.Key()) + len(iter.Value()))
+			// here we reuse the `*sst.Pair`s to optimize object allocation
+			if firstLoop {
+				pair := &sst.Pair{
+					Key:   bytesBuf.addBytes(iter.Key()),
+					Value: bytesBuf.addBytes(iter.Value()),
+				}
+				pairs = append(pairs, pair)
+			} else {
+				pairs[count].Key = bytesBuf.addBytes(iter.Key())
+				pairs[count].Value = bytesBuf.addBytes(iter.Value())
+			}
+			count++
+			totalCount++
+
+			if count >= local.batchWriteKVPairs || regionBytes >= local.regionSplitSize {
+				for i := range clients {
+					requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs
+					if err := clients[i].Send(requests[i]); err != nil {
+						return nil, err
+					}
+				}
+				kvCount += count
+				count = 0
+				bytesBuf.reset()
+				firstLoop = false
+			}
+		}
+
+		if count > 0 {
 			for i := range clients {
-				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs
+				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 				if err := clients[i].Send(requests[i]); err != nil {
 					return nil, err
 				}
 			}
-			count = 0
-			bytesBuf.reset()
-			firstLoop = false
+			kvCount += count
 		}
-	}
 
-	if count > 0 {
-		for i := range clients {
-			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-			if err := clients[i].Send(requests[i]); err != nil {
-				return nil, err
+		if iter.Error() != nil {
+			return nil, errors.Trace(iter.Error())
+		}
+
+		for i, wStream := range clients {
+			if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
+				return nil, closeErr
+			} else {
+				if leaderID == region.Region.Peers[i].GetId() {
+					leaderPeerMetas = append(leaderPeerMetas, resp.Metas...)
+					log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", resp.Metas))
+				}
 			}
 		}
-	}
+		size += regionBytes
+		totalCount += kvCount
+		regionCount++
 
-	if iter.Error() != nil {
-		return nil, errors.Trace(iter.Error())
-	}
+		log.L().Debug("write one region to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
+			zap.Binary("start_key", currentKey), zap.Binary("end_key", iter.Key()),
+			zap.Reflect("meta", meta), zap.Int("kv_pairs", kvCount), zap.Int64("total_bytes", regionBytes))
 
-	var leaderPeerMetas []*sst.SSTMeta
-	for i, wStream := range clients {
-		if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
-			return nil, closeErr
-		} else {
-			if leaderID == region.Region.Peers[i].GetId() {
-				leaderPeerMetas = resp.Metas
-				log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
-			}
+		if iter.Valid() {
+			iter.Next()
+		}
+		if !iter.Valid() {
+			break
+		}
+
+		// split region at the new key
+		splitRanges := []Range{{start: currentKey, end: iter.Key()}, {start: iter.Key(), end: endKey}}
+		if err := local.SplitAndScatterRegionByRanges(ctx, splitRanges); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
 	log.L().Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size),
-		zap.Int64("buf_size", bytesBuf.totalSize()))
+		zap.Int("region count", regionCount), zap.Int64("buf_size", bytesBuf.totalSize()))
 
 	return leaderPeerMetas, nil
 }
@@ -541,7 +571,11 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		if !exists {
 			return nil, errors.New("invalid ranges, cannot seek to lower bound")
 		}
-		if bytes.Compare(iter.Value(), ranges[idx].end) < 0 {
+		log.L().Info("ajust range value", zap.Int("index", idx), zap.Binary("current_lower", currentLower),
+			zap.Binary("index lower", ranges[idx].start), zap.Binary("index upper", ranges[idx].end),
+			zap.Binary("value", iter.Value()),
+			zap.Int("cmp", bytes.Compare(iter.Value(), ranges[idx].end)))
+		if bytes.Compare(iter.Key(), ranges[idx].end) < 0 {
 			res = append(res, Range{start: currentLower, end: ranges[idx].end})
 			if idx < len(ranges)-1 {
 				currentLower = ranges[idx+1].start
@@ -598,10 +632,7 @@ func (local *local) doReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uu
 		indexCount := (endIndexID - startIndexID) + 1
 
 		// each index has to split into n / indexCount ranges
-		indexRangeCount := n / indexCount
-		if indexRangeCount == 0 {
-			indexRangeCount = 1
-		}
+		indexRangeCount := (n + indexCount - 1) / indexCount
 
 		for i := startIndexID; i <= endIndexID; i++ {
 			k := tablecodec.EncodeTableIndexPrefix(tableID, i)
