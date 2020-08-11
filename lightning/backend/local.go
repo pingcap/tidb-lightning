@@ -365,7 +365,7 @@ func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst
 func (local *local) WriteToTiKV(
 	ctx context.Context,
 	engineFile *LocalFile,
-	region *split.RegionInfo) ([]*sst.SSTMeta, error) {
+	region *split.RegionInfo) ([]*sst.SSTMeta, *Range, error) {
 	var startKey, endKey []byte
 	if len(region.Region.StartKey) > 0 {
 		_, startKey, _ = codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -377,6 +377,8 @@ func (local *local) WriteToTiKV(
 	iter := engineFile.db.NewIter(opt)
 	defer iter.Close()
 
+	iter.First()
+	firstKey := codec.EncodeBytes([]byte{}, iter.Key())
 	iter.Last()
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
 
@@ -385,142 +387,122 @@ func (local *local) WriteToTiKV(
 		RegionId:    region.Region.GetId(),
 		RegionEpoch: region.Region.GetRegionEpoch(),
 		Range: &sst.Range{
-			End: lastKey,
+			Start: firstKey,
+			End:   lastKey,
 		},
 	}
 
 	leaderID := region.Leader.GetId()
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
 	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
-	var leaderPeerMetas []*sst.SSTMeta
+	for _, peer := range region.Region.GetPeers() {
+		cli, err := local.getImportClient(ctx, peer)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		wstream, err := cli.Write(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Bind uuid for this write request
+		req := &sst.WriteRequest{
+			Chunk: &sst.WriteRequest_Meta{
+				Meta: meta,
+			},
+		}
+		if err = wstream.Send(req); err != nil {
+			return nil, nil, err
+		}
+		req.Chunk = &sst.WriteRequest_Batch{
+			Batch: &sst.WriteBatch{
+				CommitTs: engineFile.Ts,
+			},
+		}
+		clients = append(clients, wstream)
+		requests = append(requests, req)
+	}
 
 	bytesBuf := newBytesBuffer()
 	defer bytesBuf.destroy()
-	iter.First()
+	pairs := make([]*sst.Pair, 0, local.batchWriteKVPairs)
+	count := 0
 	size := int64(0)
 	totalCount := 0
 	firstLoop := true
-	regionCount := 0
-
-	for {
-		clients = clients[:0]
-		requests = requests[:0]
-		currentKey := iter.Key()
-		meta.Range.Start = currentKey
-		for _, peer := range region.Region.GetPeers() {
-			cli, err := local.getImportClient(ctx, peer)
-			if err != nil {
-				return nil, err
+	for iter.First(); iter.Valid(); iter.Next() {
+		size += int64(len(iter.Key()) + len(iter.Value()))
+		// here we reuse the `*sst.Pair`s to optimize object allocation
+		if firstLoop {
+			pair := &sst.Pair{
+				Key:   bytesBuf.addBytes(iter.Key()),
+				Value: bytesBuf.addBytes(iter.Value()),
 			}
-
-			wstream, err := cli.Write(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			// Bind uuid for this write request
-			req := &sst.WriteRequest{
-				Chunk: &sst.WriteRequest_Meta{
-					Meta: meta,
-				},
-			}
-			if err = wstream.Send(req); err != nil {
-				return nil, err
-			}
-			req.Chunk = &sst.WriteRequest_Batch{
-				Batch: &sst.WriteBatch{
-					CommitTs: engineFile.Ts,
-				},
-			}
-			clients = append(clients, wstream)
-			requests = append(requests, req)
+			pairs = append(pairs, pair)
+		} else {
+			pairs[count].Key = bytesBuf.addBytes(iter.Key())
+			pairs[count].Value = bytesBuf.addBytes(iter.Value())
 		}
-		pairs := make([]*sst.Pair, 0, local.batchWriteKVPairs)
-		regionBytes := int64(0)
-		count := 0
-		kvCount := 0
-		for ; iter.Valid(); iter.Next() {
-			regionBytes += int64(len(iter.Key()) + len(iter.Value()))
-			// here we reuse the `*sst.Pair`s to optimize object allocation
-			if firstLoop {
-				pair := &sst.Pair{
-					Key:   bytesBuf.addBytes(iter.Key()),
-					Value: bytesBuf.addBytes(iter.Value()),
-				}
-				pairs = append(pairs, pair)
-			} else {
-				pairs[count].Key = bytesBuf.addBytes(iter.Key())
-				pairs[count].Value = bytesBuf.addBytes(iter.Value())
-			}
-			count++
-			totalCount++
+		count++
+		totalCount++
 
-			if count >= local.batchWriteKVPairs || regionBytes >= local.regionSplitSize {
-				for i := range clients {
-					requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs
-					if err := clients[i].Send(requests[i]); err != nil {
-						return nil, err
-					}
-				}
-				kvCount += count
-				count = 0
-				bytesBuf.reset()
-				firstLoop = false
-			}
-		}
-
-		if count > 0 {
+		if count >= local.batchWriteKVPairs || size >= local.regionSplitSize {
 			for i := range clients {
-				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs
 				if err := clients[i].Send(requests[i]); err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 			}
-			kvCount += count
+			count = 0
+			bytesBuf.reset()
+			firstLoop = false
 		}
-
-		if iter.Error() != nil {
-			return nil, errors.Trace(iter.Error())
-		}
-
-		for i, wStream := range clients {
-			if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
-				return nil, closeErr
-			} else {
-				if leaderID == region.Region.Peers[i].GetId() {
-					leaderPeerMetas = append(leaderPeerMetas, resp.Metas...)
-					log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", resp.Metas))
-				}
-			}
-		}
-		size += regionBytes
-		totalCount += kvCount
-		regionCount++
-
-		log.L().Debug("write one region to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
-			zap.Binary("start_key", currentKey), zap.Binary("end_key", iter.Key()),
-			zap.Reflect("meta", meta), zap.Int("kv_pairs", kvCount), zap.Int64("total_bytes", regionBytes))
-
-		if iter.Valid() {
-			iter.Next()
-		}
-		if !iter.Valid() {
+		if size >= local.regionSplitSize {
 			break
 		}
+	}
 
-		// split region at the new key
-		splitRanges := []Range{{start: currentKey, end: iter.Key()}, {start: iter.Key(), end: endKey}}
-		if err := local.SplitAndScatterRegionByRanges(ctx, splitRanges); err != nil {
-			return nil, errors.Trace(err)
+	if count > 0 {
+		for i := range clients {
+			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+			if err := clients[i].Send(requests[i]); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	if iter.Error() != nil {
+		return nil, nil, errors.Trace(iter.Error())
+	}
+
+	var leaderPeerMetas []*sst.SSTMeta
+	for i, wStream := range clients {
+		if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
+			return nil, nil, closeErr
+		} else {
+			if leaderID == region.Region.Peers[i].GetId() {
+				leaderPeerMetas = resp.Metas
+				log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
+			}
 		}
 	}
 
 	log.L().Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size),
-		zap.Int("region count", regionCount), zap.Int64("buf_size", bytesBuf.totalSize()))
+		zap.Int64("buf_size", bytesBuf.totalSize()))
 
-	return leaderPeerMetas, nil
+	var remainRange *Range
+	if iter.Valid() && iter.Next() {
+		lastKey = make([]byte, len(iter.Key()))
+		copy(lastKey, iter.Key())
+		remainRange = &Range{start: lastKey, end: region.Region.EndKey}
+		log.L().Info("write to tikv half finish", zap.Reflect("region", region),
+			zap.Reflect("remain range", *remainRange))
+	}
+
+	return leaderPeerMetas, remainRange, nil
 }
 
 func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
@@ -823,7 +805,9 @@ func (b *bytesBuffer) addBytes(bytes []byte) []byte {
 func (local *local) writeAndIngestByRange(
 	ctx context.Context,
 	engineFile *LocalFile,
-	start, end []byte) error {
+	start, end []byte,
+	remainChan chan []Range,
+) error {
 	ito := &pebble.IterOptions{
 		LowerBound: start,
 		UpperBound: end,
@@ -848,6 +832,7 @@ func (local *local) writeAndIngestByRange(
 	var err error
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
 WriteAndIngest:
 	for retry := 0; retry < maxRetryTimes; retry++ {
 		if retry != 0 {
@@ -876,13 +861,21 @@ WriteAndIngest:
 			// generate new uuid for concurrent write to tikv
 
 			if len(regions) == 1 {
-				if err = local.WriteAndIngestPairs(ctx, engineFile, region); err != nil {
+				rg, err := local.WriteAndIngestPairs(ctx, engineFile, region)
+				if err != nil {
 					continue WriteAndIngest
+				}
+				if rg != nil {
+					remainChan <- []Range{*rg}
 				}
 			} else {
 				shouldWait = true
 				go func(r *split.RegionInfo) {
-					errChan <- local.WriteAndIngestPairs(ctx, engineFile, r)
+					rg, err := local.WriteAndIngestPairs(ctx, engineFile, r)
+					errChan <- err
+					if err == nil {
+						remainChan <- []Range{*rg}
+					}
 				}(region)
 			}
 		}
@@ -914,11 +907,11 @@ func (local *local) WriteAndIngestPairs(
 	ctx context.Context,
 	engineFile *LocalFile,
 	region *split.RegionInfo,
-) error {
-	metas, err := local.WriteToTiKV(ctx, engineFile, region)
+) (*Range, error) {
+	metas, remainRange, err := local.WriteToTiKV(ctx, engineFile, region)
 	if err != nil {
 		log.L().Warn("write to tikv failed", zap.Error(err))
-		return err
+		return remainRange, err
 	}
 
 	for _, meta := range metas {
@@ -949,7 +942,7 @@ func (local *local) WriteAndIngestPairs(
 				log.L().Warn("ingest failed noretry", zap.Error(errIngest), zap.Reflect("meta", meta),
 					zap.Reflect("region", region))
 				// met non-retryable error retry whole Write procedure
-				return errIngest
+				return remainRange, errIngest
 			}
 			// retry with not leader and epoch not match error
 			if newRegion != nil && i < maxRetryTimes-1 {
@@ -958,14 +951,14 @@ func (local *local) WriteAndIngestPairs(
 				log.L().Warn("retry ingest due to",
 					zap.Reflect("meta", meta), zap.Reflect("region", region),
 					zap.Reflect("new region", newRegion), zap.Error(errIngest))
-				return errIngest
+				return remainRange, errIngest
 			}
 		}
 	}
-	return nil
+	return remainRange, nil
 }
 
-func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range) error {
+func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainChan chan []Range) error {
 	if engineFile.Length == 0 {
 		log.L().Error("the ranges is empty")
 		return nil
@@ -986,7 +979,7 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *Loca
 			}()
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
-				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey); err != nil {
+				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainChan); err != nil {
 					log.L().Warn("write and ingest by range failed",
 						zap.Int("retry time", i+1), zap.Error(err))
 				} else {
@@ -1007,6 +1000,8 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *Loca
 }
 
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
+	rangesCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	engineFile, ok := local.engines.Load(engineUUID)
 	if !ok {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1017,19 +1012,54 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 	if err != nil {
 		return err
 	}
-	// split region by given ranges
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges)
-	if err != nil {
-		log.L().Error("split & scatter ranges failed", zap.Error(err))
-		return err
+
+	rangesChan := make(chan []Range, 1)
+	defer close(rangesChan)
+	rangesChan <- ranges
+
+	errChan := make(chan error)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		for rg := range rangesChan {
+			wg.Add(1)
+			// split region by given ranges
+			go func(rg []Range) {
+				defer wg.Done()
+
+				err = local.SplitAndScatterRegionByRanges(rangesCtx, rg)
+				if err != nil {
+					log.L().Error("split & scatter ranges failed", zap.Error(err))
+					select {
+					case errChan <- err:
+					default:
+					}
+				}
+				// start to write to kv and ingest
+				err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), rg, rangesChan)
+				if err != nil {
+					log.L().Error("write and ingest ranges failed", zap.Error(err))
+					select {
+					case errChan <- err:
+					default:
+					}
+				}
+			}(rg)
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		errChan <- nil
+	}()
+
+	res := <-errChan
+	if res == nil {
+		log.L().Info("import engine success", zap.Stringer("uuid", engineUUID))
 	}
-	// start to write to kv and ingest
-	err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges)
-	if err != nil {
-		log.L().Error("write and ingest ranges failed", zap.Error(err))
-		return err
-	}
-	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID))
+
 	return nil
 }
 

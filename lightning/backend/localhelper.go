@@ -238,6 +238,7 @@ func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64
 
 func getSplitKeysByRanges(ranges []Range, regions []*split.RegionInfo) map[uint64][][]byte {
 	checkKeys := make([][]byte, 0)
+	checkKeys = append(checkKeys, truncateRowKey(ranges[0].start))
 	for _, rg := range ranges {
 		checkKeys = append(checkKeys, truncateRowKey(rg.end))
 	}
