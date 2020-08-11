@@ -35,6 +35,8 @@ _EOF_
 
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS ch'
+# enable cluster index
+run_sql 'set @@global.tidb_enable_clustered_index = 1' || echo "tidb does not support cluster index yet, skipped!"
 
 set +e
 run_lightning -d "$DBPATH" --backend local 2> /dev/null
