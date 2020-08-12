@@ -917,7 +917,8 @@ func (local *local) WriteAndIngestPairs(
 
 func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainRanges *syncdRanges) error {
 	if engineFile.Length == 0 {
-		log.L().Error("the ranges is empty")
+		// engine is empty, this is likes because it's a index engine but the table contains no index
+		log.L().Warn("engine contains no data", zap.Stringer("uuid", engineFile.Uuid))
 		return nil
 	}
 	log.L().Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
