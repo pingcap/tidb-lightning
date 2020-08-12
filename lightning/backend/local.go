@@ -22,6 +22,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -125,6 +126,7 @@ type local struct {
 	regionSplitSize int64
 
 	rangeConcurrency  *worker.Pool
+	ingestConcurrency *worker.Pool
 	batchWriteKVPairs int
 	checkpointEnabled bool
 }
@@ -174,6 +176,7 @@ func NewLocalBackend(
 		regionSplitSize: regionSplitSize,
 
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
+		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
 	}
@@ -365,13 +368,21 @@ func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst
 func (local *local) WriteToTiKV(
 	ctx context.Context,
 	engineFile *LocalFile,
-	region *split.RegionInfo) ([]*sst.SSTMeta, *Range, error) {
+	region *split.RegionInfo,
+	start, end []byte,
+) ([]*sst.SSTMeta, *Range, error) {
 	var startKey, endKey []byte
 	if len(region.Region.StartKey) > 0 {
 		_, startKey, _ = codec.DecodeBytes(region.Region.StartKey, []byte{})
 	}
+	if bytes.Compare(startKey, start) < 0 {
+		startKey = start
+	}
 	if len(region.Region.EndKey) > 0 {
 		_, endKey, _ = codec.DecodeBytes(region.Region.EndKey, []byte{})
+	}
+	if bytes.Compare(endKey, end) > 0 {
+		endKey = end
 	}
 	opt := &pebble.IterOptions{LowerBound: startKey, UpperBound: endKey}
 	iter := engineFile.db.NewIter(opt)
@@ -449,7 +460,7 @@ func (local *local) WriteToTiKV(
 
 		if count >= local.batchWriteKVPairs || size >= local.regionSplitSize {
 			for i := range clients {
-				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs
+				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 				if err := clients[i].Send(requests[i]); err != nil {
 					return nil, nil, err
 				}
@@ -495,11 +506,12 @@ func (local *local) WriteToTiKV(
 
 	var remainRange *Range
 	if iter.Valid() && iter.Next() {
-		lastKey = make([]byte, len(iter.Key()))
-		copy(lastKey, iter.Key())
-		remainRange = &Range{start: lastKey, end: region.Region.EndKey}
+		firstKey = make([]byte, len(iter.Key()))
+		copy(firstKey, iter.Key())
+		remainRange = &Range{start: firstKey, end: endKey}
 		log.L().Info("write to tikv half finish", zap.Reflect("region", region),
-			zap.Reflect("remain range", *remainRange))
+			zap.Binary("startKey", startKey), zap.Binary("endKey", endKey),
+			zap.Reflect("remainStart", remainRange.start), zap.Reflect("remainEnd", remainRange.end))
 	}
 
 	return leaderPeerMetas, remainRange, nil
@@ -565,7 +577,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		}
 		idx++
 	}
-	log.L().Info("adjust ranges", zap.Reflect("origin", ranges), zap.Reflect("res", res))
+	log.L().Info("adjust ranges", zap.Reflect("origin count", len(ranges)), zap.Reflect("new count", len(res)))
 	return res, nil
 }
 
@@ -803,10 +815,10 @@ func (b *bytesBuffer) addBytes(bytes []byte) []byte {
 }
 
 func (local *local) writeAndIngestByRange(
-	ctx context.Context,
+	ctxt context.Context,
 	engineFile *LocalFile,
 	start, end []byte,
-	remainChan chan []Range,
+	remainRanges *syncdRanges,
 ) error {
 	ito := &pebble.IterOptions{
 		LowerBound: start,
@@ -830,7 +842,7 @@ func (local *local) writeAndIngestByRange(
 
 	var regions []*split.RegionInfo
 	var err error
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctxt)
 	defer cancel()
 
 WriteAndIngest:
@@ -861,20 +873,25 @@ WriteAndIngest:
 			// generate new uuid for concurrent write to tikv
 
 			if len(regions) == 1 {
-				rg, err := local.WriteAndIngestPairs(ctx, engineFile, region)
-				if err != nil {
+				w := local.ingestConcurrency.Apply()
+				rg, err1 := local.WriteAndIngestPairs(ctx, engineFile, region, start, end)
+				local.ingestConcurrency.Recycle(w)
+				if err1 != nil {
+					err = err1
 					continue WriteAndIngest
 				}
 				if rg != nil {
-					remainChan <- []Range{*rg}
+					remainRanges.add(*rg)
 				}
 			} else {
 				shouldWait = true
 				go func(r *split.RegionInfo) {
-					rg, err := local.WriteAndIngestPairs(ctx, engineFile, r)
+					w := local.ingestConcurrency.Apply()
+					rg, err := local.WriteAndIngestPairs(ctx, engineFile, r, start, end)
+					local.ingestConcurrency.Recycle(w)
 					errChan <- err
-					if err == nil {
-						remainChan <- []Range{*rg}
+					if err == nil && rg != nil {
+						remainRanges.add(*rg)
 					}
 				}(region)
 			}
@@ -907,8 +924,9 @@ func (local *local) WriteAndIngestPairs(
 	ctx context.Context,
 	engineFile *LocalFile,
 	region *split.RegionInfo,
+	start, end []byte,
 ) (*Range, error) {
-	metas, remainRange, err := local.WriteToTiKV(ctx, engineFile, region)
+	metas, remainRange, err := local.WriteToTiKV(ctx, engineFile, region, start, end)
 	if err != nil {
 		log.L().Warn("write to tikv failed", zap.Error(err))
 		return remainRange, err
@@ -958,7 +976,7 @@ func (local *local) WriteAndIngestPairs(
 	return remainRange, nil
 }
 
-func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainChan chan []Range) error {
+func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainRanges *syncdRanges) error {
 	if engineFile.Length == 0 {
 		log.L().Error("the ranges is empty")
 		return nil
@@ -974,12 +992,10 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *Loca
 		endKey := r.end
 		w := local.rangeConcurrency.Apply()
 		go func(w *worker.Worker) {
-			defer func() {
-				local.rangeConcurrency.Recycle(w)
-			}()
+			defer local.rangeConcurrency.Recycle(w)
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
-				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainChan); err != nil {
+				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainRanges); err != nil {
 					log.L().Warn("write and ingest by range failed",
 						zap.Int("retry time", i+1), zap.Error(err))
 				} else {
@@ -999,9 +1015,31 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *Loca
 	return nil
 }
 
+type syncdRanges struct {
+	sync.Mutex
+	ranges []Range
+}
+
+func (r *syncdRanges) add(g Range) {
+	r.Lock()
+	r.ranges = append(r.ranges, g)
+	r.Unlock()
+}
+
+func (r *syncdRanges) take() []Range {
+	r.Lock()
+	rg := r.ranges
+	r.ranges = []Range{}
+	r.Unlock()
+	if len(rg) > 0 {
+		sort.Slice(rg, func(i, j int) bool {
+			return bytes.Compare(rg[i].start, rg[j].start) < 0
+		})
+	}
+	return rg
+}
+
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	rangesCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	engineFile, ok := local.engines.Load(engineUUID)
 	if !ok {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1012,54 +1050,30 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 	if err != nil {
 		return err
 	}
+	remains := &syncdRanges{}
 
-	rangesChan := make(chan []Range, 1)
-	defer close(rangesChan)
-	rangesChan <- ranges
-
-	errChan := make(chan error)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	go func() {
-		for rg := range rangesChan {
-			wg.Add(1)
-			// split region by given ranges
-			go func(rg []Range) {
-				defer wg.Done()
-
-				err = local.SplitAndScatterRegionByRanges(rangesCtx, rg)
-				if err != nil {
-					log.L().Error("split & scatter ranges failed", zap.Error(err))
-					select {
-					case errChan <- err:
-					default:
-					}
-				}
-				// start to write to kv and ingest
-				err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), rg, rangesChan)
-				if err != nil {
-					log.L().Error("write and ingest ranges failed", zap.Error(err))
-					select {
-					case errChan <- err:
-					default:
-					}
-				}
-			}(rg)
+	for {
+		// split region by given ranges
+		err = local.SplitAndScatterRegionByRanges(ctx, ranges)
+		if err != nil {
+			log.L().Error("split & scatter ranges failed", zap.Error(err))
+			return err
 		}
-	}()
+		// start to write to kv and ingest
+		err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
+		if err != nil {
+			log.L().Error("write and ingest ranges failed", zap.Error(err))
+			return err
+		}
 
-	go func() {
-		wg.Wait()
-		errChan <- nil
-	}()
-
-	res := <-errChan
-	if res == nil {
-		log.L().Info("import engine success", zap.Stringer("uuid", engineUUID))
+		unfinishedRanges := remains.take()
+		if len(unfinishedRanges) == 0 {
+			break
+		}
+		ranges = unfinishedRanges
 	}
 
+	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID))
 	return nil
 }
 

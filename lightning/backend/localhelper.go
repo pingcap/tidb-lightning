@@ -76,10 +76,12 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 					}
 					return errors.Trace(errSplit)
 				}
-				log.L().Warn("split regions", zap.Error(errSplit))
+				log.L().Warn("split regions", zap.Error(errSplit), zap.Int("retry count", i),
+					zap.Uint64("region_id", regionID), zap.Reflect("region", region))
 				select {
 				case <-time.After(time.Second):
 				case <-ctx.Done():
+					log.L().Warn("context canceled")
 					return ctx.Err()
 				}
 				retryKeys = append(retryKeys, keys...)
@@ -94,7 +96,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 				return bytes.Compare(retryKeys[i], retryKeys[j]) < 0
 			})
 			minKey = retryKeys[0]
-			maxKey = retryKeys[len(retryKeys)-1]
+			maxKey = nextKey(retryKeys[len(retryKeys)-1])
 		}
 	}
 	if errSplit != nil {
@@ -238,9 +240,13 @@ func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64
 
 func getSplitKeysByRanges(ranges []Range, regions []*split.RegionInfo) map[uint64][][]byte {
 	checkKeys := make([][]byte, 0)
-	checkKeys = append(checkKeys, truncateRowKey(ranges[0].start))
+	var lastEnd []byte
 	for _, rg := range ranges {
+		if !bytes.Equal(lastEnd, rg.start) {
+			checkKeys = append(checkKeys, truncateRowKey(rg.start))
+		}
 		checkKeys = append(checkKeys, truncateRowKey(rg.end))
+		lastEnd = rg.end
 	}
 	return getSplitKeys(checkKeys, regions)
 }
@@ -264,25 +270,26 @@ func getSplitKeys(checkKeys [][]byte, regions []*split.RegionInfo) map[uint64][]
 }
 
 // needSplit checks whether a key is necessary to split, if true returns the split region
-func needSplit(splitKey []byte, regions []*split.RegionInfo) *split.RegionInfo {
+func needSplit(key []byte, regions []*split.RegionInfo) *split.RegionInfo {
 	// If splitKey is the max key.
-	if len(splitKey) == 0 {
+	if len(key) == 0 {
 		return nil
 	}
-	splitKey = codec.EncodeBytes([]byte{}, splitKey)
+	splitKey := codec.EncodeBytes([]byte{}, key)
 
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
-		log.L().Debug("need split",
-			zap.Binary("splitKey", splitKey),
-			zap.Binary("region start", region.Region.GetStartKey()),
-			zap.Binary("region end", region.Region.GetEndKey()),
-		)
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {
 			return nil
 		}
 		// If splitKey is in a region
 		if bytes.Compare(splitKey, region.Region.GetStartKey()) > 0 && beforeEnd(splitKey, region.Region.GetEndKey()) {
+			log.L().Debug("need split",
+				zap.Binary("splitKey", key),
+				zap.Binary("encodedKey", splitKey),
+				zap.Binary("region start", region.Region.GetStartKey()),
+				zap.Binary("region end", region.Region.GetEndKey()),
+			)
 			return region
 		}
 	}
