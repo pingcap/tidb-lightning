@@ -17,7 +17,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"math"
 	"os"
@@ -651,8 +653,10 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 			rangeStart = v
 		}
 	}
-	if bytes.Equal(ranges[0].start, firstKey) || bytes.Equal(ranges[len(ranges)-1].end, endKey) {
-		panic("split ranges panic")
+	if !bytes.Equal(ranges[0].start, firstKey) || !bytes.Equal(ranges[len(ranges)-1].end, endKey) {
+		panic(fmt.Sprintf("split ranges panic. firstKey: %s, range start: %s, lastKey: %s, endKey: %s, rangeEnd: %s\n",
+			hex.EncodeToString(firstKey), hex.EncodeToString(ranges[0].start), hex.EncodeToString(lastKey),
+			hex.EncodeToString(endKey), hex.EncodeToString(ranges[len(ranges)-1].end)))
 	}
 	return ranges, nil
 }
@@ -1170,10 +1174,7 @@ func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sa
 	iter := l.db.NewIter(opt)
 	defer iter.Close()
 
-	exist := iter.First()
-	if !exist {
-
-	}
+	iter.First()
 	start = append([]byte{}, iter.Key()...)
 	iter.Last()
 	end = nextKey(iter.Key())
@@ -1262,7 +1263,7 @@ func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sa
 
 	s := float64(len(sampleValues)) / float64(count)
 
-	res := make([][]byte, 0, count+1)
+	res := make([][]byte, 0, count)
 	for i := s - 1; int(i) < len(sampleValues); i += s {
 		curBytes := make([]byte, offset+8)
 		copy(curBytes, start[:offset])
@@ -1276,7 +1277,6 @@ func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sa
 		} else {
 			res[len(res)-1] = end
 		}
-
 	}
 	log.L().Info("split value with sample", zap.Int64("count", count),
 		zap.Int("ranges", len(res)), zap.Int("samples", len(sampleValues)),

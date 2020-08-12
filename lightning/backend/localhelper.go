@@ -76,12 +76,11 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 					}
 					return errors.Trace(errSplit)
 				}
-				log.L().Warn("split regions", zap.Error(errSplit), zap.Int("retry count", i),
-					zap.Uint64("region_id", regionID), zap.Reflect("region", region))
+				log.L().Warn("split regions", zap.Error(errSplit), zap.Int("retry time", i+1),
+					zap.Uint64("region_id", regionID))
 				select {
 				case <-time.After(time.Second):
 				case <-ctx.Done():
-					log.L().Warn("context canceled")
 					return ctx.Err()
 				}
 				retryKeys = append(retryKeys, keys...)
