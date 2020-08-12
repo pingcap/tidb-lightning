@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	pd "github.com/pingcap/pd/v4/client"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -442,6 +441,8 @@ func (local *local) WriteToTiKV(
 	size := int64(0)
 	totalCount := 0
 	firstLoop := true
+	regionMaxSize := local.regionSplitSize * 4 / 3
+
 	for iter.First(); iter.Valid(); iter.Next() {
 		size += int64(len(iter.Key()) + len(iter.Value()))
 		// here we reuse the `*sst.Pair`s to optimize object allocation
@@ -458,7 +459,7 @@ func (local *local) WriteToTiKV(
 		count++
 		totalCount++
 
-		if count >= local.batchWriteKVPairs || size >= local.regionSplitSize {
+		if count >= local.batchWriteKVPairs || size >= regionMaxSize {
 			for i := range clients {
 				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 				if err := clients[i].Send(requests[i]); err != nil {
@@ -469,7 +470,7 @@ func (local *local) WriteToTiKV(
 			bytesBuf.reset()
 			firstLoop = false
 		}
-		if size >= local.regionSplitSize {
+		if size >= regionMaxSize {
 			break
 		}
 	}
@@ -545,43 +546,6 @@ func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split
 }
 
 func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid.UUID) ([]Range, error) {
-	ranges, err := local.doReadAndSplitIntoRange(engineFile, engineUUID)
-	if len(ranges) <= 1 || err != nil {
-		return ranges, err
-	}
-
-	// adjust ranges, remove empty ranges
-	opt := &pebble.IterOptions{
-		LowerBound: ranges[0].start,
-		UpperBound: ranges[len(ranges)-1].end,
-	}
-	iter := engineFile.db.NewIter(opt)
-	defer iter.Close()
-	res := make([]Range, 0, len(ranges))
-	currentLower := ranges[0].start
-	idx := 0
-	for idx < len(ranges) {
-		exists := iter.SeekGE(currentLower)
-		if !exists {
-			return nil, errors.New("invalid ranges, cannot seek to lower bound")
-		}
-		log.L().Info("ajust range value", zap.Int("index", idx), zap.Binary("current_lower", currentLower),
-			zap.Binary("index lower", ranges[idx].start), zap.Binary("index upper", ranges[idx].end),
-			zap.Binary("value", iter.Value()),
-			zap.Int("cmp", bytes.Compare(iter.Value(), ranges[idx].end)))
-		if bytes.Compare(iter.Key(), ranges[idx].end) < 0 {
-			res = append(res, Range{start: currentLower, end: ranges[idx].end})
-			if idx < len(ranges)-1 {
-				currentLower = ranges[idx+1].start
-			}
-		}
-		idx++
-	}
-	log.L().Info("adjust ranges", zap.Reflect("origin count", len(ranges)), zap.Reflect("new count", len(res)))
-	return res, nil
-}
-
-func (local *local) doReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid.UUID) ([]Range, error) {
 	if engineFile.Length == 0 {
 		return nil, nil
 	}
@@ -589,37 +553,40 @@ func (local *local) doReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uu
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
 
-	var startKey, endKey []byte
+	var firstKey, lastKey []byte
 	if iter.First() {
-		startKey = append([]byte{}, iter.Key()...)
+		firstKey = append([]byte{}, iter.Key()...)
 	} else {
 		return nil, errors.New("could not find first pair, this shouldn't happen")
 	}
 	if iter.Last() {
-		endKey = append([]byte{}, iter.Key()...)
+		lastKey = append([]byte{}, iter.Key()...)
 	} else {
 		return nil, errors.New("could not find last pair, this shouldn't happen")
 	}
+	endKey := nextKey(lastKey)
 
 	// <= 96MB no need to split into range
 	if engineFile.TotalSize <= local.regionSplitSize {
-		ranges := []Range{{start: startKey, end: nextKey(endKey), length: int(engineFile.Length)}}
+		ranges := []Range{{start: firstKey, end: endKey, length: int(engineFile.Length)}}
 		return ranges, nil
 	}
 
-	log.L().Info("doReadAndSplitIntoRange", zap.Binary("start", startKey), zap.Binary("end", endKey))
+	log.L().Info("doReadAndSplitIntoRange", zap.Binary("firstKey", firstKey), zap.Binary("lastKey", lastKey))
 
-	// split data into n ranges, then seek n times to get n + 1 ranges
-	n := (engineFile.TotalSize + local.regionSplitSize - 1) / local.regionSplitSize
+	// split data into n * 4/3 ranges, then seek n times to get n + 1 ranges
+	// because we don't split very accurate, so wo try to split 1/4 more regions to avoid region to be too big
+	splitTargetSize := (local.regionSplitSize*3 + 3) / 4
+	n := (engineFile.TotalSize + splitTargetSize - 1) / splitTargetSize
 
 	ranges := make([]Range, 0, n+1)
-	if tablecodec.IsIndexKey(startKey) {
+	if tablecodec.IsIndexKey(firstKey) {
 		// index engine
-		tableID, startIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(startKey)
+		tableID, startIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(firstKey)
 		if err != nil {
 			return nil, err
 		}
-		tableID, endIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(endKey)
+		tableID, endIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(lastKey)
 		if err != nil {
 			return nil, err
 		}
@@ -640,11 +607,11 @@ func (local *local) doReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uu
 
 			lastKeyOfIndex := append([]byte{}, iter.Key()...)
 
-			_, startIndexID, startValues, err := tablecodec.DecodeIndexKeyPrefix(startKeyOfIndex)
+			_, startIndexID, _, err := tablecodec.DecodeKeyHead(startKeyOfIndex)
 			if err != nil {
 				return nil, err
 			}
-			_, endIndexID, endValues, err := tablecodec.DecodeIndexKeyPrefix(lastKeyOfIndex)
+			_, endIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(lastKeyOfIndex)
 			if err != nil {
 				return nil, err
 			}
@@ -667,53 +634,25 @@ func (local *local) doReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uu
 				zap.Int64("indexID", i), zap.Int64("rangeCount", indexRangeCount),
 				zap.Binary("start", startKeyOfIndex), zap.Binary("end", lastKeyOfIndex))
 
-			values := splitValuesToRange(startValues, endValues, indexRangeCount)
-
-			keyPrefix := tablecodec.EncodeTableIndexPrefix(tableID, i)
+			values := engineFile.splitValuesToRange(startKeyOfIndex, nextKey(lastKeyOfIndex), indexRangeCount, int(indexCount))
+			rangeStart := startKeyOfIndex
 			for _, v := range values {
-				e := append(keyPrefix, v...)
-				rangeEnd := nextKey(e)
-				ranges = append(ranges, Range{start: startKeyOfIndex, end: rangeEnd})
-				startKeyOfIndex = rangeEnd
+				ranges = append(ranges, Range{start: rangeStart, end: v})
+				rangeStart = v
 			}
 		}
 	} else {
-		// data engine
-		tableID, startHandleInterface, err := tablecodec.DecodeRecordKey(startKey)
-		if err != nil {
-			return nil, err
+		// data engine, we split keys by sample keys instead of by handle
+		// because handles are also not distributed evenly
+		values := engineFile.splitValuesToRange(firstKey, endKey, n, 1)
+		rangeStart := firstKey
+		for _, v := range values {
+			ranges = append(ranges, Range{start: rangeStart, end: v})
+			rangeStart = v
 		}
-		endHandleInterface, err := tablecodec.DecodeRowKey(endKey)
-		if err != nil {
-			return nil, err
-		}
-		endHandle := endHandleInterface.IntValue()
-		startHandle := startHandleInterface.IntValue()
-		step := (endHandle - startHandle) / n
-		index := int64(0)
-		var sKey, eKey []byte
-
-		log.L().Info("split data ranges", zap.Int64("step", step),
-			zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle),
-			zap.String("engine", engineUUID.String()))
-
-		for i := startHandle; i+step <= endHandle; i += step {
-			sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i))
-			eKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i+step-1))
-			index = i
-			log.L().Debug("data engine append range", zap.Int64("start handle", i),
-				zap.Int64("end handle", i+step-1), zap.Binary("start key", sKey),
-				zap.Binary("end key", eKey), zap.Int64("step", step))
-
-			ranges = append(ranges, Range{start: sKey, end: nextKey(eKey)})
-		}
-		log.L().Debug("data engine append range at final",
-			zap.Int64("start handle", index+step), zap.Int64("end handle", endHandle),
-			zap.Binary("start key", sKey), zap.Binary("end key", endKey),
-			zap.Int64("step", endHandle-index-step+1))
-
-		sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(index+step))
-		ranges = append(ranges, Range{start: sKey, end: nextKey(endKey)})
+	}
+	if bytes.Equal(ranges[0].start, firstKey) || bytes.Equal(ranges[len(ranges)-1].end, endKey) {
+		panic("split ranges panic")
 	}
 	return ranges, nil
 }
@@ -1222,17 +1161,21 @@ func nextKey(key []byte) []byte {
 	return res
 }
 
-// splitValuesToRange try to cut [start, end] to count range approximately
-// just like [start, v1], [v1, v2]... [vCount-1, end]
+// splitValuesToRange try to cut [start, end) to count range approximately
+// just like [start, v1), [v1, v2)... [vCount-1, end)
 // return value []{v1, v2... vCount-1, End}
-func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
-	if bytes.Equal(start, end) {
-		log.L().Info("couldn't split range due to start end are same",
-			zap.Binary("start", start),
-			zap.Binary("end", end),
-			zap.Int64("count", count))
-		return [][]byte{end}
+func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sampleFactor int) [][]byte {
+	opt := &pebble.IterOptions{LowerBound: start, UpperBound: end}
+	iter := l.db.NewIter(opt)
+	defer iter.Close()
+
+	exist := iter.First()
+	if !exist {
+
 	}
+	start = append([]byte{}, iter.Key()...)
+	iter.Last()
+	end = nextKey(iter.Key())
 
 	startBytes := make([]byte, 8)
 	endBytes := make([]byte, 8)
@@ -1256,19 +1199,86 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 	sValue := binary.BigEndian.Uint64(startBytes)
 	eValue := binary.BigEndian.Uint64(endBytes)
 
-	step := (eValue - sValue) / uint64(count)
-	if step == uint64(0) {
-		step = uint64(1)
+	naiveFn := func() [][]byte {
+		step := (eValue - sValue) / uint64(count)
+		if step == uint64(0) {
+			step = uint64(1)
+		}
+
+		res := make([][]byte, 0, count)
+		var curBytes []byte
+		iter.First()
+		for cur := sValue + step; cur <= eValue-step; cur += step {
+			curBytes = make([]byte, offset+8)
+			copy(curBytes, start[:offset])
+			binary.BigEndian.PutUint64(curBytes[offset:], cur)
+			// if range is empty, skip range
+			if bytes.Compare(curBytes, iter.Key()) < 0 {
+				continue
+			}
+			// move to next range
+			iter.SeekGE(curBytes)
+			res = append(res, curBytes)
+		}
+		res = append(res, end)
+
+		return res
 	}
 
-	res := make([][]byte, 0, count)
-	for cur := sValue + step; cur <= eValue-step; cur += step {
+	sampleCount := uint64(l.Length) / 100 / uint64(sampleFactor)
+
+	if eValue-sValue < sampleCount {
+		return naiveFn()
+	}
+
+	step := (eValue - sValue) / sampleCount
+
+	sampleValues := make([]uint64, 0, sampleCount/10)
+
+	lastValue := uint64(0)
+	valueBuf := make([]byte, 8)
+	seekKey := make([]byte, offset+8)
+	copy(seekKey, start[:offset])
+	for i := sValue; i < eValue; i += step {
+		if i <= lastValue {
+			continue
+		}
+		binary.BigEndian.PutUint64(seekKey[offset:], i)
+		iter.SeekGE(seekKey)
+		copy(valueBuf, iter.Key()[offset:])
+		value := binary.BigEndian.Uint64(valueBuf)
+		sampleValues = append(sampleValues, value)
+		lastValue = value
+	}
+
+	// if too few sample values, fall back to naive func
+	if len(sampleValues) < int(count)*20 {
+		log.L().Info("too few samples, fallback to naive split", zap.Int64("count", count),
+			zap.Int("samples", len(sampleValues)), zap.Binary("start", start),
+			zap.Binary("end", end), zap.Int64("engine_kv", l.Length))
+		return naiveFn()
+	}
+
+	s := float64(len(sampleValues)) / float64(count)
+
+	res := make([][]byte, 0, count+1)
+	for i := s - 1; int(i) < len(sampleValues); i += s {
 		curBytes := make([]byte, offset+8)
 		copy(curBytes, start[:offset])
-		binary.BigEndian.PutUint64(curBytes[offset:], cur)
+		binary.BigEndian.PutUint64(curBytes[offset:], sampleValues[int(i)])
 		res = append(res, curBytes)
 	}
-	res = append(res, end)
+	// adjust last value
+	if bytes.Compare(res[len(res)-1], end) < 0 {
+		if len(res) < int(count) {
+			res = append(res, end)
+		} else {
+			res[len(res)-1] = end
+		}
 
+	}
+	log.L().Info("split value with sample", zap.Int64("count", count),
+		zap.Int("ranges", len(res)), zap.Int("samples", len(sampleValues)),
+		zap.Int64("engine_kv", l.Length))
 	return res
 }
