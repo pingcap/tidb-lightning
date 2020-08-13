@@ -17,9 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"math"
 	"os"
@@ -512,9 +510,10 @@ func (local *local) WriteToTiKV(
 		firstKey = make([]byte, len(iter.Key()))
 		copy(firstKey, iter.Key())
 		remainRange = &Range{start: firstKey, end: endKey}
-		log.L().Info("write to tikv half finish", zap.Reflect("region", region),
-			zap.Binary("startKey", startKey), zap.Binary("endKey", endKey),
-			zap.Reflect("remainStart", remainRange.start), zap.Reflect("remainEnd", remainRange.end))
+		log.L().Info("write to tikv partial finish", zap.Int("count", totalCount),
+			zap.Int64("size", size), zap.Binary("startKey", startKey), zap.Binary("endKey", endKey),
+			zap.Reflect("remainStart", remainRange.start), zap.Reflect("remainEnd", remainRange.end),
+			zap.Reflect("region", region))
 	}
 
 	return leaderPeerMetas, remainRange, nil
@@ -582,6 +581,12 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 	n := (engineFile.TotalSize + splitTargetSize - 1) / splitTargetSize
 
 	ranges := make([]Range, 0, n+1)
+	appendRanges := func(ranges []Range, start []byte, ends [][]byte) {
+		for _, e := range ends {
+			ranges = append(ranges, Range{start: start, end: e})
+			start = e
+		}
+	}
 	if tablecodec.IsIndexKey(firstKey) {
 		// index engine
 		tableID, startIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(firstKey)
@@ -637,26 +642,13 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 				zap.Binary("start", startKeyOfIndex), zap.Binary("end", lastKeyOfIndex))
 
 			values := engineFile.splitValuesToRange(startKeyOfIndex, nextKey(lastKeyOfIndex), indexRangeCount, int(indexCount))
-			rangeStart := startKeyOfIndex
-			for _, v := range values {
-				ranges = append(ranges, Range{start: rangeStart, end: v})
-				rangeStart = v
-			}
+			appendRanges(ranges, startKeyOfIndex, values)
 		}
 	} else {
 		// data engine, we split keys by sample keys instead of by handle
 		// because handles are also not distributed evenly
 		values := engineFile.splitValuesToRange(firstKey, endKey, n, 1)
-		rangeStart := firstKey
-		for _, v := range values {
-			ranges = append(ranges, Range{start: rangeStart, end: v})
-			rangeStart = v
-		}
-	}
-	if !bytes.Equal(ranges[0].start, firstKey) || !bytes.Equal(ranges[len(ranges)-1].end, endKey) {
-		panic(fmt.Sprintf("split ranges panic. firstKey: %s, range start: %s, lastKey: %s, endKey: %s, rangeEnd: %s\n",
-			hex.EncodeToString(firstKey), hex.EncodeToString(ranges[0].start), hex.EncodeToString(lastKey),
-			hex.EncodeToString(endKey), hex.EncodeToString(ranges[len(ranges)-1].end)))
+		appendRanges(ranges, firstKey, values)
 	}
 	return ranges, nil
 }
