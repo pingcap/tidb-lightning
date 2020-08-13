@@ -589,11 +589,11 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 	}
 	if tablecodec.IsIndexKey(firstKey) {
 		// index engine
-		tableID, startIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(firstKey)
+		tableID, startIndexID, _, err := tablecodec.DecodeKeyHead(firstKey)
 		if err != nil {
 			return nil, err
 		}
-		tableID, endIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(lastKey)
+		tableID, endIndexID, _, err := tablecodec.DecodeKeyHead(lastKey)
 		if err != nil {
 			return nil, err
 		}
@@ -601,7 +601,6 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 
 		// each index has to split into n / indexCount ranges
 		indexRangeCount := (n + indexCount - 1) / indexCount
-
 		for i := startIndexID; i <= endIndexID; i++ {
 			k := tablecodec.EncodeTableIndexPrefix(tableID, i)
 			iter.SeekGE(k)
@@ -618,7 +617,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 			if err != nil {
 				return nil, err
 			}
-			_, endIndexID, _, err := tablecodec.DecodeIndexKeyPrefix(lastKeyOfIndex)
+			_, endIndexID, _, err := tablecodec.DecodeKeyHead(lastKeyOfIndex)
 			if err != nil {
 				return nil, err
 			}
