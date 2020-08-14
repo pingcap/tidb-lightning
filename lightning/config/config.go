@@ -24,8 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/br/pkg/storage"
-
 	"github.com/BurntSushi/toml"
 	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -147,18 +145,17 @@ type CSVConfig struct {
 }
 
 type MydumperRuntime struct {
-	ReadBlockSize    int64                    `toml:"read-block-size" json:"read-block-size"`
-	BatchSize        int64                    `toml:"batch-size" json:"batch-size"`
-	BatchImportRatio float64                  `toml:"batch-import-ratio" json:"batch-import-ratio"`
-	SourceDir        string                   `toml:"data-source-dir" json:"data-source-dir"`
-	NoSchema         bool                     `toml:"no-schema" json:"no-schema"`
-	CharacterSet     string                   `toml:"character-set" json:"character-set"`
-	CSV              CSVConfig                `toml:"csv" json:"csv"`
-	CaseSensitive    bool                     `toml:"case-sensitive" json:"case-sensitive"`
-	StrictFormat     bool                     `toml:"strict-format" json:"strict-format"`
-	MaxRegionSize    int64                    `toml:"max-region-size" json:"max-region-size"`
-	Filter           []string                 `toml:"filter" json:"filter"`
-	S3               storage.S3BackendOptions `json:"s3" toml:"s3"`
+	ReadBlockSize    int64     `toml:"read-block-size" json:"read-block-size"`
+	BatchSize        int64     `toml:"batch-size" json:"batch-size"`
+	BatchImportRatio float64   `toml:"batch-import-ratio" json:"batch-import-ratio"`
+	SourceDir        string    `toml:"data-source-dir" json:"data-source-dir"`
+	NoSchema         bool      `toml:"no-schema" json:"no-schema"`
+	CharacterSet     string    `toml:"character-set" json:"character-set"`
+	CSV              CSVConfig `toml:"csv" json:"csv"`
+	CaseSensitive    bool      `toml:"case-sensitive" json:"case-sensitive"`
+	StrictFormat     bool      `toml:"strict-format" json:"strict-format"`
+	MaxRegionSize    int64     `toml:"max-region-size" json:"max-region-size"`
+	Filter           []string  `toml:"filter" json:"filter"`
 }
 
 type TikvImporter struct {
@@ -297,7 +294,6 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
 	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
 	cfg.Mydumper.Filter = global.Mydumper.Filter
-	cfg.Mydumper.S3 = global.Mydumper.S3
 	cfg.TikvImporter.Addr = global.TikvImporter.Addr
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
 	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir

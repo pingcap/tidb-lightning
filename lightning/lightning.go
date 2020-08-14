@@ -207,8 +207,7 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 		return nil
 	})
 
-	backendOptions := &storage.BackendOptions{S3: taskCfg.Mydumper.S3}
-	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, backendOptions)
+	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, &storage.BackendOptions{})
 	if err != nil {
 		return errors.Trace(err)
 	}

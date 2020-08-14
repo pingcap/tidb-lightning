@@ -179,7 +179,6 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 
 	pfs := pflag.NewFlagSet("", pflag.ContinueOnError)
 	pfs.AddGoFlagSet(fs)
-	storage.DefineS3Flags(pfs)
 
 	if err := pfs.Parse(args); err != nil {
 		return nil, errors.Trace(err)
@@ -187,10 +186,6 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	if *printVersion {
 		fmt.Println(common.GetRawInfo())
 		return nil, flag.ErrHelp
-	}
-
-	if err := cfg.Mydumper.S3.ParseFromFlags(pfs); err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	if len(configFilePath) > 0 {
