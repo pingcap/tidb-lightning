@@ -64,6 +64,8 @@ const (
 	gRPCBackOffMaxDelay  = 3 * time.Second
 
 	LocalMemoryTableSize = 512 << 20
+
+	regionMaxKeyCount = 1_400_000
 )
 
 var (
@@ -380,7 +382,7 @@ func (local *local) WriteToTiKV(
 	if len(region.Region.EndKey) > 0 {
 		_, endKey, _ = codec.DecodeBytes(region.Region.EndKey, []byte{})
 	}
-	if bytes.Compare(endKey, end) > 0 {
+	if beforeEnd(end, endKey) {
 		endKey = end
 	}
 	opt := &pebble.IterOptions{LowerBound: startKey, UpperBound: endKey}
@@ -459,7 +461,7 @@ func (local *local) WriteToTiKV(
 		count++
 		totalCount++
 
-		if count >= local.batchWriteKVPairs || size >= regionMaxSize {
+		if count >= local.batchWriteKVPairs || size >= regionMaxSize || totalCount >= regionMaxKeyCount {
 			for i := range clients {
 				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 				if err := clients[i].Send(requests[i]); err != nil {
@@ -470,7 +472,7 @@ func (local *local) WriteToTiKV(
 			bytesBuf.reset()
 			firstLoop = false
 		}
-		if size >= regionMaxSize {
+		if size >= regionMaxSize || totalCount >= regionMaxKeyCount {
 			break
 		}
 	}
@@ -577,8 +579,13 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 
 	// split data into n * 4/3 ranges, then seek n times to get n + 1 ranges
 	// because we don't split very accurate, so wo try to split 1/4 more regions to avoid region to be too big
+	// estimiate regions size by the bigger of region size in bytes and kv count
 	splitTargetSize := (local.regionSplitSize*3 + 3) / 4
 	n := (engineFile.TotalSize + splitTargetSize - 1) / splitTargetSize
+	numByKeyCount := engineFile.Length / (regionMaxKeyCount * 3 / 4)
+	if n < numByKeyCount {
+		n = numByKeyCount
+	}
 
 	ranges := make([]Range, 0, n+1)
 	appendRanges := func(ranges []Range, start []byte, ends [][]byte) {
