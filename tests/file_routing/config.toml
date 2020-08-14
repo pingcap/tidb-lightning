@@ -1,0 +1,31 @@
+[lightning]
+table-concurrency = 1
+
+[checkpoint]
+enable = false
+
+[mydumper]
+default-file-rules = false
+
+[[mydumper.files]]
+pattern = "(?i)^(?:[^/]*/)*([a-z0-9]+)/schema\\.sql$"
+schema = "$1"
+type = "schema-schema"
+
+[[mydumper.files]]
+pattern = "(?i)^(?:[^/]*/)*([a-z0-9]+)/([a-z0-9]+)-table\\.sql$"
+schema = "$1"
+table = "$2"
+type = "table-schema"
+
+[[mydumper.files]]
+pattern = "(?i)^(?:[^/]*/)*([^./]+)/([a-z]+)[0-9]*(?:\\.([0-9]+))?\\.(sql|csv)$"
+schema = "$1"
+table = "$2"
+type = "$4"
+
+[[mydumper.files]]
+pattern = "(?i)^(?:[^/]*/)*([a-z]+)[0-9]*(?:\\.([0-9]+))?\\.(sql|csv)$"
+schema = "fr"
+table = "$1"
+type = "$3"

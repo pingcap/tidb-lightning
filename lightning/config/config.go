@@ -140,17 +140,28 @@ type CSVConfig struct {
 }
 
 type MydumperRuntime struct {
-	ReadBlockSize    int64     `toml:"read-block-size" json:"read-block-size"`
-	BatchSize        int64     `toml:"batch-size" json:"batch-size"`
-	BatchImportRatio float64   `toml:"batch-import-ratio" json:"batch-import-ratio"`
-	SourceDir        string    `toml:"data-source-dir" json:"data-source-dir"`
-	NoSchema         bool      `toml:"no-schema" json:"no-schema"`
-	CharacterSet     string    `toml:"character-set" json:"character-set"`
-	CSV              CSVConfig `toml:"csv" json:"csv"`
-	CaseSensitive    bool      `toml:"case-sensitive" json:"case-sensitive"`
-	StrictFormat     bool      `toml:"strict-format" json:"strict-format"`
-	MaxRegionSize    int64     `toml:"max-region-size" json:"max-region-size"`
-	Filter           []string  `toml:"filter" json:"filter"`
+	ReadBlockSize    int64            `toml:"read-block-size" json:"read-block-size"`
+	BatchSize        int64            `toml:"batch-size" json:"batch-size"`
+	BatchImportRatio float64          `toml:"batch-import-ratio" json:"batch-import-ratio"`
+	SourceDir        string           `toml:"data-source-dir" json:"data-source-dir"`
+	NoSchema         bool             `toml:"no-schema" json:"no-schema"`
+	CharacterSet     string           `toml:"character-set" json:"character-set"`
+	CSV              CSVConfig        `toml:"csv" json:"csv"`
+	CaseSensitive    bool             `toml:"case-sensitive" json:"case-sensitive"`
+	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
+	MaxRegionSize    int64            `toml:"max-region-size" json:"max-region-size"`
+	Filter           []string         `toml:"filter" json:"filter"`
+	FileRouters      []*FileRouteRule `toml:"files" json:"files"`
+	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
+}
+
+type FileRouteRule struct {
+	Pattern     string `json:"pattern" toml:"pattern" yaml:"pattern"`
+	Schema      string `json:"schema" toml:"schema" yaml:"schema"`
+	Table       string `json:"table" toml:"table" yaml:"table"`
+	Type        string `json:"type" toml:"type" yaml:"type"`
+	Key         string `json:"key" toml:"key" yaml:"key"`
+	Compression string `json:"compression" toml:"compression" yaml:"compression"`
 }
 
 type TikvImporter struct {
@@ -385,6 +396,11 @@ func (cfg *Config) Adjust() error {
 		if csv.Delimiter == `\` {
 			return errors.New("invalid config: cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true")
 		}
+	}
+
+	// enable default file route rule if no rules are set
+	if len(cfg.Mydumper.FileRouters) == 0 {
+		cfg.Mydumper.DefaultFileRules = true
 	}
 
 	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
