@@ -461,14 +461,20 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 }
 
 func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}) {
-	switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
-	defer func() {
-		switchModeTicker.Stop()
-		logProgressTicker.Stop()
-	}()
+	defer logProgressTicker.Stop()
 
-	rc.switchToImportMode(ctx)
+	var switchModeChan <-chan time.Time
+	// tide backend don't need to switch tikv to import mode
+	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
+		defer switchModeTicker.Stop()
+		switchModeChan = switchModeTicker.C
+
+		rc.switchToImportMode(ctx)
+	} else {
+		switchModeChan = make(chan time.Time)
+	}
 
 	start := time.Now()
 
@@ -481,7 +487,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			log.L().Info("everything imported, stopping periodic actions")
 			return
 
-		case <-switchModeTicker.C:
+		case <-switchModeChan:
 			// periodically switch to import mode, as requested by TiKV 3.0
 			rc.switchToImportMode(ctx)
 
