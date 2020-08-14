@@ -135,6 +135,11 @@ func Parse(cfg []*config.FileRouteRule) (FileRouter, error) {
 	return chainRouters(res), nil
 }
 
+func DefaultRouter() FileRouter {
+	router, _ := Parse(defaultFileRouteRules)
+	return router
+}
+
 type RegexRouteRule struct {
 	pattern    *regexp.Regexp
 	extractors []regexExtractor

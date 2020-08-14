@@ -417,3 +417,7 @@ func (s *mdLoaderSetup) insertTable(tableName filter.Table, path string) (*MDTab
 func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 	return l.dbs
 }
+
+func (l *MDLoader) FileRouter() FileRouter {
+	return l.fileRouter
+}

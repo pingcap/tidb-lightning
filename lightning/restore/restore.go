@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -149,13 +148,26 @@ type RestoreController struct {
 	checkpointsWg sync.WaitGroup
 
 	closedEngineLimit *worker.Pool
+
+	sourceFileRouter mydump.FileRouter
 }
 
-func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
-	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, DeliverPauser)
+func NewRestoreController(
+	ctx context.Context,
+	dbMetas []*mydump.MDDatabaseMeta,
+	cfg *config.Config,
+	fileRouter mydump.FileRouter,
+) (*RestoreController, error) {
+	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, fileRouter, DeliverPauser)
 }
 
-func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, pauser *common.Pauser) (*RestoreController, error) {
+func NewRestoreControllerWithPauser(
+	ctx context.Context,
+	dbMetas []*mydump.MDDatabaseMeta,
+	cfg *config.Config,
+	fileRouter mydump.FileRouter,
+	pauser *common.Pauser,
+) (*RestoreController, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
@@ -212,6 +224,7 @@ func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDat
 		checkpointsDB:     cpdb,
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
+		sourceFileRouter:  fileRouter,
 	}
 
 	return rc, nil
@@ -966,7 +979,7 @@ func (t *TableRestore) restoreEngine(
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers, t.tableInfo)
+		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers, t.tableInfo, rc.sourceFileRouter)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1258,6 +1271,7 @@ func newChunkRestore(
 	chunk *ChunkCheckpoint,
 	ioWorkers *worker.Pool,
 	tableInfo *TidbTableInfo,
+	router mydump.FileRouter,
 ) (*chunkRestore, error) {
 	blockBufSize := cfg.Mydumper.ReadBlockSize
 
@@ -1266,13 +1280,20 @@ func newChunkRestore(
 		return nil, errors.Trace(err)
 	}
 
+	routeRes := router.Route(chunk.Key.Path)
+	if routeRes == nil || routeRes.Type == mydump.SourceTypeIgnore {
+		return nil, errors.Errorf("file '%s' is filtered by file router", chunk.Key.Path)
+	}
+
 	var parser mydump.Parser
-	switch path.Ext(strings.ToLower(chunk.Key.Path)) {
-	case ".csv":
+	switch routeRes.Type {
+	case mydump.SourceTypeCSV:
 		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
 		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
-	default:
+	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+	default:
+		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, routeRes.Type.String()))
 	}
 
 	if len(chunk.ColumnPermutation) > 0 {
