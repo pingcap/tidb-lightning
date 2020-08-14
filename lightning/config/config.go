@@ -557,6 +557,9 @@ func (cfg *Config) Adjust() error {
 	}
 	// convert path and relative path to a valid file url
 	if u.Scheme == "" {
+		if !common.IsDirExists(cfg.Mydumper.SourceDir) {
+			return errors.Errorf("%s: mydumper dir does not exist", cfg.Mydumper.SourceDir)
+		}
 		absPath, err := filepath.Abs(cfg.Mydumper.SourceDir)
 		if err != nil {
 			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
