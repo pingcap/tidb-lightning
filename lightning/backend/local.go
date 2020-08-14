@@ -588,11 +588,12 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 	}
 
 	ranges := make([]Range, 0, n+1)
-	appendRanges := func(ranges []Range, start []byte, ends [][]byte) {
+	appendRanges := func(ranges []Range, start []byte, ends [][]byte) []Range {
 		for _, e := range ends {
 			ranges = append(ranges, Range{start: start, end: e})
 			start = e
 		}
+		return ranges
 	}
 	if tablecodec.IsIndexKey(firstKey) {
 		// index engine
@@ -647,14 +648,14 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 				zap.Int64("indexID", i), zap.Int64("rangeCount", indexRangeCount),
 				zap.Binary("start", startKeyOfIndex), zap.Binary("end", lastKeyOfIndex))
 
-			values := engineFile.splitValuesToRange(startKeyOfIndex, nextKey(lastKeyOfIndex), indexRangeCount, int(indexCount))
-			appendRanges(ranges, startKeyOfIndex, values)
+			values := engineFile.splitValuesToRange(startKeyOfIndex, nextKey(lastKeyOfIndex), indexRangeCount, indexCount)
+			ranges = appendRanges(ranges, startKeyOfIndex, values)
 		}
 	} else {
 		// data engine, we split keys by sample keys instead of by handle
 		// because handles are also not distributed evenly
 		values := engineFile.splitValuesToRange(firstKey, endKey, n, 1)
-		appendRanges(ranges, firstKey, values)
+		ranges = appendRanges(ranges, firstKey, values)
 	}
 	return ranges, nil
 }
@@ -1222,12 +1223,15 @@ func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sa
 		}
 		res = append(res, end)
 
+		log.L().Info("split value naively", zap.Int64("count", count),
+			zap.Int("ranges", len(res)))
+
 		return res
 	}
 
 	sampleCount := uint64(l.Length) / 100 / uint64(sampleFactor)
 
-	if eValue-sValue < sampleCount {
+	if eValue-sValue < sampleCount*20 {
 		return naiveFn()
 	}
 
