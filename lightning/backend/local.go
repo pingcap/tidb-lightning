@@ -648,7 +648,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 				zap.Int64("indexID", i), zap.Int64("rangeCount", indexRangeCount),
 				zap.Binary("start", startKeyOfIndex), zap.Binary("end", lastKeyOfIndex))
 
-			values := engineFile.splitValuesToRange(startKeyOfIndex, nextKey(lastKeyOfIndex), indexRangeCount, indexCount)
+			values := engineFile.splitValuesToRange(startKeyOfIndex, nextKey(lastKeyOfIndex), indexRangeCount, int(indexCount))
 			ranges = appendRanges(ranges, startKeyOfIndex, values)
 		}
 	} else {
