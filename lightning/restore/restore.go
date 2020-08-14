@@ -74,6 +74,10 @@ var DeliverPauser = common.NewPauser()
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
+	// used in integration tests
+	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
+		minDeliverBytes = uint64(v.(int))
+	})
 }
 
 type saveCp struct {
@@ -460,14 +464,20 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 }
 
 func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}) {
-	switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
-	defer func() {
-		switchModeTicker.Stop()
-		logProgressTicker.Stop()
-	}()
+	defer logProgressTicker.Stop()
 
-	rc.switchToImportMode(ctx)
+	var switchModeChan <-chan time.Time
+	// tide backend don't need to switch tikv to import mode
+	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
+		defer switchModeTicker.Stop()
+		switchModeChan = switchModeTicker.C
+
+		rc.switchToImportMode(ctx)
+	} else {
+		switchModeChan = make(chan time.Time)
+	}
 
 	start := time.Now()
 
@@ -480,7 +490,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			log.L().Info("everything imported, stopping periodic actions")
 			return
 
-		case <-switchModeTicker.C:
+		case <-switchModeChan:
 			// periodically switch to import mode, as requested by TiKV 3.0
 			rc.switchToImportMode(ctx)
 
@@ -958,8 +968,7 @@ func (t *TableRestore) restoreEngine(
 		// 	2. sql -> kvs
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
-
-		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store)
+		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, t.tableInfo)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1252,6 +1261,7 @@ func newChunkRestore(
 	chunk *ChunkCheckpoint,
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
+	tableInfo *TidbTableInfo,
 ) (*chunkRestore, error) {
 	blockBufSize := cfg.Mydumper.ReadBlockSize
 
@@ -1263,13 +1273,17 @@ func newChunkRestore(
 	var parser mydump.Parser
 	switch path.Ext(strings.ToLower(chunk.Key.Path)) {
 	case ".csv":
-		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers)
+		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
+		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
 	default:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	}
 
 	if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
 		return nil, errors.Trace(err)
+	}
+	if len(chunk.ColumnPermutation) > 0 {
+		parser.SetColumns(getColumnNames(tableInfo.Core, chunk.ColumnPermutation))
 	}
 
 	return &chunkRestore{
@@ -1412,6 +1426,17 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 	ccp.ColumnPermutation = colPerm
 }
 
+func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
+	names := make([]string, 0, len(permutation))
+	for _, idx := range permutation {
+		// skip columns with index -1
+		if idx >= 0 {
+			names = append(names, tableInfo.Columns[idx].Name.O)
+		}
+	}
+	return names
+}
+
 func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 
@@ -1544,9 +1569,9 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
 
 ////////////////////////////////////////////////////////////////
 
-const (
-	maxKVQueueSize  = 128   // Cache at most this number of rows before blocking the encode loop
-	minDeliverBytes = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
+var (
+	maxKVQueueSize         = 128   // Cache at most this number of rows before blocking the encode loop
+	minDeliverBytes uint64 = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
 )
 
 type deliveredKVs struct {
@@ -1641,6 +1666,10 @@ func (cr *chunkRestore) deliverLoop(
 			// No need to save checkpoint if nothing was delivered.
 			saveCheckpoint(rc, t, engineID, cr.chunk)
 		}
+		failpoint.Inject("FailAfterWriteRows", func() {
+			time.Sleep(time.Second)
+			panic("forcing failure due to FailAfterWriteRows")
+		})
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after writen
 		//10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
 		// can safely update current checkpoint.
@@ -1669,11 +1698,12 @@ func saveCheckpoint(rc *RestoreController, t *TableRestore, engineID int32, chun
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &ChunkCheckpointMerger{
-			EngineID: engineID,
-			Key:      chunk.Key,
-			Checksum: chunk.Checksum,
-			Pos:      chunk.Chunk.Offset,
-			RowID:    chunk.Chunk.PrevRowIDMax,
+			EngineID:          engineID,
+			Key:               chunk.Key,
+			Checksum:          chunk.Checksum,
+			Pos:               chunk.Chunk.Offset,
+			RowID:             chunk.Chunk.PrevRowIDMax,
+			ColumnPermutation: chunk.ColumnPermutation,
 		},
 	}
 }

@@ -57,7 +57,7 @@ func (mb *kvMemBuf) Set(k kv.Key, v []byte) error {
 	return nil
 }
 
-func (mb *kvMemBuf) SetWithFlags(k kv.Key, f kv.KeyFlags, v []byte) error {
+func (mb *kvMemBuf) SetWithFlags(k kv.Key, v []byte, ops ...kv.FlagsOp) error {
 	return mb.Set(k, v)
 }
 
@@ -66,16 +66,11 @@ func (mb *kvMemBuf) Delete(k kv.Key) error {
 }
 
 // Release publish all modifications in the latest staging buffer to upper level.
-func (mb *kvMemBuf) Release(h kv.StagingHandle) (int, error) {
-	return 0, nil
+func (mb *kvMemBuf) Release(h kv.StagingHandle) {
 }
 
 func (mb *kvMemBuf) Staging() kv.StagingHandle {
 	return 0
-}
-
-func (mb *kvMemBuf) GetStagingBuffer(h kv.StagingHandle) kv.StagingBuffer {
-	return mb
 }
 
 // Cleanup cleanup the resources referenced by the StagingHandle.
@@ -99,6 +94,13 @@ type kvUnionStore struct {
 
 func (s *kvUnionStore) GetMemBuffer() kv.MemBuffer {
 	return &s.kvMemBuf
+}
+
+func (s *kvUnionStore) GetIndexName(tableID, indexID int64) string {
+	panic("Unsupported Operation")
+}
+
+func (s *kvUnionStore) CacheIndexName(tableID, indexID int64, name string) {
 }
 
 // transaction is a trimmed down Transaction type which only supports adding a

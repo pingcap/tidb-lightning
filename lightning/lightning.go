@@ -31,7 +31,6 @@ import (
 	"time"
 
 	"github.com/pingcap/br/pkg/storage"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -40,6 +39,7 @@ import (
 	"golang.org/x/net/http/httpproxy"
 
 	"github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -228,6 +228,13 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 		log.L().Error("check system requirements failed", zap.Error(err))
 		return errors.Trace(err)
 	}
+	// check table schema conflicts
+	err = checkSchemaConflict(taskCfg, mdl.GetDatabases())
+	if err != nil {
+		log.L().Error("checkpoint schema conflicts with data files", zap.Error(err))
+		return errors.Trace(err)
+	}
+
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
@@ -599,5 +606,21 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 		}
 	}
 
+	return nil
+}
+
+/// checkSchemaConflict return error if checkpoint table scheme is conflict with data files
+func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) error {
+	if cfg.Checkpoint.Enable && cfg.Checkpoint.Driver == config.CheckpointDriverMySQL {
+		for _, db := range dbsMeta {
+			if db.Name == cfg.Checkpoint.Schema {
+				for _, tb := range db.Tables {
+					if checkpoints.IsCheckpointTable(tb.Name) {
+						return errors.Errorf("checkpoint table `%s`.`%s` conflict with data files. Please change the `checkpoint.schema` config or set `checkpoint.driver` to \"file\" instead", db.Name, tb.Name)
+					}
+				}
+			}
+		}
+	}
 	return nil
 }

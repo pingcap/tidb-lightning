@@ -112,6 +112,8 @@ type Parser interface {
 	// Columns returns the _lower-case_ column names corresponding to values in
 	// the LastRow.
 	Columns() []string
+	// SetColumns set restored column names to parser
+	SetColumns([]string)
 
 	SetLogger(log.Logger)
 }
@@ -159,6 +161,10 @@ func (parser *blockParser) Close() error {
 
 func (parser *blockParser) Columns() []string {
 	return parser.columns
+}
+
+func (parser *blockParser) SetColumns(columns []string) {
+	parser.columns = columns
 }
 
 func (parser *blockParser) logSyntaxError() {
