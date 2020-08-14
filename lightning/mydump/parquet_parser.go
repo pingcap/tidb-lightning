@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 
 	"github.com/xitongsys/parquet-go-source/local"
 
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	batchReadRowSize = 16
+	batchReadRowSize = 256
 )
 
 type ParquetParser struct {
@@ -56,10 +57,9 @@ func NewParquetParser(path string) (*ParquetParser, error) {
 	}
 
 	columns := make([]string, 0, len(reader.Footer.Schema))
-	for i, c := range reader.Footer.Schema {
+	for _, c := range reader.Footer.Schema {
 		if c.GetNumChildren() == 0 {
-			columns = append(columns, c.Name)
-			fmt.Printf("i: %d, str: %s\n", i, c.Name)
+			columns = append(columns, strings.ToLower(c.Name))
 		}
 
 	}
@@ -118,6 +118,13 @@ func (pp *ParquetParser) ReadRow() error {
 
 		var err error
 		var rows []interface{}
+		//if len(pp.rows) < count {
+		//	rows, err = pp.Reader.ReadByNumber(count)
+		//	pp.rows = rows
+		//} else {
+		//	pp.rows = pp.rows[:count]
+		//	err = pp.Reader.Read(&pp.rows)
+		//}
 		rows, err = pp.Reader.ReadByNumber(count)
 		pp.rows = rows
 		if err != nil {
@@ -147,7 +154,6 @@ func (pp *ParquetParser) ReadRow() error {
 func setDatumValue(d *types.Datum, v reflect.Value) {
 	switch v.Kind() {
 	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		//fmt.Printf("      uint value: %d\n", v.Uint())
 		d.SetUint64(v.Uint())
 	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		d.SetInt64(v.Int())

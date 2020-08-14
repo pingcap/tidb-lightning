@@ -20,6 +20,7 @@ const (
 	SourceTypeTableSchema
 	SourceTypeSQL
 	SourceTypeCSV
+	SourceTypeParquet
 )
 
 const (
@@ -27,6 +28,7 @@ const (
 	TableSchema  = "table-schema"
 	TypeSQL      = "sql"
 	TypeCSV      = "csv"
+	TypeParquet  = "parquet"
 	TypeIgnore   = "ignore"
 )
 
@@ -50,6 +52,8 @@ func parseSourceType(t string) SourceType {
 		return SourceTypeSQL
 	case TypeCSV:
 		return SourceTypeCSV
+	case TypeParquet:
+		return SourceTypeParquet
 	default:
 		return SourceTypeIgnore
 	}
@@ -65,6 +69,8 @@ func (s SourceType) String() string {
 		return TypeCSV
 	case SourceTypeSQL:
 		return TypeSQL
+	case SourceTypeParquet:
+		return TypeParquet
 	default:
 		return TypeIgnore
 	}
