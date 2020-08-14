@@ -133,13 +133,15 @@ strict-format = false
 # will restore in parallel. The size of each chunk is `max-region-size`, where the default is 256 MiB.
 #max-region-size = 268_435_456
 
-# enable file router to use the default rules. If set to false, user must manually config
-# at least one `mydumper.files` config.
-# The default file rules are as follows:
+# enable file router to use the default rules. By default, it will be set to true if no `mydumper.files`
+# rule is provided, else false. You can explicitly set it to `true` to enable the default rules, they will
+# take effect on files that on other rules are match.
+# The default file routing rules' behavior is the same as former versions without this conf, that is:
 #   {schema}-schema-create.sql --> schema create sql file
 #   {schema}.{table}-schema.sql --> table schema sql file
 #   {schema}.{table}.{0001}.{sql|csv} --> data source file
-default-file-rules = true
+#   *-schema-view.sql, *-schema-trigger.sql, *-schema-post.sql --> ignore all the sql files end with these pattern
+#default-file-rules = false
 
 # only import tables if the wildcard rules are matched. See documention for details.
 filter = ['*.*']
@@ -238,12 +240,3 @@ analyze = true
 switch-mode = "5m"
 # the duration which the an import progress will be printed to the log.
 log-progress = "5m"
-
-## Rules to rename existing databases/tables and possibly merge them together.
-## The patterns support wildcards with `*` and `?`.
-## Routes are applied _after_ filter.
-# [[routes]]
-# schema-pattern = "shard_db_*"
-# table-pattern = "shard_table_*"
-# target-schema = "shard_db"
-# target-table = "shard_table"

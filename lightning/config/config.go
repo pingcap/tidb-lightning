@@ -267,10 +267,9 @@ func NewConfig() *Config {
 				BackslashEscape: true,
 				TrimLastSep:     false,
 			},
-			StrictFormat:     false,
-			MaxRegionSize:    MaxRegionSize,
-			Filter:           []string{"*.*"},
-			DefaultFileRules: true,
+			StrictFormat:  false,
+			MaxRegionSize: MaxRegionSize,
+			Filter:        []string{"*.*"},
 		},
 		TikvImporter: TikvImporter{
 			Backend:         BackendImporter,
@@ -397,6 +396,11 @@ func (cfg *Config) Adjust() error {
 		if csv.Delimiter == `\` {
 			return errors.New("invalid config: cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true")
 		}
+	}
+
+	// enable default file route rule if no rules are set
+	if len(cfg.Mydumper.FileRouters) == 0 {
+		cfg.Mydumper.DefaultFileRules = true
 	}
 
 	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
