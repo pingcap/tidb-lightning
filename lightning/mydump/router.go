@@ -243,9 +243,10 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 			}
 			if compression != CompressionNone {
 				log.L().Warn("Currently we don't support restore compressed source file yet, source file will be ignored")
+				return false
 			}
 			result.Compression = compression
-			return false
+			return true
 		})
 		if err != nil {
 			return err
