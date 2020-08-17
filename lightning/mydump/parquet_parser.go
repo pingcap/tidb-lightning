@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"strings"
-
-	"github.com/xitongsys/parquet-go-source/local"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb/types"
+	"github.com/xitongsys/parquet-go-source/local"
 	preader "github.com/xitongsys/parquet-go/reader"
 	"github.com/xitongsys/parquet-go/source"
 )
@@ -59,7 +57,7 @@ func NewParquetParser(path string) (*ParquetParser, error) {
 	columns := make([]string, 0, len(reader.Footer.Schema))
 	for _, c := range reader.Footer.Schema {
 		if c.GetNumChildren() == 0 {
-			columns = append(columns, strings.ToLower(c.Name))
+			columns = append(columns, c.GetName())
 		}
 
 	}
