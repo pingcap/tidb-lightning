@@ -1292,6 +1292,12 @@ func newChunkRestore(
 		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+	case mydump.SourceTypeParquet:
+		_ = reader.Close()
+		parser, err = mydump.NewParquetParser(chunk.Key.Path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	default:
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, routeRes.Type.String()))
 	}
