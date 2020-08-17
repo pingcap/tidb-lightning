@@ -96,7 +96,6 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 		"my_schema.my_table.0001.sql":         {"my_schema", "my_table", "0001", "", "sql"},
 		//"my_schema.my_table.0001.sql.gz":      {"my_schema", "my_table", "0001", "gz", "sql"},
 		"my_schema.my_table.0001.sql.gz":      {},
-		"my_schema.my_table.0001.sql.part001": {"my_schema", "my_table", "0001", "", "sql"},
 	}
 	for path, fields := range inputOutputMap {
 		res := r.Route(path)
