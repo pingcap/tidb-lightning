@@ -107,7 +107,7 @@ func ExportStatement(store storage.ExternalStorage, sqlFile fileInfo, characterS
 			zap.String("encoding", characterSet),
 			zap.String("Path", sqlFile.Path),
 		)
-		return nil, errors.Annotatef(err, "failed to decode %s as %s", sqlFile, characterSet)
+		return nil, errors.Annotatef(err, "failed to decode %s as %s", sqlFile.Path, characterSet)
 	}
 	return data, nil
 }

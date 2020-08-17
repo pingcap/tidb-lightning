@@ -243,7 +243,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		prevRowIdxMax := int64(0)
 		ioWorker := worker.NewPool(context.Background(), 4, "io")
 
-		store, err := storage.NewLocalStorage("./csv")
+		store, err := storage.NewLocalStorage(".")
 		c.Assert(err, IsNil)
 
 		_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker, store)

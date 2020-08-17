@@ -15,6 +15,7 @@ package mydump
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -32,28 +33,31 @@ func TestMydumps(t *testing.T) {
 }
 
 type testMydumpLoaderSuite struct {
-	cfg *config.Config
+	cfg       *config.Config
+	sourceDir string
 }
 
 func (s *testMydumpLoaderSuite) SetUpSuite(c *C)    {}
 func (s *testMydumpLoaderSuite) TearDownSuite(c *C) {}
 
 func newConfigWithSourceDir(sourceDir string) *config.Config {
+	path, _ := filepath.Abs(sourceDir)
 	return &config.Config{
 		Mydumper: config.MydumperRuntime{
-			SourceDir: sourceDir,
+			SourceDir: fmt.Sprintf("file://%s", path),
 			Filter:    []string{"*.*"},
 		},
 	}
 }
 
 func (s *testMydumpLoaderSuite) SetUpTest(c *C) {
-	s.cfg = newConfigWithSourceDir(c.MkDir())
+	s.sourceDir = c.MkDir()
+	s.cfg = newConfigWithSourceDir(s.sourceDir)
 }
 
 func (s *testMydumpLoaderSuite) touch(c *C, filename ...string) string {
 	components := make([]string, len(filename)+1)
-	components = append(components, s.cfg.Mydumper.SourceDir)
+	components = append(components, s.sourceDir)
 	components = append(components, filename...)
 	path := filepath.Join(components...)
 	err := ioutil.WriteFile(path, nil, 0644)
@@ -62,7 +66,7 @@ func (s *testMydumpLoaderSuite) touch(c *C, filename ...string) string {
 }
 
 func (s *testMydumpLoaderSuite) mkdir(c *C, dirname string) {
-	path := filepath.Join(s.cfg.Mydumper.SourceDir, dirname)
+	path := filepath.Join(s.sourceDir, dirname)
 	err := os.Mkdir(path, 0755)
 	c.Assert(err, IsNil)
 }
@@ -128,7 +132,7 @@ func (s *testMydumpLoaderSuite) TestTableNoHostDB(c *C) {
 			db.tbl-schema.sql
 	*/
 
-	dir := s.cfg.Mydumper.SourceDir
+	dir := s.sourceDir
 	err := ioutil.WriteFile(filepath.Join(dir, "notdb-schema-create.sql"), nil, 0644)
 	c.Assert(err, IsNil)
 	err = ioutil.WriteFile(filepath.Join(dir, "db.tbl-schema.sql"), nil, 0644)
@@ -187,7 +191,7 @@ func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
 }
 
 func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
-	dir := s.cfg.Mydumper.SourceDir
+	dir := s.sourceDir
 	p := filepath.Join(dir, "db.tbl.sql")
 	err := ioutil.WriteFile(p, nil, 0644)
 	c.Assert(err, IsNil)

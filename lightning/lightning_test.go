@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -60,10 +61,10 @@ func (s *lightningSuite) TestRun(c *C) {
 	lightning := New(cfg)
 	err := lightning.RunOnce()
 	c.Assert(err, ErrorMatches, ".*mydumper dir does not exist")
-
+	path, _ := filepath.Abs(".")
 	err = lightning.run(&config.Config{
 		Mydumper: config.MydumperRuntime{
-			SourceDir: ".",
+			SourceDir: fmt.Sprintf("file://%s", path),
 			Filter:    []string{"*.*"},
 		},
 		Checkpoint: config.Checkpoint{
@@ -101,6 +102,7 @@ func (s *lightningServerSuite) SetUpTest(c *C) {
 	cfg.TiDB.PdAddr = "test.invalid:2379"
 	cfg.App.ServerMode = true
 	cfg.App.StatusAddr = "127.0.0.1:0"
+	cfg.Mydumper.SourceDir = "file://."
 
 	s.lightning = New(cfg)
 	s.taskCfgCh = make(chan *config.Config)
@@ -160,7 +162,7 @@ func (s *lightningServerSuite) TestRunServer(c *C) {
 	for i := 0; i < 20; i++ {
 		resp, err = http.Post(url, "application/toml", strings.NewReader(fmt.Sprintf(`
 			[mydumper]
-			data-source-dir = 'demo-path-%d'
+			data-source-dir = 'file://demo-path-%d'
 			[mydumper.csv]
 			separator = '/'
 		`, i)))
@@ -175,7 +177,7 @@ func (s *lightningServerSuite) TestRunServer(c *C) {
 		select {
 		case taskCfg := <-s.taskCfgCh:
 			c.Assert(taskCfg.TiDB.Host, Equals, "test.invalid")
-			c.Assert(taskCfg.Mydumper.SourceDir, Equals, fmt.Sprintf("demo-path-%d", i))
+			c.Assert(taskCfg.Mydumper.SourceDir, Equals, fmt.Sprintf("file://demo-path-%d", i))
 			c.Assert(taskCfg.Mydumper.CSV.Separator, Equals, "/")
 		case <-time.After(500 * time.Millisecond):
 			c.Fatalf("task is not queued after 500ms (i = %d)", i)
@@ -204,7 +206,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 	postTask := func(i int) int64 {
 		resp, err := http.Post(url, "application/toml", strings.NewReader(fmt.Sprintf(`
 			[mydumper]
-			data-source-dir = 'demo-path-%d'
+			data-source-dir = 'file://demo-path-%d'
 		`, i)))
 		c.Assert(err, IsNil)
 		c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -264,7 +266,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 	err = json.NewDecoder(resp.Body).Decode(&resCfg)
 	resp.Body.Close()
 	c.Assert(err, IsNil)
-	c.Assert(resCfg.Mydumper.SourceDir, Equals, "demo-path-2")
+	c.Assert(resCfg.Mydumper.SourceDir, Equals, "file://demo-path-2")
 
 	resp, err = http.Get(fmt.Sprintf("%s/%d", url, first))
 	c.Assert(err, IsNil)
@@ -272,7 +274,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 	err = json.NewDecoder(resp.Body).Decode(&resCfg)
 	resp.Body.Close()
 	c.Assert(err, IsNil)
-	c.Assert(resCfg.Mydumper.SourceDir, Equals, "demo-path-1")
+	c.Assert(resCfg.Mydumper.SourceDir, Equals, "file://demo-path-1")
 
 	// Check `DELETE /tasks` returns error.
 
