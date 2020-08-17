@@ -581,7 +581,7 @@ func (s *chunkRestoreSuite) SetUpTest(c *C) {
 	}
 
 	var err error
-	s.cr, err = newChunkRestore(1, s.cfg, &chunk, w, nil)
+	s.cr, err = newChunkRestore(1, s.cfg, &chunk, w, nil, mydump.DefaultRouter())
 	c.Assert(err, IsNil)
 }
 

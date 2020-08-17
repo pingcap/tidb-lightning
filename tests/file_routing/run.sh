@@ -22,11 +22,11 @@ mkdir -p $DBPATH $DBPATH/fr
 echo 'CREATE DATABASE fr;' > "$DBPATH/fr/schema.sql"
 echo "CREATE TABLE tbl(i TINYINT PRIMARY KEY, j INT);" > "$DBPATH/fr/tbl-table.sql"
 # the column orders in data file is different from table schema order.
-echo "INSERT INTO tbl (i, j) VALUES (1, 1),(2, 2);" > "$DBPATH/fr/tbl1.sql"
-echo "INSERT INTO tbl (i, j) VALUES (3, 3),(4, 4);" > "$DBPATH/fr/tbl2.sql"
+echo "INSERT INTO tbl (i, j) VALUES (1, 1),(2, 2);" > "$DBPATH/fr/tbl1.sql.0"
+echo "INSERT INTO tbl (i, j) VALUES (3, 3),(4, 4);" > "$DBPATH/fr/tbl2.sql.0"
 echo "INSERT INTO tbl (i, j) VALUES (5, 5);" > "$DBPATH/fr/tbl.sql"
 echo "INSERT INTO tbl (i, j) VALUES (6, 6);" > "$DBPATH/fr/tbl-noused.sql"
-echo "INSERT INTO tbl (i, j) VALUES (7, 7), (8, 8), (9, 9), (10, 10);" > "$DBPATH/tbl1.sql"
+echo "INSERT INTO tbl (i, j) VALUES (7, 7), (8, 8), (9, 9), (10, 10);" > "$DBPATH/tbl1.sql.1"
 
 # Set minDeliverBytes to a small enough number to only write only 1 row each time
 # Set the failpoint to kill the lightning instance as soon as one row is written

@@ -19,13 +19,13 @@ table = "$2"
 type = "table-schema"
 
 [[mydumper.files]]
-pattern = "(?i)^(?:[^/]*/)*([^./]+)/([a-z]+)[0-9]*(?:\\.([0-9]+))?\\.(sql|csv)$"
+pattern = "(?i)^(?:[^/]*/)*([^./]+)/([a-z]+)[0-9]*\\.(sql|csv)(?:\\.([0-9]+))?$"
 schema = "$1"
 table = "$2"
-type = "$4"
+type = "$3"
 
 [[mydumper.files]]
-pattern = "(?i)^(?:[^/]*/)*([a-z]+)[0-9]*(?:\\.([0-9]+))?\\.(sql|csv)$"
+pattern = "(?i)^(?:[^/]*/)*([a-z]+)[0-9]*\\.(sql|csv)(?:\\.([0-9]+))?$"
 schema = "fr"
 table = "$1"
-type = "$3"
+type = "$2"
