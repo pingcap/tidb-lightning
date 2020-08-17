@@ -94,17 +94,22 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 		"/test/123/my_schema.my_table.sql":    {"my_schema", "my_table", "", "", "sql"},
 		"my_dir/my_schema.my_table.csv":       {"my_schema", "my_table", "", "", "csv"},
 		"my_schema.my_table.0001.sql":         {"my_schema", "my_table", "0001", "", "sql"},
-		"my_schema.my_table.0001.sql.gz":      {"my_schema", "my_table", "0001", "gz", "sql"},
+		//"my_schema.my_table.0001.sql.gz":      {"my_schema", "my_table", "0001", "gz", "sql"},
+		"my_schema.my_table.0001.sql.gz":      {},
 		"my_schema.my_table.0001.sql.part001": {"my_schema", "my_table", "0001", "", "sql"},
 	}
 	for path, fields := range inputOutputMap {
 		res := r.Route(path)
-		compress, e := parseCompressionType(fields[3])
-		c.Assert(e, IsNil)
-		ty, e := parseSourceType(fields[4])
-		c.Assert(e, IsNil)
-		exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
-		c.Assert(res, DeepEquals, exp)
+		if len(fields) == 0 {
+			c.Assert(res, IsNil)
+		} else {
+			compress, e := parseCompressionType(fields[3])
+			c.Assert(e, IsNil)
+			ty, e := parseSourceType(fields[4])
+			c.Assert(e, IsNil)
+			exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
+			c.Assert(res, DeepEquals, exp)
+		}
 	}
 
 	// multi rule don't intersect with each other
@@ -115,11 +120,15 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	c.Assert(err, IsNil)
 	for path, fields := range inputOutputMap {
 		res := r.Route(path)
-		compress, e := parseCompressionType(fields[3])
-		c.Assert(e, IsNil)
-		ty, e := parseSourceType(fields[4])
-		c.Assert(e, IsNil)
-		exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
-		c.Assert(res, DeepEquals, exp)
+		if len(fields) == 0 {
+			c.Assert(res, IsNil)
+		} else {
+			compress, e := parseCompressionType(fields[3])
+			c.Assert(e, IsNil)
+			ty, e := parseSourceType(fields[4])
+			c.Assert(e, IsNil)
+			exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
+			c.Assert(res, DeepEquals, exp)
+		}
 	}
 }
