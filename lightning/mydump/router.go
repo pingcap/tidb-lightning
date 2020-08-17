@@ -1,6 +1,7 @@
 package mydump
 
 import (
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -40,18 +41,20 @@ const (
 	CompressionXZ
 )
 
-func parseSourceType(t string) SourceType {
+func parseSourceType(t string) (SourceType, error) {
 	switch strings.ToLower(strings.TrimSpace(t)) {
 	case SchemaSchema:
-		return SourceTypeSchemaSchema
+		return SourceTypeSchemaSchema, nil
 	case TableSchema:
-		return SourceTypeTableSchema
+		return SourceTypeTableSchema, nil
 	case TypeSQL:
-		return SourceTypeSQL
+		return SourceTypeSQL, nil
 	case TypeCSV:
-		return SourceTypeCSV
+		return SourceTypeCSV, nil
+	case TypeIgnore:
+		return SourceTypeIgnore, nil
 	default:
-		return SourceTypeIgnore
+		return SourceTypeIgnore, errors.Errorf("unknown source type '%s'", t)
 	}
 }
 
@@ -70,24 +73,26 @@ func (s SourceType) String() string {
 	}
 }
 
-func parseCompressionType(t string) Compression {
+func parseCompressionType(t string) (Compression, error) {
 	switch strings.ToLower(strings.TrimSpace(t)) {
 	case "gz":
-		return CompressionGZ
+		return CompressionGZ, nil
 	case "lz4":
-		return CompressionLZ4
+		return CompressionLZ4, nil
 	case "zstd":
-		return CompressionZStd
+		return CompressionZStd, nil
 	case "xz":
-		return CompressionXZ
+		return CompressionXZ, nil
+	case "":
+		return CompressionNone, nil
 	default:
-		return CompressionNone
+		return CompressionNone, errors.Errorf("invalid compression type '%s'", t)
 	}
 }
 
 var (
 	isAlphaNum = regexp.MustCompile(`^[A-Za-z0-9]+$`).MatchString
-	isAlpha    = regexp.MustCompile(`^[0-9]+$`).MatchString
+	isNumber   = regexp.MustCompile(`^[0-9]+$`).MatchString
 )
 
 var (
@@ -95,11 +100,11 @@ var (
 		// ignore *-schema-view.sql,-schema-trigger.sql,-schema-post.sql files
 		{Pattern: `(?i).*(-schema-view|-schema-trigger|-schema-post)\.sql`, Type: "ignore"},
 		// db schema create file pattern, matches files like '{schema}-schema-create.sql'
-		{`(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql`, "$1", "", SchemaSchema, "", ""},
+		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql`, Schema: "$1", Table: "", Type: SchemaSchema},
 		// table schema create file pattern, matches files like '{schema}.{table}-schema.sql'
-		{`(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql`, "$1", "$2", TableSchema, "", ""},
+		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql`, Schema: "$1", Table: "$2", Type: TableSchema},
 		// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}'
-		{`(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(\.[0-9]+)?\.(sql|csv)$`, "$1", "$2", "$4", "$3", ""},
+		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(\.[0-9]+)?\.(sql|csv)$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3"},
 	}
 )
 
@@ -122,7 +127,7 @@ func (c chainRouters) Route(path string) *RouteResult {
 	return nil
 }
 
-func Parse(cfg []*config.FileRouteRule) (FileRouter, error) {
+func NewFileRouter(cfg []*config.FileRouteRule) (FileRouter, error) {
 	res := make([]FileRouter, 0, len(cfg))
 	p := &regexRuleParser{}
 	for _, c := range cfg {
@@ -136,7 +141,7 @@ func Parse(cfg []*config.FileRouteRule) (FileRouter, error) {
 }
 
 func DefaultRouter() FileRouter {
-	router, _ := Parse(defaultFileRouteRules)
+	router, _ := NewFileRouter(defaultFileRouteRules)
 	return router
 }
 
@@ -146,11 +151,10 @@ type RegexRouteRule struct {
 }
 
 func (r *RegexRouteRule) Route(path string) *RouteResult {
-	if !r.pattern.MatchString(path) {
+	indexes := r.pattern.FindStringSubmatchIndex(path)
+	if len(indexes) == 0 {
 		return nil
 	}
-
-	indexes := r.pattern.FindStringSubmatchIndex(path)
 	result := &RouteResult{}
 	for _, e := range r.extractors {
 		if !e.Extract(r.pattern, path, indexes, result) {
@@ -173,8 +177,16 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 	}
 	p.rule.pattern = pattern
 
-	err = p.parseFieldExtractor("type", p.r.Type, func(result *RouteResult, value string) {
-		result.Type = parseSourceType(value)
+	err = p.parseFieldExtractor("type", p.r.Type, func(s string) error {
+		_, e := parseSourceType(s)
+		return e
+	}, func(result *RouteResult, value string) bool {
+		ty, err := parseSourceType(value)
+		if err != nil {
+			return false
+		}
+		result.Type = ty
+		return true
 	})
 	if err != nil {
 		return err
@@ -184,8 +196,9 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 		return nil
 	}
 
-	err = p.parseFieldExtractor("schema", p.r.Schema, func(result *RouteResult, value string) {
+	err = p.parseFieldExtractor("schema", p.r.Schema, alwaysValid, func(result *RouteResult, value string) bool {
 		result.Schema = value
+		return true
 	})
 	if err != nil {
 		return err
@@ -193,8 +206,9 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 
 	// special case: when the pattern is for db schema, should not parse table name
 	if p.r.Type != SchemaSchema {
-		err = p.parseFieldExtractor("table", p.r.Table, func(result *RouteResult, value string) {
+		err = p.parseFieldExtractor("table", p.r.Table, alwaysValid, func(result *RouteResult, value string) bool {
 			result.Name = value
+			return true
 		})
 		if err != nil {
 			return err
@@ -202,8 +216,9 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 	}
 
 	if len(p.r.Key) > 0 {
-		err = p.parseFieldExtractor("key", p.r.Key, func(result *RouteResult, value string) {
+		err = p.parseFieldExtractor("key", p.r.Key, alwaysValid, func(result *RouteResult, value string) bool {
 			result.Key = value
+			return true
 		})
 		if err != nil {
 			return err
@@ -211,8 +226,20 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 	}
 
 	if len(p.r.Compression) > 0 {
-		err = p.parseFieldExtractor("compression", p.r.Compression, func(result *RouteResult, value string) {
-			result.Compression = parseCompressionType(value)
+		err = p.parseFieldExtractor("compression", p.r.Compression, func(s string) error {
+			_, e := parseCompressionType(s)
+			return e
+		}, func(result *RouteResult, value string) bool {
+			// TODO: should support restore compressed source files
+			compression, err := parseCompressionType(value)
+			if err != nil {
+				return false
+			}
+			if compression != CompressionNone {
+				log.L().Warn("Currently we don't support restore compressed source file yet, source file will be ignored")
+			}
+			result.Compression = compression
+			return false
 		})
 		if err != nil {
 			return err
@@ -222,10 +249,15 @@ func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
 	return nil
 }
 
+func alwaysValid(_ string) error {
+	return nil
+}
+
 func (p *regexRuleParser) parseFieldExtractor(
 	field,
 	fieldPattern string,
-	applyFn func(result *RouteResult, value string),
+	validateFn func(string) error,
+	applyFn func(result *RouteResult, value string) bool,
 ) error {
 	// pattern is empty, return default rule
 	if len(fieldPattern) == 0 {
@@ -234,6 +266,10 @@ func (p *regexRuleParser) parseFieldExtractor(
 
 	// template is const string, return directly
 	if strings.IndexByte(fieldPattern, '$') < 0 {
+		// check if the const pattern is valid
+		if err := validateFn(fieldPattern); err != nil {
+			return err
+		}
 		p.rule.extractors = append(p.rule.extractors, &constExtractor{
 			value:   fieldPattern,
 			applyFn: applyFn,
@@ -260,7 +296,7 @@ func (p *regexRuleParser) checkSubPatterns(t string) error {
 
 outer:
 	for _, c := range captures {
-		if isAlpha(c) {
+		if isNumber(c) {
 			idx, _ := strconv.Atoi(c)
 			if idx > p.rule.pattern.NumSubexp() {
 				return errors.Errorf("sub pattern capture index '%d' out of range", idx)
@@ -334,7 +370,7 @@ type regexExtractor interface {
 // patExpander extract string by expanding template with the regexp pattern
 type patExpander struct {
 	template string
-	applyFn  func(result *RouteResult, value string)
+	applyFn  func(result *RouteResult, value string) bool
 }
 
 func (p *patExpander) Extract(pattern *regexp.Regexp, path string, matchIndex []int, result *RouteResult) bool {
@@ -342,19 +378,17 @@ func (p *patExpander) Extract(pattern *regexp.Regexp, path string, matchIndex []
 		return false
 	}
 	value := pattern.ExpandString([]byte{}, p.template, path, matchIndex)
-	p.applyFn(result, string(value))
-	return true
+	return p.applyFn(result, string(value))
 }
 
 // constExtractor is a extractor that always return a constant string
 type constExtractor struct {
 	value   string
-	applyFn func(result *RouteResult, value string)
+	applyFn func(result *RouteResult, value string) bool
 }
 
 func (p *constExtractor) Extract(pattern *regexp.Regexp, path string, matchIndex []int, result *RouteResult) bool {
-	p.applyFn(result, p.value)
-	return true
+	return p.applyFn(result, p.value)
 }
 
 type RouteResult struct {

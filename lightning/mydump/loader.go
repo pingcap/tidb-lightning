@@ -114,7 +114,7 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 		return nil, errors.New("not file route rules. You may set 'mydumper.default-route-rules' to true or add 'mydumper.files' configs")
 	}
 
-	fileRouter, err := Parse(fileRouteRules)
+	fileRouter, err := NewFileRouter(fileRouteRules)
 	if err != nil {
 		return nil, err
 	}
@@ -167,8 +167,6 @@ type fileInfo struct {
 	path      string
 	size      int64
 }
-
-// var tableNameRegexp = regexp.MustCompile(`^([^.]+)\.(.*?)(?:\.[0-9]+)?$`)
 
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
 //

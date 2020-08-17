@@ -22,7 +22,7 @@ func (t *testFileRouterSuite) TestRouteParser(c *C) {
 		{`^(?:[^/]*/)*([^/.]+)\.([^./]+)(?:\.[0-9]+)?\.(csv|sql)`, "$1_schema", "$1_table", "$2", "", ""},
 	}
 	for _, r := range rules {
-		_, err := Parse([]*config.FileRouteRule{r})
+		_, err := NewFileRouter([]*config.FileRouteRule{r})
 		c.Assert(err, IsNil)
 	}
 
@@ -33,7 +33,7 @@ func (t *testFileRouterSuite) TestRouteParser(c *C) {
 		{`^(?:[^/]*/)*([^/.]+)\.([^./]+)(?:\.[0-9]+)?\.(csv|sql)`, "$1", "$2", "$3", "", "$4"},
 	}
 	for _, r := range invalidRules {
-		_, err := Parse([]*config.FileRouteRule{r})
+		_, err := NewFileRouter([]*config.FileRouteRule{r})
 		c.Assert(err, NotNil)
 	}
 }
@@ -43,7 +43,7 @@ func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 		{`^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, "$1", "$table", "$type", "$key", "$cp"},
 	}
 
-	r, err := Parse(rules)
+	r, err := NewFileRouter(rules)
 	c.Assert(err, IsNil)
 
 	inputOutputMap := map[string][]string{
@@ -56,8 +56,10 @@ func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 	}
 	for path, fields := range inputOutputMap {
 		res := r.Route(path)
-		compress := parseCompressionType(fields[3])
-		ty := parseSourceType(fields[4])
+		compress, e := parseCompressionType(fields[3])
+		c.Assert(e, IsNil)
+		ty, e := parseSourceType(fields[4])
+		c.Assert(e, IsNil)
 		exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
 		c.Assert(res, DeepEquals, exp)
 	}
@@ -82,7 +84,7 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 		{`^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, "$schema", "$table", "$type", "$key", "$cp"},
 	}
 
-	r, err := Parse(rules)
+	r, err := NewFileRouter(rules)
 	c.Assert(err, IsNil)
 
 	inputOutputMap := map[string][]string{
@@ -97,8 +99,10 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	}
 	for path, fields := range inputOutputMap {
 		res := r.Route(path)
-		compress := parseCompressionType(fields[3])
-		ty := parseSourceType(fields[4])
+		compress, e := parseCompressionType(fields[3])
+		c.Assert(e, IsNil)
+		ty, e := parseSourceType(fields[4])
+		c.Assert(e, IsNil)
 		exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
 		c.Assert(res, DeepEquals, exp)
 	}
@@ -107,12 +111,14 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	// add another rule that math same pattern with the third rule, the result should be no different
 	p := &config.FileRouteRule{`^(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, "test_schema", "test_table", "$type", "$key", "$cp"}
 	rules = append(rules, p)
-	r, err = Parse(rules)
+	r, err = NewFileRouter(rules)
 	c.Assert(err, IsNil)
 	for path, fields := range inputOutputMap {
 		res := r.Route(path)
-		compress := parseCompressionType(fields[3])
-		ty := parseSourceType(fields[4])
+		compress, e := parseCompressionType(fields[3])
+		c.Assert(e, IsNil)
+		ty, e := parseSourceType(fields[4])
+		c.Assert(e, IsNil)
 		exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
 		c.Assert(res, DeepEquals, exp)
 	}
