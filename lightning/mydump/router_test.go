@@ -47,10 +47,10 @@ func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 	c.Assert(err, IsNil)
 
 	inputOutputMap := map[string][]string{
-		"my_schema.my_table.sql":              {"my_schema", "my_table", "", "", "sql"},
-		"/test/123/my_schema.my_table.sql":    {"my_schema", "my_table", "", "", "sql"},
-		"my_dir/my_schema.my_table.csv":       {"my_schema", "my_table", "", "", "csv"},
-		"my_schema.my_table.0001.sql":         {"my_schema", "my_table", "0001", "", "sql"},
+		"my_schema.my_table.sql":           {"my_schema", "my_table", "", "", "sql"},
+		"/test/123/my_schema.my_table.sql": {"my_schema", "my_table", "", "", "sql"},
+		"my_dir/my_schema.my_table.csv":    {"my_schema", "my_table", "", "", "csv"},
+		"my_schema.my_table.0001.sql":      {"my_schema", "my_table", "0001", "", "sql"},
 	}
 	for path, fields := range inputOutputMap {
 		res := r.Route(path)
@@ -86,14 +86,14 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	c.Assert(err, IsNil)
 
 	inputOutputMap := map[string][]string{
-		"test-schema-create.sql":              {"test", "", "", "", SchemaSchema},
-		"test.t-schema.sql":                   {"test", "t", "", "", TableSchema},
-		"my_schema.my_table.sql":              {"my_schema", "my_table", "", "", "sql"},
-		"/test/123/my_schema.my_table.sql":    {"my_schema", "my_table", "", "", "sql"},
-		"my_dir/my_schema.my_table.csv":       {"my_schema", "my_table", "", "", "csv"},
-		"my_schema.my_table.0001.sql":         {"my_schema", "my_table", "0001", "", "sql"},
+		"test-schema-create.sql":           {"test", "", "", "", SchemaSchema},
+		"test.t-schema.sql":                {"test", "t", "", "", TableSchema},
+		"my_schema.my_table.sql":           {"my_schema", "my_table", "", "", "sql"},
+		"/test/123/my_schema.my_table.sql": {"my_schema", "my_table", "", "", "sql"},
+		"my_dir/my_schema.my_table.csv":    {"my_schema", "my_table", "", "", "csv"},
+		"my_schema.my_table.0001.sql":      {"my_schema", "my_table", "0001", "", "sql"},
 		//"my_schema.my_table.0001.sql.gz":      {"my_schema", "my_table", "0001", "gz", "sql"},
-		"my_schema.my_table.0001.sql.gz":      {},
+		"my_schema.my_table.0001.sql.gz": {},
 	}
 	for path, fields := range inputOutputMap {
 		res := r.Route(path)
