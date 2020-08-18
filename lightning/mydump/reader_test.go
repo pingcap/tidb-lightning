@@ -41,9 +41,9 @@ func (s *testMydumpReaderSuite) TestExportStatementNoTrailingNewLine(c *C) {
 
 	_, err = file.Write([]byte("CREATE DATABASE whatever;"))
 	c.Assert(err, IsNil)
-	err = file.Close()
-	c.Assert(err, IsNil)
 	stat, err := file.Stat()
+	c.Assert(err, IsNil)
+	err = file.Close()
 	c.Assert(err, IsNil)
 
 	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
@@ -67,13 +67,12 @@ func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
 		CREATE DATABASE whatever;  
 `))
 	c.Assert(err, IsNil)
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
 	err = file.Close()
 	c.Assert(err, IsNil)
 
 	store, err := storage.NewLocalStorage(os.TempDir())
-	c.Assert(err, IsNil)
-
-	stat, err := file.Stat()
 	c.Assert(err, IsNil)
 
 	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
@@ -96,13 +95,12 @@ func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(
 		 */;
 		CREATE DATABASE whatever;`))
 	c.Assert(err, IsNil)
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
 	err = file.Close()
 	c.Assert(err, IsNil)
 
 	store, err := storage.NewLocalStorage(os.TempDir())
-	c.Assert(err, IsNil)
-
-	stat, err := file.Stat()
 	c.Assert(err, IsNil)
 	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
 	c.Assert(err, IsNil)
@@ -121,13 +119,12 @@ func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
 	c.Assert(err, IsNil)
 	_, err = file.Write([]byte("');\n"))
 	c.Assert(err, IsNil)
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
 	err = file.Close()
 	c.Assert(err, IsNil)
 
 	store, err := storage.NewLocalStorage(os.TempDir())
-	c.Assert(err, IsNil)
-
-	stat, err := file.Stat()
 	c.Assert(err, IsNil)
 	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
 	c.Assert(err, IsNil)
@@ -141,13 +138,12 @@ func (s *testMydumpReaderSuite) TestExportStatementGibberishError(c *C) {
 
 	_, err = file.Write([]byte("\x9e\x02\xdc\xfbZ/=n\xf3\xf2N8\xc1\xf2\xe9\xaa\xd0\x85\xc5}\x97\x07\xae6\x97\x99\x9c\x08\xcb\xe8;"))
 	c.Assert(err, IsNil)
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
 	err = file.Close()
 	c.Assert(err, IsNil)
 
 	store, err := storage.NewLocalStorage(os.TempDir())
-	c.Assert(err, IsNil)
-
-	stat, err := file.Stat()
 	c.Assert(err, IsNil)
 
 	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
