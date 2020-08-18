@@ -115,7 +115,7 @@ func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) bool {
 
 type ChunkCheckpoint struct {
 	Key               ChunkCheckpointKey
-	FileMeta          mydump.SourceMeta
+	FileMeta          mydump.SourceFileMeta
 	ColumnPermutation []int
 	Chunk             mydump.Chunk
 	Checksum          verify.KVChecksum
@@ -872,7 +872,7 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 					Path:   chunkModel.Path,
 					Offset: chunkModel.Offset,
 				},
-				FileMeta: mydump.SourceMeta{
+				FileMeta: mydump.SourceFileMeta{
 					Path:        chunkModel.Path,
 					Type:        mydump.SourceType(chunkModel.Type),
 					Compression: mydump.Compression(chunkModel.Compression),

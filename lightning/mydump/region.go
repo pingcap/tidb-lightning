@@ -30,7 +30,7 @@ type TableRegion struct {
 
 	DB       string
 	Table    string
-	FileMeta SourceMeta
+	FileMeta SourceFileMeta
 
 	Chunk Chunk
 }
@@ -154,7 +154,7 @@ func MakeTableRegions(
 		dataFileSize := dataFile.Size
 
 		divisor := int64(columns)
-		isCsvFile := dataFile.Type == SourceTypeCSV
+		isCsvFile := dataFile.FileMeta.Type == SourceTypeCSV
 		if !isCsvFile {
 			divisor += 2
 		}
@@ -177,7 +177,7 @@ func MakeTableRegions(
 		tableRegion := &TableRegion{
 			DB:       meta.DB,
 			Table:    meta.Name,
-			FileMeta: dataFile.SourceMeta,
+			FileMeta: dataFile.FileMeta,
 			Chunk: Chunk{
 				Offset:       0,
 				EndOffset:    dataFileSize,
@@ -189,7 +189,7 @@ func MakeTableRegions(
 		if tableRegion.Size() > tableRegionSizeWarningThreshold {
 			log.L().Warn(
 				"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
-				zap.String("file", dataFile.Path),
+				zap.String("file", dataFile.FileMeta.Path),
 				zap.Int64("size", dataFileSize))
 		}
 		prevRowIDMax = rowIDMax
@@ -214,7 +214,7 @@ func MakeTableRegions(
 func SplitLargeFile(
 	meta *MDTableMeta,
 	cfg *config.Config,
-	dataFile *SourceFileMeta,
+	dataFile FileInfo,
 	divisor int64,
 	prevRowIdxMax int64,
 	ioWorker *worker.Pool,
@@ -226,7 +226,7 @@ func SplitLargeFile(
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFile.Size {
-			reader, err := os.Open(dataFile.Path)
+			reader, err := os.Open(dataFile.FileMeta.Path)
 			if err != nil {
 				return 0, nil, nil, err
 			}
@@ -243,7 +243,7 @@ func SplitLargeFile(
 			&TableRegion{
 				DB:       meta.DB,
 				Table:    meta.Name,
-				FileMeta: dataFile.SourceMeta,
+				FileMeta: dataFile.FileMeta,
 				Chunk: Chunk{
 					Offset:       startOffset,
 					EndOffset:    endOffset,

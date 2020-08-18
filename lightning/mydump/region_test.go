@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mydump_test
+package mydump
 
 import (
 	"context"
@@ -22,7 +22,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 )
 
@@ -223,7 +222,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		log.Fatal(err)
 	}
 	fileSize := dataFileInfo.Size()
-	fileMeta := &SourceFileMeta{SourceMeta: SourceMeta{Path: filePath, Type: SourceTypeCSV}, Size: fileSize}
+	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV}, Size: fileSize}
 	colCnt := int64(3)
 	for _, tc := range []struct {
 		maxRegionSize int64
@@ -241,7 +240,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		cfg.Mydumper.MaxRegionSize = tc.maxRegionSize
 		prevRowIdxMax := int64(0)
 		ioWorker := worker.NewPool(context.Background(), 4, "io")
-		_, regions, _, err := SplitLargeFile(meta, cfg, fileMeta, colCnt, prevRowIdxMax, ioWorker)
+		_, regions, _, err := SplitLargeFile(meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker)
 		c.Assert(err, IsNil)
 		c.Assert(len(regions), Equals, tc.chkCnt)
 		for i := range tc.offsets {

@@ -353,7 +353,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
 			for _, fileMeta := range tableMeta.DataFiles {
-				if fileMeta.Type == mydump.SourceTypeCSV {
+				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
 					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
 						estimatedChunkCount += int(fileMeta.Size / cfg.MaxRegionSize)

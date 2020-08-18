@@ -124,7 +124,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 					Path:   "/tmp/path/1.sql",
 					Offset: 0,
 				},
-				FileMeta: mydump.SourceMeta{
+				FileMeta: mydump.SourceFileMeta{
 					Path: "/tmp/path/1.sql",
 					Type: mydump.SourceTypeSQL,
 				},
@@ -253,7 +253,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 						Path:   "/tmp/path/1.sql",
 						Offset: 0,
 					},
-					FileMeta: mydump.SourceMeta{
+					FileMeta: mydump.SourceFileMeta{
 						Path: "/tmp/path/1.sql",
 						Type: mydump.SourceTypeSQL,
 					},
