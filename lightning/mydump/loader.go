@@ -43,12 +43,16 @@ type MDTableMeta struct {
 	TotalSize  int64
 }
 
-type SourceFileMeta struct {
+type SourceMeta struct {
 	Path        string
 	Type        SourceType
 	Compression Compression
 	SortKey     string
-	Size        int64
+}
+
+type SourceFileMeta struct {
+	SourceMeta
+	Size int64
 }
 
 func (m *MDTableMeta) GetSchema() string {
@@ -172,7 +176,7 @@ func (ftype fileType) String() string {
 
 type fileInfo struct {
 	tableName filter.Table
-	FileMeta  *SourceFileMeta
+	fileMeta  *SourceFileMeta
 }
 
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
@@ -213,18 +217,18 @@ func (s *mdLoaderSetup) setup(dir string) error {
 			return errors.New("missing {schema}-schema-create.sql")
 		}
 		for _, fileInfo := range s.dbSchemas {
-			if _, dbExists := s.insertDB(fileInfo.tableName.Schema, fileInfo.FileMeta.Path); dbExists && s.loader.router == nil {
-				return errors.Errorf("invalid database schema file, duplicated item - %s", fileInfo.FileMeta.Path)
+			if _, dbExists := s.insertDB(fileInfo.tableName.Schema, fileInfo.fileMeta.Path); dbExists && s.loader.router == nil {
+				return errors.Errorf("invalid database schema file, duplicated item - %s", fileInfo.fileMeta.Path)
 			}
 		}
 
 		// setup table schema
 		for _, fileInfo := range s.tableSchemas {
-			_, dbExists, tableExists := s.insertTable(fileInfo.tableName, fileInfo.FileMeta.Path)
+			_, dbExists, tableExists := s.insertTable(fileInfo.tableName, fileInfo.fileMeta.Path)
 			if !dbExists {
-				return errors.Errorf("invalid table schema file, cannot find db '%s' - %s", fileInfo.tableName.Schema, fileInfo.FileMeta.Path)
+				return errors.Errorf("invalid table schema file, cannot find db '%s' - %s", fileInfo.tableName.Schema, fileInfo.fileMeta.Path)
 			} else if tableExists && s.loader.router == nil {
-				return errors.Errorf("invalid table schema file, duplicated item - %s", fileInfo.FileMeta.Path)
+				return errors.Errorf("invalid table schema file, duplicated item - %s", fileInfo.fileMeta.Path)
 			}
 		}
 	}
@@ -234,13 +238,13 @@ func (s *mdLoaderSetup) setup(dir string) error {
 		tableMeta, dbExists, tableExists := s.insertTable(fileInfo.tableName, "")
 		if !s.loader.noSchema {
 			if !dbExists {
-				return errors.Errorf("invalid data file, miss host db '%s' - %s", fileInfo.tableName.Schema, fileInfo.FileMeta.Path)
+				return errors.Errorf("invalid data file, miss host db '%s' - %s", fileInfo.tableName.Schema, fileInfo.fileMeta.Path)
 			} else if !tableExists {
-				return errors.Errorf("invalid data file, miss host table '%s' - %s", fileInfo.tableName.Name, fileInfo.FileMeta.Path)
+				return errors.Errorf("invalid data file, miss host table '%s' - %s", fileInfo.tableName.Name, fileInfo.fileMeta.Path)
 			}
 		}
-		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.FileMeta)
-		tableMeta.TotalSize += fileInfo.FileMeta.Size
+		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.fileMeta)
+		tableMeta.TotalSize += fileInfo.fileMeta.Size
 	}
 
 	// Put the small table in the front of the slice which can avoid large table
@@ -278,7 +282,7 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 
 		info := fileInfo{
 			tableName: filter.Table{Schema: res.Schema, Name: res.Name},
-			FileMeta:  &SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, Size: f.Size()},
+			fileMeta:  &SourceFileMeta{SourceMeta: SourceMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key}, Size: f.Size()},
 		}
 
 		if s.loader.shouldSkip(&info.tableName) {
@@ -326,7 +330,7 @@ func (s *mdLoaderSetup) route() error {
 	knownDBNames := make(map[string]dbInfo)
 	for _, info := range s.dbSchemas {
 		knownDBNames[info.tableName.Schema] = dbInfo{
-			fileMeta: info.FileMeta,
+			fileMeta: info.fileMeta,
 			count:    1,
 		}
 	}
@@ -353,7 +357,7 @@ func (s *mdLoaderSetup) route() error {
 					newInfo.fileMeta = oldInfo.fileMeta
 					s.dbSchemas = append(s.dbSchemas, fileInfo{
 						tableName: filter.Table{Schema: dbName},
-						FileMeta:  oldInfo.fileMeta,
+						fileMeta:  oldInfo.fileMeta,
 					})
 				}
 				knownDBNames[dbName] = newInfo

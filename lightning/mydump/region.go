@@ -30,7 +30,7 @@ type TableRegion struct {
 
 	DB       string
 	Table    string
-	FileMeta *SourceFileMeta
+	FileMeta SourceMeta
 
 	Chunk Chunk
 }
@@ -174,7 +174,7 @@ func MakeTableRegions(
 		tableRegion := &TableRegion{
 			DB:       meta.DB,
 			Table:    meta.Name,
-			FileMeta: dataFile,
+			FileMeta: dataFile.SourceMeta,
 			Chunk: Chunk{
 				Offset:       0,
 				EndOffset:    dataFileSize,
@@ -240,7 +240,7 @@ func SplitLargeFile(
 			&TableRegion{
 				DB:       meta.DB,
 				Table:    meta.Name,
-				FileMeta: dataFile,
+				FileMeta: dataFile.SourceMeta,
 				Chunk: Chunk{
 					Offset:       startOffset,
 					EndOffset:    endOffset,

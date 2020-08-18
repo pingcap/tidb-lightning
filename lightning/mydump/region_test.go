@@ -223,7 +223,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		log.Fatal(err)
 	}
 	fileSize := dataFileInfo.Size()
-	fileMeta := &SourceFileMeta{Path: filePath, Type: SourceTypeCSV, Size: fileSize}
+	fileMeta := &SourceFileMeta{SourceMeta: SourceMeta{Path: filePath, Type: SourceTypeCSV}, Size: fileSize}
 	colCnt := int64(3)
 	for _, tc := range []struct {
 		maxRegionSize int64
