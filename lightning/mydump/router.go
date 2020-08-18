@@ -140,11 +140,6 @@ func NewFileRouter(cfg []*config.FileRouteRule) (FileRouter, error) {
 	return chainRouters(res), nil
 }
 
-func DefaultRouter() FileRouter {
-	router, _ := NewFileRouter(defaultFileRouteRules)
-	return router
-}
-
 type RegexRouteRule struct {
 	pattern    *regexp.Regexp
 	extractors []regexExtractor

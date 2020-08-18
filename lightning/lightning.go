@@ -230,7 +230,7 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	web.BroadcastInitProgress(dbMetas)
 
 	var procedure *restore.RestoreController
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, mdl.FileRouter())
+	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
