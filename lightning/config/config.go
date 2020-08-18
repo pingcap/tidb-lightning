@@ -565,10 +565,8 @@ func (cfg *Config) Adjust() error {
 			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
 		}
 		cfg.Mydumper.SourceDir = fmt.Sprintf("file://%s", absPath)
-		u, err = url.Parse(cfg.Mydumper.SourceDir)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		u.Path = absPath
+		u.Scheme = "file"
 	}
 
 	found := false
