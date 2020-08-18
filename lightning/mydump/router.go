@@ -127,9 +127,9 @@ func (c chainRouters) Route(path string) *RouteResult {
 
 func NewFileRouter(cfg []*config.FileRouteRule) (FileRouter, error) {
 	res := make([]FileRouter, 0, len(cfg))
-	p := &regexRuleParser{}
+	p := &regexRouterParser{}
 	for _, c := range cfg {
-		p.rule = &RegexRouteRule{}
+		p.rule = &RegexRouter{}
 		if err := p.Parse(c); err != nil {
 			return nil, err
 		}
@@ -138,12 +138,15 @@ func NewFileRouter(cfg []*config.FileRouteRule) (FileRouter, error) {
 	return chainRouters(res), nil
 }
 
-type RegexRouteRule struct {
+// `RegexRouter` is a `FileRouter` implement that apply specific regex pattern to filepath.
+// if regex pattern match, then each extractors with capture the matched regexp pattern and
+// set value to target field in `RouteResult`
+type RegexRouter struct {
 	pattern    *regexp.Regexp
 	extractors []regexExtractor
 }
 
-func (r *RegexRouteRule) Route(path string) *RouteResult {
+func (r *RegexRouter) Route(path string) *RouteResult {
 	indexes := r.pattern.FindStringSubmatchIndex(path)
 	if len(indexes) == 0 {
 		return nil
@@ -157,12 +160,12 @@ func (r *RegexRouteRule) Route(path string) *RouteResult {
 	return result
 }
 
-type regexRuleParser struct {
-	rule *RegexRouteRule
+type regexRouterParser struct {
+	rule *RegexRouter
 	r    *config.FileRouteRule
 }
 
-func (p *regexRuleParser) Parse(r *config.FileRouteRule) error {
+func (p *regexRouterParser) Parse(r *config.FileRouteRule) error {
 	p.r = r
 	pattern, err := regexp.Compile(p.r.Pattern)
 	if err != nil {
@@ -247,7 +250,8 @@ func alwaysValid(_ string) error {
 	return nil
 }
 
-func (p *regexRuleParser) parseFieldExtractor(
+// parse each field extractor in `p.r` and set them to p.rule
+func (p *regexRouterParser) parseFieldExtractor(
 	field,
 	fieldPattern string,
 	validateFn func(string) error,
@@ -282,7 +286,7 @@ func (p *regexRuleParser) parseFieldExtractor(
 	return nil
 }
 
-func (p *regexRuleParser) checkSubPatterns(t string) error {
+func (p *regexRouterParser) checkSubPatterns(t string) error {
 	captures, err := p.extractSubPatterns(t)
 	if err != nil {
 		return errors.Trace(err)
@@ -308,7 +312,7 @@ outer:
 	return nil
 }
 
-func (p *regexRuleParser) extractSubPatterns(t string) ([]string, error) {
+func (p *regexRouterParser) extractSubPatterns(t string) ([]string, error) {
 	var res []string
 	remain := t
 	for {
