@@ -57,10 +57,13 @@ func (rs regionSlice) Swap(i, j int) {
 	rs[i], rs[j] = rs[j], rs[i]
 }
 func (rs regionSlice) Less(i, j int) bool {
-	if rs[i].FileMeta.Path == rs[j].FileMeta.Path {
-		return rs[i].Chunk.Offset < rs[j].Chunk.Offset
+	if rs[i].FileMeta.SortKey != rs[j].FileMeta.SortKey {
+		return rs[i].FileMeta.SortKey < rs[j].FileMeta.SortKey
 	}
-	return rs[i].FileMeta.Path < rs[j].FileMeta.Path
+	if rs[i].FileMeta.Path != rs[j].FileMeta.Path {
+		return rs[i].FileMeta.Path < rs[j].FileMeta.Path
+	}
+	return rs[i].Chunk.Offset < rs[j].Chunk.Offset
 }
 
 ////////////////////////////////////////////////////////////////
