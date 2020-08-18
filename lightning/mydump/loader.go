@@ -252,7 +252,7 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 	// `filepath.Walk` yields the paths in a deterministic (lexicographical) order,
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
-	err := store.WalkDir(ctx, func(path string, size int64) error {
+	err := store.WalkDir(ctx, "", 0, func(path string, size int64) error {
 		lowerFName := strings.ToLower(path)
 
 		segs := strings.Split(path, "/")

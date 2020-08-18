@@ -15,7 +15,7 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
 	github.com/juju/loggo v0.0.0-20180524022052-584905176618 // indirect
 	github.com/onsi/ginkgo v1.13.0 // indirect
-	github.com/pingcap/br v0.0.0-20200813064218-1ab851170883
+	github.com/pingcap/br v0.0.0-20200818063344-3b5df22963a9
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20200729012136-4e113ddee29e
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
@@ -30,7 +30,6 @@ require (
 	github.com/satori/go.uuid v1.2.0
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	github.com/spf13/pflag v1.0.5
 	go.uber.org/zap v1.15.0
 	golang.org/x/net v0.0.0-20200602114024-627f9648deb9
 	golang.org/x/sync v0.0.0-20200317015054-43a5402ce75a

@@ -139,7 +139,7 @@ func (s *testMydumpLoaderSuite) TestTableNoHostDB(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, ErrorMatches, `invalid table schema file, cannot find db - .*[/\\]db\.tbl-schema\.sql`)
+	c.Assert(err, ErrorMatches, `invalid table schema file, cannot find db - .*db\.tbl-schema\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDuplicatedTable(c *C) {
@@ -159,7 +159,7 @@ func (s *testMydumpLoaderSuite) TestDuplicatedTable(c *C) {
 	s.touch(c, "b", "db.tbl-schema.sql")
 
 	_, err := NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, ErrorMatches, `invalid table schema file, duplicated item - .*[/\\]db\.tbl-schema\.sql`)
+	c.Assert(err, ErrorMatches, `invalid table schema file, duplicated item - .*db\.tbl-schema\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDataNoHostDB(c *C) {
@@ -173,7 +173,7 @@ func (s *testMydumpLoaderSuite) TestDataNoHostDB(c *C) {
 	s.touch(c, "db.tbl.sql")
 
 	_, err := NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, ErrorMatches, `invalid data file, miss host db - .*[/\\]db\.tbl\.sql`)
+	c.Assert(err, ErrorMatches, `invalid data file, miss host db - .*[/\\]?db\.tbl\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
@@ -187,7 +187,7 @@ func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
 	s.touch(c, "db.tbl.sql")
 
 	_, err := NewMyDumpLoader(context.Background(), s.cfg)
-	c.Assert(err, ErrorMatches, `invalid data file, miss host table - .*[/\\]db\.tbl\.sql`)
+	c.Assert(err, ErrorMatches, `invalid data file, miss host table - .*[/\\]?db\.tbl\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
@@ -208,17 +208,17 @@ func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
 			DB:         "db",
 			Name:       "tbl",
 			SchemaFile: fileInfo{},
-			DataFiles:  []fileInfo{{Path: p, Size: 0}},
+			DataFiles:  []fileInfo{{Path: "db.tbl.sql", Size: 0}},
 		}},
 	}})
 }
 
 func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
-	pDBSchema := s.touch(c, "db-schema-create.sql")
-	pT1Schema := s.touch(c, "db.tbl.with.dots-schema.sql")
-	pT1Data := s.touch(c, "db.tbl.with.dots.0001.sql")
-	pT2Schema := s.touch(c, "db.0002-schema.sql")
-	pT2Data := s.touch(c, "db.0002.sql")
+	s.touch(c, "db-schema-create.sql")
+	s.touch(c, "db.tbl.with.dots-schema.sql")
+	s.touch(c, "db.tbl.with.dots.0001.sql")
+	s.touch(c, "db.0002-schema.sql")
+	s.touch(c, "db.0002.sql")
 
 	// insert some tables with file name structures which we're going to ignore.
 	s.touch(c, "db.v-schema-view.sql")
@@ -232,19 +232,19 @@ func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
 
 	c.Assert(mdl.GetDatabases(), DeepEquals, []*MDDatabaseMeta{{
 		Name:       "db",
-		SchemaFile: pDBSchema,
+		SchemaFile: "db-schema-create.sql",
 		Tables: []*MDTableMeta{
 			{
 				DB:         "db",
 				Name:       "0002",
-				SchemaFile: fileInfo{Path: pT2Schema},
-				DataFiles:  []fileInfo{{Path: pT2Data, Size: 0}},
+				SchemaFile: fileInfo{Path: "db.0002-schema.sql"},
+				DataFiles:  []fileInfo{{Path: "db.0002.sql", Size: 0}},
 			},
 			{
 				DB:         "db",
 				Name:       "tbl.with.dots",
-				SchemaFile: fileInfo{Path: pT1Schema},
-				DataFiles:  []fileInfo{{Path: pT1Data, Size: 0}},
+				SchemaFile: fileInfo{Path: "db.tbl.with.dots-schema.sql"},
+				DataFiles:  []fileInfo{{Path: "db.tbl.with.dots.0001.sql", Size: 0}},
 			},
 		},
 	}})
@@ -282,65 +282,64 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 			d0-schema-create.sql
 	*/
 
-	pA0SchemaCreate := s.touch(c, "a0-schema-create.sql")
-	pA0T0Schema := s.touch(c, "a0.t0-schema.sql")
-	pA0T0Data := s.touch(c, "a0.t0.1.sql")
-	_ = s.touch(c, "a0.t1-schema.sql")
-	pA0T1Data := s.touch(c, "a0.t1.1.sql")
+	s.touch(c, "a0-schema-create.sql")
+	s.touch(c, "a0.t0-schema.sql")
+	s.touch(c, "a0.t0.1.sql")
+	s.touch(c, "a0.t1-schema.sql")
+	s.touch(c, "a0.t1.1.sql")
 
-	pA1SchemaCreate := s.touch(c, "a1-schema-create.sql")
-	pA1S1Schema := s.touch(c, "a1.s1-schema.sql")
-	pA1S1Data := s.touch(c, "a1.s1.1.sql")
-	_ = s.touch(c, "a1.t2-schema.sql")
-	pA1T2Data := s.touch(c, "a1.t2.1.sql")
+	s.touch(c, "a1-schema-create.sql")
+	s.touch(c, "a1.s1-schema.sql")
+	s.touch(c, "a1.s1.1.sql")
+	s.touch(c, "a1.t2-schema.sql")
+	s.touch(c, "a1.t2.1.sql")
 
-	pC0SchemaCreate := s.touch(c, "c0-schema-create.sql")
-	pC0T3Schema := s.touch(c, "c0.t3-schema.sql")
-	pC0T3Data := s.touch(c, "c0.t3.1.sql")
+	s.touch(c, "c0-schema-create.sql")
+	s.touch(c, "c0.t3-schema.sql")
+	s.touch(c, "c0.t3.1.sql")
 
-	pD0SchemaCreate := s.touch(c, "d0-schema-create.sql")
+	s.touch(c, "d0-schema-create.sql")
 
 	mdl, err := NewMyDumpLoader(context.Background(), s.cfg)
 	c.Assert(err, IsNil)
-
 	c.Assert(mdl.GetDatabases(), DeepEquals, []*MDDatabaseMeta{
 		{
 			Name:       "a1",
-			SchemaFile: pA1SchemaCreate,
+			SchemaFile: "a1-schema-create.sql",
 			Tables: []*MDTableMeta{
 				{
 					DB:         "a1",
 					Name:       "s1",
-					SchemaFile: fileInfo{Path: pA1S1Schema},
-					DataFiles:  []fileInfo{{Path: pA1S1Data}},
+					SchemaFile: fileInfo{Path: "a1.s1-schema.sql"},
+					DataFiles:  []fileInfo{{Path: "a1.s1.1.sql"}},
 				},
 			},
 		},
 		{
 			Name:       "d0",
-			SchemaFile: pD0SchemaCreate,
+			SchemaFile: "d0-schema-create.sql",
 		},
 		{
 			Name:       "b",
-			SchemaFile: pA0SchemaCreate,
+			SchemaFile: "a0-schema-create.sql",
 			Tables: []*MDTableMeta{
 				{
 					DB:         "b",
 					Name:       "u",
-					SchemaFile: fileInfo{Path: pA0T0Schema},
-					DataFiles:  []fileInfo{{Path: pA0T0Data}, {Path: pA0T1Data}, {Path: pA1T2Data}},
+					SchemaFile: fileInfo{Path: "a0.t0-schema.sql"},
+					DataFiles:  []fileInfo{{Path: "a0.t0.1.sql"}, {Path: "a0.t1.1.sql"}, {Path: "a1.t2.1.sql"}},
 				},
 			},
 		},
 		{
 			Name:       "c",
-			SchemaFile: pC0SchemaCreate,
+			SchemaFile: "c0-schema-create.sql",
 			Tables: []*MDTableMeta{
 				{
 					DB:         "c",
 					Name:       "t3",
-					SchemaFile: fileInfo{Path: pC0T3Schema},
-					DataFiles:  []fileInfo{{Path: pC0T3Data}},
+					SchemaFile: fileInfo{Path: "c0.t3-schema.sql"},
+					DataFiles:  []fileInfo{{Path: "c0.t3.1.sql"}},
 				},
 			},
 		},

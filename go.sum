@@ -462,8 +462,8 @@ github.com/pingcap/br v0.0.0-20200803052654-e6f63fc1807a/go.mod h1:8j7vGUfHCETYb
 github.com/pingcap/br v0.0.0-20200805121136-181c081ba6ac h1:UTDTEFuFdS/cyCqYAcp8rWBfG8qJnzHIckC5FPUKfqw=
 github.com/pingcap/br v0.0.0-20200805121136-181c081ba6ac/go.mod h1:9P24mNzNmXjggYBm4pnb08slSbua8FA6QIyg68GpuhQ=
 github.com/pingcap/br v0.0.0-20200805121136-181c081ba6ac/go.mod h1:9P24mNzNmXjggYBm4pnb08slSbua8FA6QIyg68GpuhQ=
-github.com/pingcap/br v0.0.0-20200813064218-1ab851170883 h1:VpYVrgvl+M+vWpWstH5aYGr+FoxYlnjikt1bYYOxS28=
-github.com/pingcap/br v0.0.0-20200813064218-1ab851170883/go.mod h1:wX52iF4voQzGaYHLCgfbN8nV97P4HIfv0MMj9G8fHY8=
+github.com/pingcap/br v0.0.0-20200818063344-3b5df22963a9 h1:mPhZCfFje628vZ6xoXVtwmyYK/Yd2Zd4/h+HX04j2ao=
+github.com/pingcap/br v0.0.0-20200818063344-3b5df22963a9/go.mod h1:wX52iF4voQzGaYHLCgfbN8nV97P4HIfv0MMj9G8fHY8=
 github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8/go.mod h1:B1+S9LNcuMyLH/4HMTViQOJevkGiik3wW2AN9zb2fNQ=
 github.com/pingcap/check v0.0.0-20191107115940-caf2b9e6ccf4/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
 github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
