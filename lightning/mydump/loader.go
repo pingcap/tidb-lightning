@@ -254,10 +254,7 @@ func (s *mdLoaderSetup) setup(dir string) error {
 		for _, tbMeta := range dbMeta.Tables {
 			dataFiles := tbMeta.DataFiles
 			sort.SliceStable(dataFiles, func(i, j int) bool {
-				if dataFiles[i].FileMeta.SortKey != dataFiles[j].FileMeta.SortKey {
-					return dataFiles[i].FileMeta.SortKey < dataFiles[j].FileMeta.SortKey
-				}
-				return dataFiles[i].FileMeta.Path < dataFiles[j].FileMeta.Path
+				return dataFiles[i].FileMeta.SortKey < dataFiles[j].FileMeta.SortKey
 			})
 		}
 	}
