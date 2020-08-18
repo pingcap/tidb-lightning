@@ -89,8 +89,8 @@ func parseCompressionType(t string) (Compression, error) {
 }
 
 var (
-	isAlphaNum = regexp.MustCompile(`^[A-Za-z0-9]+$`).MatchString
-	isNumber   = regexp.MustCompile(`^[0-9]+$`).MatchString
+	isAlphaNumOrUnderline = regexp.MustCompile(`^[A-Za-z0-9_]+$`).MatchString
+	isNumber              = regexp.MustCompile(`^[0-9]+$`).MatchString
 )
 
 var (
@@ -143,7 +143,7 @@ func NewFileRouter(cfg []*config.FileRouteRule) (FileRouter, error) {
 // set value to target field in `RouteResult`
 type RegexRouter struct {
 	pattern    *regexp.Regexp
-	extractors []regexExtractor
+	extractors []regexExpander
 }
 
 func (r *RegexRouter) Route(path string) *RouteResult {
@@ -153,7 +153,7 @@ func (r *RegexRouter) Route(path string) *RouteResult {
 	}
 	result := &RouteResult{}
 	for _, e := range r.extractors {
-		if !e.Extract(r.pattern, path, indexes, result) {
+		if !e.Expand(r.pattern, path, indexes, result) {
 			return nil
 		}
 	}
@@ -268,7 +268,7 @@ func (p *regexRouterParser) parseFieldExtractor(
 		if err := validateFn(fieldPattern); err != nil {
 			return err
 		}
-		p.rule.extractors = append(p.rule.extractors, &constExtractor{
+		p.rule.extractors = append(p.rule.extractors, &constExpander{
 			value:   fieldPattern,
 			applyFn: applyFn,
 		})
@@ -320,21 +320,27 @@ func (p *regexRouterParser) extractSubPatterns(t string) ([]string, error) {
 		if idx < 0 {
 			return res, nil
 		}
+		// $$ is expanding to '$', so just continue
+		if idx < len(remain)-1 && remain[idx+1] == '$' {
+			remain = remain[idx+2:]
+			continue
+		}
 		remain = remain[idx+1:]
 		if len(remain) == 0 {
 			return nil, errors.Errorf("invalid template '%s', cannot end with '$'", t)
 		}
 
-		if remain[0] == '(' {
+		// parse sub-pattern such as $(pattern) or ${pattern}
+		if remain[0] == '{' {
 			// parenthesis pattern
-			end := strings.IndexByte(remain, ')')
+			end := strings.IndexByte(remain, '}')
 			if end < 0 {
-				return nil, errors.Errorf("invalid template '%s', named capture starts with '$(' should end with ')'", t)
+				return nil, errors.Errorf("invalid template '%s', named capture starts with '${' should end with '}'", t)
 			}
 			if end == 1 {
 				return nil, errors.Errorf("invalid template '%s', named capture must not be empty", t)
 			}
-			if !isAlphaNum(remain[1:end]) {
+			if !isAlphaNumOrUnderline(remain[1:end]) {
 				return nil, errors.Errorf("invalid template '%s', invalid named capture '%s'", t, remain[1:end-1])
 			}
 
@@ -343,8 +349,9 @@ func (p *regexRouterParser) extractSubPatterns(t string) ([]string, error) {
 			continue
 		}
 
+		// find the end Index of
 		endIdx := strings.IndexFunc(remain, func(r rune) bool {
-			return r < 48 || (r > 57 && r < 65) || (r > 90 && r < 97) || r > 122
+			return r < 48 || (r > 57 && r < 65) || (r > 90 && r != 95 && r < 97) || r > 122
 		})
 		switch {
 		case endIdx == 0:
@@ -359,10 +366,11 @@ func (p *regexRouterParser) extractSubPatterns(t string) ([]string, error) {
 	}
 }
 
-// extractor extract one or more values from path base on pattern to result
+// regexExpander expand one or more values from path base on pattern to result
 // return true for success and false for failed
-type regexExtractor interface {
-	Extract(pattern *regexp.Regexp, path string, matchIndex []int, result *RouteResult) bool
+type regexExpander interface {
+	// expand template with pattern and matchIndex, and set the result to `RouteResult`
+	Expand(pattern *regexp.Regexp, path string, matchIndex []int, result *RouteResult) bool
 }
 
 // patExpander extract string by expanding template with the regexp pattern
@@ -371,7 +379,7 @@ type patExpander struct {
 	applyFn  func(result *RouteResult, value string) bool
 }
 
-func (p *patExpander) Extract(pattern *regexp.Regexp, path string, matchIndex []int, result *RouteResult) bool {
+func (p *patExpander) Expand(pattern *regexp.Regexp, path string, matchIndex []int, result *RouteResult) bool {
 	if len(matchIndex) == 0 {
 		return false
 	}
@@ -379,13 +387,13 @@ func (p *patExpander) Extract(pattern *regexp.Regexp, path string, matchIndex []
 	return p.applyFn(result, string(value))
 }
 
-// constExtractor is a extractor that always return a constant string
-type constExtractor struct {
+// constExpander is a extractor that always return a constant string
+type constExpander struct {
 	value   string
 	applyFn func(result *RouteResult, value string) bool
 }
 
-func (p *constExtractor) Extract(pattern *regexp.Regexp, path string, matchIndex []int, result *RouteResult) bool {
+func (p *constExpander) Expand(pattern *regexp.Regexp, path string, matchIndex []int, result *RouteResult) bool {
 	return p.applyFn(result, p.value)
 }
 

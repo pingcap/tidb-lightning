@@ -129,3 +129,45 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 		}
 	}
 }
+
+func (t *testFileRouterSuite) TestRouteExpanding(c *C) {
+	rule := &config.FileRouteRule{
+		Pattern:     `^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table_name>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`,
+		Schema:      "$schema",
+		Type:        "$type",
+		Key:         "$key",
+		Compression: "$cp",
+	}
+	path := "db.table.001.sql"
+	tablePatternResMap := map[string]string{
+		"$schema":             "db",
+		"$table_name":         "table",
+		"$schema.$table_name": "db.table",
+		"${1}":                "db",
+		"${1}_$table_name":    "db_table",
+		"${2}.schema":         "table.schema",
+		"$${2}":               "${2}",
+		"$$table_name":        "$table_name",
+		"$table_name-123":     "table-123",
+		"$$12$1$schema":       "$12dbdb",
+		"${table_name}$$2":    "table$2",
+		"${table_name}$$":     "table$",
+		"{1}$$":               "{1}$",
+	}
+
+	for pat, value := range tablePatternResMap {
+		rule.Table = pat
+		router, err := NewFileRouter([]*config.FileRouteRule{rule})
+		c.Assert(err, IsNil)
+		res := router.Route(path)
+		c.Assert(res, NotNil)
+		c.Assert(res.Name, Equals, value)
+	}
+
+	invalidPatterns := []string{"$1_$schema", "$table_name$", "${1", "${schema", "$schema_$table_name"}
+	for _, pat := range invalidPatterns {
+		rule.Table = pat
+		_, err := NewFileRouter([]*config.FileRouteRule{rule})
+		c.Assert(err, NotNil)
+	}
+}
