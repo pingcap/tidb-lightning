@@ -14,13 +14,14 @@
 package mydump_test
 
 import (
-	"github.com/pingcap/tidb-tools/pkg/filter"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb-tools/pkg/filter"
+	
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
