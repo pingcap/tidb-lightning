@@ -38,9 +38,17 @@ type MDTableMeta struct {
 	DB         string
 	Name       string
 	SchemaFile string
-	DataFiles  []string
+	DataFiles  []*SourceFileMeta
 	charSet    string
 	TotalSize  int64
+}
+
+type SourceFileMeta struct {
+	Path        string
+	Type        SourceType
+	Compression Compression
+	SortKey     string
+	Size        int64
 }
 
 func (m *MDTableMeta) GetSchema() string {
@@ -164,8 +172,7 @@ func (ftype fileType) String() string {
 
 type fileInfo struct {
 	tableName filter.Table
-	path      string
-	size      int64
+	FileMeta  *SourceFileMeta
 }
 
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
@@ -206,18 +213,18 @@ func (s *mdLoaderSetup) setup(dir string) error {
 			return errors.New("missing {schema}-schema-create.sql")
 		}
 		for _, fileInfo := range s.dbSchemas {
-			if _, dbExists := s.insertDB(fileInfo.tableName.Schema, fileInfo.path); dbExists && s.loader.router == nil {
-				return errors.Errorf("invalid database schema file, duplicated item - %s", fileInfo.path)
+			if _, dbExists := s.insertDB(fileInfo.tableName.Schema, fileInfo.FileMeta.Path); dbExists && s.loader.router == nil {
+				return errors.Errorf("invalid database schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 
 		// setup table schema
 		for _, fileInfo := range s.tableSchemas {
-			_, dbExists, tableExists := s.insertTable(fileInfo.tableName, fileInfo.path)
+			_, dbExists, tableExists := s.insertTable(fileInfo.tableName, fileInfo.FileMeta.Path)
 			if !dbExists {
-				return errors.Errorf("invalid table schema file, cannot find db '%s' - %s", fileInfo.tableName.Schema, fileInfo.path)
+				return errors.Errorf("invalid table schema file, cannot find db '%s' - %s", fileInfo.tableName.Schema, fileInfo.FileMeta.Path)
 			} else if tableExists && s.loader.router == nil {
-				return errors.Errorf("invalid table schema file, duplicated item - %s", fileInfo.path)
+				return errors.Errorf("invalid table schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 	}
@@ -227,13 +234,13 @@ func (s *mdLoaderSetup) setup(dir string) error {
 		tableMeta, dbExists, tableExists := s.insertTable(fileInfo.tableName, "")
 		if !s.loader.noSchema {
 			if !dbExists {
-				return errors.Errorf("invalid data file, miss host db '%s' - %s", fileInfo.tableName.Schema, fileInfo.path)
+				return errors.Errorf("invalid data file, miss host db '%s' - %s", fileInfo.tableName.Schema, fileInfo.FileMeta.Path)
 			} else if !tableExists {
-				return errors.Errorf("invalid data file, miss host table '%s' - %s", fileInfo.tableName.Name, fileInfo.path)
+				return errors.Errorf("invalid data file, miss host table '%s' - %s", fileInfo.tableName.Name, fileInfo.FileMeta.Path)
 			}
 		}
-		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.path)
-		tableMeta.TotalSize += fileInfo.size
+		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.FileMeta)
+		tableMeta.TotalSize += fileInfo.FileMeta.Size
 	}
 
 	// Put the small table in the front of the slice which can avoid large table
@@ -271,8 +278,7 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 
 		info := fileInfo{
 			tableName: filter.Table{Schema: res.Schema, Name: res.Name},
-			path:      path,
-			size:      f.Size(),
+			FileMeta:  &SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, Size: f.Size()},
 		}
 
 		if s.loader.shouldSkip(&info.tableName) {
@@ -313,15 +319,15 @@ func (s *mdLoaderSetup) route() error {
 	}
 
 	type dbInfo struct {
-		path  string
-		count int
+		fileMeta *SourceFileMeta
+		count    int
 	}
 
 	knownDBNames := make(map[string]dbInfo)
 	for _, info := range s.dbSchemas {
 		knownDBNames[info.tableName.Schema] = dbInfo{
-			path:  info.path,
-			count: 1,
+			fileMeta: info.FileMeta,
+			count:    1,
 		}
 	}
 	for _, info := range s.tableSchemas {
@@ -344,10 +350,10 @@ func (s *mdLoaderSetup) route() error {
 				newInfo, ok := knownDBNames[dbName]
 				newInfo.count++
 				if !ok {
-					newInfo.path = oldInfo.path
+					newInfo.fileMeta = oldInfo.fileMeta
 					s.dbSchemas = append(s.dbSchemas, fileInfo{
 						tableName: filter.Table{Schema: dbName},
-						path:      oldInfo.path,
+						FileMeta:  oldInfo.fileMeta,
 					})
 				}
 				knownDBNames[dbName] = newInfo
@@ -404,7 +410,7 @@ func (s *mdLoaderSetup) insertTable(tableName filter.Table, path string) (*MDTab
 			DB:         tableName.Schema,
 			Name:       tableName.Name,
 			SchemaFile: path,
-			DataFiles:  make([]string, 0, 16),
+			DataFiles:  make([]*SourceFileMeta, 0, 16),
 			charSet:    s.loader.charSet,
 		}
 		dbMeta.Tables = append(dbMeta.Tables, ptr)

@@ -49,4 +49,8 @@ message ChunkCheckpointModel {
     uint64 kvc_kvs = 10;
     fixed64 kvc_checksum = 11;
     sfixed64 timestamp = 13;
+    int32 type = 14;
+    int32 compression = 15;
+    string sort_key = 16;
+    int64 size = 17;
 }

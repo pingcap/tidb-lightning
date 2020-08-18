@@ -168,15 +168,15 @@ trim-last-separator = false
 # supported by go regexp. 
 #[[mydumper.files]]
 # pattern is  a regexp in Go syntax for matching the file path.
-# pattern = "(?i)^(?:[^/]*/)(?P<schema>[^/.]+)\.([^/.]+)(?:\.([0-9]+))?\.(sql|csv)$"
+#pattern = '(?i)^(?:[^/]*/)(?P<schema>[^/.]+)\.([^/.]+)(?:\.([0-9]+))?\.(sql|csv)$'
 # schema(database) name
-# schema = "$schema"
+#schema = "$schema"
 # table name
-# table = "$2"
+#table = "$2"
 # file type, can be one of schema-schema, table-schema, sql, csv
-# type = "$4"
+#type = "$4"
 # an arbitrary string used to maintain the sort order among the files for row ID allocation and checkpoint resumption
-# key = "$3"
+#key = "$3"
 
 # configuration for tidb server address(one is enough) and pd server address(one is enough).
 [tidb]

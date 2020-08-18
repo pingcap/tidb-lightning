@@ -204,7 +204,7 @@ func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
 			DB:         "db",
 			Name:       "tbl",
 			SchemaFile: "",
-			DataFiles:  []string{p},
+			DataFiles:  []*md.SourceFileMeta{{Path: p, Type: md.SourceTypeSQL}},
 		}},
 	}})
 }
@@ -225,7 +225,6 @@ func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
 
 	mdl, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, IsNil)
-
 	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{{
 		Name:       "db",
 		SchemaFile: pDBSchema,
@@ -234,13 +233,13 @@ func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
 				DB:         "db",
 				Name:       "0002",
 				SchemaFile: pT2Schema,
-				DataFiles:  []string{pT2Data},
+				DataFiles:  []*md.SourceFileMeta{{Path: pT2Data, Type: md.SourceTypeSQL}},
 			},
 			{
 				DB:         "db",
 				Name:       "tbl.with.dots",
 				SchemaFile: pT1Schema,
-				DataFiles:  []string{pT1Data},
+				DataFiles:  []*md.SourceFileMeta{{Path: pT1Data, Type: md.SourceTypeSQL, SortKey: "0001"}},
 			},
 		},
 	}})
@@ -298,7 +297,6 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 
 	mdl, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, IsNil)
-
 	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
 		{
 			Name:       "a1",
@@ -308,7 +306,7 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 					DB:         "a1",
 					Name:       "s1",
 					SchemaFile: pA1S1Schema,
-					DataFiles:  []string{pA1S1Data},
+					DataFiles:  []*md.SourceFileMeta{{Path: pA1S1Data, Type: md.SourceTypeSQL, SortKey: "1"}},
 				},
 			},
 		},
@@ -324,7 +322,11 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 					DB:         "b",
 					Name:       "u",
 					SchemaFile: pA0T0Schema,
-					DataFiles:  []string{pA0T0Data, pA0T1Data, pA1T2Data},
+					DataFiles: []*md.SourceFileMeta{
+						{Path: pA0T0Data, Type: md.SourceTypeSQL, SortKey: "1"},
+						{Path: pA0T1Data, Type: md.SourceTypeSQL, SortKey: "1"},
+						{Path: pA1T2Data, Type: md.SourceTypeSQL, SortKey: "1"},
+					},
 				},
 			},
 		},
@@ -336,7 +338,7 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 					DB:         "c",
 					Name:       "t3",
 					SchemaFile: pC0T3Schema,
-					DataFiles:  []string{pC0T3Data},
+					DataFiles:  []*md.SourceFileMeta{{Path: pC0T3Data, Type: md.SourceTypeSQL, SortKey: "1"}},
 				},
 			},
 		},
@@ -395,7 +397,6 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 
 	mdl, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, IsNil)
-
 	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
 		{
 			Name:       "d1",
@@ -405,7 +406,11 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 					DB:         "d1",
 					Name:       "test",
 					SchemaFile: d1TestTable,
-					DataFiles:  []string{d1TestData0, d1TestData1, d1TestData2},
+					DataFiles: []*md.SourceFileMeta{
+						{Path: d1TestData0, Type: md.SourceTypeSQL},
+						{Path: d1TestData1, Type: md.SourceTypeSQL},
+						{Path: d1TestData2, Type: md.SourceTypeSQL},
+					},
 				},
 			},
 		},
@@ -417,7 +422,7 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 					DB:         "d2",
 					Name:       "abc",
 					SchemaFile: d2TestTable,
-					DataFiles:  []string{d2AbcData0},
+					DataFiles:  []*md.SourceFileMeta{{Path: d2AbcData0, Type: md.SourceTypeSQL}},
 				},
 			},
 		},

@@ -71,7 +71,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		table := meta.Name
 		fmt.Printf("[%s] region count ===============> %d\n", table, len(regions))
 		for _, region := range regions {
-			fname := filepath.Base(region.File)
+			fname := filepath.Base(region.FileMeta.Path)
 			fmt.Printf("[%s] rowID = %5d / rows = %5d / offset = %10d / size = %10d \n",
 				fname,
 				region.RowIDMin(),
@@ -83,9 +83,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		// check - region-size vs file-size
 		var tolFileSize int64 = 0
 		for _, file := range meta.DataFiles {
-			fileSize, err := getFileSize(file)
-			c.Assert(err, IsNil)
-			tolFileSize += fileSize
+			tolFileSize += file.Size
 		}
 		var tolRegionSize int64 = 0
 		for _, region := range regions {
@@ -105,7 +103,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		preReg := regions[0]
 		for i := 1; i < regionNum; i++ {
 			reg := regions[i]
-			if preReg.File == reg.File {
+			if preReg.FileMeta.Path == reg.FileMeta.Path {
 				c.Assert(reg.Offset(), Equals, preReg.Offset()+preReg.Size())
 				c.Assert(reg.RowIDMin(), Equals, preReg.RowIDMin()+preReg.Rows())
 			} else {
@@ -225,6 +223,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		log.Fatal(err)
 	}
 	fileSize := dataFileInfo.Size()
+	fileMeta := &SourceFileMeta{Path: filePath, Type: SourceTypeCSV, Size: fileSize}
 	colCnt := int64(3)
 	for _, tc := range []struct {
 		maxRegionSize int64
@@ -242,7 +241,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		cfg.Mydumper.MaxRegionSize = tc.maxRegionSize
 		prevRowIdxMax := int64(0)
 		ioWorker := worker.NewPool(context.Background(), 4, "io")
-		_, regions, _, err := SplitLargeFile(meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker)
+		_, regions, _, err := SplitLargeFile(meta, cfg, fileMeta, colCnt, prevRowIdxMax, ioWorker)
 		c.Assert(err, IsNil)
 		c.Assert(len(regions), Equals, tc.chkCnt)
 		for i := range tc.offsets {

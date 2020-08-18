@@ -352,14 +352,11 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	estimatedChunkCount := 0
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
-			for _, tablePath := range tableMeta.DataFiles {
-				isCsvFile := strings.HasSuffix(strings.ToLower(tablePath), ".csv")
-				if isCsvFile {
-					f, _ := os.Stat(tablePath)
-					dataFileSize := f.Size()
+			for _, fileMeta := range tableMeta.DataFiles {
+				if fileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if dataFileSize > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += int(dataFileSize / cfg.MaxRegionSize)
+					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += int(fileMeta.Size / cfg.MaxRegionSize)
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -1377,9 +1374,10 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 			}
 			engine.Chunks = append(engine.Chunks, &ChunkCheckpoint{
 				Key: ChunkCheckpointKey{
-					Path:   chunk.File,
+					Path:   chunk.FileMeta.Path,
 					Offset: chunk.Chunk.Offset,
 				},
+				FileMeta:          chunk.FileMeta,
 				ColumnPermutation: nil,
 				Chunk:             chunk.Chunk,
 				Timestamp:         timestamp,
