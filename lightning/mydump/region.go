@@ -48,24 +48,6 @@ func (reg *TableRegion) Size() int64 {
 	return reg.Chunk.EndOffset - reg.Chunk.Offset
 }
 
-type regionSlice []*TableRegion
-
-func (rs regionSlice) Len() int {
-	return len(rs)
-}
-func (rs regionSlice) Swap(i, j int) {
-	rs[i], rs[j] = rs[j], rs[i]
-}
-func (rs regionSlice) Less(i, j int) bool {
-	if rs[i].FileMeta.SortKey != rs[j].FileMeta.SortKey {
-		return rs[i].FileMeta.SortKey < rs[j].FileMeta.SortKey
-	}
-	if rs[i].FileMeta.Path != rs[j].FileMeta.Path {
-		return rs[i].FileMeta.Path < rs[j].FileMeta.Path
-	}
-	return rs[i].Chunk.Offset < rs[j].Chunk.Offset
-}
-
 ////////////////////////////////////////////////////////////////
 
 func AllocateEngineIDs(
@@ -146,7 +128,7 @@ func MakeTableRegions(
 	ioWorkers *worker.Pool,
 ) ([]*TableRegion, error) {
 	// Split files into regions
-	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
+	filesRegions := make([]*TableRegion, 0, len(meta.DataFiles))
 	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
 	prevRowIDMax := int64(0)
 	var err error
