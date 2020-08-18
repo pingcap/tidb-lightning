@@ -21,10 +21,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-tools/pkg/filter"
-	
+	router "github.com/pingcap/tidb-tools/pkg/table-router"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	md "github.com/pingcap/tidb-lightning/lightning/mydump"
-	router "github.com/pingcap/tidb-tools/pkg/table-router"
 )
 
 var _ = Suite(&testMydumpLoaderSuite{})

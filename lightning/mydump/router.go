@@ -1,15 +1,13 @@
 package mydump
 
 import (
-	"github.com/pingcap/tidb-lightning/lightning/log"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb-lightning/lightning/config"
-
 	"github.com/pingcap/errors"
-
+	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 )
 

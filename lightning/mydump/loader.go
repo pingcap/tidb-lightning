@@ -89,7 +89,7 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	var err error
 
 	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
-		return nil, errors.New("table route is deprecated, can't both config [routes] and [mydumper.files]")
+		return nil, errors.New("table route is deprecated, can't config both [routes] and [mydumper.files]")
 	}
 
 	if len(cfg.Routes) > 0 {

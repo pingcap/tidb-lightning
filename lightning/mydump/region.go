@@ -14,9 +14,10 @@
 package mydump
 
 import (
-	"go.uber.org/zap"
 	"math"
 	"os"
+
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
