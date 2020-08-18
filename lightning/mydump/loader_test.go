@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mydump
+package mydump_test
 
 import (
 	"github.com/pingcap/tidb-tools/pkg/filter"
@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-lightning/lightning/config"
+	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 )
 

@@ -1,10 +1,10 @@
 package mydump
 
 import (
-	"github.com/pingcap/tidb-lightning/lightning/config"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 )
 
 var _ = Suite(&testFileRouterSuite{})
