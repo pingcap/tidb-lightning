@@ -17,6 +17,10 @@ import (
 	"math"
 	"os"
 
+	"github.com/pingcap/errors"
+	"github.com/xitongsys/parquet-go-source/local"
+	"github.com/xitongsys/parquet-go/reader"
+
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -134,6 +138,18 @@ func MakeTableRegions(
 	prevRowIDMax := int64(0)
 	var err error
 	for _, dataFile := range meta.DataFiles {
+		if dataFile.FileMeta.Type == SourceTypeParquet {
+			rowIDMax, region, err := makeParquetFileRegion(meta, dataFile, prevRowIDMax)
+			if err != nil {
+				return nil, err
+			}
+			prevRowIDMax = rowIDMax
+			filesRegions = append(filesRegions, region)
+			// TODO: how to estimate raw data size for parquet file
+			dataFileSizes = append(dataFileSizes, float64(dataFile.Size))
+			continue
+		}
+
 		dataFileSize := dataFile.Size
 
 		divisor := int64(columns)
@@ -185,6 +201,39 @@ func MakeTableRegions(
 
 	AllocateEngineIDs(filesRegions, dataFileSizes, float64(cfg.Mydumper.BatchSize), cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
 	return filesRegions, nil
+}
+
+// because parquet files can't seek efficiently, there is no benefit in split.
+// parquet file are column orient, so the offset is read line number
+func makeParquetFileRegion(
+	meta *MDTableMeta,
+	dataFile FileInfo,
+	prevRowIdxMax int64,
+) (int64, *TableRegion, error) {
+	r, err := local.NewLocalFileReader(dataFile.FileMeta.Path)
+	if err != nil {
+		return prevRowIdxMax, nil, errors.Trace(err)
+	}
+	pReader, err := reader.NewParquetReader(r, nil, 2)
+	if err != nil {
+		return prevRowIdxMax, nil, errors.Trace(err)
+	}
+	defer pReader.ReadStop()
+
+	// EndOffset for parquet files are the number of rows
+	rowIDMax := prevRowIdxMax + pReader.GetNumRows()
+	region := &TableRegion{
+		DB:       meta.DB,
+		Table:    meta.Name,
+		FileMeta: dataFile.FileMeta,
+		Chunk: Chunk{
+			Offset:       0,
+			EndOffset:    pReader.GetNumRows(),
+			PrevRowIDMax: prevRowIdxMax,
+			RowIDMax:     rowIDMax,
+		},
+	}
+	return rowIDMax, region, nil
 }
 
 // SplitLargeFile splits a large csv file into multiple regions, the size of
