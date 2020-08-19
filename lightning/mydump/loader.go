@@ -278,7 +278,10 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 
 		logger := log.With(zap.String("path", path))
 
-		res := fr.Route(path)
+		res, err := fr.Route(path)
+		if err != nil {
+			return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
+		}
 		if res == nil {
 			logger.Info("[loader] file is filtered by file router")
 			return nil

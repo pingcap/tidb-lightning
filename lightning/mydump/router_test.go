@@ -55,7 +55,8 @@ func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 		"my_schema.my_table.0001.sql":      {"my_schema", "my_table", "0001", "", "sql"},
 	}
 	for path, fields := range inputOutputMap {
-		res := r.Route(path)
+		res, err := r.Route(path)
+		c.Assert(err, IsNil)
 		compress, e := parseCompressionType(fields[3])
 		c.Assert(e, IsNil)
 		ty, e := parseSourceType(fields[4])
@@ -72,7 +73,24 @@ func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 		"my_schema.my_table.0001-002.sql",
 	}
 	for _, p := range notMatchPaths {
-		c.Assert(r.Route(p), IsNil)
+		res, err := r.Route(p)
+		c.Assert(res, IsNil)
+		c.Assert(err, IsNil)
+	}
+
+	rule := &config.FileRouteRule{Pattern: `^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>\w+)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "$1", Table: "$table", Type: "$type", Key: "$key", Compression: "$cp"}
+	r, err = NewFileRouter([]*config.FileRouteRule{rule})
+	c.Assert(err, IsNil)
+	c.Assert(r, NotNil)
+	invalidMatchPaths := []string{
+		"my_schema.my_table.sql.gz",
+		"my_schema.my_table.sql.rar",
+		"my_schema.my_table.txt",
+	}
+	for _, p := range invalidMatchPaths {
+		res, err := r.Route(p)
+		c.Assert(res, IsNil)
+		c.Assert(err, NotNil)
 	}
 }
 
@@ -95,10 +113,10 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 		"my_dir/my_schema.my_table.csv":    {"my_schema", "my_table", "", "", "csv"},
 		"my_schema.my_table.0001.sql":      {"my_schema", "my_table", "0001", "", "sql"},
 		//"my_schema.my_table.0001.sql.gz":      {"my_schema", "my_table", "0001", "gz", "sql"},
-		"my_schema.my_table.0001.sql.gz": {},
 	}
 	for path, fields := range inputOutputMap {
-		res := r.Route(path)
+		res, err := r.Route(path)
+		c.Assert(err, IsNil)
 		if len(fields) == 0 {
 			c.Assert(res, IsNil)
 		} else {
@@ -118,7 +136,8 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	r, err = NewFileRouter(rules)
 	c.Assert(err, IsNil)
 	for path, fields := range inputOutputMap {
-		res := r.Route(path)
+		res, err := r.Route(path)
+		c.Assert(err, IsNil)
 		if len(fields) == 0 {
 			c.Assert(res, IsNil)
 		} else {
@@ -162,7 +181,8 @@ func (t *testFileRouterSuite) TestRouteExpanding(c *C) {
 		rule.Table = pat
 		router, err := NewFileRouter([]*config.FileRouteRule{rule})
 		c.Assert(err, IsNil)
-		res := router.Route(path)
+		res, err := router.Route(path)
+		c.Assert(err, IsNil)
 		c.Assert(res, NotNil)
 		c.Assert(res.Name, Equals, value)
 	}
@@ -187,7 +207,8 @@ func (t *testFileRouterSuite) TestRouteWithPath(c *C) {
 	r := *rule
 	router, err := NewFileRouter([]*config.FileRouteRule{&r})
 	c.Assert(err, IsNil)
-	res := router.Route(fileName)
+	res, err := router.Route(fileName)
+	c.Assert(err, IsNil)
 	c.Assert(res, NotNil)
 	c.Assert(res.Schema, Equals, rule.Schema)
 	c.Assert(res.Name, Equals, rule.Table)
@@ -196,6 +217,7 @@ func (t *testFileRouterSuite) TestRouteWithPath(c *C) {
 	c.Assert(res.Key, Equals, rule.Key)
 
 	// replace all '.' by '-', if with plain regex pattern, will still match
-	res = router.Route(strings.ReplaceAll(fileName, ".", "-"))
+	res, err = router.Route(strings.ReplaceAll(fileName, ".", "-"))
+	c.Assert(err, IsNil)
 	c.Assert(res, IsNil)
 }
