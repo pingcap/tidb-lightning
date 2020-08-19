@@ -163,7 +163,7 @@ func MakeTableRegions(
 		}
 		// If a csv file is overlarge, we need to split it into mutiple regions.
 		// Note: We can only split a csv file whose format is strict and header is empty.
-		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat && !cfg.Mydumper.CSV.Header {
+		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat {
 			var (
 				regions      []*TableRegion
 				subFileSizes []float64
@@ -226,6 +226,20 @@ func SplitLargeFile(
 	maxRegionSize := cfg.Mydumper.MaxRegionSize
 	dataFileSizes = make([]float64, 0, dataFileSize/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
+	var columns []string
+	if cfg.Mydumper.CSV.Header {
+		reader, err := os.Open(dataFilePath)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker, true)
+		if err = parser.ReadColumns(); err != nil {
+			return 0, nil, nil, err
+		}
+		columns = parser.Columns()
+		startOffset, _ = parser.Pos()
+		endOffset = startOffset + maxRegionSize
+	}
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
@@ -253,6 +267,7 @@ func SplitLargeFile(
 					EndOffset:    endOffset,
 					PrevRowIDMax: prevRowIdxMax,
 					RowIDMax:     rowIDMax,
+					Columns:      columns,
 				},
 			})
 		dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))
