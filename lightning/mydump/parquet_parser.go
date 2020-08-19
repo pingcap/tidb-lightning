@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	batchReadRowSize = 256
+	batchReadRowSize = 32
 )
 
 type ParquetParser struct {
@@ -55,11 +55,11 @@ func NewParquetParser(path string) (*ParquetParser, error) {
 	}
 
 	columns := make([]string, 0, len(reader.Footer.Schema))
-	for _, c := range reader.Footer.Schema {
+	for i, c := range reader.Footer.Schema {
 		if c.GetNumChildren() == 0 {
-			columns = append(columns, c.GetName())
+			// the SchemaElement.Name is capitalized, we should use the original name
+			columns = append(columns, reader.SchemaHandler.Infos[i].ExName)
 		}
-
 	}
 
 	//reader.GetNumRows()
