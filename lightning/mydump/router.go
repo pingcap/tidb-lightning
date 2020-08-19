@@ -148,12 +148,10 @@ type RegexRouter struct {
 }
 
 func (r *RegexRouter) Route(path string) *RouteResult {
-	// the regexp pattern maybe not contains any sub matches
-	if !r.pattern.MatchString(path) {
+	indexes := r.pattern.FindStringSubmatchIndex(path)
+	if len(indexes) == 0 {
 		return nil
 	}
-
-	indexes := r.pattern.FindStringSubmatchIndex(path)
 	result := &RouteResult{}
 	for _, e := range r.extractors {
 		if !e.Expand(r.pattern, path, indexes, result) {
@@ -168,7 +166,7 @@ type regexRouterParser struct{}
 func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) {
 	rule := &RegexRouter{}
 	if r.Path != "" && r.Pattern != "" {
-		return nil, errors.New("can't set both `path` and `pattern` field")
+		return nil, errors.New("can't set both `path` and `pattern` field in [[mydumper.files]]")
 	}
 	if r.Path != "" {
 		// convert constant string as a regexp pattern
