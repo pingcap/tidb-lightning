@@ -38,7 +38,7 @@ type MDTableMeta struct {
 	DB         string
 	Name       string
 	SchemaFile string
-	DataFiles  []*SourceFileMeta
+	DataFiles  []FileInfo
 	charSet    string
 	TotalSize  int64
 }
@@ -48,7 +48,6 @@ type SourceFileMeta struct {
 	Type        SourceType
 	Compression Compression
 	SortKey     string
-	Size        int64
 }
 
 func (m *MDTableMeta) GetSchema() string {
@@ -78,9 +77,9 @@ type MDLoader struct {
 
 type mdLoaderSetup struct {
 	loader        *MDLoader
-	dbSchemas     []fileInfo
-	tableSchemas  []fileInfo
-	tableDatas    []fileInfo
+	dbSchemas     []FileInfo
+	tableSchemas  []FileInfo
+	tableDatas    []FileInfo
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
 }
@@ -90,7 +89,7 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	var err error
 
 	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
-		return nil, errors.New("table route is deprecated, can't both config [routes] and [mydumper.files]")
+		return nil, errors.New("table route is deprecated, can't config both [routes] and [mydumper.files]")
 	}
 
 	if len(cfg.Routes) > 0 {
@@ -170,9 +169,10 @@ func (ftype fileType) String() string {
 	}
 }
 
-type fileInfo struct {
-	tableName filter.Table
-	FileMeta  *SourceFileMeta
+type FileInfo struct {
+	TableName filter.Table
+	FileMeta  SourceFileMeta
+	Size      int64
 }
 
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
@@ -213,16 +213,16 @@ func (s *mdLoaderSetup) setup(dir string) error {
 			return errors.New("missing {schema}-schema-create.sql")
 		}
 		for _, fileInfo := range s.dbSchemas {
-			if _, dbExists := s.insertDB(fileInfo.tableName.Schema, fileInfo.FileMeta.Path); dbExists && s.loader.router == nil {
+			if _, dbExists := s.insertDB(fileInfo.TableName.Schema, fileInfo.FileMeta.Path); dbExists && s.loader.router == nil {
 				return errors.Errorf("invalid database schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 
 		// setup table schema
 		for _, fileInfo := range s.tableSchemas {
-			_, dbExists, tableExists := s.insertTable(fileInfo.tableName, fileInfo.FileMeta.Path)
+			_, dbExists, tableExists := s.insertTable(fileInfo.TableName, fileInfo.FileMeta.Path)
 			if !dbExists {
-				return errors.Errorf("invalid table schema file, cannot find db '%s' - %s", fileInfo.tableName.Schema, fileInfo.FileMeta.Path)
+				return errors.Errorf("invalid table schema file, cannot find db '%s' - %s", fileInfo.TableName.Schema, fileInfo.FileMeta.Path)
 			} else if tableExists && s.loader.router == nil {
 				return errors.Errorf("invalid table schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
@@ -231,24 +231,32 @@ func (s *mdLoaderSetup) setup(dir string) error {
 
 	// Sql file for restore data
 	for _, fileInfo := range s.tableDatas {
-		tableMeta, dbExists, tableExists := s.insertTable(fileInfo.tableName, "")
+		tableMeta, dbExists, tableExists := s.insertTable(fileInfo.TableName, "")
 		if !s.loader.noSchema {
 			if !dbExists {
-				return errors.Errorf("invalid data file, miss host db '%s' - %s", fileInfo.tableName.Schema, fileInfo.FileMeta.Path)
+				return errors.Errorf("invalid data file, miss host db '%s' - %s", fileInfo.TableName.Schema, fileInfo.FileMeta.Path)
 			} else if !tableExists {
-				return errors.Errorf("invalid data file, miss host table '%s' - %s", fileInfo.tableName.Name, fileInfo.FileMeta.Path)
+				return errors.Errorf("invalid data file, miss host table '%s' - %s", fileInfo.TableName.Name, fileInfo.FileMeta.Path)
 			}
 		}
-		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo.FileMeta)
-		tableMeta.TotalSize += fileInfo.FileMeta.Size
+		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo)
+		tableMeta.TotalSize += fileInfo.Size
 	}
 
-	// Put the small table in the front of the slice which can avoid large table
-	// take a long time to import and block small table to release index worker.
 	for _, dbMeta := range s.loader.dbs {
+		// Put the small table in the front of the slice which can avoid large table
+		// take a long time to import and block small table to release index worker.
 		sort.SliceStable(dbMeta.Tables, func(i, j int) bool {
 			return dbMeta.Tables[i].TotalSize < dbMeta.Tables[j].TotalSize
 		})
+
+		// sort each table source files by sort-key
+		for _, tbMeta := range dbMeta.Tables {
+			dataFiles := tbMeta.DataFiles
+			sort.SliceStable(dataFiles, func(i, j int) bool {
+				return dataFiles[i].FileMeta.SortKey < dataFiles[j].FileMeta.SortKey
+			})
+		}
 	}
 
 	return nil
@@ -276,12 +284,13 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 			return nil
 		}
 
-		info := fileInfo{
-			tableName: filter.Table{Schema: res.Schema, Name: res.Name},
-			FileMeta:  &SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, Size: f.Size()},
+		info := FileInfo{
+			TableName: filter.Table{Schema: res.Schema, Name: res.Name},
+			FileMeta:  SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key},
+			Size:      f.Size(),
 		}
 
-		if s.loader.shouldSkip(&info.tableName) {
+		if s.loader.shouldSkip(&info.TableName) {
 			logger.Debug("[filter] ignoring table file")
 
 			return nil
@@ -319,46 +328,46 @@ func (s *mdLoaderSetup) route() error {
 	}
 
 	type dbInfo struct {
-		fileMeta *SourceFileMeta
+		fileMeta SourceFileMeta
 		count    int
 	}
 
 	knownDBNames := make(map[string]dbInfo)
 	for _, info := range s.dbSchemas {
-		knownDBNames[info.tableName.Schema] = dbInfo{
+		knownDBNames[info.TableName.Schema] = dbInfo{
 			fileMeta: info.FileMeta,
 			count:    1,
 		}
 	}
 	for _, info := range s.tableSchemas {
-		dbInfo := knownDBNames[info.tableName.Schema]
+		dbInfo := knownDBNames[info.TableName.Schema]
 		dbInfo.count++
-		knownDBNames[info.tableName.Schema] = dbInfo
+		knownDBNames[info.TableName.Schema] = dbInfo
 	}
 
-	run := func(arr []fileInfo) error {
+	run := func(arr []FileInfo) error {
 		for i, info := range arr {
-			dbName, tableName, err := r.Route(info.tableName.Schema, info.tableName.Name)
+			dbName, tableName, err := r.Route(info.TableName.Schema, info.TableName.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if dbName != info.tableName.Schema {
-				oldInfo := knownDBNames[info.tableName.Schema]
+			if dbName != info.TableName.Schema {
+				oldInfo := knownDBNames[info.TableName.Schema]
 				oldInfo.count--
-				knownDBNames[info.tableName.Schema] = oldInfo
+				knownDBNames[info.TableName.Schema] = oldInfo
 
 				newInfo, ok := knownDBNames[dbName]
 				newInfo.count++
 				if !ok {
 					newInfo.fileMeta = oldInfo.fileMeta
-					s.dbSchemas = append(s.dbSchemas, fileInfo{
-						tableName: filter.Table{Schema: dbName},
+					s.dbSchemas = append(s.dbSchemas, FileInfo{
+						TableName: filter.Table{Schema: dbName},
 						FileMeta:  oldInfo.fileMeta,
 					})
 				}
 				knownDBNames[dbName] = newInfo
 			}
-			arr[i].tableName = filter.Table{Schema: dbName, Name: tableName}
+			arr[i].TableName = filter.Table{Schema: dbName, Name: tableName}
 		}
 		return nil
 	}
@@ -374,7 +383,7 @@ func (s *mdLoaderSetup) route() error {
 	// https://github.com/golang/go/wiki/SliceTricks#filtering-without-allocating
 	remainingSchemas := s.dbSchemas[:0]
 	for _, info := range s.dbSchemas {
-		if knownDBNames[info.tableName.Schema].count > 0 {
+		if knownDBNames[info.TableName.Schema].count > 0 {
 			remainingSchemas = append(remainingSchemas, info)
 		}
 	}
@@ -410,7 +419,7 @@ func (s *mdLoaderSetup) insertTable(tableName filter.Table, path string) (*MDTab
 			DB:         tableName.Schema,
 			Name:       tableName.Name,
 			SchemaFile: path,
-			DataFiles:  make([]*SourceFileMeta, 0, 16),
+			DataFiles:  make([]FileInfo, 0, 16),
 			charSet:    s.loader.charSet,
 		}
 		dbMeta.Tables = append(dbMeta.Tables, ptr)
@@ -420,8 +429,4 @@ func (s *mdLoaderSetup) insertTable(tableName filter.Table, path string) (*MDTab
 
 func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 	return l.dbs
-}
-
-func (l *MDLoader) FileRouter() FileRouter {
-	return l.fileRouter
 }

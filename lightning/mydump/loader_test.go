@@ -20,9 +20,11 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb-tools/pkg/filter"
+	router "github.com/pingcap/tidb-tools/pkg/table-router"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	md "github.com/pingcap/tidb-lightning/lightning/mydump"
-	router "github.com/pingcap/tidb-tools/pkg/table-router"
 )
 
 var _ = Suite(&testMydumpLoaderSuite{})
@@ -204,7 +206,7 @@ func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
 			DB:         "db",
 			Name:       "tbl",
 			SchemaFile: "",
-			DataFiles:  []*md.SourceFileMeta{{Path: p, Type: md.SourceTypeSQL}},
+			DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: p, Type: md.SourceTypeSQL}}},
 		}},
 	}})
 }
@@ -233,13 +235,13 @@ func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
 				DB:         "db",
 				Name:       "0002",
 				SchemaFile: pT2Schema,
-				DataFiles:  []*md.SourceFileMeta{{Path: pT2Data, Type: md.SourceTypeSQL}},
+				DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "0002"}, FileMeta: md.SourceFileMeta{Path: pT2Data, Type: md.SourceTypeSQL}}},
 			},
 			{
 				DB:         "db",
 				Name:       "tbl.with.dots",
 				SchemaFile: pT1Schema,
-				DataFiles:  []*md.SourceFileMeta{{Path: pT1Data, Type: md.SourceTypeSQL, SortKey: "0001"}},
+				DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "tbl.with.dots"}, FileMeta: md.SourceFileMeta{Path: pT1Data, Type: md.SourceTypeSQL, SortKey: "0001"}}},
 			},
 		},
 	}})
@@ -306,7 +308,7 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 					DB:         "a1",
 					Name:       "s1",
 					SchemaFile: pA1S1Schema,
-					DataFiles:  []*md.SourceFileMeta{{Path: pA1S1Data, Type: md.SourceTypeSQL, SortKey: "1"}},
+					DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: pA1S1Data, Type: md.SourceTypeSQL, SortKey: "1"}}},
 				},
 			},
 		},
@@ -322,10 +324,10 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 					DB:         "b",
 					Name:       "u",
 					SchemaFile: pA0T0Schema,
-					DataFiles: []*md.SourceFileMeta{
-						{Path: pA0T0Data, Type: md.SourceTypeSQL, SortKey: "1"},
-						{Path: pA0T1Data, Type: md.SourceTypeSQL, SortKey: "1"},
-						{Path: pA1T2Data, Type: md.SourceTypeSQL, SortKey: "1"},
+					DataFiles: []md.FileInfo{
+						{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: pA0T0Data, Type: md.SourceTypeSQL, SortKey: "1"}},
+						{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: pA0T1Data, Type: md.SourceTypeSQL, SortKey: "1"}},
+						{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: pA1T2Data, Type: md.SourceTypeSQL, SortKey: "1"}},
 					},
 				},
 			},
@@ -338,7 +340,7 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 					DB:         "c",
 					Name:       "t3",
 					SchemaFile: pC0T3Schema,
-					DataFiles:  []*md.SourceFileMeta{{Path: pC0T3Data, Type: md.SourceTypeSQL, SortKey: "1"}},
+					DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "c", Name: "t3"}, FileMeta: md.SourceFileMeta{Path: pC0T3Data, Type: md.SourceTypeSQL, SortKey: "1"}}},
 				},
 			},
 		},
@@ -406,10 +408,10 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 					DB:         "d1",
 					Name:       "test",
 					SchemaFile: d1TestTable,
-					DataFiles: []*md.SourceFileMeta{
-						{Path: d1TestData0, Type: md.SourceTypeSQL},
-						{Path: d1TestData1, Type: md.SourceTypeSQL},
-						{Path: d1TestData2, Type: md.SourceTypeSQL},
+					DataFiles: []md.FileInfo{
+						{TableName: filter.Table{Schema: "d1", Name: "test"}, FileMeta: md.SourceFileMeta{Path: d1TestData0, Type: md.SourceTypeSQL}},
+						{TableName: filter.Table{Schema: "d1", Name: "test"}, FileMeta: md.SourceFileMeta{Path: d1TestData1, Type: md.SourceTypeSQL}},
+						{TableName: filter.Table{Schema: "d1", Name: "test"}, FileMeta: md.SourceFileMeta{Path: d1TestData2, Type: md.SourceTypeSQL}},
 					},
 				},
 			},
@@ -422,7 +424,7 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 					DB:         "d2",
 					Name:       "abc",
 					SchemaFile: d2TestTable,
-					DataFiles:  []*md.SourceFileMeta{{Path: d2AbcData0, Type: md.SourceTypeSQL}},
+					DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "d2", Name: "abc"}, FileMeta: md.SourceFileMeta{Path: d2AbcData0, Type: md.SourceTypeSQL}}},
 				},
 			},
 		},

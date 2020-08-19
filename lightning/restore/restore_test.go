@@ -16,6 +16,7 @@ package restore
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb-tools/pkg/filter"
 	"io/ioutil"
 	"path/filepath"
 	"sort"
@@ -304,12 +305,12 @@ func (s *tableRestoreSuite) SetUpSuite(c *C) {
 	fakeDataFilesCount := 6
 	fakeDataFilesContent := []byte("INSERT INTO `table` VALUES (1, 2, 3);")
 	c.Assert(len(fakeDataFilesContent), Equals, 37)
-	fakeDataFiles := make([]*mydump.SourceFileMeta, 0, fakeDataFilesCount)
+	fakeDataFiles := make([]mydump.FileInfo, 0, fakeDataFilesCount)
 	for i := 1; i <= fakeDataFilesCount; i++ {
 		fakeDataPath := filepath.Join(fakeDataDir, fmt.Sprintf("db.table.%d.sql", i))
 		err = ioutil.WriteFile(fakeDataPath, fakeDataFilesContent, 0644)
 		c.Assert(err, IsNil)
-		fakeDataFiles = append(fakeDataFiles, &mydump.SourceFileMeta{Path: fakeDataPath, Type: mydump.SourceTypeSQL, Size: 37, SortKey: fmt.Sprintf("%d", i)})
+		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeDataPath, Type: mydump.SourceTypeSQL, SortKey: fmt.Sprintf("%d", i)}, Size: 37})
 	}
 
 	s.tableMeta = &mydump.MDTableMeta{
@@ -352,8 +353,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 			Status: CheckpointStatusLoaded,
 			Chunks: []*ChunkCheckpoint{
 				{
-					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[0].Path, Offset: 0},
-					FileMeta: s.tr.tableMeta.DataFiles[0],
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[0].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[0].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -363,8 +364,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].Path, Offset: 0},
-					FileMeta: s.tr.tableMeta.DataFiles[1],
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[1].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -374,8 +375,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[2].Path, Offset: 0},
-					FileMeta: s.tr.tableMeta.DataFiles[2],
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[2].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[2].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -390,8 +391,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 			Status: CheckpointStatusLoaded,
 			Chunks: []*ChunkCheckpoint{
 				{
-					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[3].Path, Offset: 0},
-					FileMeta: s.tr.tableMeta.DataFiles[3],
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[3].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[3].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -401,8 +402,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[4].Path, Offset: 0},
-					FileMeta: s.tr.tableMeta.DataFiles[4],
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[4].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[4].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -412,8 +413,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[5].Path, Offset: 0},
-					FileMeta: s.tr.tableMeta.DataFiles[5],
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[5].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[5].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -577,8 +578,8 @@ func (s *chunkRestoreSuite) SetUpTest(c *C) {
 	w := worker.NewPool(ctx, 5, "io")
 
 	chunk := ChunkCheckpoint{
-		Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].Path, Offset: 0},
-		FileMeta: s.tr.tableMeta.DataFiles[1],
+		Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
+		FileMeta: s.tr.tableMeta.DataFiles[1].FileMeta,
 		Chunk: mydump.Chunk{
 			Offset:       0,
 			EndOffset:    37,
@@ -588,7 +589,7 @@ func (s *chunkRestoreSuite) SetUpTest(c *C) {
 	}
 
 	var err error
-	s.cr, err = newChunkRestore(1, s.cfg, &chunk, w, nil, mydump.DefaultRouter())
+	s.cr, err = newChunkRestore(1, s.cfg, &chunk, w, nil)
 	c.Assert(err, IsNil)
 }
 

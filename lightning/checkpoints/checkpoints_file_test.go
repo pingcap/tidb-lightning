@@ -59,10 +59,9 @@ func (s *cpFileSuite) SetUpTest(c *C) {
 					Path:   "/tmp/path/1.sql",
 					Offset: 0,
 				},
-				FileMeta: &mydump.SourceFileMeta{
+				FileMeta: mydump.SourceFileMeta{
 					Path: "/tmp/path/1.sql",
 					Type: mydump.SourceTypeSQL,
-					Size: 102400,
 				},
 				Chunk: mydump.Chunk{
 					Offset:       12,
@@ -157,10 +156,9 @@ func (s *cpFileSuite) TestGet(c *C) {
 						Path:   "/tmp/path/1.sql",
 						Offset: 0,
 					},
-					FileMeta: &mydump.SourceFileMeta{
+					FileMeta: mydump.SourceFileMeta{
 						Path: "/tmp/path/1.sql",
 						Type: mydump.SourceTypeSQL,
-						Size: 102400,
 					},
 					ColumnPermutation: []int{},
 					Chunk: mydump.Chunk{

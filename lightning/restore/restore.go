@@ -148,24 +148,20 @@ type RestoreController struct {
 	checkpointsWg sync.WaitGroup
 
 	closedEngineLimit *worker.Pool
-
-	sourceFileRouter mydump.FileRouter
 }
 
 func NewRestoreController(
 	ctx context.Context,
 	dbMetas []*mydump.MDDatabaseMeta,
 	cfg *config.Config,
-	fileRouter mydump.FileRouter,
 ) (*RestoreController, error) {
-	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, fileRouter, DeliverPauser)
+	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, DeliverPauser)
 }
 
 func NewRestoreControllerWithPauser(
 	ctx context.Context,
 	dbMetas []*mydump.MDDatabaseMeta,
 	cfg *config.Config,
-	fileRouter mydump.FileRouter,
 	pauser *common.Pauser,
 ) (*RestoreController, error) {
 	tls, err := cfg.ToTLS()
@@ -224,7 +220,6 @@ func NewRestoreControllerWithPauser(
 		checkpointsDB:     cpdb,
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
-		sourceFileRouter:  fileRouter,
 	}
 
 	return rc, nil
@@ -353,7 +348,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
 			for _, fileMeta := range tableMeta.DataFiles {
-				if fileMeta.Type == mydump.SourceTypeCSV {
+				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
 					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
 						estimatedChunkCount += int(fileMeta.Size / cfg.MaxRegionSize)
@@ -976,7 +971,7 @@ func (t *TableRestore) restoreEngine(
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers, t.tableInfo, rc.sourceFileRouter)
+		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers, t.tableInfo)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1268,7 +1263,6 @@ func newChunkRestore(
 	chunk *ChunkCheckpoint,
 	ioWorkers *worker.Pool,
 	tableInfo *TidbTableInfo,
-	router mydump.FileRouter,
 ) (*chunkRestore, error) {
 	blockBufSize := cfg.Mydumper.ReadBlockSize
 
@@ -1277,13 +1271,8 @@ func newChunkRestore(
 		return nil, errors.Trace(err)
 	}
 
-	routeRes := router.Route(chunk.Key.Path)
-	if routeRes == nil || routeRes.Type == mydump.SourceTypeIgnore {
-		return nil, errors.Errorf("file '%s' is filtered by file router", chunk.Key.Path)
-	}
-
 	var parser mydump.Parser
-	switch routeRes.Type {
+	switch chunk.FileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
 		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
@@ -1296,7 +1285,7 @@ func newChunkRestore(
 			return nil, errors.Trace(err)
 		}
 	default:
-		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, routeRes.Type.String()))
+		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
 	}
 
 	if len(chunk.ColumnPermutation) > 0 {

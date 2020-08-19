@@ -1,10 +1,12 @@
 package mydump
 
 import (
-	"github.com/pingcap/tidb-lightning/lightning/config"
-	"github.com/pingcap/tidb-tools/pkg/filter"
+	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb-tools/pkg/filter"
+
+	"github.com/pingcap/tidb-lightning/lightning/config"
 )
 
 var _ = Suite(&testFileRouterSuite{})
@@ -14,12 +16,12 @@ type testFileRouterSuite struct{}
 func (t *testFileRouterSuite) TestRouteParser(c *C) {
 	// valid rules
 	rules := []*config.FileRouteRule{
-		{`^(?:[^/]*/)*([^/.]+)\.([^./]+)(?:\.[0-9]+)?\.(csv|sql)`, "$1", "$2", "$3", "", ""},
-		{`^.+\.(csv|sql)`, "test", "t", "$1", "", ""},
-		{`^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, "$schema", "$table", "$type", "$key", "$cp"},
-		{`^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.([0-9]+))?\.(csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, "$(schema)s", "$table", "$(3)_0", "$4", "$cp"},
-		{`^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.([0-9]+))?\.(csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, "$(1)s", "$table", "$(3)_0", "$4", "$cp"},
-		{`^(?:[^/]*/)*([^/.]+)\.([^./]+)(?:\.[0-9]+)?\.(csv|sql)`, "$1_schema", "$1_table", "$2", "", ""},
+		{Pattern: `^(?:[^/]*/)*([^/.]+)\.([^./]+)(?:\.[0-9]+)?\.(csv|sql)`, Schema: "$1", Table: "$2", Type: "$3"},
+		{Pattern: `^.+\.(csv|sql)`, Schema: "test", Table: "t", Type: "$1"},
+		{Pattern: `^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "$schema", Table: "$table", Type: "$type", Key: "$key", Compression: "$cp"},
+		{Pattern: `^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.([0-9]+))?\.(csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "${schema}s", Table: "$table", Type: "${3}_0", Key: "$4", Compression: "$cp"},
+		{Pattern: `^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.([0-9]+))?\.(csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "${1}s", Table: "$table", Type: "${3}_0", Key: "$4", Compression: "$cp"},
+		{Pattern: `^(?:[^/]*/)*([^/.]+)\.([^./]+)(?:\.[0-9]+)?\.(csv|sql)`, Schema: "$1-schema", Table: "$1-table", Type: "$2"},
 	}
 	for _, r := range rules {
 		_, err := NewFileRouter([]*config.FileRouteRule{r})
@@ -28,9 +30,9 @@ func (t *testFileRouterSuite) TestRouteParser(c *C) {
 
 	// invalid rules
 	invalidRules := []*config.FileRouteRule{
-		{`^(?:[^/]*/)*(?P<schema>\.(?P<table>[^./]+).*$`, "$test", "$table", "", "", ""},
-		{`^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table>[^./]+).*$`, "$schemas", "$table", "", "", ""},
-		{`^(?:[^/]*/)*([^/.]+)\.([^./]+)(?:\.[0-9]+)?\.(csv|sql)`, "$1", "$2", "$3", "", "$4"},
+		{Pattern: `^(?:[^/]*/)*(?P<schema>\.(?P<table>[^./]+).*$`, Schema: "$test", Table: "$table"},
+		{Pattern: `^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table>[^./]+).*$`, Schema: "$schemas", Table: "$table"},
+		{Pattern: `^(?:[^/]*/)*([^/.]+)\.([^./]+)(?:\.[0-9]+)?\.(csv|sql)`, Schema: "$1", Table: "$2", Type: "$3", Key: "$4"},
 	}
 	for _, r := range invalidRules {
 		_, err := NewFileRouter([]*config.FileRouteRule{r})
@@ -40,7 +42,7 @@ func (t *testFileRouterSuite) TestRouteParser(c *C) {
 
 func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 	rules := []*config.FileRouteRule{
-		{`^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, "$1", "$table", "$type", "$key", "$cp"},
+		{Pattern: `^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "$1", Table: "$table", Type: "$type", Key: "$key", Compression: "$cp"},
 	}
 
 	r, err := NewFileRouter(rules)
@@ -77,9 +79,9 @@ func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	// multi rule don't intersect with each other
 	rules := []*config.FileRouteRule{
-		{`(?:[^/]*/)*([^/.]+)-schema-create\.sql`, "$1", "", SchemaSchema, "", ""},
-		{`(?:[^/]*/)*([^/.]+)\.([^/.]+)-schema\.sql`, "$1", "$2", TableSchema, "", ""},
-		{`^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, "$schema", "$table", "$type", "$key", "$cp"},
+		{Pattern: `(?:[^/]*/)*([^/.]+)-schema-create\.sql`, Schema: "$1", Type: SchemaSchema},
+		{Pattern: `(?:[^/]*/)*([^/.]+)\.([^/.]+)-schema\.sql`, Schema: "$1", Table: "$2", Type: TableSchema},
+		{Pattern: `^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "$schema", Table: "$table", Type: "$type", Key: "$key", Compression: "$cp"},
 	}
 
 	r, err := NewFileRouter(rules)
@@ -111,7 +113,7 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 
 	// multi rule don't intersect with each other
 	// add another rule that math same pattern with the third rule, the result should be no different
-	p := &config.FileRouteRule{`^(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, "test_schema", "test_table", "$type", "$key", "$cp"}
+	p := &config.FileRouteRule{Pattern: `^(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "test_schema", Table: "test_table", Type: "$type", Key: "$key", Compression: "$cp"}
 	rules = append(rules, p)
 	r, err = NewFileRouter(rules)
 	c.Assert(err, IsNil)
@@ -128,4 +130,72 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 			c.Assert(res, DeepEquals, exp)
 		}
 	}
+}
+
+func (t *testFileRouterSuite) TestRouteExpanding(c *C) {
+	rule := &config.FileRouteRule{
+		Pattern:     `^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table_name>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`,
+		Schema:      "$schema",
+		Type:        "$type",
+		Key:         "$key",
+		Compression: "$cp",
+	}
+	path := "db.table.001.sql"
+	tablePatternResMap := map[string]string{
+		"$schema":             "db",
+		"$table_name":         "table",
+		"$schema.$table_name": "db.table",
+		"${1}":                "db",
+		"${1}_$table_name":    "db_table",
+		"${2}.schema":         "table.schema",
+		"$${2}":               "${2}",
+		"$$table_name":        "$table_name",
+		"$table_name-123":     "table-123",
+		"$$12$1$schema":       "$12dbdb",
+		"${table_name}$$2":    "table$2",
+		"${table_name}$$":     "table$",
+		"{1}$$":               "{1}$",
+		"my_table":            "my_table",
+	}
+
+	for pat, value := range tablePatternResMap {
+		rule.Table = pat
+		router, err := NewFileRouter([]*config.FileRouteRule{rule})
+		c.Assert(err, IsNil)
+		res := router.Route(path)
+		c.Assert(res, NotNil)
+		c.Assert(res.Name, Equals, value)
+	}
+
+	invalidPatterns := []string{"$1_$schema", "$schema_$table_name", "$6"}
+	for _, pat := range invalidPatterns {
+		rule.Table = pat
+		_, err := NewFileRouter([]*config.FileRouteRule{rule})
+		c.Assert(err, NotNil)
+	}
+}
+
+func (t *testFileRouterSuite) TestRouteWithPath(c *C) {
+	fileName := "myschema.(my_table$1).000.sql"
+	rule := &config.FileRouteRule{
+		Path:   fileName,
+		Schema: "schema",
+		Table:  "my_table$1",
+		Type:   "sql",
+		Key:    "$key",
+	}
+	r := *rule
+	router, err := NewFileRouter([]*config.FileRouteRule{&r})
+	c.Assert(err, IsNil)
+	res := router.Route(fileName)
+	c.Assert(res, NotNil)
+	c.Assert(res.Schema, Equals, rule.Schema)
+	c.Assert(res.Name, Equals, rule.Table)
+	ty, _ := parseSourceType(rule.Type)
+	c.Assert(res.Type, Equals, ty)
+	c.Assert(res.Key, Equals, rule.Key)
+
+	// replace all '.' by '-', if with plain regex pattern, will still match
+	res = router.Route(strings.ReplaceAll(fileName, ".", "-"))
+	c.Assert(res, IsNil)
 }

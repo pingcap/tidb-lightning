@@ -14,9 +14,10 @@
 package mydump
 
 import (
-	"go.uber.org/zap"
 	"math"
 	"os"
+
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -30,7 +31,7 @@ type TableRegion struct {
 
 	DB       string
 	Table    string
-	FileMeta *SourceFileMeta
+	FileMeta SourceFileMeta
 
 	Chunk Chunk
 }
@@ -46,21 +47,6 @@ func (reg *TableRegion) Offset() int64 {
 }
 func (reg *TableRegion) Size() int64 {
 	return reg.Chunk.EndOffset - reg.Chunk.Offset
-}
-
-type regionSlice []*TableRegion
-
-func (rs regionSlice) Len() int {
-	return len(rs)
-}
-func (rs regionSlice) Swap(i, j int) {
-	rs[i], rs[j] = rs[j], rs[i]
-}
-func (rs regionSlice) Less(i, j int) bool {
-	if rs[i].FileMeta.Path == rs[j].FileMeta.Path {
-		return rs[i].Chunk.Offset < rs[j].Chunk.Offset
-	}
-	return rs[i].FileMeta.Path < rs[j].FileMeta.Path
 }
 
 ////////////////////////////////////////////////////////////////
@@ -143,7 +129,7 @@ func MakeTableRegions(
 	ioWorkers *worker.Pool,
 ) ([]*TableRegion, error) {
 	// Split files into regions
-	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
+	filesRegions := make([]*TableRegion, 0, len(meta.DataFiles))
 	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
 	prevRowIDMax := int64(0)
 	var err error
@@ -151,7 +137,7 @@ func MakeTableRegions(
 		dataFileSize := dataFile.Size
 
 		divisor := int64(columns)
-		isCsvFile := dataFile.Type == SourceTypeCSV
+		isCsvFile := dataFile.FileMeta.Type == SourceTypeCSV
 		if !isCsvFile {
 			divisor += 2
 		}
@@ -174,7 +160,7 @@ func MakeTableRegions(
 		tableRegion := &TableRegion{
 			DB:       meta.DB,
 			Table:    meta.Name,
-			FileMeta: dataFile,
+			FileMeta: dataFile.FileMeta,
 			Chunk: Chunk{
 				Offset:       0,
 				EndOffset:    dataFileSize,
@@ -186,7 +172,7 @@ func MakeTableRegions(
 		if tableRegion.Size() > tableRegionSizeWarningThreshold {
 			log.L().Warn(
 				"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
-				zap.String("file", dataFile.Path),
+				zap.String("file", dataFile.FileMeta.Path),
 				zap.Int64("size", dataFileSize))
 		}
 		prevRowIDMax = rowIDMax
@@ -211,7 +197,7 @@ func MakeTableRegions(
 func SplitLargeFile(
 	meta *MDTableMeta,
 	cfg *config.Config,
-	dataFile *SourceFileMeta,
+	dataFile FileInfo,
 	divisor int64,
 	prevRowIdxMax int64,
 	ioWorker *worker.Pool,
@@ -223,7 +209,7 @@ func SplitLargeFile(
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFile.Size {
-			reader, err := os.Open(dataFile.Path)
+			reader, err := os.Open(dataFile.FileMeta.Path)
 			if err != nil {
 				return 0, nil, nil, err
 			}
@@ -240,7 +226,7 @@ func SplitLargeFile(
 			&TableRegion{
 				DB:       meta.DB,
 				Table:    meta.Name,
-				FileMeta: dataFile,
+				FileMeta: dataFile.FileMeta,
 				Chunk: Chunk{
 					Offset:       startOffset,
 					EndOffset:    endOffset,
