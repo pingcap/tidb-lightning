@@ -312,6 +312,12 @@ func (s *tableRestoreSuite) SetUpSuite(c *C) {
 		fakeDataFiles = append(fakeDataFiles, fakeDataPath)
 	}
 
+	fakeCsvContent := []byte("1,2,3\r\n4,5,6\r\n")
+	fakeDataPath := filepath.Join(fakeDataDir, "db.table.99.csv")
+	err = ioutil.WriteFile(fakeDataPath, fakeCsvContent, 0644)
+	c.Assert(err, IsNil)
+	fakeDataFiles = append(fakeDataFiles, fakeDataPath)
+
 	s.tableMeta = &mydump.MDTableMeta{
 		DB:         "db",
 		Name:       "table",
@@ -343,6 +349,13 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	rc := &RestoreController{cfg: s.cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io")}
 	err := s.tr.populateChunks(rc, cp)
 	c.Assert(err, IsNil)
+
+	for id, engine := range cp.Engines {
+		fmt.Printf("id: %d, engine: %v\n", id, *engine)
+		for _, c := range engine.Chunks {
+			fmt.Printf("  key: %v, chunk: %v\n", c.Key, c.Chunk)
+		}
+	}
 
 	c.Assert(cp.Engines, DeepEquals, map[int32]*EngineCheckpoint{
 		-1: {
@@ -418,25 +431,61 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 				},
 			},
 		},
+		2: {
+			Status: CheckpointStatusLoaded,
+			Chunks: []*ChunkCheckpoint{
+				{
+					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[6], Offset: 0},
+					Chunk: mydump.Chunk{
+						Offset:       0,
+						EndOffset:    14,
+						PrevRowIDMax: 42,
+						RowIDMax:     46,
+					},
+					Timestamp: 1234567897,
+				},
+			},
+		},
 	})
+
+	// set csv header to true, this will cause check columns fail
+	s.cfg.Mydumper.CSV.Header = true
+	s.cfg.Mydumper.StrictFormat = true
+	regionSize := s.cfg.Mydumper.MaxRegionSize
+	s.cfg.Mydumper.MaxRegionSize = 5
+	err = s.tr.populateChunks(rc, cp)
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, `.*unknown columns in csv header \[1 2 3\]`)
+	s.cfg.Mydumper.MaxRegionSize = regionSize
+	s.cfg.Mydumper.CSV.Header = false
 }
 
 func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
 	ccp := &ChunkCheckpoint{}
-	s.tr.initializeColumns(nil, ccp)
+	c.Assert(s.tr.initializeColumns(nil, ccp), IsNil)
 	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{0, 1, 2, -1})
 
 	ccp.ColumnPermutation = nil
-	s.tr.initializeColumns([]string{"b", "c", "a"}, ccp)
+	c.Assert(s.tr.initializeColumns([]string{"b", "c", "a"}, ccp), IsNil)
 	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{2, 0, 1, -1})
 
 	ccp.ColumnPermutation = nil
-	s.tr.initializeColumns([]string{"b"}, ccp)
+	c.Assert(s.tr.initializeColumns([]string{"b"}, ccp), IsNil)
 	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{-1, 0, -1, -1})
 
 	ccp.ColumnPermutation = nil
-	s.tr.initializeColumns([]string{"_tidb_rowid", "b", "a", "c"}, ccp)
+	c.Assert(s.tr.initializeColumns([]string{"_tidb_rowid", "b", "a", "c"}, ccp), IsNil)
 	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{2, 1, 3, 0})
+
+	ccp.ColumnPermutation = nil
+	err := s.tr.initializeColumns([]string{"_tidb_rowid", "b", "a", "c", "d"}, ccp)
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, `unknown columns in csv header \[d\]`)
+
+	ccp.ColumnPermutation = nil
+	err = s.tr.initializeColumns([]string{"e", "b", "c", "d"}, ccp)
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, `unknown columns in csv header \[e d\]`)
 }
 
 func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
