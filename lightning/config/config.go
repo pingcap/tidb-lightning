@@ -157,6 +157,7 @@ type MydumperRuntime struct {
 
 type FileRouteRule struct {
 	Pattern     string `json:"pattern" toml:"pattern" yaml:"pattern"`
+	Path        string `json:"path" toml:"path" yaml:"path"`
 	Schema      string `json:"schema" toml:"schema" yaml:"schema"`
 	Table       string `json:"table" toml:"table" yaml:"table"`
 	Type        string `json:"type" toml:"type" yaml:"type"`
