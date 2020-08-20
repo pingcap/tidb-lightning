@@ -71,7 +71,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		table := meta.Name
 		fmt.Printf("[%s] region count ===============> %d\n", table, len(regions))
 		for _, region := range regions {
-			fname := filepath.Base(region.File)
+			fname := filepath.Base(region.FileMeta.Path)
 			fmt.Printf("[%s] rowID = %5d / rows = %5d / offset = %10d / size = %10d \n",
 				fname,
 				region.RowIDMin(),
@@ -83,9 +83,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		// check - region-size vs file-size
 		var tolFileSize int64 = 0
 		for _, file := range meta.DataFiles {
-			fileSize, err := getFileSize(file)
-			c.Assert(err, IsNil)
-			tolFileSize += fileSize
+			tolFileSize += file.Size
 		}
 		var tolRegionSize int64 = 0
 		for _, region := range regions {
@@ -105,7 +103,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		preReg := regions[0]
 		for i := 1; i < regionNum; i++ {
 			reg := regions[i]
-			if preReg.File == reg.File {
+			if preReg.FileMeta.Path == reg.FileMeta.Path {
 				c.Assert(reg.Offset(), Equals, preReg.Offset()+preReg.Size())
 				c.Assert(reg.RowIDMin(), Equals, preReg.RowIDMin()+preReg.Rows())
 			} else {
@@ -209,7 +207,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 			CSV: config.CSVConfig{
 				Separator:       ",",
 				Delimiter:       "",
-				Header:          false,
+				Header:          true,
 				TrimLastSep:     false,
 				NotNull:         false,
 				Null:            "NULL",
@@ -225,29 +223,33 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		log.Fatal(err)
 	}
 	fileSize := dataFileInfo.Size()
+	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV}, Size: fileSize}
 	colCnt := int64(3)
+	columns := []string{"a", "b", "c"}
 	for _, tc := range []struct {
 		maxRegionSize int64
 		chkCnt        int
 		offsets       [][]int64
 	}{
-		{1, 4, [][]int64{{0, 6}, {6, 12}, {12, 18}, {18, 24}}},
-		{6, 2, [][]int64{{0, 12}, {12, 24}}},
-		{8, 2, [][]int64{{0, 12}, {12, 24}}},
-		{12, 2, [][]int64{{0, 18}, {18, 24}}},
-		{13, 2, [][]int64{{0, 18}, {18, 24}}},
-		{18, 1, [][]int64{{0, 24}}},
-		{19, 1, [][]int64{{0, 24}}},
+		{1, 4, [][]int64{{6, 12}, {12, 18}, {18, 24}, {24, 30}}},
+		{6, 2, [][]int64{{6, 18}, {18, 30}}},
+		{8, 2, [][]int64{{6, 18}, {18, 30}}},
+		{12, 2, [][]int64{{6, 24}, {24, 30}}},
+		{13, 2, [][]int64{{6, 24}, {24, 30}}},
+		{18, 1, [][]int64{{6, 30}}},
+		{19, 1, [][]int64{{6, 30}}},
 	} {
 		cfg.Mydumper.MaxRegionSize = tc.maxRegionSize
 		prevRowIdxMax := int64(0)
 		ioWorker := worker.NewPool(context.Background(), 4, "io")
-		_, regions, _, err := SplitLargeFile(meta, cfg, filePath, fileSize, colCnt, prevRowIdxMax, ioWorker)
+		_, regions, _, err := SplitLargeFile(meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker)
 		c.Assert(err, IsNil)
 		c.Assert(len(regions), Equals, tc.chkCnt)
 		for i := range tc.offsets {
 			c.Assert(regions[i].Chunk.Offset, Equals, tc.offsets[i][0])
 			c.Assert(regions[i].Chunk.EndOffset, Equals, tc.offsets[i][1])
+			c.Assert(len(regions[i].Chunk.Columns), Equals, len(columns))
+			c.Assert(regions[i].Chunk.Columns, DeepEquals, columns)
 		}
 	}
 }

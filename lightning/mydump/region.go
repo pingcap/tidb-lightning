@@ -16,9 +16,7 @@ package mydump
 import (
 	"math"
 	"os"
-	"strings"
 
-	"github.com/pingcap/errors"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -31,9 +29,9 @@ const tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
 type TableRegion struct {
 	EngineID int32
 
-	DB    string
-	Table string
-	File  string
+	DB       string
+	Table    string
+	FileMeta SourceFileMeta
 
 	Chunk Chunk
 }
@@ -49,21 +47,6 @@ func (reg *TableRegion) Offset() int64 {
 }
 func (reg *TableRegion) Size() int64 {
 	return reg.Chunk.EndOffset - reg.Chunk.Offset
-}
-
-type regionSlice []*TableRegion
-
-func (rs regionSlice) Len() int {
-	return len(rs)
-}
-func (rs regionSlice) Swap(i, j int) {
-	rs[i], rs[j] = rs[j], rs[i]
-}
-func (rs regionSlice) Less(i, j int) bool {
-	if rs[i].File == rs[j].File {
-		return rs[i].Chunk.Offset < rs[j].Chunk.Offset
-	}
-	return rs[i].File < rs[j].File
 }
 
 ////////////////////////////////////////////////////////////////
@@ -146,29 +129,26 @@ func MakeTableRegions(
 	ioWorkers *worker.Pool,
 ) ([]*TableRegion, error) {
 	// Split files into regions
-	filesRegions := make(regionSlice, 0, len(meta.DataFiles))
+	filesRegions := make([]*TableRegion, 0, len(meta.DataFiles))
 	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
 	prevRowIDMax := int64(0)
+	var err error
 	for _, dataFile := range meta.DataFiles {
-		dataFileInfo, err := os.Stat(dataFile)
-		if err != nil {
-			return nil, errors.Annotatef(err, "cannot stat %s", dataFile)
-		}
-		dataFileSize := dataFileInfo.Size()
+		dataFileSize := dataFile.Size
 
 		divisor := int64(columns)
-		isCsvFile := strings.HasSuffix(strings.ToLower(dataFile), ".csv")
+		isCsvFile := dataFile.FileMeta.Type == SourceTypeCSV
 		if !isCsvFile {
 			divisor += 2
 		}
 		// If a csv file is overlarge, we need to split it into mutiple regions.
 		// Note: We can only split a csv file whose format is strict and header is empty.
-		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat && !cfg.Mydumper.CSV.Header {
+		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat {
 			var (
 				regions      []*TableRegion
 				subFileSizes []float64
 			)
-			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(meta, cfg, dataFile, dataFileSize, divisor, prevRowIDMax, ioWorkers)
+			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(meta, cfg, dataFile, divisor, prevRowIDMax, ioWorkers)
 			if err != nil {
 				return nil, err
 			}
@@ -178,9 +158,9 @@ func MakeTableRegions(
 		}
 		rowIDMax := prevRowIDMax + dataFileSize/divisor
 		tableRegion := &TableRegion{
-			DB:    meta.DB,
-			Table: meta.Name,
-			File:  dataFile,
+			DB:       meta.DB,
+			Table:    meta.Name,
+			FileMeta: dataFile.FileMeta,
 			Chunk: Chunk{
 				Offset:       0,
 				EndOffset:    dataFileSize,
@@ -192,7 +172,7 @@ func MakeTableRegions(
 		if tableRegion.Size() > tableRegionSizeWarningThreshold {
 			log.L().Warn(
 				"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
-				zap.String("file", dataFile),
+				zap.String("file", dataFile.FileMeta.Path),
 				zap.Int64("size", dataFileSize))
 		}
 		prevRowIDMax = rowIDMax
@@ -217,20 +197,33 @@ func MakeTableRegions(
 func SplitLargeFile(
 	meta *MDTableMeta,
 	cfg *config.Config,
-	dataFilePath string,
-	dataFileSize int64,
+	dataFile FileInfo,
 	divisor int64,
 	prevRowIdxMax int64,
 	ioWorker *worker.Pool,
 ) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := cfg.Mydumper.MaxRegionSize
-	dataFileSizes = make([]float64, 0, dataFileSize/maxRegionSize+1)
+	dataFileSizes = make([]float64, 0, dataFile.Size/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
+	var columns []string
+	if cfg.Mydumper.CSV.Header {
+		reader, err := os.Open(dataFile.FileMeta.Path)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker, true)
+		if err = parser.ReadColumns(); err != nil {
+			return 0, nil, nil, err
+		}
+		columns = parser.Columns()
+		startOffset, _ = parser.Pos()
+		endOffset = startOffset + maxRegionSize
+	}
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
-		if endOffset != dataFileSize {
-			reader, err := os.Open(dataFilePath)
+		if endOffset != dataFile.Size {
+			reader, err := os.Open(dataFile.FileMeta.Path)
 			if err != nil {
 				return 0, nil, nil, err
 			}
@@ -245,24 +238,25 @@ func SplitLargeFile(
 		}
 		regions = append(regions,
 			&TableRegion{
-				DB:    meta.DB,
-				Table: meta.Name,
-				File:  dataFilePath,
+				DB:       meta.DB,
+				Table:    meta.Name,
+				FileMeta: dataFile.FileMeta,
 				Chunk: Chunk{
 					Offset:       startOffset,
 					EndOffset:    endOffset,
 					PrevRowIDMax: prevRowIdxMax,
 					RowIDMax:     rowIDMax,
+					Columns:      columns,
 				},
 			})
 		dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))
 		prevRowIdxMax = rowIDMax
-		if endOffset == dataFileSize {
+		if endOffset == dataFile.Size {
 			break
 		}
 		startOffset = endOffset
-		if endOffset += maxRegionSize; endOffset > dataFileSize {
-			endOffset = dataFileSize
+		if endOffset += maxRegionSize; endOffset > dataFile.Size {
+			endOffset = dataFile.Size
 		}
 	}
 	return prevRowIdxMax, regions, dataFileSizes, nil
