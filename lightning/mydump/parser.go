@@ -85,6 +85,7 @@ type Chunk struct {
 	EndOffset    int64
 	PrevRowIDMax int64
 	RowIDMax     int64
+	Columns      []string
 }
 
 // Row is the content of a row.

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/reader"
-
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -157,9 +156,10 @@ func MakeTableRegions(
 		if !isCsvFile {
 			divisor += 2
 		}
-		// If a csv file is overlarge, we need to split it into mutiple regions.
-		// Note: We can only split a csv file whose format is strict and header is empty.
-		if isCsvFile && dataFile.Size > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat && !cfg.Mydumper.CSV.Header {
+
+		// If a csv file is overlarge, we need to split it into multiple regions.
+		// Note: We can only split a csv file whose format is strict.
+		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat {
 			var (
 				regions      []*TableRegion
 				subFileSizes []float64
@@ -254,6 +254,20 @@ func SplitLargeFile(
 	maxRegionSize := cfg.Mydumper.MaxRegionSize
 	dataFileSizes = make([]float64, 0, dataFile.Size/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
+	var columns []string
+	if cfg.Mydumper.CSV.Header {
+		reader, err := os.Open(dataFile.FileMeta.Path)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker, true)
+		if err = parser.ReadColumns(); err != nil {
+			return 0, nil, nil, err
+		}
+		columns = parser.Columns()
+		startOffset, _ = parser.Pos()
+		endOffset = startOffset + maxRegionSize
+	}
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
@@ -281,6 +295,7 @@ func SplitLargeFile(
 					EndOffset:    endOffset,
 					PrevRowIDMax: prevRowIdxMax,
 					RowIDMax:     rowIDMax,
+					Columns:      columns,
 				},
 			})
 		dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))

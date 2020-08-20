@@ -117,9 +117,6 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	if cfg.Mydumper.DefaultFileRules {
 		fileRouteRules = append(fileRouteRules, defaultFileRouteRules...)
 	}
-	if len(fileRouteRules) == 0 {
-		return nil, errors.New("not file route rules. You may set 'mydumper.default-route-rules' to true or add 'mydumper.files' configs")
-	}
 
 	fileRouter, err := NewFileRouter(fileRouteRules)
 	if err != nil {
@@ -278,7 +275,10 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 
 		logger := log.With(zap.String("path", path))
 
-		res := fr.Route(path)
+		res, err := fr.Route(path)
+		if err != nil {
+			return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
+		}
 		if res == nil {
 			logger.Info("[loader] file is filtered by file router")
 			return nil

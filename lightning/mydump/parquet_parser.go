@@ -62,8 +62,6 @@ func NewParquetParser(path string) (*ParquetParser, error) {
 		}
 	}
 
-	//reader.GetNumRows()
-
 	return &ParquetParser{
 		Reader:  reader,
 		columns: columns,

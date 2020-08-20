@@ -9,7 +9,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/config"
-	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 )
 
@@ -115,21 +114,25 @@ var (
 
 // // RouteRule is a rule to route file path to target schema/table
 type FileRouter interface {
-	// Route apply rule to path. Return nil if path doesn't math route rule
-	Route(path string) *RouteResult
+	// Route apply rule to path. Return nil if path doesn't math route rule;
+	// return error if path match route rule but the captured value for field is invalid
+	Route(path string) (*RouteResult, error)
 }
 
 // chainRouters aggregates multi `FileRouter` as a router
 type chainRouters []FileRouter
 
-func (c chainRouters) Route(path string) *RouteResult {
+func (c chainRouters) Route(path string) (*RouteResult, error) {
 	for _, r := range c {
-		res := r.Route(path)
+		res, err := r.Route(path)
+		if err != nil {
+			return nil, err
+		}
 		if res != nil {
-			return res
+			return res, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func NewFileRouter(cfg []*config.FileRouteRule) (FileRouter, error) {
@@ -153,20 +156,19 @@ type RegexRouter struct {
 	extractors []patExpander
 }
 
-func (r *RegexRouter) Route(path string) *RouteResult {
-	// the regexp pattern maybe not contains any sub matches
-	if !r.pattern.MatchString(path) {
-		return nil
-	}
-
+func (r *RegexRouter) Route(path string) (*RouteResult, error) {
 	indexes := r.pattern.FindStringSubmatchIndex(path)
+	if len(indexes) == 0 {
+		return nil, nil
+	}
 	result := &RouteResult{}
 	for _, e := range r.extractors {
-		if !e.Expand(r.pattern, path, indexes, result) {
-			return nil
+		err := e.Expand(r.pattern, path, indexes, result)
+		if err != nil {
+			return nil, err
 		}
 	}
-	return result
+	return result, nil
 }
 
 type regexRouterParser struct{}
@@ -174,7 +176,7 @@ type regexRouterParser struct{}
 func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) {
 	rule := &RegexRouter{}
 	if r.Path != "" && r.Pattern != "" {
-		return nil, errors.New("can't set both `path` and `pattern` field")
+		return nil, errors.New("can't set both `path` and `pattern` field in [[mydumper.files]]")
 	}
 	if r.Path != "" {
 		// convert constant string as a regexp pattern
@@ -194,16 +196,13 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) 
 	}
 	rule.pattern = pattern
 
-	err = p.parseFieldExtractor(rule, "type", r.Type, func(s string) error {
-		_, e := parseSourceType(s)
-		return e
-	}, func(result *RouteResult, value string) bool {
+	err = p.parseFieldExtractor(rule, "type", r.Type, func(result *RouteResult, value string) error {
 		ty, err := parseSourceType(value)
 		if err != nil {
-			return false
+			return err
 		}
 		result.Type = ty
-		return true
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -213,9 +212,9 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) 
 		return rule, nil
 	}
 
-	err = p.parseFieldExtractor(rule, "schema", r.Schema, alwaysValid, func(result *RouteResult, value string) bool {
+	err = p.parseFieldExtractor(rule, "schema", r.Schema, func(result *RouteResult, value string) error {
 		result.Schema = value
-		return true
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -223,9 +222,9 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) 
 
 	// special case: when the pattern is for db schema, should not parse table name
 	if r.Type != SchemaSchema {
-		err = p.parseFieldExtractor(rule, "table", r.Table, alwaysValid, func(result *RouteResult, value string) bool {
+		err = p.parseFieldExtractor(rule, "table", r.Table, func(result *RouteResult, value string) error {
 			result.Name = value
-			return true
+			return nil
 		})
 		if err != nil {
 			return nil, err
@@ -233,9 +232,9 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) 
 	}
 
 	if len(r.Key) > 0 {
-		err = p.parseFieldExtractor(rule, "key", r.Key, alwaysValid, func(result *RouteResult, value string) bool {
+		err = p.parseFieldExtractor(rule, "key", r.Key, func(result *RouteResult, value string) error {
 			result.Key = value
-			return true
+			return nil
 		})
 		if err != nil {
 			return nil, err
@@ -243,21 +242,18 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) 
 	}
 
 	if len(r.Compression) > 0 {
-		err = p.parseFieldExtractor(rule, "compression", r.Compression, func(s string) error {
-			_, e := parseCompressionType(s)
-			return e
-		}, func(result *RouteResult, value string) bool {
+		err = p.parseFieldExtractor(rule, "compression", r.Compression, func(result *RouteResult, value string) error {
 			// TODO: should support restore compressed source files
 			compression, err := parseCompressionType(value)
 			if err != nil {
-				return false
+				return err
 			}
 			if compression != CompressionNone {
-				log.L().Warn("Currently we don't support restore compressed source file yet, source file will be ignored")
-				return false
+				return errors.New("Currently we don't support restore compressed source file yet")
+
 			}
 			result.Compression = compression
-			return true
+			return nil
 		})
 		if err != nil {
 			return nil, err
@@ -267,17 +263,12 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) 
 	return rule, nil
 }
 
-func alwaysValid(_ string) error {
-	return nil
-}
-
 // parse each field extractor in `p.r` and set them to p.rule
 func (p regexRouterParser) parseFieldExtractor(
 	rule *RegexRouter,
 	field,
 	fieldPattern string,
-	validateFn func(string) error,
-	applyFn func(result *RouteResult, value string) bool,
+	applyFn func(result *RouteResult, value string) error,
 ) error {
 	// pattern is empty, return default rule
 	if len(fieldPattern) == 0 {
@@ -285,7 +276,7 @@ func (p regexRouterParser) parseFieldExtractor(
 	}
 
 	// check and parse regexp template
-	if err := p.checkSubPatterns(rule.pattern, fieldPattern, validateFn); err != nil {
+	if err := p.checkSubPatterns(rule.pattern, fieldPattern); err != nil {
 		return errors.Trace(err)
 	}
 	rule.extractors = append(rule.extractors, patExpander{
@@ -295,14 +286,8 @@ func (p regexRouterParser) parseFieldExtractor(
 	return nil
 }
 
-func (p regexRouterParser) checkSubPatterns(pat *regexp.Regexp, t string, validateFn func(string) error) error {
+func (p regexRouterParser) checkSubPatterns(pat *regexp.Regexp, t string) error {
 	subPats := expandVariablePattern.FindAllString(t, -1)
-	if len(subPats) == 0 {
-		// validate const patterns
-		if err := validateFn(t); err != nil {
-			return err
-		}
-	}
 	for _, subVar := range subPats {
 		var tmplName string
 		switch {
@@ -331,10 +316,10 @@ func (p regexRouterParser) checkSubPatterns(pat *regexp.Regexp, t string, valida
 // patExpander extract string by expanding template with the regexp pattern
 type patExpander struct {
 	template string
-	applyFn  func(result *RouteResult, value string) bool
+	applyFn  func(result *RouteResult, value string) error
 }
 
-func (p *patExpander) Expand(pattern *regexp.Regexp, path string, matchIndex []int, result *RouteResult) bool {
+func (p *patExpander) Expand(pattern *regexp.Regexp, path string, matchIndex []int, result *RouteResult) error {
 	value := pattern.ExpandString([]byte{}, p.template, path, matchIndex)
 	return p.applyFn(result, string(value))
 }
