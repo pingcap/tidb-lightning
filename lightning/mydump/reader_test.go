@@ -46,7 +46,8 @@ func (s *testMydumpReaderSuite) TestExportStatementNoTrailingNewLine(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	data, err := ExportStatement(store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
@@ -75,7 +76,8 @@ func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
 	store, err := storage.NewLocalStorage(os.TempDir())
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	data, err := ExportStatement(store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
@@ -102,7 +104,8 @@ func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(
 
 	store, err := storage.NewLocalStorage(os.TempDir())
 	c.Assert(err, IsNil)
-	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	data, err := ExportStatement(store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
@@ -126,7 +129,8 @@ func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
 
 	store, err := storage.NewLocalStorage(os.TempDir())
 	c.Assert(err, IsNil)
-	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	data, err := ExportStatement(store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE TABLE a (b int(11) COMMENT '总案例');"))
 }
@@ -146,7 +150,8 @@ func (s *testMydumpReaderSuite) TestExportStatementGibberishError(c *C) {
 	store, err := storage.NewLocalStorage(os.TempDir())
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(store, fileInfo{Path: stat.Name(), Size: stat.Size()}, "auto")
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	data, err := ExportStatement(store, f, "auto")
 	c.Assert(data, IsNil)
 	c.Assert(err, NotNil)
 }

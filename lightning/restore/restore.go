@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -158,7 +157,13 @@ func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta,
 	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, s, DeliverPauser)
 }
 
-func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, s storage.ExternalStorage, pauser *common.Pauser) (*RestoreController, error) {
+func NewRestoreControllerWithPauser(
+	ctx context.Context,
+	dbMetas []*mydump.MDDatabaseMeta,
+	cfg *config.Config,
+	s storage.ExternalStorage,
+	pauser *common.Pauser,
+) (*RestoreController, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
@@ -344,12 +349,11 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	estimatedChunkCount := 0
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
-			for _, tableInfo := range tableMeta.DataFiles {
-				isCsvFile := strings.HasSuffix(strings.ToLower(tableInfo.Path), ".csv")
-				if isCsvFile {
+			for _, fileMeta := range tableMeta.DataFiles {
+				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if tableInfo.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += int(tableInfo.Size / cfg.MaxRegionSize)
+					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += int(fileMeta.Size / cfg.MaxRegionSize)
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -1271,12 +1275,14 @@ func newChunkRestore(
 	}
 
 	var parser mydump.Parser
-	switch path.Ext(strings.ToLower(chunk.Key.Path)) {
-	case ".csv":
+	switch chunk.FileMeta.Type {
+	case mydump.SourceTypeCSV:
 		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
 		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
-	default:
+	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+	default:
+		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
 	}
 
 	if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
@@ -1353,15 +1359,20 @@ func (t *TableRestore) populateChunks(ctx context.Context, rc *RestoreController
 				}
 				cp.Engines[chunk.EngineID] = engine
 			}
-			engine.Chunks = append(engine.Chunks, &ChunkCheckpoint{
+			ccp := &ChunkCheckpoint{
 				Key: ChunkCheckpointKey{
-					Path:   chunk.File,
+					Path:   chunk.FileMeta.Path,
 					Offset: chunk.Chunk.Offset,
 				},
+				FileMeta:          chunk.FileMeta,
 				ColumnPermutation: nil,
 				Chunk:             chunk.Chunk,
 				Timestamp:         timestamp,
-			})
+			}
+			if len(chunk.Chunk.Columns) > 0 {
+				ccp.ColumnPermutation = t.parseColumnPermutations(chunk.Chunk.Columns)
+			}
+			engine.Chunks = append(engine.Chunks, ccp)
 		}
 
 		// Add index engine checkpoint
@@ -1388,10 +1399,11 @@ func (t *TableRestore) populateChunks(ctx context.Context, rc *RestoreController
 //
 // The argument `columns` _must_ be in lower case.
 func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
-	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
-	shouldIncludeRowID := common.TableHasAutoRowID(t.tableInfo.Core)
-
+	var colPerm []int
 	if len(columns) == 0 {
+		colPerm = make([]int, 0, len(t.tableInfo.Core.Columns)+1)
+		shouldIncludeRowID := common.TableHasAutoRowID(t.tableInfo.Core)
+
 		// no provided columns, so use identity permutation.
 		for i := range t.tableInfo.Core.Columns {
 			colPerm = append(colPerm, i)
@@ -1400,30 +1412,37 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 			colPerm = append(colPerm, -1)
 		}
 	} else {
-		columnMap := make(map[string]int)
-		for i, column := range columns {
-			columnMap[column] = i
-		}
-		for _, colInfo := range t.tableInfo.Core.Columns {
-			if i, ok := columnMap[colInfo.Name.L]; ok {
-				colPerm = append(colPerm, i)
-			} else {
-				t.logger.Warn("column missing from data file, going to fill with default value",
-					zap.Stringer("path", &ccp.Key),
-					zap.String("colName", colInfo.Name.O),
-					zap.Stringer("colType", &colInfo.FieldType),
-				)
-				colPerm = append(colPerm, -1)
-			}
-		}
-		if i, ok := columnMap[model.ExtraHandleName.L]; ok {
-			colPerm = append(colPerm, i)
-		} else if shouldIncludeRowID {
-			colPerm = append(colPerm, -1)
-		}
+		colPerm = t.parseColumnPermutations(columns)
 	}
 
 	ccp.ColumnPermutation = colPerm
+}
+
+func (t *TableRestore) parseColumnPermutations(columns []string) []int {
+	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
+
+	columnMap := make(map[string]int)
+	for i, column := range columns {
+		columnMap[column] = i
+	}
+	for _, colInfo := range t.tableInfo.Core.Columns {
+		if i, ok := columnMap[colInfo.Name.L]; ok {
+			colPerm = append(colPerm, i)
+		} else {
+			t.logger.Warn("column missing from data file, going to fill with default value",
+				zap.String("colName", colInfo.Name.O),
+				zap.Stringer("colType", &colInfo.FieldType),
+			)
+			colPerm = append(colPerm, -1)
+		}
+	}
+	if i, ok := columnMap[model.ExtraHandleName.L]; ok {
+		colPerm = append(colPerm, i)
+	} else if common.TableHasAutoRowID(t.tableInfo.Core) {
+		colPerm = append(colPerm, -1)
+	}
+
+	return colPerm
 }
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {

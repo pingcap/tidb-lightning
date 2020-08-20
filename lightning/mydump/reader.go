@@ -22,12 +22,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/br/pkg/storage"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
+	"golang.org/x/text/encoding/simplifiedchinese"
+
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-	"go.uber.org/zap"
-	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 var (
@@ -67,8 +68,8 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 	return data, nil
 }
 
-func ExportStatement(store storage.ExternalStorage, sqlFile fileInfo, characterSet string) ([]byte, error) {
-	fd, err := store.Open(context.Background(), sqlFile.Path)
+func ExportStatement(store storage.ExternalStorage, sqlFile FileInfo, characterSet string) ([]byte, error) {
+	fd, err := store.Open(context.Background(), sqlFile.FileMeta.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -105,9 +106,9 @@ func ExportStatement(store storage.ExternalStorage, sqlFile fileInfo, characterS
 	if err != nil {
 		log.L().Error("cannot decode input file, please convert to target encoding manually",
 			zap.String("encoding", characterSet),
-			zap.String("Path", sqlFile.Path),
+			zap.String("Path", sqlFile.FileMeta.Path),
 		)
-		return nil, errors.Annotatef(err, "failed to decode %s as %s", sqlFile.Path, characterSet)
+		return nil, errors.Annotatef(err, "failed to decode %s as %s", sqlFile.FileMeta.Path, characterSet)
 	}
 	return data, nil
 }

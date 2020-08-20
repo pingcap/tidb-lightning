@@ -22,10 +22,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/br/pkg/storage"
-
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"
+	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -34,6 +33,11 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	"github.com/pingcap/tidb/ddl"
+	tmock "github.com/pingcap/tidb/util/mock"
+	uuid "github.com/satori/go.uuid"
+
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -43,9 +47,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 	"github.com/pingcap/tidb-lightning/mock"
-	"github.com/pingcap/tidb/ddl"
-	tmock "github.com/pingcap/tidb/util/mock"
-	uuid "github.com/satori/go.uuid"
 )
 
 var _ = Suite(&restoreSuite{})
@@ -313,21 +314,21 @@ func (s *tableRestoreSuite) SetUpSuite(c *C) {
 	fakeDataFilesCount := 6
 	fakeDataFilesContent := []byte("INSERT INTO `table` VALUES (1, 2, 3);")
 	c.Assert(len(fakeDataFilesContent), Equals, 37)
-	s.tableMeta = &mydump.MDTableMeta{
-		DB:         "db",
-		Name:       "table",
-		TotalSize:  222,
-		SchemaFile: mydump.NewFileInfo(filepath.Join(fakeDataDir, "db.table-schema.sql"), 0),
-	}
-
-	fakeDataFiles := make([]string, 0, fakeDataFilesCount)
+	fakeDataFiles := make([]mydump.FileInfo, 0, fakeDataFilesCount)
 	for i := 1; i <= fakeDataFilesCount; i++ {
 		fakeFileName := fmt.Sprintf("db.table.%d.sql", i)
 		fakeDataPath := filepath.Join(fakeDataDir, fakeFileName)
 		err = ioutil.WriteFile(fakeDataPath, fakeDataFilesContent, 0644)
 		c.Assert(err, IsNil)
-		fakeDataFiles = append(fakeDataFiles, fakeDataPath)
-		s.tableMeta.DataFiles = append(s.tableMeta.DataFiles, mydump.NewFileInfo(fakeFileName, int64(len(fakeDataFilesContent))))
+		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeFileName, Type: mydump.SourceTypeSQL, SortKey: fmt.Sprintf("%d", i)}, Size: 37})
+	}
+
+	s.tableMeta = &mydump.MDTableMeta{
+		DB:         "db",
+		Name:       "table",
+		TotalSize:  222,
+		SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: mydump.SourceFileMeta{Path: "db.table-schema.sql", Type: mydump.SourceTypeTableSchema}},
+		DataFiles:  fakeDataFiles,
 	}
 }
 
@@ -362,7 +363,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 			Status: CheckpointStatusLoaded,
 			Chunks: []*ChunkCheckpoint{
 				{
-					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[0].Path, Offset: 0},
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[0].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[0].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -372,7 +374,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Timestamp: 1234567897,
 				},
 				{
-					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].Path, Offset: 0},
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[1].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -382,7 +385,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Timestamp: 1234567897,
 				},
 				{
-					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[2].Path, Offset: 0},
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[2].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[2].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -397,7 +401,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 			Status: CheckpointStatusLoaded,
 			Chunks: []*ChunkCheckpoint{
 				{
-					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[3].Path, Offset: 0},
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[3].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[3].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -407,7 +412,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Timestamp: 1234567897,
 				},
 				{
-					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[4].Path, Offset: 0},
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[4].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[4].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -417,7 +423,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 					Timestamp: 1234567897,
 				},
 				{
-					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[5].Path, Offset: 0},
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[5].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[5].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
@@ -581,7 +588,8 @@ func (s *chunkRestoreSuite) SetUpTest(c *C) {
 	w := worker.NewPool(ctx, 5, "io")
 
 	chunk := ChunkCheckpoint{
-		Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].Path, Offset: 0},
+		Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
+		FileMeta: s.tr.tableMeta.DataFiles[1].FileMeta,
 		Chunk: mydump.Chunk{
 			Offset:       0,
 			EndOffset:    37,

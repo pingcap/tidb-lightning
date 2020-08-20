@@ -20,9 +20,10 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-	"github.com/pingcap/tidb/types"
 )
 
 var (
@@ -342,14 +343,9 @@ func (parser *CSVParser) ReadRow() error {
 
 	// skip the header first
 	if parser.shouldParseHeader {
-		columns, err := parser.readRecord(nil)
+		err := parser.ReadColumns()
 		if err != nil {
 			return errors.Trace(err)
-		}
-		parser.columns = make([]string, 0, len(columns))
-		for _, colName := range columns {
-			colName, _ = parser.unescapeString(colName)
-			parser.columns = append(parser.columns, strings.ToLower(colName))
 		}
 		parser.shouldParseHeader = false
 	}
@@ -382,6 +378,19 @@ func (parser *CSVParser) ReadRow() error {
 		}
 	}
 
+	return nil
+}
+
+func (parser *CSVParser) ReadColumns() error {
+	columns, err := parser.readRecord(nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	parser.columns = make([]string, 0, len(columns))
+	for _, colName := range columns {
+		colName, _ = parser.unescapeString(colName)
+		parser.columns = append(parser.columns, strings.ToLower(colName))
+	}
 	return nil
 }
 

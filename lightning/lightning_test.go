@@ -29,6 +29,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 )
 
@@ -64,8 +65,9 @@ func (s *lightningSuite) TestRun(c *C) {
 	path, _ := filepath.Abs(".")
 	err = lightning.run(&config.Config{
 		Mydumper: config.MydumperRuntime{
-			SourceDir: fmt.Sprintf("file://%s", path),
-			Filter:    []string{"*.*"},
+			SourceDir:        fmt.Sprintf("file://%s", path),
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
 		},
 		Checkpoint: config.Checkpoint{
 			Enable: true,

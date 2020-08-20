@@ -25,12 +25,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-	"github.com/pingcap/tidb/types"
-	"go.uber.org/zap"
 )
 
 type blockParser struct {
@@ -85,6 +86,7 @@ type Chunk struct {
 	EndOffset    int64
 	PrevRowIDMax int64
 	RowIDMax     int64
+	Columns      []string
 }
 
 // Row is the content of a row.
