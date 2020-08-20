@@ -117,9 +117,6 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	if cfg.Mydumper.DefaultFileRules {
 		fileRouteRules = append(fileRouteRules, defaultFileRouteRules...)
 	}
-	if len(fileRouteRules) == 0 {
-		return nil, errors.New("not file route rules. You may set 'mydumper.default-route-rules' to true or add 'mydumper.files' configs")
-	}
 
 	fileRouter, err := NewFileRouter(fileRouteRules)
 	if err != nil {
