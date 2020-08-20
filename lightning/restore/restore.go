@@ -1436,7 +1436,7 @@ func (t *TableRestore) parseColumnPermutations(columns []string) ([]int, error) 
 		}
 	}
 	if len(unknownCols) > 0 {
-		return colPerm, errors.Errorf("unknown columns in csv header %s", unknownCols)
+		return colPerm, errors.Errorf("unknown columns in header %s", unknownCols)
 	}
 
 	for _, colInfo := range t.tableInfo.Core.Columns {

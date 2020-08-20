@@ -350,13 +350,6 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	err := s.tr.populateChunks(rc, cp)
 	c.Assert(err, IsNil)
 
-	for id, engine := range cp.Engines {
-		fmt.Printf("id: %d, engine: %v\n", id, *engine)
-		for _, c := range engine.Chunks {
-			fmt.Printf("  key: %v, chunk: %v\n", c.Key, c.Chunk)
-		}
-	}
-
 	c.Assert(cp.Engines, DeepEquals, map[int32]*EngineCheckpoint{
 		-1: {
 			Status: CheckpointStatusLoaded,
@@ -455,7 +448,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	s.cfg.Mydumper.MaxRegionSize = 5
 	err = s.tr.populateChunks(rc, cp)
 	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `.*unknown columns in csv header \[1 2 3\]`)
+	c.Assert(err, ErrorMatches, `.*unknown columns in header \[1 2 3\]`)
 	s.cfg.Mydumper.MaxRegionSize = regionSize
 	s.cfg.Mydumper.CSV.Header = false
 }
@@ -480,12 +473,12 @@ func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
 	ccp.ColumnPermutation = nil
 	err := s.tr.initializeColumns([]string{"_tidb_rowid", "b", "a", "c", "d"}, ccp)
 	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `unknown columns in csv header \[d\]`)
+	c.Assert(err, ErrorMatches, `unknown columns in header \[d\]`)
 
 	ccp.ColumnPermutation = nil
 	err = s.tr.initializeColumns([]string{"e", "b", "c", "d"}, ccp)
 	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `unknown columns in csv header \[e d\]`)
+	c.Assert(err, ErrorMatches, `unknown columns in header \[e d\]`)
 }
 
 func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
