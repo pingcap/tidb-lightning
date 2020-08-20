@@ -20,9 +20,11 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	router "github.com/pingcap/tidb-tools/pkg/table-router"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	md "github.com/pingcap/tidb-lightning/lightning/mydump"
-	router "github.com/pingcap/tidb-tools/pkg/table-router"
 )
 
 var _ = Suite(&testMydumpLoaderSuite{})
@@ -41,8 +43,9 @@ func (s *testMydumpLoaderSuite) TearDownSuite(c *C) {}
 func newConfigWithSourceDir(sourceDir string) *config.Config {
 	return &config.Config{
 		Mydumper: config.MydumperRuntime{
-			SourceDir: sourceDir,
-			Filter:    []string{"*.*"},
+			SourceDir:        sourceDir,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
 		},
 	}
 }
@@ -134,7 +137,7 @@ func (s *testMydumpLoaderSuite) TestTableNoHostDB(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid table schema file, cannot find db - .*[/\\]db\.tbl-schema\.sql`)
+	c.Assert(err, ErrorMatches, `invalid table schema file, cannot find db 'db' - .*[/\\]db\.tbl-schema\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDuplicatedTable(c *C) {
@@ -168,7 +171,7 @@ func (s *testMydumpLoaderSuite) TestDataNoHostDB(c *C) {
 	s.touch(c, "db.tbl.sql")
 
 	_, err := md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid data file, miss host db - .*[/\\]db\.tbl\.sql`)
+	c.Assert(err, ErrorMatches, `invalid data file, miss host db 'db' - .*[/\\]db\.tbl\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
@@ -182,7 +185,7 @@ func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
 	s.touch(c, "db.tbl.sql")
 
 	_, err := md.NewMyDumpLoader(s.cfg)
-	c.Assert(err, ErrorMatches, `invalid data file, miss host table - .*[/\\]db\.tbl\.sql`)
+	c.Assert(err, ErrorMatches, `invalid data file, miss host table 'tbl' - .*[/\\]db\.tbl\.sql`)
 }
 
 func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
@@ -203,7 +206,7 @@ func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
 			DB:         "db",
 			Name:       "tbl",
 			SchemaFile: "",
-			DataFiles:  []string{p},
+			DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: p, Type: md.SourceTypeSQL}}},
 		}},
 	}})
 }
@@ -224,7 +227,6 @@ func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
 
 	mdl, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, IsNil)
-
 	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{{
 		Name:       "db",
 		SchemaFile: pDBSchema,
@@ -233,13 +235,13 @@ func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
 				DB:         "db",
 				Name:       "0002",
 				SchemaFile: pT2Schema,
-				DataFiles:  []string{pT2Data},
+				DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "0002"}, FileMeta: md.SourceFileMeta{Path: pT2Data, Type: md.SourceTypeSQL}}},
 			},
 			{
 				DB:         "db",
 				Name:       "tbl.with.dots",
 				SchemaFile: pT1Schema,
-				DataFiles:  []string{pT1Data},
+				DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "tbl.with.dots"}, FileMeta: md.SourceFileMeta{Path: pT1Data, Type: md.SourceTypeSQL, SortKey: "0001"}}},
 			},
 		},
 	}})
@@ -297,7 +299,6 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 
 	mdl, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, IsNil)
-
 	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
 		{
 			Name:       "a1",
@@ -307,7 +308,7 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 					DB:         "a1",
 					Name:       "s1",
 					SchemaFile: pA1S1Schema,
-					DataFiles:  []string{pA1S1Data},
+					DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: pA1S1Data, Type: md.SourceTypeSQL, SortKey: "1"}}},
 				},
 			},
 		},
@@ -323,7 +324,11 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 					DB:         "b",
 					Name:       "u",
 					SchemaFile: pA0T0Schema,
-					DataFiles:  []string{pA0T0Data, pA0T1Data, pA1T2Data},
+					DataFiles: []md.FileInfo{
+						{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: pA0T0Data, Type: md.SourceTypeSQL, SortKey: "1"}},
+						{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: pA0T1Data, Type: md.SourceTypeSQL, SortKey: "1"}},
+						{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: pA1T2Data, Type: md.SourceTypeSQL, SortKey: "1"}},
+					},
 				},
 			},
 		},
@@ -335,7 +340,7 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 					DB:         "c",
 					Name:       "t3",
 					SchemaFile: pC0T3Schema,
-					DataFiles:  []string{pC0T3Data},
+					DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "c", Name: "t3"}, FileMeta: md.SourceFileMeta{Path: pC0T3Data, Type: md.SourceTypeSQL, SortKey: "1"}}},
 				},
 			},
 		},
@@ -348,8 +353,80 @@ func (s *testMydumpLoaderSuite) TestBadRouterRule(c *C) {
 		TargetSchema:  "ab",
 	}}
 
-	s.touch(c, "a1b-schema-create.sql")
-
 	_, err := md.NewMyDumpLoader(s.cfg)
 	c.Assert(err, ErrorMatches, `.*pattern a\*b not valid`)
+}
+
+func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
+	s.cfg.Mydumper.DefaultFileRules = false
+	s.cfg.Mydumper.FileRouters = []*config.FileRouteRule{
+		{
+			Pattern: `(?i)^(?:[^./]*/)*([a-z0-9_]+)/schema\.sql$`,
+			Schema:  "$1",
+			Type:    "schema-schema",
+		},
+		{
+			Pattern: `(?i)^(?:[^./]*/)*([a-z0-9]+)/([a-z0-9_]+)-table\.sql$`,
+			Schema:  "$1",
+			Table:   "$2",
+			Type:    "table-schema",
+		},
+		{
+			Pattern: `(?i)^(?:[^./]*/)*([a-z][a-z0-9_]*)/([a-z]+)[0-9]*(?:\.([0-9]+))?\.(sql|csv)$`,
+			Schema:  "$1",
+			Table:   "$2",
+			Type:    "$4",
+		},
+		{
+			Pattern: `^(?:[^./]*/)*([a-z]+)(?:\.([0-9]+))?\.(sql|csv)$`,
+			Schema:  "d2",
+			Table:   "$1",
+			Type:    "$3",
+		},
+	}
+
+	s.mkdir(c, "d1")
+	s.mkdir(c, "d2")
+	d1Schema := s.touch(c, "d1/schema.sql")
+	d1TestTable := s.touch(c, "d1/test-table.sql")
+	d1TestData0 := s.touch(c, "d1/test0.sql")
+	d1TestData1 := s.touch(c, "d1/test1.sql")
+	d1TestData2 := s.touch(c, "d1/test2.001.sql")
+	_ = s.touch(c, "d1/t1-schema-create.sql")
+	d2Schema := s.touch(c, "d2/schema.sql")
+	d2TestTable := s.touch(c, "d2/abc-table.sql")
+	d2AbcData0 := s.touch(c, "abc.1.sql")
+
+	mdl, err := md.NewMyDumpLoader(s.cfg)
+	c.Assert(err, IsNil)
+	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
+		{
+			Name:       "d1",
+			SchemaFile: d1Schema,
+			Tables: []*md.MDTableMeta{
+				{
+					DB:         "d1",
+					Name:       "test",
+					SchemaFile: d1TestTable,
+					DataFiles: []md.FileInfo{
+						{TableName: filter.Table{Schema: "d1", Name: "test"}, FileMeta: md.SourceFileMeta{Path: d1TestData0, Type: md.SourceTypeSQL}},
+						{TableName: filter.Table{Schema: "d1", Name: "test"}, FileMeta: md.SourceFileMeta{Path: d1TestData1, Type: md.SourceTypeSQL}},
+						{TableName: filter.Table{Schema: "d1", Name: "test"}, FileMeta: md.SourceFileMeta{Path: d1TestData2, Type: md.SourceTypeSQL}},
+					},
+				},
+			},
+		},
+		{
+			Name:       "d2",
+			SchemaFile: d2Schema,
+			Tables: []*md.MDTableMeta{
+				{
+					DB:         "d2",
+					Name:       "abc",
+					SchemaFile: d2TestTable,
+					DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "d2", Name: "abc"}, FileMeta: md.SourceFileMeta{Path: d2AbcData0, Type: md.SourceTypeSQL}}},
+				},
+			},
+		},
+	})
 }

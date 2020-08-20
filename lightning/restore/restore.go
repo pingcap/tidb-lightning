@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -151,11 +150,20 @@ type RestoreController struct {
 	closedEngineLimit *worker.Pool
 }
 
-func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
+func NewRestoreController(
+	ctx context.Context,
+	dbMetas []*mydump.MDDatabaseMeta,
+	cfg *config.Config,
+) (*RestoreController, error) {
 	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, DeliverPauser)
 }
 
-func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, pauser *common.Pauser) (*RestoreController, error) {
+func NewRestoreControllerWithPauser(
+	ctx context.Context,
+	dbMetas []*mydump.MDDatabaseMeta,
+	cfg *config.Config,
+	pauser *common.Pauser,
+) (*RestoreController, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
@@ -339,14 +347,11 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	estimatedChunkCount := 0
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
-			for _, tablePath := range tableMeta.DataFiles {
-				isCsvFile := strings.HasSuffix(strings.ToLower(tablePath), ".csv")
-				if isCsvFile {
-					f, _ := os.Stat(tablePath)
-					dataFileSize := f.Size()
+			for _, fileMeta := range tableMeta.DataFiles {
+				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if dataFileSize > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += int(dataFileSize / cfg.MaxRegionSize)
+					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += int(fileMeta.Size / cfg.MaxRegionSize)
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -1267,12 +1272,14 @@ func newChunkRestore(
 	}
 
 	var parser mydump.Parser
-	switch path.Ext(strings.ToLower(chunk.Key.Path)) {
-	case ".csv":
+	switch chunk.FileMeta.Type {
+	case mydump.SourceTypeCSV:
 		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
 		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
-	default:
+	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+	default:
+		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
 	}
 
 	if len(chunk.ColumnPermutation) > 0 {
@@ -1350,9 +1357,10 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 			}
 			ccp := &ChunkCheckpoint{
 				Key: ChunkCheckpointKey{
-					Path:   chunk.File,
+					Path:   chunk.FileMeta.Path,
 					Offset: chunk.Chunk.Offset,
 				},
+				FileMeta:          chunk.FileMeta,
 				ColumnPermutation: nil,
 				Chunk:             chunk.Chunk,
 				Timestamp:         timestamp,

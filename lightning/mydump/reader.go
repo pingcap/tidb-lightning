@@ -21,10 +21,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go.uber.org/zap"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-	"go.uber.org/zap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
