@@ -196,7 +196,7 @@ type FileInfo struct {
 // databases and tables in the end are ordered lexicographically since they may
 // be stored in different subdirectories).
 //
-// Will sort tables by table Size, this means that the big table is imported
+// Will sort tables by table size, this means that the big table is imported
 // at the latest, which to avoid large table take a long time to import and block
 // small table to release index worker.
 func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage) error {

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mydump
+package mydump_test
 
 import (
 	"io/ioutil"
@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/br/pkg/storage"
 
 	. "github.com/pingcap/check"
+	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 )
 
 //////////////////////////////////////////////////////////

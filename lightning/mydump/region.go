@@ -65,7 +65,7 @@ func AllocateEngineIDs(
 		totalDataFileSize += dataFileSize
 	}
 
-	// No need to batch if the Size is too small :)
+	// No need to batch if the size is too small :)
 	if totalDataFileSize <= batchSize {
 		return
 	}
@@ -76,7 +76,7 @@ func AllocateEngineIDs(
 
 	// import() step will not be concurrent.
 	// If multiple Batch end times are close, it will result in multiple
-	// Batch import serials. We need use a non-uniform batch Size to create a pipeline effect.
+	// Batch import serials. We need use a non-uniform batch size to create a pipeline effect.
 	// Here we calculate the total number of engines, which is needed to compute the scale up
 	//
 	//     Total/B1 = 1/(1-R) * (N - 1/beta(N, R))
@@ -96,7 +96,7 @@ func AllocateEngineIDs(
 		}
 		realRatio := n - invBetaNR
 		if realRatio >= ratio {
-			// we don't have enough engines. reduce the batch Size to keep the pipeline smooth.
+			// we don't have enough engines. reduce the batch size to keep the pipeline smooth.
 			curBatchSize = totalDataFileSize * (1 - batchImportRatio) / realRatio
 			break
 		}
@@ -113,7 +113,7 @@ func AllocateEngineIDs(
 			curEngineID++
 
 			i := float64(curEngineID)
-			// calculate the non-uniform batch Size
+			// calculate the non-uniform batch size
 			if i >= n {
 				curBatchSize = batchSize
 			} else {
@@ -191,7 +191,7 @@ func MakeTableRegions(
 	return filesRegions, nil
 }
 
-// SplitLargeFile splits a large csv file into multiple regions, the Size of
+// SplitLargeFile splits a large csv file into multiple regions, the size of
 // each regions is specified by `config.MaxRegionSize`.
 // Note: We split the file coarsely, thus the format of csv file is needed to be
 // strict.
