@@ -48,7 +48,7 @@ func NewParquetParser(path string) (*ParquetParser, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	//wrapper := &ReaderWrapper{r}
+	// FIXME: need to bench what the best value for the concurrent reader number
 	reader, err := preader.NewParquetReader(r, nil, 2)
 	if err != nil {
 		return nil, errors.Trace(err)
