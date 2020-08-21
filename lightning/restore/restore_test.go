@@ -16,12 +16,13 @@ package restore
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb-tools/pkg/filter"
 	"io/ioutil"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/pingcap/tidb-tools/pkg/filter"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"
@@ -317,7 +318,7 @@ func (s *tableRestoreSuite) SetUpSuite(c *C) {
 	fakeDataPath := filepath.Join(fakeDataDir, "db.table.99.csv")
 	err = ioutil.WriteFile(fakeDataPath, fakeCsvContent, 0644)
 	c.Assert(err, IsNil)
-	fakeDataFiles = append(fakeDataFiles, fakeDataPath)
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeDataPath, Type: mydump.SourceTypeCSV, SortKey: "99"}, Size: 14})
 
 	s.tableMeta = &mydump.MDTableMeta{
 		DB:         "db",
@@ -435,7 +436,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 			Status: CheckpointStatusLoaded,
 			Chunks: []*ChunkCheckpoint{
 				{
-					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[6], Offset: 0},
+					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[6].FileMeta.Path, Offset: 0},
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    14,
