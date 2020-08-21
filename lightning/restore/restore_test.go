@@ -266,7 +266,7 @@ func (s *restoreSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
 
 var _ = Suite(&tableRestoreSuite{})
 
-type tableRestoreSuite struct {
+type tableRestoreSuiteBase struct {
 	tr  *TableRestore
 	cfg *config.Config
 
@@ -275,7 +275,11 @@ type tableRestoreSuite struct {
 	tableMeta *mydump.MDTableMeta
 }
 
-func (s *tableRestoreSuite) SetUpSuite(c *C) {
+type tableRestoreSuite struct {
+	tableRestoreSuiteBase
+}
+
+func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 	// Produce a mock table info
 
 	p := parser.New()
@@ -329,7 +333,7 @@ func (s *tableRestoreSuite) SetUpSuite(c *C) {
 	}
 }
 
-func (s *tableRestoreSuite) SetUpTest(c *C) {
+func (s *tableRestoreSuiteBase) SetUpTest(c *C) {
 	// Collect into the test TableRestore structure
 	var err error
 	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &TableCheckpoint{})
@@ -351,7 +355,6 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	rc := &RestoreController{cfg: s.cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io")}
 	err := s.tr.populateChunks(rc, cp)
 	c.Assert(err, IsNil)
-
 	c.Assert(cp.Engines, DeepEquals, map[int32]*EngineCheckpoint{
 		-1: {
 			Status: CheckpointStatusLoaded,
@@ -436,7 +439,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 			Status: CheckpointStatusLoaded,
 			Chunks: []*ChunkCheckpoint{
 				{
-					Key: ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[6].FileMeta.Path, Offset: 0},
+					Key:      ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[6].FileMeta.Path, Offset: 0},
+					FileMeta: s.tr.tableMeta.DataFiles[6].FileMeta,
 					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    14,
@@ -610,12 +614,12 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 var _ = Suite(&chunkRestoreSuite{})
 
 type chunkRestoreSuite struct {
-	tableRestoreSuite
+	tableRestoreSuiteBase
 	cr *chunkRestore
 }
 
 func (s *chunkRestoreSuite) SetUpTest(c *C) {
-	s.tableRestoreSuite.SetUpTest(c)
+	s.tableRestoreSuiteBase.SetUpTest(c)
 
 	ctx := context.Background()
 	w := worker.NewPool(ctx, 5, "io")
