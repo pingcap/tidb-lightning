@@ -447,19 +447,19 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	}
 
 	// with max open files 1024, the max table size will be: 524288MB
-	err := failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/GetRlimitValue", "return(1024)")
+	err := failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(1024)")
 	c.Assert(err, IsNil)
-	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/SetRlimitError", "return(true)")
+	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/SetRlimitError", "return(true)")
 	c.Assert(err, IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/SetRlimitError")
+	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/backend/SetRlimitError")
 	// with this dbMetas, the estimated fds will be 1025, so should return error
 	err = checkSystemRequirement(cfg, dbMetas)
 	c.Assert(err, NotNil)
-	err = failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/GetRlimitValue")
+	err = failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue")
 	c.Assert(err, IsNil)
 
-	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/GetRlimitValue", "return(1025)")
-	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/GetRlimitValue")
+	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(1025)")
+	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue")
 	c.Assert(err, IsNil)
 	err = checkSystemRequirement(cfg, dbMetas)
 	c.Assert(err, IsNil)
