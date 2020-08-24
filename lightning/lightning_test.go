@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -406,6 +407,11 @@ func (s *lightningServerSuite) TestHTTPAPIOutsideServerMode(c *C) {
 }
 
 func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
+	if runtime.GOOS == "windows" {
+		c.Skip("Local-backend is not supported on Windows")
+		return
+	}
+
 	cfg := config.NewConfig()
 	cfg.App.TableConcurrency = 4
 	cfg.TikvImporter.Backend = config.BackendLocal
