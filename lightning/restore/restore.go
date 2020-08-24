@@ -1372,7 +1372,11 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 				Timestamp:         timestamp,
 			}
 			if len(chunk.Chunk.Columns) > 0 {
-				ccp.ColumnPermutation = t.parseColumnPermutations(chunk.Chunk.Columns)
+				perms, err := t.parseColumnPermutations(chunk.Chunk.Columns)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				ccp.ColumnPermutation = perms
 			}
 			engine.Chunks = append(engine.Chunks, ccp)
 		}
@@ -1400,7 +1404,7 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 // The column permutation of (d, b, a) is set to be [2, 1, -1, 0].
 //
 // The argument `columns` _must_ be in lower case.
-func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
+func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) error {
 	var colPerm []int
 	if len(columns) == 0 {
 		colPerm = make([]int, 0, len(t.tableInfo.Core.Columns)+1)
@@ -1414,19 +1418,41 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 			colPerm = append(colPerm, -1)
 		}
 	} else {
-		colPerm = t.parseColumnPermutations(columns)
+		var err error
+		colPerm, err = t.parseColumnPermutations(columns)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	ccp.ColumnPermutation = colPerm
+	return nil
 }
 
-func (t *TableRestore) parseColumnPermutations(columns []string) []int {
+func (t *TableRestore) parseColumnPermutations(columns []string) ([]int, error) {
 	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
 
 	columnMap := make(map[string]int)
 	for i, column := range columns {
 		columnMap[column] = i
 	}
+
+	tableColumnMap := make(map[string]int)
+	for i, col := range t.tableInfo.Core.Columns {
+		tableColumnMap[col.Name.L] = i
+	}
+
+	// check if there are some unknown columns
+	var unknownCols []string
+	for _, c := range columns {
+		if _, ok := tableColumnMap[c]; !ok && c != model.ExtraHandleName.L {
+			unknownCols = append(unknownCols, c)
+		}
+	}
+	if len(unknownCols) > 0 {
+		return colPerm, errors.Errorf("unknown columns in header %s", unknownCols)
+	}
+
 	for _, colInfo := range t.tableInfo.Core.Columns {
 		if i, ok := columnMap[colInfo.Name.L]; ok {
 			colPerm = append(colPerm, i)
@@ -1444,7 +1470,7 @@ func (t *TableRestore) parseColumnPermutations(columns []string) []int {
 		colPerm = append(colPerm, -1)
 	}
 
-	return colPerm
+	return colPerm, nil
 }
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
@@ -1781,7 +1807,9 @@ func (cr *chunkRestore) encodeLoop(
 			case nil:
 				if !initializedColumns {
 					if len(cr.chunk.ColumnPermutation) == 0 {
-						t.initializeColumns(columnNames, cr.chunk)
+						if err = t.initializeColumns(columnNames, cr.chunk); err != nil {
+							return
+						}
 					}
 					initializedColumns = true
 				}
