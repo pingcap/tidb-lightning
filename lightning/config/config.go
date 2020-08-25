@@ -83,6 +83,10 @@ type DBStore struct {
 	ChecksumTableConcurrency   int `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
 }
 
+func (s *DBStore) TiDBAddr() string {
+	return fmt.Sprintf("%s:%d", s.Host, s.Port)
+}
+
 type Config struct {
 	TaskID int64 `toml:"-" json:"id"`
 

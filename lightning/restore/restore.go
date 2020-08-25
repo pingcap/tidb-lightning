@@ -277,7 +277,7 @@ outside:
 		switch {
 		case err == nil:
 		case log.IsContextCanceledError(err):
-			logger.Info("user terminated")
+			logger.Info("task canceled")
 			err = nil
 			break outside
 		default:
@@ -325,7 +325,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	rc.dbInfos = dbInfos
 
 	// Load new checkpoints
-	err = rc.checkpointsDB.Initialize(ctx, dbInfos)
+	err = rc.checkpointsDB.Initialize(ctx, rc.cfg, dbInfos)
 	if err != nil {
 		return errors.Trace(err)
 	}
