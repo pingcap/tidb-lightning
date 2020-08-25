@@ -84,6 +84,14 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 	c.Assert(err, IsNil)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
+	// check none utf8 row
+	row, err = encoder.Encode(logger, []types.Datum{
+		types.NewUintDatum(0),
+		types.NewStringDatum("\xC0"),
+	}, 1, nil)
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "invalid utf8 string value")
+
 	err = engine.WriteRows(ctx, []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
 	c.Assert(err, IsNil)
 }

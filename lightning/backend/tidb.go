@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -172,8 +173,13 @@ func (enc tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum) error 
 		var buffer [32]byte
 		value := strconv.AppendFloat(buffer[:0], datum.GetFloat64(), 'g', -1, 64)
 		sb.Write(value)
+	case types.KindString:
+		if !utf8.Valid(datum.GetBytes()) {
+			return errors.New("invalid utf8 string value")
+		}
+		enc.appendSQLBytes(sb, datum.GetBytes())
 
-	case types.KindString, types.KindBytes:
+	case types.KindBytes:
 		enc.appendSQLBytes(sb, datum.GetBytes())
 
 	case types.KindMysqlJSON:
