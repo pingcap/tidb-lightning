@@ -961,9 +961,7 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Confi
 }
 
 func (cpdb *FileCheckpointsDB) getTaskCheckpoint(_ context.Context) (*TaskCheckpoint, error) {
-	cpdb.lock.Lock()
-	defer cpdb.lock.Unlock()
-
+	// this method is always called in lock
 	cp := cpdb.checkpoints.TaskCheckpoint
 	if cp == nil || cp.TaskId == 0 {
 		return nil, nil

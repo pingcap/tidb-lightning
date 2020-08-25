@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
@@ -21,6 +23,17 @@ var _ = Suite(&cpFileSuite{})
 type cpFileSuite struct {
 	path string
 	cpdb *checkpoints.FileCheckpointsDB
+	cfg  *config.Config
+}
+
+func newTestConfig() *config.Config {
+	cfg := config.NewConfig()
+	cfg.Mydumper.SourceDir = "/data"
+	cfg.TaskID = 123
+	cfg.TiDB.Port = 4000
+	cfg.TiDB.PdAddr = "127.0.0.1:2379"
+	cfg.TikvImporter.Addr = "127.0.0.1:8287"
+	return cfg
 }
 
 func (s *cpFileSuite) SetUpTest(c *C) {
@@ -31,8 +44,8 @@ func (s *cpFileSuite) SetUpTest(c *C) {
 	cpdb := s.cpdb
 
 	// 2. initialize with checkpoint data.
-
-	err := cpdb.Initialize(ctx, map[string]*checkpoints.TidbDBInfo{
+	cfg := newTestConfig()
+	err := cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",
 			Tables: map[string]*checkpoints.TidbTableInfo{
@@ -132,6 +145,45 @@ func (s *cpFileSuite) setInvalidStatus() {
 		"`db1`.`t2`": cpd,
 		"`db2`.`t3`": cpd,
 	})
+}
+
+func (s *cpFileSuite) TestReInitializeFailed(c *C) {
+	adjustFuncs := []func(cfg *config.Config){
+		func(cfg *config.Config) {
+			cfg.TikvImporter.Backend = "local"
+		},
+		func(cfg *config.Config) {
+			cfg.TikvImporter.Addr = "128.0.0.1:8287"
+		},
+		func(cfg *config.Config) {
+			cfg.Mydumper.SourceDir = "/tmp/test"
+		},
+		func(cfg *config.Config) {
+			cfg.TiDB.Host = "192.168.0.1"
+		},
+		func(cfg *config.Config) {
+			cfg.TiDB.Port = 5000
+		},
+		func(cfg *config.Config) {
+			cfg.TiDB.PdAddr = "127.0.0.1:3379"
+		},
+	}
+
+	// default mode, will return error
+	for _, fn := range adjustFuncs {
+		cfg := newTestConfig()
+		fn(cfg)
+		err := s.cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
+		c.Assert(err, NotNil)
+	}
+
+	for _, fn := range adjustFuncs[1:] {
+		cfg := newTestConfig()
+		cfg.App.CheckRequirements = false
+		fn(cfg)
+		err := s.cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
+		c.Assert(err, IsNil)
+	}
 }
 
 func (s *cpFileSuite) TestGet(c *C) {

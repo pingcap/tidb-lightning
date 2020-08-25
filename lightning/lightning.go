@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 
@@ -145,7 +146,7 @@ func (l *Lightning) RunOnce() error {
 		return err
 	}
 
-	// in none-server mode, task id should stay the same
+	cfg.TaskID = time.Now().UnixNano()
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		cfg.TaskID = int64(val.(int))
 	})
