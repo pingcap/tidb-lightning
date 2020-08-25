@@ -26,10 +26,11 @@ message CheckpointsModel {
 
 message TaskCheckpointModel {
     int64 task_id = 1;
-    string backend = 2;
-    string importer_addr = 3;
-    string tidb_addr = 4;
-    string pd_addr = 5;
+    string source_dir = 2;
+    string backend = 3;
+    string importer_addr = 4;
+    string tidb_addr = 5;
+    string pd_addr = 6;
 }
 
 message TableCheckpointModel {

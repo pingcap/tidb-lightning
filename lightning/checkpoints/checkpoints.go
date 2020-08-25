@@ -335,6 +335,7 @@ type DestroyedTableCheckpoint struct {
 
 type TaskCheckpoint struct {
 	TaskId       int64
+	SourceDir    string
 	Backend      string
 	ImporterAddr string
 	TidbAddr     string
@@ -353,6 +354,10 @@ func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
 
 	if cfg.App.CheckRequirements {
 		errorFmt := "config '%s' value '%s' different from checkpoint value '%s'. You may set 'check-requirements = false' to skip this check or " + retryUsage
+		if cfg.Mydumper.SourceDir != taskCp.SourceDir {
+			return errors.Errorf(errorFmt, "mydumper.data-source-dir", cfg.Mydumper.SourceDir, taskCp.SourceDir)
+		}
+
 		if cfg.TikvImporter.Backend == config.BackendImporter && cfg.TikvImporter.Addr != taskCp.ImporterAddr {
 			return errors.Errorf(errorFmt, "tikv-importer.addr", cfg.TikvImporter.Backend, taskCp.Backend)
 		}
@@ -454,12 +459,13 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 
 	err = sql.Exec(ctx, "create task checkpoints table", fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.%s (
-			task_id bigint NOT NULL PRIMARY KEY,
+			id int NOT NULL PRIMARY KEY,
+			task_id bigint NOT NULL,
+			source_dir varchar(256) NOT NULL,
 			backend varchar(16) NOT NULL, 
 			importer_addr varchar(32),
-			source_dir varchar(256) NOT NULL,
 			tidb_addr varchar(128) NOT NULL,
-			pd_addr varchar(128) NOT NULL,
+			pd_addr varchar(128) NOT NULL
 		);
 	`, schema, CheckpointTableNameTask))
 	if err != nil {
@@ -542,15 +548,16 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.L()}
 	err := s.Transact(ctx, "insert checkpoints", func(c context.Context, tx *sql.Tx) error {
 		taskStmt, err := tx.PrepareContext(c, fmt.Sprintf(`
-			INSERT INTO %s.%s (task_id, backend, importer_addr, tidb_addr, pd_addr) VALUES (?, ?, ?, ?, ?)
-			ON DUPLICATE KEY UPDATE backend = VALUES(backend), importer_addr = VALUES(importer_addr), 
+			INSERT INTO %s.%s (id, task_id, source_dir, backend, importer_addr, tidb_addr, pd_addr) VALUES (1, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE task_id = VALUES(task_id), source_dir = VALUES(source_dir), backend = VALUES(backend), importer_addr = VALUES(importer_addr), 
 			tidb_addr = VALUES(tidb_addr), pd_addr = VALUES(pd_addr);
 		`, cpdb.schema, CheckpointTableNameTask))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		defer taskStmt.Close()
-		_, err = taskStmt.ExecContext(ctx, cfg.TikvImporter.Backend, cfg.TikvImporter.Addr, cfg.TiDB.TiDBAddr(), cfg.TiDB.PdAddr)
+		_, err = taskStmt.ExecContext(ctx, cfg.TaskID, cfg.Mydumper.SourceDir, cfg.TikvImporter.Backend,
+			cfg.TikvImporter.Addr, cfg.TiDB.TiDBAddr(), cfg.TiDB.PdAddr)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -598,9 +605,9 @@ func (cpdb *MySQLCheckpointsDB) getTaskCheckpoint(ctx context.Context) (*TaskChe
 		Logger: log.L(),
 	}
 
-	taskQuery := fmt.Sprintf("SELECT task_id, backend, importer_addr, tidb_addr, pd_addr FROM %s.%s", cpdb.schema, CheckpointTableNameTask)
+	taskQuery := fmt.Sprintf("SELECT task_id, source_dir, backend, importer_addr, tidb_addr, pd_addr FROM %s.%s WHERE id = 1", cpdb.schema, CheckpointTableNameTask)
 	taskCp := &TaskCheckpoint{}
-	err := s.QueryRow(ctx, "fetch task checkpoint", taskQuery, &taskCp.TaskId, &taskCp.Backend,
+	err := s.QueryRow(ctx, "fetch task checkpoint", taskQuery, &taskCp.TaskId, &taskCp.SourceDir, &taskCp.Backend,
 		&taskCp.ImporterAddr, &taskCp.TidbAddr, &taskCp.PdAddr)
 
 	if err != nil {
@@ -925,6 +932,7 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Confi
 
 	cpdb.checkpoints.TaskCheckpoint = &TaskCheckpointModel{
 		TaskId:       cfg.TaskID,
+		SourceDir:    cfg.Mydumper.SourceDir,
 		Backend:      cfg.TikvImporter.Backend,
 		ImporterAddr: cfg.TikvImporter.Addr,
 		TidbAddr:     cfg.TiDB.TiDBAddr(),
@@ -963,6 +971,7 @@ func (cpdb *FileCheckpointsDB) getTaskCheckpoint(_ context.Context) (*TaskCheckp
 
 	return &TaskCheckpoint{
 		TaskId:       cp.TaskId,
+		SourceDir:    cp.SourceDir,
 		Backend:      cp.Backend,
 		ImporterAddr: cp.ImporterAddr,
 		TidbAddr:     cp.TidbAddr,
