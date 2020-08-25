@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -347,7 +348,8 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 	estimatedChunkCount := 0.0
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
-			dbCp, err := rc.checkpointsDB.Get(ctx, tableMeta.Name)
+			tableName := common.UniqueTable(dbMeta.Name, tableMeta.Name)
+			dbCp, err := rc.checkpointsDB.Get(ctx, tableName)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -372,7 +374,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
 					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += float64(fileMeta.Size / cfg.MaxRegionSize)
+						estimatedChunkCount += math.Round(float64(fileMeta.Size) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -545,6 +547,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			log.L().Info("progress",
 				zap.String("files", fmt.Sprintf("%.0f/%.0f (%.1f%%)", finished, estimated, finished/estimated*100)),
 				zap.String("tables", fmt.Sprintf("%.0f/%.0f (%.1f%%)", completedTables, totalTables, completedTables/totalTables*100)),
+				zap.String("chunks", fmt.Sprintf("%.0f/%.0f", finished, estimated)),
 				zap.Float64("speed(MiB/s)", bytesRead/(1048576e-9*nanoseconds)),
 				zap.String("state", state),
 				remaining,
