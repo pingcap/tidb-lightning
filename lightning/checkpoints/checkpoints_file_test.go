@@ -148,45 +148,6 @@ func (s *cpFileSuite) setInvalidStatus() {
 	})
 }
 
-func (s *cpFileSuite) TestReInitializeFailed(c *C) {
-	adjustFuncs := []func(cfg *config.Config){
-		func(cfg *config.Config) {
-			cfg.TikvImporter.Backend = "local"
-		},
-		func(cfg *config.Config) {
-			cfg.TikvImporter.Addr = "128.0.0.1:8287"
-		},
-		func(cfg *config.Config) {
-			cfg.Mydumper.SourceDir = "/tmp/test"
-		},
-		func(cfg *config.Config) {
-			cfg.TiDB.Host = "192.168.0.1"
-		},
-		func(cfg *config.Config) {
-			cfg.TiDB.Port = 5000
-		},
-		func(cfg *config.Config) {
-			cfg.TiDB.PdAddr = "127.0.0.1:3379"
-		},
-	}
-
-	// default mode, will return error
-	for _, fn := range adjustFuncs {
-		cfg := newTestConfig()
-		fn(cfg)
-		err := s.cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
-		c.Assert(err, NotNil)
-	}
-
-	for _, fn := range adjustFuncs[1:] {
-		cfg := newTestConfig()
-		cfg.App.CheckRequirements = false
-		fn(cfg)
-		err := s.cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
-		c.Assert(err, IsNil)
-	}
-}
-
 func (s *cpFileSuite) TestGet(c *C) {
 	ctx := context.Background()
 

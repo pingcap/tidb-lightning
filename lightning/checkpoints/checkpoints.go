@@ -343,49 +343,9 @@ type TaskCheckpoint struct {
 	SortedKVDir  string
 }
 
-func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
-	if taskCp == nil {
-		return nil
-	}
-	// always check the backend value even with 'check-requirements = false'
-	retryUsage := "destroy all checkpoints and remove all restored tables and try again"
-	if cfg.TikvImporter.Backend != taskCp.Backend {
-		return errors.Errorf("config 'tikv-importer.backend' value '%s' different from checkpoint value '%s', please %s", cfg.TikvImporter.Backend, taskCp.Backend, retryUsage)
-	}
-
-	if cfg.App.CheckRequirements {
-		errorFmt := "config '%s' value '%s' different from checkpoint value '%s'. You may set 'check-requirements = false' to skip this check or " + retryUsage
-		if cfg.Mydumper.SourceDir != taskCp.SourceDir {
-			return errors.Errorf(errorFmt, "mydumper.data-source-dir", cfg.Mydumper.SourceDir, taskCp.SourceDir)
-		}
-
-		if cfg.TikvImporter.Backend == config.BackendLocal && cfg.TikvImporter.SortedKVDir != taskCp.SortedKVDir {
-			return errors.Errorf(errorFmt, "mydumper.sorted-kv-dir", cfg.TikvImporter.SortedKVDir, taskCp.SortedKVDir)
-		}
-
-		if cfg.TikvImporter.Backend == config.BackendImporter && cfg.TikvImporter.Addr != taskCp.ImporterAddr {
-			return errors.Errorf(errorFmt, "tikv-importer.addr", cfg.TikvImporter.Backend, taskCp.Backend)
-		}
-
-		if cfg.TiDB.Host != taskCp.TiDBHost {
-			return errors.Errorf(errorFmt, "tidb.host", cfg.TiDB.Host, taskCp.TiDBHost)
-		}
-
-		if cfg.TiDB.Port != taskCp.TiDBPort {
-			return errors.Errorf(errorFmt, "tidb.port", cfg.TiDB.Port, taskCp.TiDBPort)
-		}
-
-		if cfg.TiDB.PdAddr != taskCp.PdAddr {
-			return errors.Errorf(errorFmt, "tidb.pd-addr", cfg.TiDB.PdAddr, taskCp.PdAddr)
-		}
-	}
-
-	return nil
-}
-
 type CheckpointsDB interface {
 	Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error
-	getTaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error)
+	TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error)
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	Close() error
 	// InsertEngineCheckpoints initializes the checkpoints related to a table.
@@ -416,7 +376,7 @@ func (*NullCheckpointsDB) Initialize(context.Context, *config.Config, map[string
 	return nil
 }
 
-func (*NullCheckpointsDB) getTaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
+func (*NullCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
 	return nil, nil
 }
 
@@ -543,11 +503,6 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 }
 
 func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
-	taskCp, _ := cpdb.getTaskCheckpoint(ctx)
-	if err := verifyCheckpoint(cfg, taskCp); err != nil {
-		return errors.Trace(err)
-	}
-
 	// We can have at most 65535 placeholders https://stackoverflow.com/q/4922345/
 	// Since this step is not performance critical, we just insert the rows one-by-one.
 	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.L()}
@@ -603,7 +558,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 	return nil
 }
 
-func (cpdb *MySQLCheckpointsDB) getTaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
+func (cpdb *MySQLCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
 		Logger: log.L(),
@@ -932,11 +887,6 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Confi
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	taskCp, _ := cpdb.getTaskCheckpoint(ctx)
-	if err := verifyCheckpoint(cfg, taskCp); err != nil {
-		return errors.Trace(err)
-	}
-
 	cpdb.checkpoints.TaskCheckpoint = &TaskCheckpointModel{
 		TaskId:       cfg.TaskID,
 		SourceDir:    cfg.Mydumper.SourceDir,
@@ -969,7 +919,7 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Confi
 	return errors.Trace(cpdb.save())
 }
 
-func (cpdb *FileCheckpointsDB) getTaskCheckpoint(_ context.Context) (*TaskCheckpoint, error) {
+func (cpdb *FileCheckpointsDB) TaskCheckpoint(_ context.Context) (*TaskCheckpoint, error) {
 	// this method is always called in lock
 	cp := cpdb.checkpoints.TaskCheckpoint
 	if cp == nil || cp.TaskId == 0 {

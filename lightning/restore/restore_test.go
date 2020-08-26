@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -262,6 +263,74 @@ func (s *restoreSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
 
 	c.Assert(db.Close(), IsNil)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
+func (s *restoreSuite) TestVerifyCheckpoint(c *C) {
+	dir := c.MkDir()
+	cpdb := checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
+	defer cpdb.Close()
+	ctx := context.Background()
+
+	taskCp, err := cpdb.TaskCheckpoint(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(taskCp, IsNil)
+
+	newCfg := func() *config.Config {
+		cfg := config.NewConfig()
+		cfg.Mydumper.SourceDir = "/data"
+		cfg.TaskID = 123
+		cfg.TiDB.Port = 4000
+		cfg.TiDB.PdAddr = "127.0.0.1:2379"
+		cfg.TikvImporter.Addr = "127.0.0.1:8287"
+		cfg.TikvImporter.SortedKVDir = "/tmp/sorted-kv"
+
+		return cfg
+	}
+
+	err = cpdb.Initialize(ctx, newCfg(), map[string]*checkpoints.TidbDBInfo{})
+	c.Assert(err, IsNil)
+
+	adjustFuncs := map[string]func(cfg *config.Config){
+		"tikv-importer.backend": func(cfg *config.Config) {
+			cfg.TikvImporter.Backend = "local"
+		},
+		"tikv-importer.addr": func(cfg *config.Config) {
+			cfg.TikvImporter.Addr = "128.0.0.1:8287"
+		},
+		"mydumper.data-source-dir": func(cfg *config.Config) {
+			cfg.Mydumper.SourceDir = "/tmp/test"
+		},
+		"tidb.host": func(cfg *config.Config) {
+			cfg.TiDB.Host = "192.168.0.1"
+		},
+		"tidb.port": func(cfg *config.Config) {
+			cfg.TiDB.Port = 5000
+		},
+		"tidb.pd-addr": func(cfg *config.Config) {
+			cfg.TiDB.PdAddr = "127.0.0.1:3379"
+		},
+	}
+
+	// default mode, will return error
+	taskCp, err = cpdb.TaskCheckpoint(ctx)
+	c.Assert(err, IsNil)
+	for conf, fn := range adjustFuncs {
+		cfg := newCfg()
+		fn(cfg)
+		err := verifyCheckpoint(cfg, taskCp)
+		c.Assert(err, ErrorMatches, fmt.Sprintf("config '%s' value '.*' different from checkpoint value .*", conf))
+	}
+
+	for conf, fn := range adjustFuncs {
+		if conf == "tikv-importer.backend" {
+			continue
+		}
+		cfg := newCfg()
+		cfg.App.CheckRequirements = false
+		fn(cfg)
+		err := cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
+		c.Assert(err, IsNil)
+	}
 }
 
 var _ = Suite(&tableRestoreSuite{})

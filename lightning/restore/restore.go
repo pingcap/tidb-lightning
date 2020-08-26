@@ -177,6 +177,14 @@ func NewRestoreControllerWithPauser(
 		return nil, errors.Trace(err)
 	}
 
+	taskCp, err := cpdb.TaskCheckpoint(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err := verifyCheckpoint(cfg, taskCp); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	tidbMgr, err := NewTiDBManager(cfg.TiDB, tls)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -340,6 +348,47 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 
 	// Estimate the number of chunks for progress reporting
 	rc.estimateChunkCountIntoMetrics()
+	return nil
+}
+
+// verifyCheckpoint check whether previous task checkpoint is compatible with task config
+func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
+	if taskCp == nil {
+		return nil
+	}
+	// always check the backend value even with 'check-requirements = false'
+	retryUsage := "destroy all checkpoints and remove all restored tables and try again"
+	if cfg.TikvImporter.Backend != taskCp.Backend {
+		return errors.Errorf("config 'tikv-importer.backend' value '%s' different from checkpoint value '%s', please %s", cfg.TikvImporter.Backend, taskCp.Backend, retryUsage)
+	}
+
+	if cfg.App.CheckRequirements {
+		errorFmt := "config '%s' value '%s' different from checkpoint value '%s'. You may set 'check-requirements = false' to skip this check or " + retryUsage
+		if cfg.Mydumper.SourceDir != taskCp.SourceDir {
+			return errors.Errorf(errorFmt, "mydumper.data-source-dir", cfg.Mydumper.SourceDir, taskCp.SourceDir)
+		}
+
+		if cfg.TikvImporter.Backend == config.BackendLocal && cfg.TikvImporter.SortedKVDir != taskCp.SortedKVDir {
+			return errors.Errorf(errorFmt, "mydumper.sorted-kv-dir", cfg.TikvImporter.SortedKVDir, taskCp.SortedKVDir)
+		}
+
+		if cfg.TikvImporter.Backend == config.BackendImporter && cfg.TikvImporter.Addr != taskCp.ImporterAddr {
+			return errors.Errorf(errorFmt, "tikv-importer.addr", cfg.TikvImporter.Backend, taskCp.Backend)
+		}
+
+		if cfg.TiDB.Host != taskCp.TiDBHost {
+			return errors.Errorf(errorFmt, "tidb.host", cfg.TiDB.Host, taskCp.TiDBHost)
+		}
+
+		if cfg.TiDB.Port != taskCp.TiDBPort {
+			return errors.Errorf(errorFmt, "tidb.port", cfg.TiDB.Port, taskCp.TiDBPort)
+		}
+
+		if cfg.TiDB.PdAddr != taskCp.PdAddr {
+			return errors.Errorf(errorFmt, "tidb.pd-addr", cfg.TiDB.PdAddr, taskCp.PdAddr)
+		}
+	}
+
 	return nil
 }
 
