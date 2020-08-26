@@ -471,7 +471,7 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 			importer_addr varchar(32),
 			tidb_addr varchar(128) NOT NULL,
 			pd_addr varchar(128) NOT NULL,
-			sorted_kv_dir varchar(256) NOT NULL,
+			sorted_kv_dir varchar(256) NOT NULL
 		);
 	`, schema, CheckpointTableNameTask))
 	if err != nil {
