@@ -16,7 +16,6 @@ package mydump
 import (
 	"context"
 	"math"
-	"os"
 
 	"github.com/pingcap/br/pkg/storage"
 	"go.uber.org/zap"
@@ -213,7 +212,7 @@ func SplitLargeFile(
 	startOffset, endOffset := int64(0), maxRegionSize
 	var columns []string
 	if cfg.Mydumper.CSV.Header {
-		reader, err := os.Open(dataFile.FileMeta.Path)
+		reader, err := store.Open(ctx, dataFile.FileMeta.Path)
 		if err != nil {
 			return 0, nil, nil, err
 		}
@@ -229,7 +228,7 @@ func SplitLargeFile(
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFile.Size {
-			reader, err := os.Open(dataFile.FileMeta.Path)
+			reader, err := store.Open(ctx, dataFile.FileMeta.Path)
 			if err != nil {
 				return 0, nil, nil, err
 			}
