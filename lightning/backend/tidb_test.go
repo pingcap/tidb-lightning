@@ -18,6 +18,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/pingcap/parser/charset"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -107,14 +109,6 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 	c.Assert(err, IsNil)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	// check none utf8 row
-	row, err = encoder.Encode(logger, []types.Datum{
-		types.NewUintDatum(0),
-		types.NewStringDatum("\xC0"),
-	}, 1, []int{0, 8})
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, "invalid utf8 string value")
-
 	err = engine.WriteRows(ctx, []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
 	c.Assert(err, IsNil)
 }
@@ -174,4 +168,35 @@ func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
 
 	err = engine.WriteRows(ctx, []string{"a"}, dataRows)
 	c.Assert(err, IsNil)
+}
+
+func (s *mysqlSuite) TestStrictMode(c *C) {
+	ft := *types.NewFieldType(mysql.TypeVarchar)
+	ft.Charset = charset.CharsetUTF8MB4
+	col0 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
+	ft = *types.NewFieldType(mysql.TypeString)
+	ft.Charset = charset.CharsetASCII
+	col1 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
+	tblInfo := &model.TableInfo{ID: 1, Columns: []*model.ColumnInfo{col0, col1}, PKIsHandle: false, State: model.StatePublic}
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
+	c.Assert(err, IsNil)
+
+	bk := kv.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	encoder := bk.NewEncoder(tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
+
+	logger := log.L()
+	_, err = encoder.Encode(logger, []types.Datum{
+		types.NewStringDatum("test"),
+	}, 1, []int{0})
+	c.Assert(err, IsNil)
+
+	_, err = encoder.Encode(logger, []types.Datum{
+		types.NewStringDatum("\xff\xff\xff\xff"),
+	}, 1, []int{0})
+	c.Assert(err, NotNil)
+
+	_, err = encoder.Encode(logger, []types.Datum{
+		types.NewStringDatum("非 ASCII 字符串"),
+	}, 1, []int{1})
+	c.Assert(err, NotNil)
 }

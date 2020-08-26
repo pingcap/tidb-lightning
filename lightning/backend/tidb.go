@@ -17,10 +17,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -53,6 +53,7 @@ func (row tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 type tidbEncoder struct {
 	mode mysql.SQLMode
 	tbl  table.Table
+	se   *session
 }
 
 type tidbBackend struct {
@@ -106,7 +107,7 @@ func (rows tidbRows) Clear() Rows {
 	return rows[:0]
 }
 
-func (enc tidbEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
+func (enc *tidbEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
 	sb.Grow(2 + len(value))
 	sb.WriteByte('\'')
 	if enc.mode.HasNoBackslashEscapesMode() {
@@ -144,18 +145,9 @@ func (enc tidbEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
 	sb.WriteByte('\'')
 }
 
-func isUTF8StringField(col *table.Column) bool {
-	switch col.Tp {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		return true
-	default:
-		return false
-	}
-}
-
 // appendSQL appends the SQL representation of the Datum into the string builder.
 // Note that we cannot use Datum.ToString since it doesn't perform SQL escaping.
-func (enc tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, col *table.Column) error {
+func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, col *table.Column) error {
 	switch datum.Kind() {
 	case types.KindNull:
 		sb.WriteString("NULL")
@@ -184,12 +176,16 @@ func (enc tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, col *t
 		value := strconv.AppendFloat(buffer[:0], datum.GetFloat64(), 'g', -1, 64)
 		sb.Write(value)
 	case types.KindString:
-		// skip check blob field
-		if isUTF8StringField(col) && !utf8.Valid(datum.GetBytes()) {
-			return errors.New("invalid utf8 string value")
+		if enc.mode.HasStrictMode() {
+			d, err := table.CastValue(enc.se, *datum, col.ToInfo(), false, false)
+			fmt.Printf("value: %v, err: %+v\n", d, err)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			datum = &d
 		}
-		enc.appendSQLBytes(sb, datum.GetBytes())
 
+		enc.appendSQLBytes(sb, datum.GetBytes())
 	case types.KindBytes:
 		enc.appendSQLBytes(sb, datum.GetBytes())
 
@@ -230,9 +226,9 @@ func (enc tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, col *t
 	return nil
 }
 
-func (tidbEncoder) Close() {}
+func (*tidbEncoder) Close() {}
 
-func (enc tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, columnPermutation []int) (Row, error) {
+func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, columnPermutation []int) (Row, error) {
 	cols := enc.tbl.Cols()
 
 	var encoded strings.Builder
@@ -285,7 +281,14 @@ func (be *tidbBackend) CheckRequirements() error {
 }
 
 func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
-	return tidbEncoder{mode: options.SQLMode, tbl: tbl}
+	var se *session
+	if options.SQLMode.HasStrictMode() {
+		se = newSession(options)
+		se.vars.SkipUTF8Check = false
+		se.vars.SkipASCIICheck = false
+	}
+
+	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID) error {
