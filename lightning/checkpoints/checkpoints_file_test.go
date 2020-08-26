@@ -33,6 +33,7 @@ func newTestConfig() *config.Config {
 	cfg.TiDB.Port = 4000
 	cfg.TiDB.PdAddr = "127.0.0.1:2379"
 	cfg.TikvImporter.Addr = "127.0.0.1:8287"
+	cfg.TikvImporter.SortedKVDir = "/tmp/sorted-kv"
 	return cfg
 }
 
