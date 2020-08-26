@@ -193,10 +193,10 @@ func (s *mysqlSuite) TestStrictMode(c *C) {
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("\xff\xff\xff\xff"),
 	}, 1, []int{0})
-	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, `.*incorrect utf8 value .* for column s0`)
 
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("非 ASCII 字符串"),
 	}, 1, []int{1})
-	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*incorrect ascii value .* for column s1")
 }

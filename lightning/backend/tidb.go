@@ -17,7 +17,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -178,7 +177,6 @@ func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, col *
 	case types.KindString:
 		if enc.mode.HasStrictMode() {
 			d, err := table.CastValue(enc.se, *datum, col.ToInfo(), false, false)
-			fmt.Printf("value: %v, err: %+v\n", d, err)
 			if err != nil {
 				return errors.Trace(err)
 			}
