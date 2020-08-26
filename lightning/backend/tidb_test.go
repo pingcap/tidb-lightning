@@ -16,9 +16,14 @@ package backend_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
@@ -33,15 +38,28 @@ type mysqlSuite struct {
 	dbHandle *sql.DB
 	mockDB   sqlmock.Sqlmock
 	backend  kv.Backend
+	tbl      table.Table
 }
 
 func (s *mysqlSuite) SetUpTest(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 
+	tys := []byte{mysql.TypeLong, mysql.TypeLong, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeFloat, mysql.TypeDouble,
+		mysql.TypeDouble, mysql.TypeDouble, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeBit, mysql.TypeNewDecimal, mysql.TypeEnum}
+	cols := make([]*model.ColumnInfo, 0, len(tys))
+	for i, ty := range tys {
+		col := &model.ColumnInfo{ID: int64(i + 1), Name: model.NewCIStr(fmt.Sprintf("c%d", i)), State: model.StatePublic, Offset: i, FieldType: *types.NewFieldType(ty)}
+		cols = append(cols, col)
+	}
+	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
+	c.Assert(err, IsNil)
+
 	s.dbHandle = db
 	s.mockDB = mock
 	s.backend = kv.NewTiDBBackend(db, config.ReplaceOnDup)
+	s.tbl = tbl
 }
 
 func (s *mysqlSuite) TearDownTest(c *C) {
@@ -65,7 +83,12 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 	indexRows := s.backend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder := s.backend.NewEncoder(nil, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890, RowFormatVersion: "1"})
+	cols := s.tbl.Cols()
+	perms := make([]int, 0, len(s.tbl.Cols()))
+	for i := 0; i < len(cols); i++ {
+		perms = append(perms, i)
+	}
+	encoder := s.backend.NewEncoder(s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890, RowFormatVersion: "1"})
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewUintDatum(18446744073709551615),
 		types.NewIntDatum(-9223372036854775808),
@@ -80,7 +103,7 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 		types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(0x98765432, 4)),
 		types.NewDecimalDatum(types.NewDecFromFloatForTest(12.5)),
 		types.NewMysqlEnumDatum(types.Enum{Name: "ENUM_NAME", Value: 51}),
-	}, 1, nil)
+	}, 1, perms)
 	c.Assert(err, IsNil)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
@@ -88,7 +111,7 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewUintDatum(0),
 		types.NewStringDatum("\xC0"),
-	}, 1, nil)
+	}, 1, []int{0, 8})
 	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, "invalid utf8 string value")
 
@@ -113,10 +136,10 @@ func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder := ignoreBackend.NewEncoder(nil, &kv.SessionOptions{})
+	encoder := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, nil)
+	}, 1, []int{0})
 	c.Assert(err, IsNil)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
@@ -141,11 +164,12 @@ func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
 	indexRows := ignoreBackend.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
-	encoder := ignoreBackend.NewEncoder(nil, &kv.SessionOptions{})
+	encoder := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, nil)
+	}, 1, []int{0})
 	c.Assert(err, IsNil)
+
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	err = engine.WriteRows(ctx, []string{"a"}, dataRows)
