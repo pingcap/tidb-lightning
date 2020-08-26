@@ -29,9 +29,10 @@ message TaskCheckpointModel {
     string source_dir = 2;
     string backend = 3;
     string importer_addr = 4;
-    string tidb_addr = 5;
-    string pd_addr = 6;
-    string sorted_kv_dir = 7;
+    string tidb_host = 5;
+    int32 tidb_port = 6;
+    string pd_addr = 7;
+    string sorted_kv_dir = 8;
 }
 
 message TableCheckpointModel {

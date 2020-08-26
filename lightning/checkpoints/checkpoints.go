@@ -23,7 +23,6 @@ import (
 	"math"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -338,7 +337,8 @@ type TaskCheckpoint struct {
 	SourceDir    string
 	Backend      string
 	ImporterAddr string
-	TidbAddr     string
+	TiDBHost     string
+	TiDBPort     int
 	PdAddr       string
 	SortedKVDir  string
 }
@@ -367,14 +367,12 @@ func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
 			return errors.Errorf(errorFmt, "tikv-importer.addr", cfg.TikvImporter.Backend, taskCp.Backend)
 		}
 
-		hostAndPort := strings.Split(taskCp.TidbAddr, ":")
-		if cfg.TiDB.Host != hostAndPort[0] {
-			return errors.Errorf(errorFmt, "tidb.host", cfg.TiDB.Host, hostAndPort[0])
+		if cfg.TiDB.Host != taskCp.TiDBHost {
+			return errors.Errorf(errorFmt, "tidb.host", cfg.TiDB.Host, taskCp.TiDBHost)
 		}
 
-		port, _ := strconv.Atoi(hostAndPort[1])
-		if cfg.TiDB.Port != port {
-			return errors.Errorf(errorFmt, "tidb.port", cfg.TiDB.Port, hostAndPort[1])
+		if cfg.TiDB.Port != taskCp.TiDBPort {
+			return errors.Errorf(errorFmt, "tidb.port", cfg.TiDB.Port, taskCp.TiDBPort)
 		}
 
 		if cfg.TiDB.PdAddr != taskCp.PdAddr {
@@ -464,12 +462,13 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 
 	err = sql.Exec(ctx, "create task checkpoints table", fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.%s (
-			id int NOT NULL PRIMARY KEY,
+			id tinyint(1) PRIMARY KEY,
 			task_id bigint NOT NULL,
 			source_dir varchar(256) NOT NULL,
 			backend varchar(16) NOT NULL, 
 			importer_addr varchar(32),
-			tidb_addr varchar(128) NOT NULL,
+			tidb_host varchar(128) NOT NULL,
+			tidb_port int NOT NULL,
 			pd_addr varchar(128) NOT NULL,
 			sorted_kv_dir varchar(256) NOT NULL
 		);
@@ -554,16 +553,15 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.L()}
 	err := s.Transact(ctx, "insert checkpoints", func(c context.Context, tx *sql.Tx) error {
 		taskStmt, err := tx.PrepareContext(c, fmt.Sprintf(`
-			INSERT INTO %s.%s (id, task_id, source_dir, backend, importer_addr, tidb_addr, pd_addr, sorted_kv_dir) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
-			ON DUPLICATE KEY UPDATE task_id = VALUES(task_id), source_dir = VALUES(source_dir), backend = VALUES(backend), importer_addr = VALUES(importer_addr), 
-			tidb_addr = VALUES(tidb_addr), pd_addr = VALUES(pd_addr), sorted_kv_dir = VALUES(sorted_kv_dir);
+			REPLACE INTO %s.%s (id, task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir) 
+			VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?);
 		`, cpdb.schema, CheckpointTableNameTask))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		defer taskStmt.Close()
 		_, err = taskStmt.ExecContext(ctx, cfg.TaskID, cfg.Mydumper.SourceDir, cfg.TikvImporter.Backend,
-			cfg.TikvImporter.Addr, cfg.TiDB.TiDBAddr(), cfg.TiDB.PdAddr, cfg.TikvImporter.SortedKVDir)
+			cfg.TikvImporter.Addr, cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.PdAddr, cfg.TikvImporter.SortedKVDir)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -611,10 +609,13 @@ func (cpdb *MySQLCheckpointsDB) getTaskCheckpoint(ctx context.Context) (*TaskChe
 		Logger: log.L(),
 	}
 
-	taskQuery := fmt.Sprintf("SELECT task_id, source_dir, backend, importer_addr, tidb_addr, pd_addr, sorted_kv_dir FROM %s.%s WHERE id = 1", cpdb.schema, CheckpointTableNameTask)
+	taskQuery := fmt.Sprintf(
+		"SELECT task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir FROM %s.%s WHERE id = 1",
+		cpdb.schema, CheckpointTableNameTask,
+	)
 	taskCp := &TaskCheckpoint{}
 	err := s.QueryRow(ctx, "fetch task checkpoint", taskQuery, &taskCp.TaskId, &taskCp.SourceDir, &taskCp.Backend,
-		&taskCp.ImporterAddr, &taskCp.TidbAddr, &taskCp.PdAddr, &taskCp.SortedKVDir)
+		&taskCp.ImporterAddr, &taskCp.TiDBHost, &taskCp.TiDBPort, &taskCp.PdAddr, &taskCp.SortedKVDir)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -941,7 +942,8 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Confi
 		SourceDir:    cfg.Mydumper.SourceDir,
 		Backend:      cfg.TikvImporter.Backend,
 		ImporterAddr: cfg.TikvImporter.Addr,
-		TidbAddr:     cfg.TiDB.TiDBAddr(),
+		TidbHost:     cfg.TiDB.Host,
+		TidbPort:     int32(cfg.TiDB.Port),
 		PdAddr:       cfg.TiDB.PdAddr,
 		SortedKvDir:  cfg.TikvImporter.SortedKVDir,
 	}
@@ -979,7 +981,8 @@ func (cpdb *FileCheckpointsDB) getTaskCheckpoint(_ context.Context) (*TaskCheckp
 		SourceDir:    cp.SourceDir,
 		Backend:      cp.Backend,
 		ImporterAddr: cp.ImporterAddr,
-		TidbAddr:     cp.TidbAddr,
+		TiDBHost:     cp.TidbHost,
+		TiDBPort:     int(cp.TidbPort),
 		PdAddr:       cp.PdAddr,
 		SortedKVDir:  cp.SortedKvDir,
 	}, nil
