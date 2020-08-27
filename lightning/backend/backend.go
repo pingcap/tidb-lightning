@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	uuid "github.com/satori/go.uuid"
@@ -242,7 +243,7 @@ func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int
 			uuid:    engineUUID,
 		},
 		tableName: tableName,
-		ts:        uint64(time.Now().Unix()), // TODO ... set outside ? from pd ?
+		ts:        oracle.ComposeTS(time.Now().Unix() * 1000, 0),
 	}, nil
 }
 
