@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 
 	. "github.com/pingcap/check"
@@ -61,8 +63,9 @@ func (s *lightningSuite) TestRun(c *C) {
 
 	err = lightning.run(&config.Config{
 		Mydumper: config.MydumperRuntime{
-			SourceDir: ".",
-			Filter:    []string{"*.*"},
+			SourceDir:        ".",
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
 		},
 		Checkpoint: config.Checkpoint{
 			Enable: true,
@@ -460,4 +463,58 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	c.Assert(err, IsNil)
 	err = checkSystemRequirement(cfg, dbMetas)
 	c.Assert(err, IsNil)
+}
+
+func (s *lightningServerSuite) TestCheckSchemaConflict(c *C) {
+	cfg := config.NewConfig()
+	cfg.Checkpoint.Schema = "cp"
+	cfg.Checkpoint.Driver = config.CheckpointDriverMySQL
+
+	dbMetas := []*mydump.MDDatabaseMeta{
+		{
+			Name: "test",
+			Tables: []*mydump.MDTableMeta{
+				{
+					Name: checkpoints.CheckpointTableNameTable,
+				},
+				{
+					Name: checkpoints.CheckpointTableNameEngine,
+				},
+			},
+		},
+		{
+			Name: "cp",
+			Tables: []*mydump.MDTableMeta{
+				{
+					Name: "test",
+				},
+			},
+		},
+	}
+	err := checkSchemaConflict(cfg, dbMetas)
+	c.Assert(err, IsNil)
+
+	dbMetas = append(dbMetas, &mydump.MDDatabaseMeta{
+		Name: "cp",
+		Tables: []*mydump.MDTableMeta{
+			{
+				Name: checkpoints.CheckpointTableNameChunk,
+			},
+			{
+				Name: "test123",
+			},
+		},
+	})
+	err = checkSchemaConflict(cfg, dbMetas)
+	c.Assert(err, NotNil)
+
+	cfg.Checkpoint.Enable = false
+	err = checkSchemaConflict(cfg, dbMetas)
+	c.Assert(err, IsNil)
+
+	cfg.Checkpoint.Enable = true
+	cfg.Checkpoint.Driver = config.CheckpointDriverFile
+	err = checkSchemaConflict(cfg, dbMetas)
+	c.Assert(err, IsNil)
+
 }

@@ -85,6 +85,7 @@ type Chunk struct {
 	EndOffset    int64
 	PrevRowIDMax int64
 	RowIDMax     int64
+	Columns      []string
 }
 
 // Row is the content of a row.
@@ -112,6 +113,8 @@ type Parser interface {
 	// Columns returns the _lower-case_ column names corresponding to values in
 	// the LastRow.
 	Columns() []string
+	// SetColumns set restored column names to parser
+	SetColumns([]string)
 
 	SetLogger(log.Logger)
 }
@@ -152,6 +155,10 @@ func (parser *blockParser) Close() error {
 
 func (parser *blockParser) Columns() []string {
 	return parser.columns
+}
+
+func (parser *blockParser) SetColumns(columns []string) {
+	parser.columns = columns
 }
 
 func (parser *blockParser) logSyntaxError() {

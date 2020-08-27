@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -73,6 +72,10 @@ var DeliverPauser = common.NewPauser()
 func init() {
 	cfg := tidbcfg.GetGlobalConfig()
 	cfg.Log.SlowThreshold = 3000
+	// used in integration tests
+	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
+		minDeliverBytes = uint64(v.(int))
+	})
 }
 
 type saveCp struct {
@@ -148,11 +151,20 @@ type RestoreController struct {
 	closedEngineLimit *worker.Pool
 }
 
-func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config) (*RestoreController, error) {
+func NewRestoreController(
+	ctx context.Context,
+	dbMetas []*mydump.MDDatabaseMeta,
+	cfg *config.Config,
+) (*RestoreController, error) {
 	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, DeliverPauser)
 }
 
-func NewRestoreControllerWithPauser(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, pauser *common.Pauser) (*RestoreController, error) {
+func NewRestoreControllerWithPauser(
+	ctx context.Context,
+	dbMetas []*mydump.MDDatabaseMeta,
+	cfg *config.Config,
+	pauser *common.Pauser,
+) (*RestoreController, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
@@ -336,14 +348,11 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 	estimatedChunkCount := 0
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
-			for _, tablePath := range tableMeta.DataFiles {
-				isCsvFile := strings.HasSuffix(strings.ToLower(tablePath), ".csv")
-				if isCsvFile {
-					f, _ := os.Stat(tablePath)
-					dataFileSize := f.Size()
+			for _, fileMeta := range tableMeta.DataFiles {
+				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if dataFileSize > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += int(dataFileSize / cfg.MaxRegionSize)
+					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += int(fileMeta.Size / cfg.MaxRegionSize)
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -458,14 +467,20 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 }
 
 func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}) {
-	switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
-	defer func() {
-		switchModeTicker.Stop()
-		logProgressTicker.Stop()
-	}()
+	defer logProgressTicker.Stop()
 
-	rc.switchToImportMode(ctx)
+	var switchModeChan <-chan time.Time
+	// tide backend don't need to switch tikv to import mode
+	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
+		defer switchModeTicker.Stop()
+		switchModeChan = switchModeTicker.C
+
+		rc.switchToImportMode(ctx)
+	} else {
+		switchModeChan = make(chan time.Time)
+	}
 
 	start := time.Now()
 
@@ -478,7 +493,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			log.L().Info("everything imported, stopping periodic actions")
 			return
 
-		case <-switchModeTicker.C:
+		case <-switchModeChan:
 			// periodically switch to import mode, as requested by TiKV 3.0
 			rc.switchToImportMode(ctx)
 
@@ -935,7 +950,7 @@ func (t *TableRestore) restoreEngine(
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
 
-		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers)
+		cr, err := newChunkRestore(chunkIndex, rc.cfg, chunk, rc.ioWorkers, t.tableInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1365,6 +1380,7 @@ func newChunkRestore(
 	cfg *config.Config,
 	chunk *ChunkCheckpoint,
 	ioWorkers *worker.Pool,
+	tableInfo *TidbTableInfo,
 ) (*chunkRestore, error) {
 	blockBufSize := cfg.Mydumper.ReadBlockSize
 
@@ -1374,11 +1390,18 @@ func newChunkRestore(
 	}
 
 	var parser mydump.Parser
-	switch path.Ext(strings.ToLower(chunk.Key.Path)) {
-	case ".csv":
-		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers)
-	default:
+	switch chunk.FileMeta.Type {
+	case mydump.SourceTypeCSV:
+		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
+		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
+	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+	default:
+		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
+	}
+
+	if len(chunk.ColumnPermutation) > 0 {
+		parser.SetColumns(getColumnNames(tableInfo.Core, chunk.ColumnPermutation))
 	}
 
 	parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax)
@@ -1455,15 +1478,24 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 				}
 				cp.Engines[chunk.EngineID] = engine
 			}
-			engine.Chunks = append(engine.Chunks, &ChunkCheckpoint{
+			ccp := &ChunkCheckpoint{
 				Key: ChunkCheckpointKey{
-					Path:   chunk.File,
+					Path:   chunk.FileMeta.Path,
 					Offset: chunk.Chunk.Offset,
 				},
+				FileMeta:          chunk.FileMeta,
 				ColumnPermutation: nil,
 				Chunk:             chunk.Chunk,
 				Timestamp:         timestamp,
-			})
+			}
+			if len(chunk.Chunk.Columns) > 0 {
+				perms, err := t.parseColumnPermutations(chunk.Chunk.Columns)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				ccp.ColumnPermutation = perms
+			}
+			engine.Chunks = append(engine.Chunks, ccp)
 		}
 
 		// Add index engine checkpoint
@@ -1489,11 +1521,12 @@ func (t *TableRestore) populateChunks(rc *RestoreController, cp *TableCheckpoint
 // The column permutation of (d, b, a) is set to be [2, 1, -1, 0].
 //
 // The argument `columns` _must_ be in lower case.
-func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) {
-	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
-	shouldIncludeRowID := common.TableHasAutoRowID(t.tableInfo.Core)
-
+func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint) error {
+	var colPerm []int
 	if len(columns) == 0 {
+		colPerm = make([]int, 0, len(t.tableInfo.Core.Columns)+1)
+		shouldIncludeRowID := common.TableHasAutoRowID(t.tableInfo.Core)
+
 		// no provided columns, so use identity permutation.
 		for i := range t.tableInfo.Core.Columns {
 			colPerm = append(colPerm, i)
@@ -1502,30 +1535,70 @@ func (t *TableRestore) initializeColumns(columns []string, ccp *ChunkCheckpoint)
 			colPerm = append(colPerm, -1)
 		}
 	} else {
-		columnMap := make(map[string]int)
-		for i, column := range columns {
-			columnMap[column] = i
-		}
-		for _, colInfo := range t.tableInfo.Core.Columns {
-			if i, ok := columnMap[colInfo.Name.L]; ok {
-				colPerm = append(colPerm, i)
-			} else {
-				t.logger.Warn("column missing from data file, going to fill with default value",
-					zap.Stringer("path", &ccp.Key),
-					zap.String("colName", colInfo.Name.O),
-					zap.Stringer("colType", &colInfo.FieldType),
-				)
-				colPerm = append(colPerm, -1)
-			}
-		}
-		if i, ok := columnMap[model.ExtraHandleName.L]; ok {
-			colPerm = append(colPerm, i)
-		} else if shouldIncludeRowID {
-			colPerm = append(colPerm, -1)
+		var err error
+		colPerm, err = t.parseColumnPermutations(columns)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 
 	ccp.ColumnPermutation = colPerm
+	return nil
+}
+
+func (t *TableRestore) parseColumnPermutations(columns []string) ([]int, error) {
+	colPerm := make([]int, 0, len(t.tableInfo.Core.Columns)+1)
+
+	columnMap := make(map[string]int)
+	for i, column := range columns {
+		columnMap[column] = i
+	}
+
+	tableColumnMap := make(map[string]int)
+	for i, col := range t.tableInfo.Core.Columns {
+		tableColumnMap[col.Name.L] = i
+	}
+
+	// check if there are some unknown columns
+	var unknownCols []string
+	for _, c := range columns {
+		if _, ok := tableColumnMap[c]; !ok && c != model.ExtraHandleName.L {
+			unknownCols = append(unknownCols, c)
+		}
+	}
+	if len(unknownCols) > 0 {
+		return colPerm, errors.Errorf("unknown columns in header %s", unknownCols)
+	}
+
+	for _, colInfo := range t.tableInfo.Core.Columns {
+		if i, ok := columnMap[colInfo.Name.L]; ok {
+			colPerm = append(colPerm, i)
+		} else {
+			t.logger.Warn("column missing from data file, going to fill with default value",
+				zap.String("colName", colInfo.Name.O),
+				zap.Stringer("colType", &colInfo.FieldType),
+			)
+			colPerm = append(colPerm, -1)
+		}
+	}
+	if i, ok := columnMap[model.ExtraHandleName.L]; ok {
+		colPerm = append(colPerm, i)
+	} else if common.TableHasAutoRowID(t.tableInfo.Core) {
+		colPerm = append(colPerm, -1)
+	}
+
+	return colPerm, nil
+}
+
+func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
+	names := make([]string, 0, len(permutation))
+	for _, idx := range permutation {
+		// skip columns with index -1
+		if idx >= 0 {
+			names = append(names, tableInfo.Columns[idx].Name.O)
+		}
+	}
+	return names
 }
 
 func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
@@ -1660,9 +1733,9 @@ func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
 
 ////////////////////////////////////////////////////////////////
 
-const (
-	maxKVQueueSize  = 128   // Cache at most this number of rows before blocking the encode loop
-	minDeliverBytes = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
+var (
+	maxKVQueueSize         = 128   // Cache at most this number of rows before blocking the encode loop
+	minDeliverBytes uint64 = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
 )
 
 type deliveredKVs struct {
@@ -1757,6 +1830,10 @@ func (cr *chunkRestore) deliverLoop(
 			// No need to save checkpoint if nothing was delivered.
 			saveCheckpoint(rc, t, engineID, cr.chunk)
 		}
+		failpoint.Inject("FailAfterWriteRows", func() {
+			time.Sleep(time.Second)
+			panic("forcing failure due to FailAfterWriteRows")
+		})
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after writen
 		//10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
 		// can safely update current checkpoint.
@@ -1785,11 +1862,12 @@ func saveCheckpoint(rc *RestoreController, t *TableRestore, engineID int32, chun
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &ChunkCheckpointMerger{
-			EngineID: engineID,
-			Key:      chunk.Key,
-			Checksum: chunk.Checksum,
-			Pos:      chunk.Chunk.Offset,
-			RowID:    chunk.Chunk.PrevRowIDMax,
+			EngineID:          engineID,
+			Key:               chunk.Key,
+			Checksum:          chunk.Checksum,
+			Pos:               chunk.Chunk.Offset,
+			RowID:             chunk.Chunk.PrevRowIDMax,
+			ColumnPermutation: chunk.ColumnPermutation,
 		},
 	}
 }
@@ -1846,7 +1924,9 @@ func (cr *chunkRestore) encodeLoop(
 			case nil:
 				if !initializedColumns {
 					if len(cr.chunk.ColumnPermutation) == 0 {
-						t.initializeColumns(columnNames, cr.chunk)
+						if err = t.initializeColumns(columnNames, cr.chunk); err != nil {
+							return
+						}
 					}
 					initializedColumns = true
 				}
