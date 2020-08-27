@@ -22,8 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb-tools/pkg/filter"
-
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"
 	"github.com/pingcap/br/pkg/storage"
@@ -330,10 +328,10 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 	}
 
 	fakeCsvContent := []byte("1,2,3\r\n4,5,6\r\n")
-	fakeDataPath := filepath.Join(fakeDataDir, "db.table.99.csv")
-	err = ioutil.WriteFile(fakeDataPath, fakeCsvContent, 0644)
+	csvName := "db.table.99.csv"
+	err = ioutil.WriteFile(filepath.Join(fakeDataDir, csvName), fakeCsvContent, 0644)
 	c.Assert(err, IsNil)
-	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeDataPath, Type: mydump.SourceTypeCSV, SortKey: "99"}, Size: 14})
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: "99"}, Size: 14})
 
 	s.tableMeta = &mydump.MDTableMeta{
 		DB:         "db",
@@ -469,7 +467,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	s.cfg.Mydumper.StrictFormat = true
 	regionSize := s.cfg.Mydumper.MaxRegionSize
 	s.cfg.Mydumper.MaxRegionSize = 5
-	err = s.tr.populateChunks(rc, cp)
+	err = s.tr.populateChunks(context.Background(), rc, cp)
 	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, `.*unknown columns in header \[1 2 3\]`)
 	s.cfg.Mydumper.MaxRegionSize = regionSize
