@@ -68,7 +68,8 @@ const (
 )
 
 func IsCheckpointTable(name string) bool {
-	return name == CheckpointTableNameTable || name == CheckpointTableNameEngine || name == CheckpointTableNameChunk
+	return name == CheckpointTableNameTask || name == CheckpointTableNameTable ||
+		name == CheckpointTableNameEngine || name == CheckpointTableNameChunk
 }
 
 func (status CheckpointStatus) MetricName() string {
