@@ -573,7 +573,8 @@ func (cpdb *MySQLCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckp
 		&taskCp.ImporterAddr, &taskCp.TiDBHost, &taskCp.TiDBPort, &taskCp.PdAddr, &taskCp.SortedKVDir)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
+		// if task checkpoint is empty, return nil
+		if strings.Contains(err.Error(), sql.ErrNoRows.Error()) {
 			return nil, nil
 		}
 		return nil, errors.Trace(err)
