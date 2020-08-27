@@ -574,7 +574,7 @@ func (cpdb *MySQLCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckp
 
 	if err != nil {
 		// if task checkpoint is empty, return nil
-		if strings.Contains(err.Error(), sql.ErrNoRows.Error()) {
+		if errors.Cause(err) == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, errors.Trace(err)
