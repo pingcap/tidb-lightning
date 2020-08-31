@@ -877,8 +877,9 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 		}
 
 		for engineID, engine := range cp.Engines {
-			// Should skip index engine
+			// Should skip index engine if restore haven't finished
 			if engineID < 0 {
+				// if restore is finished, should start import index engine directly
 				if indexEngine == nil {
 					closedIndexEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, indexEngineID)
 					if err == nil {
@@ -896,6 +897,8 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 					return ctx.Err()
 				case restoreChan <- &tableEngine{engineId: engineID, tr: t, indexEngine: indexEngine, dataEngineCp: engine, indexEngineCp: indexEngineCp, tableCp: cp}:
 				}
+			} else {
+				atomic.AddInt32(&t.finishRestoreEngine, 1)
 			}
 		}
 	}
@@ -1072,7 +1075,10 @@ func (rc *RestoreController) restoreEngines(
 				if finishedCount == task.tr.engineCount-1 {
 					var closedIndexEngine *kv.ClosedEngine
 					closedIndexEngine, err = task.indexEngine.Close(restoreCtx)
-					rc.saveStatusCheckpoint(task.tr.tableName, indexEngineID, err, CheckpointStatusClosed)
+					if task.indexEngineCp.Status < CheckpointStatusClosed {
+						rc.saveStatusCheckpoint(task.tr.tableName, indexEngineID, err, CheckpointStatusClosed)
+					}
+
 					if err == nil {
 						importChan <- &importEngine{triggerCompact: false, engine: closedIndexEngine, engineID: indexEngineID, cp: task.indexEngineCp, tr: task.tr, tableCp: task.tableCp}
 					} else {
