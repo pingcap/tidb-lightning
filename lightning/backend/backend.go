@@ -243,7 +243,7 @@ func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int
 			uuid:    engineUUID,
 		},
 		tableName: tableName,
-		ts:        oracle.ComposeTS(time.Now().Unix() * 1000, 0),
+		ts:        oracle.ComposeTS(time.Now().Unix()*1000, 0),
 	}, nil
 }
 
