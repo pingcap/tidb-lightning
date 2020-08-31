@@ -876,7 +876,7 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 			}
 		}
 
-		finishedCnt := 0
+		finishedCnt := int32(0)
 		for _, engine := range cp.Engines {
 			if engine.Status >= CheckpointStatusImported {
 				finishedCnt++
