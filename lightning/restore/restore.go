@@ -1123,6 +1123,9 @@ func (rc *RestoreController) importEngines(
 				importedCount := atomic.AddInt32(&task.tr.finishedImportEngine, 1)
 				// data and index engine
 				if importedCount == task.tr.engineCount {
+					failpoint.Inject("FailBeforeIndexEngineImported", func() {
+						panic("forcing failure due to FailBeforeIndexEngineImported")
+					})
 					rc.saveStatusCheckpoint(task.tr.tableName, WholeTableEngineID, err, CheckpointStatusIndexImported)
 					if err == nil {
 						postProcessChan <- &importedTable{cp: task.tableCp, tr: task.tr}
