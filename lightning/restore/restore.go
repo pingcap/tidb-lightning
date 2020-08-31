@@ -876,13 +876,16 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 			}
 		}
 
-		finishedCnt := int32(0)
+		finishRestoreCnt := int32(0)
+		finishImportCnt := int32(0)
 		for _, engine := range cp.Engines {
 			if engine.Status >= CheckpointStatusImported {
-				finishedCnt++
+				finishRestoreCnt++
+				finishImportCnt++
 			}
 		}
-		t.finishRestoreEngine = finishedCnt
+		t.finishRestoreEngine = finishRestoreCnt
+		t.finishedImportEngine = finishImportCnt
 
 		for engineID, engine := range cp.Engines {
 			// Should skip index engine if restore haven't finished
@@ -1135,13 +1138,14 @@ func (rc *RestoreController) importEngines(
 				importedCount := atomic.AddInt32(&task.tr.finishedImportEngine, 1)
 				// data and index engine
 				if importedCount == task.tr.engineCount {
+					rc.saveStatusCheckpoint(task.tr.tableName, WholeTableEngineID, err, CheckpointStatusIndexImported)
 					failpoint.Inject("FailBeforeIndexEngineImported", func() {
 						panic("forcing failure due to FailBeforeIndexEngineImported")
 					})
-					rc.saveStatusCheckpoint(task.tr.tableName, WholeTableEngineID, err, CheckpointStatusIndexImported)
 					if err == nil {
 						postProcessChan <- &importedTable{cp: task.tableCp, tr: task.tr}
 					}
+
 				}
 				if err != nil {
 					select {
