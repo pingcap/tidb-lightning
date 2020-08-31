@@ -65,7 +65,8 @@ const (
 
 	LocalMemoryTableSize = 512 << 20
 
-	regionMaxKeyCount = 1_400_000
+	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
+	regionMaxKeyCount = 1_440_000
 )
 
 var (
