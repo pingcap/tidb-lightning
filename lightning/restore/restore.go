@@ -876,6 +876,14 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 			}
 		}
 
+		finishedCnt := 0
+		for _, engine := range cp.Engines {
+			if engine.Status >= CheckpointStatusImported {
+				finishedCnt++
+			}
+		}
+		t.finishRestoreEngine = finishedCnt
+
 		for engineID, engine := range cp.Engines {
 			// Should skip index engine if restore haven't finished
 			if engineID < 0 {
@@ -897,8 +905,6 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 					return ctx.Err()
 				case restoreChan <- &tableEngine{engineId: engineID, tr: t, indexEngine: indexEngine, dataEngineCp: engine, indexEngineCp: indexEngineCp, tableCp: cp}:
 				}
-			} else {
-				atomic.AddInt32(&t.finishRestoreEngine, 1)
 			}
 		}
 	}
