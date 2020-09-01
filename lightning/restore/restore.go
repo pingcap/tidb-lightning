@@ -846,7 +846,13 @@ func (t *TableRestore) loadTableTasks(
 	return t.addRestoreTasks(ctx, rc, cp, restoreChan, importChan)
 }
 
-func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, restoreChan chan *tableEngine, indexChan chan *importEngine) error {
+func (t *TableRestore) addRestoreTasks(
+	ctx context.Context,
+	rc *RestoreController,
+	cp *TableCheckpoint,
+	restoreChan chan *tableEngine,
+	indexChan chan *importEngine,
+) error {
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
 		return errors.Errorf("table %v index engine checkpoint not found", t.tableName)
@@ -862,7 +868,7 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 	var indexEngine *backend.OpenedEngine
 	var err error
 	if cp.Status < CheckpointStatusIndexImported {
-		if cp.Status < CheckpointStatusClosed {
+		if indexEngineCp.Status < CheckpointStatusClosed {
 			indexEngine, err = rc.backend.OpenEngine(ctx, t.tableName, indexEngineID)
 			if err != nil {
 				return errors.Trace(err)
@@ -890,24 +896,33 @@ func (t *TableRestore) addRestoreTasks(ctx context.Context, rc *RestoreControlle
 		for engineID, engine := range cp.Engines {
 			// Should skip index engine if restore haven't finished
 			if engineID < 0 {
-				// if restore is finished, should start import index engine directly
-				if indexEngine == nil {
-					closedIndexEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, indexEngineID)
-					if err == nil {
-						return err
-					}
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					case indexChan <- &importEngine{engine: closedIndexEngine, engineID: engineID, cp: indexEngineCp, tr: t, tableCp: cp, triggerCompact: false}:
-					}
-				}
+				continue
 			} else if engine.Status < CheckpointStatusImported {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
 				case restoreChan <- &tableEngine{engineId: engineID, tr: t, indexEngine: indexEngine, dataEngineCp: engine, indexEngineCp: indexEngineCp, tableCp: cp}:
 				}
+			}
+		}
+
+		// if restore is finished, should start import index engine directly
+		if finishRestoreCnt == t.engineCount-1 && indexEngineCp.Status < CheckpointStatusImported {
+			var closedIndexEngine *backend.ClosedEngine
+			var err error
+			if indexEngine == nil {
+				closedIndexEngine, err = rc.backend.UnsafeCloseEngine(ctx, t.tableName, indexEngineID)
+			} else {
+				closedIndexEngine, err = indexEngine.Close(ctx)
+			}
+			if err == nil {
+				return err
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case indexChan <- &importEngine{engine: closedIndexEngine, engineID: indexEngineID, cp: indexEngineCp, tr: t, tableCp: cp, triggerCompact: false}:
 			}
 		}
 	}
