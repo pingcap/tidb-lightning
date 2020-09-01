@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
