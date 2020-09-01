@@ -275,7 +275,7 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 
 		logger := log.With(zap.String("path", path))
 
-		res, err := fr.Route(path)
+		res, err := fr.Route(filepath.ToSlash(path))
 		if err != nil {
 			return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
 		}
