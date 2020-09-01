@@ -1125,7 +1125,7 @@ func (rc *RestoreController) importEngines(
 	importCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	concurrency := rc.cfg.App.TableConcurrency * 2
+	concurrency := rc.cfg.App.TableConcurrency
 	errorChan := make(chan error, concurrency)
 	wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
