@@ -144,6 +144,7 @@ func (l *Lightning) RunOnce() error {
 	if err := cfg.Adjust(); err != nil {
 		return err
 	}
+
 	cfg.TaskID = time.Now().UnixNano()
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		cfg.TaskID = int64(val.(int))
