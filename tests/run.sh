@@ -14,9 +14,8 @@
 # limitations under the License.
 
 set -eu
-
 TEST_DIR=/tmp/lightning_test_result
-SELECTED_TEST_NAME="${TEST_NAME-*}"
+SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.sh | cut -d/ -f2 | sort)}"
 export PATH="tests/_utils:$PATH"
 
 stop_services() {
@@ -167,12 +166,16 @@ if [ "${1-}" = '--debug' ]; then
     read line
 fi
 
-for script in tests/$SELECTED_TEST_NAME/run.sh; do
-    echo "\x1b[32;1m@@@@@@@ Running test $script...\x1b[0m"
+echo "selected test cases: $SELECTED_TEST_NAME"
+
+for casename in $SELECTED_TEST_NAME; do
+  script=tests/$casename/run.sh
+  echo "\x1b[32;1m@@@@@@@ Running test $script...\x1b[0m"
     TEST_DIR="$TEST_DIR" \
-    TEST_NAME="$(basename "$(dirname "$script")")" \
+    TEST_NAME="$casename" \
     CLUSTER_VERSION_MAJOR="${CLUSTER_VERSION_MAJOR#v}" \
     CLUSTER_VERSION_MINOR="$CLUSTER_VERSION_MINOR" \
     CLUSTER_VERSION_REVISION="$CLUSTER_VERSION_REVISION" \
     sh "$script"
 done
+
