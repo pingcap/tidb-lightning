@@ -169,8 +169,8 @@ fi
 echo "selected test cases: $SELECTED_TEST_NAME"
 
 for casename in $SELECTED_TEST_NAME; do
-  script=tests/$casename/run.sh
-  echo "\x1b[32;1m@@@@@@@ Running test $script...\x1b[0m"
+    script=tests/$casename/run.sh
+    echo "\x1b[32;1m@@@@@@@ Running test $script...\x1b[0m"
     TEST_DIR="$TEST_DIR" \
     TEST_NAME="$casename" \
     CLUSTER_VERSION_MAJOR="${CLUSTER_VERSION_MAJOR#v}" \
