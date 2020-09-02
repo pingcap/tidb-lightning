@@ -357,12 +357,27 @@ func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
 		return nil
 	}
 	// always check the backend value even with 'check-requirements = false'
-	retryUsage := "destroy all checkpoints and remove all restored tables and try again"
+	retryUsage := "destroy all checkpoints"
+	if cfg.Checkpoint.Driver == config.CheckpointDriverFile {
+		retryUsage = fmt.Sprintf("delete the file '%s'", cfg.Checkpoint.DSN)
+	}
+	retryUsage += " and remove all restored tables and try again"
+
 	if cfg.TikvImporter.Backend != taskCp.Backend {
 		return errors.Errorf("config 'tikv-importer.backend' value '%s' different from checkpoint value '%s', please %s", cfg.TikvImporter.Backend, taskCp.Backend, retryUsage)
 	}
 
 	if cfg.App.CheckRequirements {
+		if common.ReleaseVersion != taskCp.LightningVer {
+			var displayVer string
+			if len(taskCp.LightningVer) != 0 {
+				displayVer = fmt.Sprintf("at '%s'", taskCp.LightningVer)
+			} else {
+				displayVer = "before v4.0.6/v3.0.19"
+			}
+			return errors.Errorf("lightning version is '%s', but checkpoint was created %s, please %s", common.ReleaseVersion, displayVer, retryUsage)
+		}
+
 		errorFmt := "config '%s' value '%s' different from checkpoint value '%s'. You may set 'check-requirements = false' to skip this check or " + retryUsage
 		if cfg.Mydumper.SourceDir != taskCp.SourceDir {
 			return errors.Errorf(errorFmt, "mydumper.data-source-dir", cfg.Mydumper.SourceDir, taskCp.SourceDir)

@@ -10,6 +10,7 @@ import (
 	. "github.com/pingcap/check"
 
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
@@ -67,7 +68,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 	initializeStmt := s.mock.ExpectPrepare(
 		"REPLACE INTO `mock-schema`\\.task_v\\d+")
 	initializeStmt.ExpectExec().
-		WithArgs(123, "/data", "importer", "127.0.0.1:8287", "127.0.0.1", 4000, "127.0.0.1:2379", "/tmp/sorted-kv").
+		WithArgs(123, "/data", "importer", "127.0.0.1:8287", "127.0.0.1", 4000, "127.0.0.1:2379", "/tmp/sorted-kv", common.ReleaseVersion).
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	initializeStmt = s.mock.
 		ExpectPrepare("INSERT INTO `mock-schema`\\.table_v\\d+")

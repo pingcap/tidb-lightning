@@ -271,6 +271,11 @@ func (s *restoreSuite) TestVerifyCheckpoint(c *C) {
 	defer cpdb.Close()
 	ctx := context.Background()
 
+	actualReleaseVersion := common.ReleaseVersion
+	defer func() {
+		common.ReleaseVersion = actualReleaseVersion
+	}()
+
 	taskCp, err := cpdb.TaskCheckpoint(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(taskCp, IsNil)
@@ -309,6 +314,9 @@ func (s *restoreSuite) TestVerifyCheckpoint(c *C) {
 		"tidb.pd-addr": func(cfg *config.Config) {
 			cfg.TiDB.PdAddr = "127.0.0.1:3379"
 		},
+		"version": func(cfg *config.Config) {
+			common.ReleaseVersion = "some newer version"
+		},
 	}
 
 	// default mode, will return error
@@ -318,7 +326,12 @@ func (s *restoreSuite) TestVerifyCheckpoint(c *C) {
 		cfg := newCfg()
 		fn(cfg)
 		err := verifyCheckpoint(cfg, taskCp)
-		c.Assert(err, ErrorMatches, fmt.Sprintf("config '%s' value '.*' different from checkpoint value .*", conf))
+		if conf == "version" {
+			common.ReleaseVersion = actualReleaseVersion
+			c.Assert(err, ErrorMatches, "lightning version is 'some newer version', but checkpoint was created at '"+actualReleaseVersion+"'.*")
+		} else {
+			c.Assert(err, ErrorMatches, fmt.Sprintf("config '%s' value '.*' different from checkpoint value .*", conf))
+		}
 	}
 
 	for conf, fn := range adjustFuncs {
