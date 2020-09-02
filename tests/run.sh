@@ -168,6 +168,9 @@ fi
 
 echo "selected test cases: $SELECTED_TEST_NAME"
 
+# disable cluster index by default
+run_sql 'set @@global.tidb_enable_clustered_index = 0' || echo "tidb does not support cluster index yet, skipped!"
+
 for casename in $SELECTED_TEST_NAME; do
     script=tests/$casename/run.sh
     echo "\x1b[32;1m@@@@@@@ Running test $script...\x1b[0m"
