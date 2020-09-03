@@ -390,7 +390,11 @@ func (local *local) WriteToTiKV(
 	iter := engineFile.db.NewIter(opt)
 	defer iter.Close()
 
-	iter.First()
+	if !iter.First() {
+		log.L().Warn("keys within region is empty, skip ingest")
+		return nil, nil, nil
+	}
+
 	firstKey := codec.EncodeBytes([]byte{}, iter.Key())
 	iter.Last()
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
@@ -506,7 +510,8 @@ func (local *local) WriteToTiKV(
 	// if there is not leader currently, we should directly return an error
 	if leaderPeerMetas == nil {
 		log.L().Error("write to tikv no leader", zap.Reflect("region", region),
-			zap.Uint64("leader_id", leaderID), zap.Reflect("meta", meta))
+			zap.Uint64("leader_id", leaderID), zap.Reflect("meta", meta),
+			zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size))
 		return nil, nil, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
 			region.Region.Id, leaderID)
 	}

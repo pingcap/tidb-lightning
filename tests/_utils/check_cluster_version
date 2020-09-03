@@ -17,7 +17,7 @@ set -eu
 
 if [ "$CLUSTER_VERSION_MAJOR" -gt "$1" ] || [ "$CLUSTER_VERSION_MAJOR" -eq "$1" ] && ( \
     [ "$CLUSTER_VERSION_MINOR" -gt "$2" ] || \
-    [ "$CLUSTER_VERSION_MINOR" -eq "$2" ] && [ "$CLUSTER_VERSION_REVISION" -gt "$3" ] )
+    [ "$CLUSTER_VERSION_MINOR" -eq "$2" ] && [ "$CLUSTER_VERSION_REVISION" -ge "$3" ] )
 then
     exit 0
 fi
