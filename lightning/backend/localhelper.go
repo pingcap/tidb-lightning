@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -75,7 +76,8 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 					}
 					return errors.Trace(errSplit)
 				}
-				log.L().Warn("split regions", zap.Error(errSplit))
+				log.L().Warn("split regions", zap.Error(errSplit), zap.Int("retry time", i+1),
+					zap.Uint64("region_id", regionID))
 				select {
 				case <-time.After(time.Second):
 				case <-ctx.Done():
@@ -93,7 +95,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 				return bytes.Compare(retryKeys[i], retryKeys[j]) < 0
 			})
 			minKey = retryKeys[0]
-			maxKey = retryKeys[len(retryKeys)-1]
+			maxKey = nextKey(retryKeys[len(retryKeys)-1])
 		}
 	}
 	if errSplit != nil {
@@ -159,7 +161,8 @@ func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionI
 		// Wait for a while until the regions successfully splits.
 		local.waitForSplit(ctx, region.Region.Id)
 		if err = local.splitCli.ScatterRegion(ctx, region); err != nil {
-			log.L().Warn("scatter region failed", zap.Stringer("region", region.Region), zap.Error(err))
+			// the scatter operation likely fails because region replicate not finish yet
+			log.L().Debug("scatter region failed", zap.Stringer("region", region.Region), zap.Error(err))
 		}
 	}
 	return newRegions, nil
@@ -221,6 +224,12 @@ func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64
 		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
 			return true, nil
 		}
+		// don't return error if region replicate not complete
+		// TODO: should add a new error type to avoid this check by string matching
+		matches, _ := regexp.MatchString("region \\d+ is not fully replicated", respErr.Message)
+		if matches {
+			return false, nil
+		}
 		return false, errors.Errorf("get operator error: %s", respErr.GetType())
 	}
 	// If the current operator of the region is not 'scatter-region', we could assume
@@ -231,8 +240,13 @@ func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64
 
 func getSplitKeysByRanges(ranges []Range, regions []*split.RegionInfo) map[uint64][][]byte {
 	checkKeys := make([][]byte, 0)
+	var lastEnd []byte
 	for _, rg := range ranges {
+		if !bytes.Equal(lastEnd, rg.start) {
+			checkKeys = append(checkKeys, truncateRowKey(rg.start))
+		}
 		checkKeys = append(checkKeys, truncateRowKey(rg.end))
+		lastEnd = rg.end
 	}
 	return getSplitKeys(checkKeys, regions)
 }
@@ -256,25 +270,26 @@ func getSplitKeys(checkKeys [][]byte, regions []*split.RegionInfo) map[uint64][]
 }
 
 // needSplit checks whether a key is necessary to split, if true returns the split region
-func needSplit(splitKey []byte, regions []*split.RegionInfo) *split.RegionInfo {
+func needSplit(key []byte, regions []*split.RegionInfo) *split.RegionInfo {
 	// If splitKey is the max key.
-	if len(splitKey) == 0 {
+	if len(key) == 0 {
 		return nil
 	}
-	splitKey = codec.EncodeBytes([]byte{}, splitKey)
+	splitKey := codec.EncodeBytes([]byte{}, key)
 
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
-		log.L().Debug("need split",
-			zap.Binary("splitKey", splitKey),
-			zap.Binary("region start", region.Region.GetStartKey()),
-			zap.Binary("region end", region.Region.GetEndKey()),
-		)
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {
 			return nil
 		}
 		// If splitKey is in a region
 		if bytes.Compare(splitKey, region.Region.GetStartKey()) > 0 && beforeEnd(splitKey, region.Region.GetEndKey()) {
+			log.L().Debug("need split",
+				zap.Binary("splitKey", key),
+				zap.Binary("encodedKey", splitKey),
+				zap.Binary("region start", region.Region.GetStartKey()),
+				zap.Binary("region end", region.Region.GetEndKey()),
+			)
 			return region
 		}
 	}
