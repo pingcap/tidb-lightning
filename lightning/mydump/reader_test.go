@@ -113,7 +113,8 @@ func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(
 }
 
 func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
-	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	dir := c.MkDir()
+	file, err := ioutil.TempFile(dir, "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
@@ -129,7 +130,7 @@ func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	store, err := storage.NewLocalStorage(c.MkDir())
+	store, err := storage.NewLocalStorage(dir)
 	c.Assert(err, IsNil)
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
