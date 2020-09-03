@@ -318,7 +318,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 
 			tablesSchema := make(map[string]string)
 			for _, tblMeta := range dbMeta.Tables {
-				tablesSchema[tblMeta.Name] = tblMeta.GetSchema(rc.store)
+				tablesSchema[tblMeta.Name] = tblMeta.GetSchema(ctx, rc.store)
 			}
 			err = tidbMgr.InitSchema(ctx, dbMeta.Name, tablesSchema)
 

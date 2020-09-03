@@ -68,8 +68,8 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 	return data, nil
 }
 
-func ExportStatement(store storage.ExternalStorage, sqlFile FileInfo, characterSet string) ([]byte, error) {
-	fd, err := store.Open(context.Background(), sqlFile.FileMeta.Path)
+func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile FileInfo, characterSet string) ([]byte, error) {
+	fd, err := store.Open(ctx, sqlFile.FileMeta.Path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

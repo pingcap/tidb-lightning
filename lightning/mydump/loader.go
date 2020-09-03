@@ -51,8 +51,8 @@ type SourceFileMeta struct {
 	SortKey     string
 }
 
-func (m *MDTableMeta) GetSchema(store storage.ExternalStorage) string {
-	schema, err := ExportStatement(store, m.SchemaFile, m.charSet)
+func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
+	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
 		log.L().Error("failed to extract table schema",
 			zap.String("Path", m.SchemaFile.FileMeta.Path),
