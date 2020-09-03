@@ -15,6 +15,7 @@ package mydump
 
 import (
 	"context"
+	"path/filepath"
 	"sort"
 
 	"github.com/pingcap/br/pkg/storage"
@@ -273,10 +274,10 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 	// `filepath.Walk` yields the paths in a deterministic (lexicographical) order,
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
-	err := store.WalkDir(ctx, "", 0, func(path string, size int64) error {
+	err := store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 		logger := log.With(zap.String("path", path))
 
-		res, err := s.loader.fileRouter.Route(path)
+		res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 		if err != nil {
 			return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
 		}

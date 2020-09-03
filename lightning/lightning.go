@@ -27,7 +27,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/pingcap/br/pkg/storage"
@@ -145,6 +144,7 @@ func (l *Lightning) RunOnce() error {
 	if err := cfg.Adjust(); err != nil {
 		return err
 	}
+
 	cfg.TaskID = time.Now().UnixNano()
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		cfg.TaskID = int64(val.(int))
@@ -573,36 +573,8 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 		}
 
 		estimateMaxFiles := uint64(topNTotalSize / backend.LocalMemoryTableSize)
-		var rLimit syscall.Rlimit
-		err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-		failpoint.Inject("GetRlimitValue", func(v failpoint.Value) {
-			limit := uint64(v.(int))
-			rLimit.Cur = limit
-			rLimit.Max = limit
-			err = nil
-		})
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if rLimit.Cur >= estimateMaxFiles {
-			return nil
-		}
-		if rLimit.Max < estimateMaxFiles {
-			// If the process is not started by privileged user, this will fail.
-			rLimit.Max = estimateMaxFiles
-		}
-		prevLimit := rLimit.Cur
-		rLimit.Cur = estimateMaxFiles
-		failpoint.Inject("SetRlimitError", func(v failpoint.Value) {
-			if v.(bool) {
-				err = errors.New("Setrlimit Injected Error")
-			}
-		})
-		if err == nil {
-			err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-		}
-		if err != nil {
-			return errors.Annotatef(err, "the maximum number of open file descriptors is too small, got %d, expect greater or equal to %d", prevLimit, estimateMaxFiles)
+		if err := backend.VerifyRLimit(estimateMaxFiles); err != nil {
+			return err
 		}
 	}
 
