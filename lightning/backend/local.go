@@ -1248,7 +1248,7 @@ func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sa
 
 	sampleCount := uint64(l.Length) / 100 / uint64(sampleFactor)
 
-	if eValue-sValue < sampleCount*20 {
+	if sampleCount == 0 || eValue-sValue < sampleCount*20 {
 		return naiveFn()
 	}
 
