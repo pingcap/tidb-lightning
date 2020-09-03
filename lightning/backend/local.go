@@ -518,8 +518,7 @@ func (local *local) WriteToTiKV(
 
 	var remainRange *Range
 	if iter.Valid() && iter.Next() {
-		firstKey = make([]byte, len(iter.Key()))
-		copy(firstKey, iter.Key())
+		firstKey := append([]byte{}, iter.Key()...)
 		remainRange = &Range{start: firstKey, end: endKey}
 		log.L().Info("write to tikv partial finish", zap.Int("count", totalCount),
 			zap.Int64("size", size), zap.Binary("startKey", startKey), zap.Binary("endKey", endKey),
