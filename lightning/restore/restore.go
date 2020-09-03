@@ -277,9 +277,13 @@ func (rc *RestoreController) Run(ctx context.Context) error {
 	task := log.L().Begin(zap.InfoLevel, "the whole procedure")
 
 	var err error
+	finished := false
 outside:
 	for i, process := range opts {
 		err = process(ctx)
+		if i == len(opts)-1 {
+			finished = true
+		}
 		logger := task.With(zap.Int("step", i), log.ShortError(err))
 
 		switch {
@@ -293,6 +297,11 @@ outside:
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			break outside // ps : not continue
 		}
+	}
+
+	// if process is cancelled, should make sure checkpoints are written to db.
+	if !finished {
+		rc.waitCheckpointFinish()
 	}
 
 	task.End(zap.ErrorLevel, err)
@@ -1271,10 +1280,14 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 	return rc.backend.CheckRequirements()
 }
 
-func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
+func (rc *RestoreController) waitCheckpointFinish() {
 	// wait checkpoint process finish so that we can do cleanup safely
 	close(rc.saveCpCh)
 	rc.checkpointsWg.Wait()
+}
+
+func (rc *RestoreController) cleanCheckpoints(ctx context.Context) error {
+	rc.waitCheckpointFinish()
 
 	if !rc.cfg.Checkpoint.Enable {
 		return nil
