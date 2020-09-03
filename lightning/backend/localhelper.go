@@ -225,6 +225,7 @@ func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64
 			return true, nil
 		}
 		// don't return error if region replicate not complete
+		// TODO: should add a new error type to avoid this check by string matching
 		matches, _ := regexp.MatchString("region \\d+ is not fully replicated", respErr.Message)
 		if matches {
 			return false, nil

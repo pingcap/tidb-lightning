@@ -523,7 +523,7 @@ func (local *local) WriteToTiKV(
 		remainRange = &Range{start: firstKey, end: endKey}
 		log.L().Info("write to tikv partial finish", zap.Int("count", totalCount),
 			zap.Int64("size", size), zap.Binary("startKey", startKey), zap.Binary("endKey", endKey),
-			zap.Reflect("remainStart", remainRange.start), zap.Reflect("remainEnd", remainRange.end),
+			zap.Binary("remainStart", remainRange.start), zap.Binary("remainEnd", remainRange.end),
 			zap.Reflect("region", region))
 	}
 
@@ -1030,6 +1030,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		if len(unfinishedRanges) == 0 {
 			break
 		}
+		log.L().Debug("ingest ranges unfinished", zap.Int("remain ranges", len(unfinishedRanges)))
 		ranges = unfinishedRanges
 	}
 
