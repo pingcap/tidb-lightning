@@ -34,11 +34,12 @@ func (s *testMydumpReaderSuite) SetUpSuite(c *C)    {}
 func (s *testMydumpReaderSuite) TearDownSuite(c *C) {}
 
 func (s *testMydumpReaderSuite) TestExportStatementNoTrailingNewLine(c *C) {
-	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	dir := c.MkDir()
+	file, err := ioutil.TempFile(dir, "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
-	store, err := storage.NewLocalStorage(os.TempDir())
+	store, err := storage.NewLocalStorage(dir)
 	c.Assert(err, IsNil)
 
 	_, err = file.Write([]byte("CREATE DATABASE whatever;"))
@@ -55,7 +56,8 @@ func (s *testMydumpReaderSuite) TestExportStatementNoTrailingNewLine(c *C) {
 }
 
 func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
-	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	dir := c.MkDir()
+	file, err := ioutil.TempFile(dir, "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
@@ -75,7 +77,7 @@ func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	store, err := storage.NewLocalStorage(os.TempDir())
+	store, err := storage.NewLocalStorage(dir)
 	c.Assert(err, IsNil)
 
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
@@ -85,7 +87,8 @@ func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
 }
 
 func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(c *C) {
-	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	dir := c.MkDir()
+	file, err := ioutil.TempFile(dir, "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
@@ -104,7 +107,7 @@ func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	store, err := storage.NewLocalStorage(os.TempDir())
+	store, err := storage.NewLocalStorage(dir)
 	c.Assert(err, IsNil)
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
@@ -139,7 +142,8 @@ func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
 }
 
 func (s *testMydumpReaderSuite) TestExportStatementGibberishError(c *C) {
-	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	dir := c.MkDir()
+	file, err := ioutil.TempFile(dir, "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
@@ -150,7 +154,7 @@ func (s *testMydumpReaderSuite) TestExportStatementGibberishError(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	store, err := storage.NewLocalStorage(os.TempDir())
+	store, err := storage.NewLocalStorage(dir)
 	c.Assert(err, IsNil)
 
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
