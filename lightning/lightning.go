@@ -29,8 +29,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
-
+	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -39,6 +38,7 @@ import (
 	"golang.org/x/net/http/httpproxy"
 
 	"github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -207,9 +207,18 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 		return nil
 	})
 
+	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, &storage.BackendOptions{})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s, err := storage.Create(ctx, u, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
-	mdl, err = mydump.NewMyDumpLoader(taskCfg)
+	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, taskCfg, s)
 	loadTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return errors.Trace(err)
@@ -230,7 +239,7 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	web.BroadcastInitProgress(dbMetas)
 
 	var procedure *restore.RestoreController
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg)
+	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)

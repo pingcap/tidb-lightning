@@ -14,8 +14,11 @@
 package mydump_test
 
 import (
+	"context"
 	"io/ioutil"
 	"os"
+
+	"github.com/pingcap/br/pkg/storage"
 
 	. "github.com/pingcap/check"
 	. "github.com/pingcap/tidb-lightning/lightning/mydump"
@@ -31,22 +34,30 @@ func (s *testMydumpReaderSuite) SetUpSuite(c *C)    {}
 func (s *testMydumpReaderSuite) TearDownSuite(c *C) {}
 
 func (s *testMydumpReaderSuite) TestExportStatementNoTrailingNewLine(c *C) {
-	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	dir := c.MkDir()
+	file, err := ioutil.TempFile(dir, "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+
 	_, err = file.Write([]byte("CREATE DATABASE whatever;"))
+	c.Assert(err, IsNil)
+	stat, err := file.Stat()
 	c.Assert(err, IsNil)
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name(), "auto")
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
 
 func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
-	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	dir := c.MkDir()
+	file, err := ioutil.TempFile(dir, "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
@@ -61,16 +72,23 @@ func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
 		CREATE DATABASE whatever;  
 `))
 	c.Assert(err, IsNil)
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name(), "auto")
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
 
 func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(c *C) {
-	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	dir := c.MkDir()
+	file, err := ioutil.TempFile(dir, "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
@@ -84,16 +102,22 @@ func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(
 		 */;
 		CREATE DATABASE whatever;`))
 	c.Assert(err, IsNil)
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name(), "auto")
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
 }
 
 func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
-	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	dir := c.MkDir()
+	file, err := ioutil.TempFile(dir, "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
@@ -104,25 +128,37 @@ func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
 	c.Assert(err, IsNil)
 	_, err = file.Write([]byte("');\n"))
 	c.Assert(err, IsNil)
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name(), "auto")
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE TABLE a (b int(11) COMMENT '总案例');"))
 }
 
 func (s *testMydumpReaderSuite) TestExportStatementGibberishError(c *C) {
-	file, err := ioutil.TempFile("", "tidb_lightning_test_reader")
+	dir := c.MkDir()
+	file, err := ioutil.TempFile(dir, "tidb_lightning_test_reader")
 	c.Assert(err, IsNil)
 	defer os.Remove(file.Name())
 
 	_, err = file.Write([]byte("\x9e\x02\xdc\xfbZ/=n\xf3\xf2N8\xc1\xf2\xe9\xaa\xd0\x85\xc5}\x97\x07\xae6\x97\x99\x9c\x08\xcb\xe8;"))
 	c.Assert(err, IsNil)
+	stat, err := file.Stat()
+	c.Assert(err, IsNil)
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	data, err := ExportStatement(file.Name(), "auto")
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	c.Assert(data, IsNil)
 	c.Assert(err, NotNil)
 }

@@ -26,6 +26,7 @@ echo "INSERT INTO tbl (i, j) VALUES (1, 1),(2, 2);" > "$DBPATH/fr/tbl1.sql.0"
 echo "INSERT INTO tbl (i, j) VALUES (3, 3),(4, 4);" > "$DBPATH/fr/tbl2.sql.0"
 echo "INSERT INTO tbl (i, j) VALUES (5, 5);" > "$DBPATH/fr/tbl.sql"
 echo "INSERT INTO tbl (i, j) VALUES (6, 6), (7, 7), (8, 8), (9, 9);" > "$DBPATH/tbl1.sql.1"
+echo "INSERT INTO tbl (i, j) VALUES (10, 10);" > "$DBPATH/ff/test.SQL"
 echo "INSERT INTO tbl (i, j) VALUES (11, 11);" > "$DBPATH/fr/tbl-noused.sql"
 
 # Set minDeliverBytes to a small enough number to only write only 1 row each time
@@ -38,7 +39,7 @@ set +e
 run_lightning -d "$DBPATH" --backend local 2> /dev/null
 set -e
 run_sql 'SELECT count(*) FROM `fr`.tbl'
-check_contains "count(*): 9"
+check_contains "count(*): 10"
 
 run_sql 'SELECT sum(j) FROM `fr`.tbl'
-check_contains "sum(j): 45"
+check_contains "sum(j): 55"

@@ -15,14 +15,14 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
 	github.com/juju/loggo v0.0.0-20180524022052-584905176618 // indirect
 	github.com/onsi/ginkgo v1.13.0 // indirect
-	github.com/pingcap/br v0.0.0-20200826123318-3234e8d3e810
+	github.com/pingcap/br v0.0.0-20200903160657-0fcfd5be4b93
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20200729012136-4e113ddee29e
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
-	github.com/pingcap/kvproto v0.0.0-20200810113304-6157337686b1
+	github.com/pingcap/kvproto v0.0.0-20200828054126-d677e6fd224a
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-	github.com/pingcap/parser v0.0.0-20200813083329-a4bff035d3e2
-	github.com/pingcap/tidb v1.1.0-beta.0.20200820085534-0d997f2b8b3c
+	github.com/pingcap/parser v0.0.0-20200821073936-cf85e80665c4
+	github.com/pingcap/tidb v1.1.0-beta.0.20200831085451-438945d2948e
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
