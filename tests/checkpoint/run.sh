@@ -62,7 +62,7 @@ for BACKEND in importer tidb local; do
 
   # Set the failpoint to kill the lightning instance as soon as one table is imported
   # If checkpoint does work, this should only kill 9 instances of lightnings.
-  SLOWDOWN_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/SlowDownImport=sleep(500)'
+  SLOWDOWN_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/SlowDownImport=sleep(250)'
   export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb-lightning/lightning/restore/FailBeforeIndexEngineImported=return"
 
   # Start importing the tables.
