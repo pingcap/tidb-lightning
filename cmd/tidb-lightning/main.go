@@ -20,10 +20,11 @@ import (
 	"runtime/debug"
 	"syscall"
 
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb-lightning/lightning"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	"go.uber.org/zap"
 )
 
 func main() {

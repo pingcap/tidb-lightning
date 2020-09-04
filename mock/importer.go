@@ -6,11 +6,12 @@ package mock
 
 import (
 	context "context"
+	reflect "reflect"
+
 	gomock "github.com/golang/mock/gomock"
 	import_kvpb "github.com/pingcap/kvproto/pkg/import_kvpb"
 	grpc "google.golang.org/grpc"
 	metadata "google.golang.org/grpc/metadata"
-	reflect "reflect"
 )
 
 // MockImportKVClient is a mock of ImportKVClient interface

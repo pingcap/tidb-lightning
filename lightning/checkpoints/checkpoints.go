@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pingcap/tidb-lightning/lightning/config"
+
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
 	"go.uber.org/zap"
@@ -59,13 +61,15 @@ const WholeTableEngineID = math.MaxInt32
 const (
 	// the table names to store each kind of checkpoint in the checkpoint database
 	// remember to increase the version number in case of incompatible change.
+	CheckpointTableNameTask   = "task_v1"
 	CheckpointTableNameTable  = "table_v6"
 	CheckpointTableNameEngine = "engine_v5"
 	CheckpointTableNameChunk  = "chunk_v5"
 )
 
 func IsCheckpointTable(name string) bool {
-	return name == CheckpointTableNameTable || name == CheckpointTableNameEngine || name == CheckpointTableNameChunk
+	return name == CheckpointTableNameTask || name == CheckpointTableNameTable ||
+		name == CheckpointTableNameEngine || name == CheckpointTableNameChunk
 }
 
 func (status CheckpointStatus) MetricName() string {
@@ -329,8 +333,20 @@ type DestroyedTableCheckpoint struct {
 	MaxEngineID int32
 }
 
+type TaskCheckpoint struct {
+	TaskId       int64
+	SourceDir    string
+	Backend      string
+	ImporterAddr string
+	TiDBHost     string
+	TiDBPort     int
+	PdAddr       string
+	SortedKVDir  string
+}
+
 type CheckpointsDB interface {
-	Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error
+	Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error
+	TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error)
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	Close() error
 	// InsertEngineCheckpoints initializes the checkpoints related to a table.
@@ -357,9 +373,14 @@ func NewNullCheckpointsDB() *NullCheckpointsDB {
 	return &NullCheckpointsDB{}
 }
 
-func (*NullCheckpointsDB) Initialize(context.Context, map[string]*TidbDBInfo) error {
+func (*NullCheckpointsDB) Initialize(context.Context, *config.Config, map[string]*TidbDBInfo) error {
 	return nil
 }
+
+func (*NullCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
+	return nil, nil
+}
+
 func (*NullCheckpointsDB) Close() error {
 	return nil
 }
@@ -396,6 +417,23 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 	err := sql.Exec(ctx, "create checkpoints database", fmt.Sprintf(`
 		CREATE DATABASE IF NOT EXISTS %s;
 	`, schema))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	err = sql.Exec(ctx, "create task checkpoints table", fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s.%s (
+			id tinyint(1) PRIMARY KEY,
+			task_id bigint NOT NULL,
+			source_dir varchar(256) NOT NULL,
+			backend varchar(16) NOT NULL, 
+			importer_addr varchar(32),
+			tidb_host varchar(128) NOT NULL,
+			tidb_port int NOT NULL,
+			pd_addr varchar(128) NOT NULL,
+			sorted_kv_dir varchar(256) NOT NULL
+		);
+	`, schema, CheckpointTableNameTask))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -465,12 +503,25 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 	}, nil
 }
 
-func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error {
+func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
 	// We can have at most 65535 placeholders https://stackoverflow.com/q/4922345/
 	// Since this step is not performance critical, we just insert the rows one-by-one.
-
 	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.L()}
 	err := s.Transact(ctx, "insert checkpoints", func(c context.Context, tx *sql.Tx) error {
+		taskStmt, err := tx.PrepareContext(c, fmt.Sprintf(`
+			REPLACE INTO %s.%s (id, task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir) 
+			VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?);
+		`, cpdb.schema, CheckpointTableNameTask))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer taskStmt.Close()
+		_, err = taskStmt.ExecContext(ctx, cfg.TaskID, cfg.Mydumper.SourceDir, cfg.TikvImporter.Backend,
+			cfg.TikvImporter.Addr, cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.PdAddr, cfg.TikvImporter.SortedKVDir)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		// If `hash` is not the same but the `table_name` duplicates,
 		// the CASE expression will return NULL, which can be used to violate
 		// the NOT NULL requirement of `task_id` column, and caused this INSERT
@@ -506,6 +557,31 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, dbInfo map[strin
 	}
 
 	return nil
+}
+
+func (cpdb *MySQLCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
+	s := common.SQLWithRetry{
+		DB:     cpdb.db,
+		Logger: log.L(),
+	}
+
+	taskQuery := fmt.Sprintf(
+		"SELECT task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir FROM %s.%s WHERE id = 1",
+		cpdb.schema, CheckpointTableNameTask,
+	)
+	taskCp := &TaskCheckpoint{}
+	err := s.QueryRow(ctx, "fetch task checkpoint", taskQuery, &taskCp.TaskId, &taskCp.SourceDir, &taskCp.Backend,
+		&taskCp.ImporterAddr, &taskCp.TiDBHost, &taskCp.TiDBPort, &taskCp.PdAddr, &taskCp.SortedKVDir)
+
+	if err != nil {
+		// if task checkpoint is empty, return nil
+		if errors.Cause(err) == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, errors.Trace(err)
+	}
+
+	return taskCp, nil
 }
 
 func (cpdb *MySQLCheckpointsDB) Close() error {
@@ -763,7 +839,8 @@ func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
 	cpdb := &FileCheckpointsDB{
 		path: path,
 		checkpoints: CheckpointsModel{
-			Checkpoints: map[string]*TableCheckpointModel{},
+			TaskCheckpoint: &TaskCheckpointModel{},
+			Checkpoints:    map[string]*TableCheckpointModel{},
 		},
 	}
 	// ignore all errors -- file maybe not created yet (and it is fine).
@@ -808,9 +885,20 @@ func (cpdb *FileCheckpointsDB) save() error {
 	return nil
 }
 
-func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, dbInfo map[string]*TidbDBInfo) error {
+func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
+
+	cpdb.checkpoints.TaskCheckpoint = &TaskCheckpointModel{
+		TaskId:       cfg.TaskID,
+		SourceDir:    cfg.Mydumper.SourceDir,
+		Backend:      cfg.TikvImporter.Backend,
+		ImporterAddr: cfg.TikvImporter.Addr,
+		TidbHost:     cfg.TiDB.Host,
+		TidbPort:     int32(cfg.TiDB.Port),
+		PdAddr:       cfg.TiDB.PdAddr,
+		SortedKvDir:  cfg.TikvImporter.SortedKVDir,
+	}
 
 	if cpdb.checkpoints.Checkpoints == nil {
 		cpdb.checkpoints.Checkpoints = make(map[string]*TableCheckpointModel)
@@ -831,6 +919,25 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, dbInfo map[string
 	}
 
 	return errors.Trace(cpdb.save())
+}
+
+func (cpdb *FileCheckpointsDB) TaskCheckpoint(_ context.Context) (*TaskCheckpoint, error) {
+	// this method is always called in lock
+	cp := cpdb.checkpoints.TaskCheckpoint
+	if cp == nil || cp.TaskId == 0 {
+		return nil, nil
+	}
+
+	return &TaskCheckpoint{
+		TaskId:       cp.TaskId,
+		SourceDir:    cp.SourceDir,
+		Backend:      cp.Backend,
+		ImporterAddr: cp.ImporterAddr,
+		TiDBHost:     cp.TidbHost,
+		TiDBPort:     int(cp.TidbPort),
+		PdAddr:       cp.PdAddr,
+		SortedKVDir:  cp.SortedKvDir,
+	}, nil
 }
 
 func (cpdb *FileCheckpointsDB) Close() error {

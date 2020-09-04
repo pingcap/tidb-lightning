@@ -165,12 +165,13 @@ trim-last-separator = false
 
 # file level routing rule that map file path to schema,table,type,sort-key
 # The schema, table , type and key can be either a constant string or template strings
-# supported by go regexp. 
+# supported by go regexp.
 #[[mydumper.files]]
 # pattern and path determine target source files, you can use either of them but not both.
 # pattern is a regexp in Go syntax that can match one or more files in `source-dir`.
 #pattern = '(?i)^(?:[^/]*/)(?P<schema>[^/.]+)\.([^/.]+)(?:\.([0-9]+))?\.(sql|csv)$'
 # path is the target file path, both absolute file path or relative path to `mydump.source-dir` are supported.
+# the path separator is always converted to '/', regardless of operating system.
 #path = "schema_name.table_name.00001.sql"
 # schema(database) name
 #schema = "$schema"

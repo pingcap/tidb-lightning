@@ -21,6 +21,18 @@ option (gogoproto.goproto_getters_all) = false;
 message CheckpointsModel {
     // key is table_name
     map<string, TableCheckpointModel> checkpoints = 1;
+    TaskCheckpointModel task_checkpoint = 2;
+}
+
+message TaskCheckpointModel {
+    int64 task_id = 1;
+    string source_dir = 2;
+    string backend = 3;
+    string importer_addr = 4;
+    string tidb_host = 5;
+    int32 tidb_port = 6;
+    string pd_addr = 7;
+    string sorted_kv_dir = 8;
 }
 
 message TableCheckpointModel {

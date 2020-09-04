@@ -8,6 +8,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
+
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
@@ -28,19 +29,21 @@ func (s *cpSQLSuite) SetUpTest(c *C) {
 	s.mock = mock
 
 	// 1. create the checkpoints database.
-
 	s.mock.
 		ExpectExec("CREATE DATABASE IF NOT EXISTS `mock-schema`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mock.
-		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.table_v\\d+ .+").
+		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.task_v\\d+ .+").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	s.mock.
-		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.engine_v\\d+ .+").
+		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.table_v\\d+ .+").
 		WillReturnResult(sqlmock.NewResult(3, 1))
 	s.mock.
-		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.chunk_v\\d+ .+").
+		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.engine_v\\d+ .+").
 		WillReturnResult(sqlmock.NewResult(4, 1))
+	s.mock.
+		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.chunk_v\\d+ .+").
+		WillReturnResult(sqlmock.NewResult(5, 1))
 
 	cpdb, err := checkpoints.NewMySQLCheckpointsDB(context.Background(), s.db, "mock-schema", 1234)
 	c.Assert(err, IsNil)
@@ -61,21 +64,27 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 	// 2. initialize with checkpoint data.
 
 	s.mock.ExpectBegin()
-	initializeStmt := s.mock.
+	initializeStmt := s.mock.ExpectPrepare(
+		"REPLACE INTO `mock-schema`\\.task_v\\d+")
+	initializeStmt.ExpectExec().
+		WithArgs(123, "/data", "importer", "127.0.0.1:8287", "127.0.0.1", 4000, "127.0.0.1:2379", "/tmp/sorted-kv").
+		WillReturnResult(sqlmock.NewResult(6, 1))
+	initializeStmt = s.mock.
 		ExpectPrepare("INSERT INTO `mock-schema`\\.table_v\\d+")
 	initializeStmt.ExpectExec().
 		WithArgs(1234, "`db1`.`t1`", sqlmock.AnyArg(), int64(1)).
-		WillReturnResult(sqlmock.NewResult(5, 1))
+		WillReturnResult(sqlmock.NewResult(7, 1))
 	initializeStmt.ExpectExec().
 		WithArgs(1234, "`db1`.`t2`", sqlmock.AnyArg(), int64(2)).
-		WillReturnResult(sqlmock.NewResult(6, 1))
+		WillReturnResult(sqlmock.NewResult(8, 1))
 	initializeStmt.ExpectExec().
 		WithArgs(1234, "`db2`.`t3`", sqlmock.AnyArg(), int64(3)).
-		WillReturnResult(sqlmock.NewResult(7, 1))
+		WillReturnResult(sqlmock.NewResult(9, 1))
 	s.mock.ExpectCommit()
 
 	s.mock.MatchExpectationsInOrder(false)
-	err := cpdb.Initialize(ctx, map[string]*checkpoints.TidbDBInfo{
+	cfg := newTestConfig()
+	err := cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",
 			Tables: map[string]*checkpoints.TidbTableInfo{

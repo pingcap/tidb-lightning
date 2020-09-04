@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -26,12 +28,13 @@ import (
 	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pingcap/tidb-lightning/lightning/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
 const (
@@ -61,7 +64,10 @@ const (
 	ErrorOnDup = "error"
 )
 
-var defaultConfigPaths = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
+var (
+	defaultConfigPaths    = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
+	supportedStorageTypes = []string{"file", "local", "s3"}
+)
 
 type DBStore struct {
 	Host       string    `toml:"host" json:"host"`
@@ -561,6 +567,35 @@ func (cfg *Config) Adjust() error {
 		case CheckpointDriverFile:
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
+	}
+
+	u, err := url.Parse(cfg.Mydumper.SourceDir)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// convert path and relative path to a valid file url
+	if u.Scheme == "" {
+		if !common.IsDirExists(cfg.Mydumper.SourceDir) {
+			return errors.Errorf("%s: mydumper dir does not exist", cfg.Mydumper.SourceDir)
+		}
+		absPath, err := filepath.Abs(cfg.Mydumper.SourceDir)
+		if err != nil {
+			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
+		}
+		cfg.Mydumper.SourceDir = fmt.Sprintf("file://%s", absPath)
+		u.Path = absPath
+		u.Scheme = "file"
+	}
+
+	found := false
+	for _, t := range supportedStorageTypes {
+		if u.Scheme == t {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errors.Errorf("Unsupported data-source-dir url '%s'", cfg.Mydumper.SourceDir)
 	}
 
 	return nil

@@ -22,7 +22,7 @@ import (
 	"net/http/httptest"
 
 	"github.com/pingcap/errors"
-	pd "github.com/pingcap/pd/v4/client"
+	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )

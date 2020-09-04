@@ -74,20 +74,22 @@ func (pp *ParquetParser) Pos() (pos int64, rowID int64) {
 	return pp.curStart + int64(pp.curIndex), pp.lastRow.RowID
 }
 
-func (pp *ParquetParser) SetPos(pos int64, rowID int64) {
+func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	if pos < pp.curStart {
-		panic("don't support seek back yet")
+		return errors.New("don't support seek back yet")
 	}
 	pp.lastRow.RowID = rowID
 
 	if pos < pp.curStart+int64(len(pp.rows)) {
 		pp.curIndex = int(pos - pp.curStart)
 		pp.readRows = pos
-		return
+		return nil
 	}
 
 	if pos > pp.curStart+int64(len(pp.rows)) {
-		pp.Reader.SkipRows(pos - pp.curStart - int64(len(pp.rows)))
+		if err := pp.Reader.SkipRows(pos - pp.curStart - int64(len(pp.rows))); err != nil {
+			return err
+		}
 	}
 	pp.curStart = pos
 	pp.readRows = pos
@@ -95,6 +97,8 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) {
 	if len(pp.rows) > 0 {
 		pp.rows = pp.rows[:0]
 	}
+
+	return nil
 }
 
 func (pp *ParquetParser) Close() error {

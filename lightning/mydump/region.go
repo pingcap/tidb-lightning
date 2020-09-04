@@ -14,9 +14,10 @@
 package mydump
 
 import (
+	"context"
 	"math"
-	"os"
 
+	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/errors"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/reader"
@@ -126,10 +127,12 @@ func AllocateEngineIDs(
 }
 
 func MakeTableRegions(
+	ctx context.Context,
 	meta *MDTableMeta,
 	columns int,
 	cfg *config.Config,
 	ioWorkers *worker.Pool,
+	store storage.ExternalStorage,
 ) ([]*TableRegion, error) {
 	// Split files into regions
 	filesRegions := make([]*TableRegion, 0, len(meta.DataFiles))
@@ -164,7 +167,7 @@ func MakeTableRegions(
 				regions      []*TableRegion
 				subFileSizes []float64
 			)
-			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(meta, cfg, dataFile, divisor, prevRowIDMax, ioWorkers)
+			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(ctx, meta, cfg, dataFile, divisor, prevRowIDMax, ioWorkers, store)
 			if err != nil {
 				return nil, err
 			}
@@ -172,14 +175,14 @@ func MakeTableRegions(
 			filesRegions = append(filesRegions, regions...)
 			continue
 		}
-		rowIDMax := prevRowIDMax + dataFileSize/divisor
+		rowIDMax := prevRowIDMax + dataFile.Size/divisor
 		tableRegion := &TableRegion{
 			DB:       meta.DB,
 			Table:    meta.Name,
 			FileMeta: dataFile.FileMeta,
 			Chunk: Chunk{
 				Offset:       0,
-				EndOffset:    dataFileSize,
+				EndOffset:    dataFile.Size,
 				PrevRowIDMax: prevRowIDMax,
 				RowIDMax:     rowIDMax,
 			},
@@ -192,7 +195,7 @@ func MakeTableRegions(
 				zap.Int64("size", dataFileSize))
 		}
 		prevRowIDMax = rowIDMax
-		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
+		dataFileSizes = append(dataFileSizes, float64(dataFile.Size))
 	}
 
 	log.L().Debug("in makeTableRegions",
@@ -244,23 +247,25 @@ func makeParquetFileRegion(
 // - CSV file with header is invalid
 // - a complete tuple split into multiple lines is invalid
 func SplitLargeFile(
+	ctx context.Context,
 	meta *MDTableMeta,
 	cfg *config.Config,
 	dataFile FileInfo,
 	divisor int64,
 	prevRowIdxMax int64,
 	ioWorker *worker.Pool,
+	store storage.ExternalStorage,
 ) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := cfg.Mydumper.MaxRegionSize
 	dataFileSizes = make([]float64, 0, dataFile.Size/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
 	var columns []string
 	if cfg.Mydumper.CSV.Header {
-		reader, err := os.Open(dataFile.FileMeta.Path)
+		r, err := store.Open(ctx, dataFile.FileMeta.Path)
 		if err != nil {
 			return 0, nil, nil, err
 		}
-		parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker, true)
+		parser := NewCSVParser(&cfg.Mydumper.CSV, r, cfg.Mydumper.ReadBlockSize, ioWorker, true)
 		if err = parser.ReadColumns(); err != nil {
 			return 0, nil, nil, err
 		}
@@ -272,12 +277,14 @@ func SplitLargeFile(
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFile.Size {
-			reader, err := os.Open(dataFile.FileMeta.Path)
+			r, err := store.Open(ctx, dataFile.FileMeta.Path)
 			if err != nil {
 				return 0, nil, nil, err
 			}
-			parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker, false)
-			parser.SetPos(endOffset, prevRowIdMax)
+			parser := NewCSVParser(&cfg.Mydumper.CSV, r, cfg.Mydumper.ReadBlockSize, ioWorker, false)
+			if err = parser.SetPos(endOffset, prevRowIdMax); err != nil {
+				return 0, nil, nil, err
+			}
 			pos, err := parser.ReadUntilTokNewLine()
 			if err != nil {
 				return 0, nil, nil, err

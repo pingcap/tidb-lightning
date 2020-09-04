@@ -17,21 +17,21 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
 	github.com/juju/loggo v0.0.0-20180524022052-584905176618 // indirect
 	github.com/onsi/ginkgo v1.13.0 // indirect
-	github.com/pingcap/br v0.0.0-20200805121136-181c081ba6ac
+	github.com/pingcap/br v0.0.0-20200903160657-0fcfd5be4b93
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20200729012136-4e113ddee29e
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
-	github.com/pingcap/kvproto v0.0.0-20200803054707-ebd5de15093f
+	github.com/pingcap/kvproto v0.0.0-20200828054126-d677e6fd224a
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-	github.com/pingcap/parser v0.0.0-20200731033026-84f62115187c
-	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200730093003-dc8c75cf7ca0
-	github.com/pingcap/tidb v1.1.0-beta.0.20200810035801-6f4090ed9f23
-	github.com/pingcap/tidb-tools v4.0.5-0.20200817064459-ba61a7376547+incompatible
+	github.com/pingcap/parser v0.0.0-20200821073936-cf85e80665c4
+	github.com/pingcap/tidb v1.1.0-beta.0.20200831085451-438945d2948e
+	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/satori/go.uuid v1.2.0
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
+	github.com/tikv/pd v1.1.0-beta.0.20200818122340-ef1a4e920b2f
 	github.com/xitongsys/parquet-go v1.5.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20190524061010-2b72cbee77d5
 	go.opencensus.io v0.22.3 // indirect

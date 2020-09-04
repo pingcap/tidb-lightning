@@ -51,6 +51,8 @@ func (row tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 
 type tidbEncoder struct {
 	mode mysql.SQLMode
+	tbl  table.Table
+	se   *session
 }
 
 type tidbBackend struct {
@@ -104,7 +106,7 @@ func (rows tidbRows) Clear() Rows {
 	return rows[:0]
 }
 
-func (enc tidbEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
+func (enc *tidbEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
 	sb.Grow(2 + len(value))
 	sb.WriteByte('\'')
 	if enc.mode.HasNoBackslashEscapesMode() {
@@ -144,7 +146,7 @@ func (enc tidbEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
 
 // appendSQL appends the SQL representation of the Datum into the string builder.
 // Note that we cannot use Datum.ToString since it doesn't perform SQL escaping.
-func (enc tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum) error {
+func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, col *table.Column) error {
 	switch datum.Kind() {
 	case types.KindNull:
 		sb.WriteString("NULL")
@@ -172,8 +174,17 @@ func (enc tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum) error 
 		var buffer [32]byte
 		value := strconv.AppendFloat(buffer[:0], datum.GetFloat64(), 'g', -1, 64)
 		sb.Write(value)
+	case types.KindString:
+		if enc.mode.HasStrictMode() {
+			d, err := table.CastValue(enc.se, *datum, col.ToInfo(), false, false)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			datum = &d
+		}
 
-	case types.KindString, types.KindBytes:
+		enc.appendSQLBytes(sb, datum.GetBytes())
+	case types.KindBytes:
 		enc.appendSQLBytes(sb, datum.GetBytes())
 
 	case types.KindMysqlJSON:
@@ -213,9 +224,11 @@ func (enc tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum) error 
 	return nil
 }
 
-func (tidbEncoder) Close() {}
+func (*tidbEncoder) Close() {}
 
-func (enc tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, _ []int) (Row, error) {
+func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, columnPermutation []int) (Row, error) {
+	cols := enc.tbl.Cols()
+
 	var encoded strings.Builder
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
@@ -223,7 +236,7 @@ func (enc tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, _ [
 		if i != 0 {
 			encoded.WriteByte(',')
 		}
-		if err := enc.appendSQL(&encoded, &field); err != nil {
+		if err := enc.appendSQL(&encoded, &field, cols[columnPermutation[i]]); err != nil {
 			logger.Error("tidb encode failed",
 				zap.Array("original", rowArrayMarshaler(row)),
 				zap.Int("originalCol", i),
@@ -265,8 +278,15 @@ func (be *tidbBackend) CheckRequirements() error {
 	return nil
 }
 
-func (be *tidbBackend) NewEncoder(_ table.Table, options *SessionOptions) Encoder {
-	return tidbEncoder{mode: options.SQLMode}
+func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
+	var se *session
+	if options.SQLMode.HasStrictMode() {
+		se = newSession(options)
+		se.vars.SkipUTF8Check = false
+		se.vars.SkipASCIICheck = false
+	}
+
+	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID) error {
