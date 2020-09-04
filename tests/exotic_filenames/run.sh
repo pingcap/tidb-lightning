@@ -15,6 +15,9 @@
 
 set -eu
 
+# disable cluster index by default
+run_sql 'set @@global.tidb_enable_clustered_index = 0' || echo "tidb does not support cluster index yet, skipped!"
+
 # rebuild the directory and rename the files to use exotic file names.
 # (need to do it at runtime but otherwise git behaves erratically on windows)
 DBPATH="$TEST_DIR/exotic_filename.mydump"
