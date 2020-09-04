@@ -3,7 +3,6 @@ package mydump
 import (
 	"context"
 	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 
@@ -29,10 +28,8 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	dir := c.MkDir()
 	// prepare data
 	name := "test123.parquet"
-	f, err := os.Create(filepath.Join(dir, name))
-	c.Assert(err, IsNil)
-	c.Assert(f.Close(), IsNil)
-	pf, err := local.NewLocalFileWriter(name)
+	testPath := filepath.Join(dir, name)
+	pf, err := local.NewLocalFileWriter(testPath)
 	c.Assert(err, IsNil)
 	test := &Test{}
 	writer, err := writer2.NewParquetWriter(pf, test, 2)
