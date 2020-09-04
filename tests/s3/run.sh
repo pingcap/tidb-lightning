@@ -64,9 +64,7 @@ _EOF_
 run_sql "DROP DATABASE IF EXISTS $DB;"
 run_sql "DROP TABLE IF EXISTS $DB.$TABLE;"
 
-run_sql "CRset +e
 run_lightning -d "$DBPATH" --backend local 2> /dev/null
-set -e
 run_sql "SELECT count(*), sum(i) FROM \`$DB\`.$TABLE"
 check_contains "count(*): 7"
 check_contains "sum(i): 413"
