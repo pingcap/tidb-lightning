@@ -139,7 +139,7 @@ func MakeTableRegions(
 	var err error
 	for _, dataFile := range meta.DataFiles {
 		if dataFile.FileMeta.Type == SourceTypeParquet {
-			rowIDMax, region, err := makeParquetFileRegion(meta, dataFile, prevRowIDMax)
+			rowIDMax, region, err := makeParquetFileRegion(ctx, store, meta, dataFile, prevRowIDMax)
 			if err != nil {
 				return nil, err
 			}
