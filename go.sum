@@ -417,6 +417,8 @@ github.com/ngaut/unistore v0.0.0-20200806113332-5b9f73333a19 h1:N8pW0PTJEGTyHzZu
 github.com/ngaut/unistore v0.0.0-20200806113332-5b9f73333a19/go.mod h1:RtZJKyiaHRiII+b9/g/4339rSikSvfrUJmIbrUkYVi4=
 github.com/ngaut/unistore v0.0.0-20200820080223-c734bcc4ea53 h1:mamcR5THP4UTx6dMZp00LUq5kMILU6o2FnHEWzYZQhE=
 github.com/ngaut/unistore v0.0.0-20200820080223-c734bcc4ea53/go.mod h1:85S5ZgzoHtTMyaEYhaWnxv9OWMBfyhTNuWypXCfVn/0=
+github.com/ngaut/unistore v0.0.0-20200828072424-1c0ede06a3fc h1:aWjX4/AooiJvLllPt+d7+4umIgFDKooKfLH+IRaQiGU=
+github.com/ngaut/unistore v0.0.0-20200828072424-1c0ede06a3fc/go.mod h1:iSlx5Ub/926GvQn6+d2B2C16wJJwgQIsi6k/bEU0vl4=
 github.com/nicksnyder/go-i18n v1.10.0/go.mod h1:HrK7VCrbOvQoUAQ7Vpy7i87N7JZZZ7R2xBGjv0j365Q=
 github.com/nxadm/tail v1.4.4 h1:DQuhQpB1tVlglWS2hLQ5OV6B5r8aGxSrPc5Qo6uTN78=
 github.com/nxadm/tail v1.4.4/go.mod h1:kenIhsEOeOJmVchQTgglprH7qJGnHDVpk1VPCcaMI8A=
@@ -469,8 +471,8 @@ github.com/pingcap/br v0.0.0-20200803052654-e6f63fc1807a/go.mod h1:8j7vGUfHCETYb
 github.com/pingcap/br v0.0.0-20200805121136-181c081ba6ac h1:UTDTEFuFdS/cyCqYAcp8rWBfG8qJnzHIckC5FPUKfqw=
 github.com/pingcap/br v0.0.0-20200805121136-181c081ba6ac/go.mod h1:9P24mNzNmXjggYBm4pnb08slSbua8FA6QIyg68GpuhQ=
 github.com/pingcap/br v0.0.0-20200820083933-d9d6207c0aa7/go.mod h1:5ri8663t7CtJuG0kiOKKoBmwk9HOCX5MoKpmh1fW4CE=
-github.com/pingcap/br v0.0.0-20200826123318-3234e8d3e810 h1:NOfoUFnyQQe4fdVXNXYcBFJEtCofCq21q+s6qdIpQW8=
-github.com/pingcap/br v0.0.0-20200826123318-3234e8d3e810/go.mod h1:8r6F6jCXdvQjfxbGtz08i0QVw5Pcn6ig36V3vuAiWmk=
+github.com/pingcap/br v0.0.0-20200903160657-0fcfd5be4b93 h1:21WD99nwr4v3PYWMXYE/FogA1lY7r01PZYAdBHLQ1c8=
+github.com/pingcap/br v0.0.0-20200903160657-0fcfd5be4b93/go.mod h1:DGsMcZVYt2haeDF/xGerf77c2RpTymgYY5+bMg8uArA=
 github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8/go.mod h1:B1+S9LNcuMyLH/4HMTViQOJevkGiik3wW2AN9zb2fNQ=
 github.com/pingcap/check v0.0.0-20191107115940-caf2b9e6ccf4/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
 github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
@@ -514,6 +516,8 @@ github.com/pingcap/kvproto v0.0.0-20200715040832-c3e2e0b163ee/go.mod h1:IOdRDPLy
 github.com/pingcap/kvproto v0.0.0-20200803054707-ebd5de15093f h1:y247vlXfpe8MYGt6pkVKqIoYmx2KoeF8jmBLbAlse6Y=
 github.com/pingcap/kvproto v0.0.0-20200803054707-ebd5de15093f/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/pingcap/kvproto v0.0.0-20200810113304-6157337686b1/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
+github.com/pingcap/kvproto v0.0.0-20200828054126-d677e6fd224a h1:/FW9upn9/MJ8e6SdiGZcJ4MeZLXdYUG+L5RHp1OhPR4=
+github.com/pingcap/kvproto v0.0.0-20200828054126-d677e6fd224a/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/log v0.0.0-20200511115504-543df19646ad h1:SveG82rmu/GFxYanffxsSF503SiQV+2JLnWEiGiF+Tc=
@@ -531,6 +535,8 @@ github.com/pingcap/parser v0.0.0-20200731033026-84f62115187c h1:UG7JwE9UbEpiTOJe
 github.com/pingcap/parser v0.0.0-20200731033026-84f62115187c/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/pingcap/parser v0.0.0-20200813083329-a4bff035d3e2 h1:9d8wKsCNrOM3kAidHIB5u1qAUPOZ+wPaz7+lB5rsdNM=
 github.com/pingcap/parser v0.0.0-20200813083329-a4bff035d3e2/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
+github.com/pingcap/parser v0.0.0-20200821073936-cf85e80665c4 h1:ATFD3gmwkSHcPt5DuQK3dZwqDU49WXOq/zRmwPJ6Nks=
+github.com/pingcap/parser v0.0.0-20200821073936-cf85e80665c4/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2/go.mod h1:s+utZtXDznOiL24VK0qGmtoHjjXNsscJx3m1n8cC56s=
 github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181 h1:FM+PzdoR3fmWAJx3ug+p5aOgs5aZYwFkoDL7Potdsz0=
 github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181/go.mod h1:q4HTx/bA8aKBa4S7L+SQKHvjRPXCRV0tA0yRw0qkZSA=
@@ -560,6 +566,8 @@ github.com/pingcap/tidb v1.1.0-beta.0.20200806060043-574540aa06ba/go.mod h1:NHcZ
 github.com/pingcap/tidb v1.1.0-beta.0.20200810064414-d81150394f9d/go.mod h1:vLYo4E7Q6kzKYTskhP2MHBsodmZIRRUU63qdiFjlULA=
 github.com/pingcap/tidb v1.1.0-beta.0.20200820085534-0d997f2b8b3c h1:iWfrPsySocKJ2NsyHRrE0goi6jSwuXZx9kJBHGmd6w4=
 github.com/pingcap/tidb v1.1.0-beta.0.20200820085534-0d997f2b8b3c/go.mod h1:z7Hn1KY8Crt9cHhWtbGPKMBcjvmSJXIoOjO4rMk165w=
+github.com/pingcap/tidb v1.1.0-beta.0.20200831085451-438945d2948e h1:g7CWe2gi5bXMdsIs6ukdb6Qac/XIg/nCSHAr7HOU4Ko=
+github.com/pingcap/tidb v1.1.0-beta.0.20200831085451-438945d2948e/go.mod h1:VXxiC2f+HY3/5phR1841YJrX4on56kTEXrtEzRezcj4=
 github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200306084441-875bd09aa3d5+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200421113014-507d2bb3a15e+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200514040632-f76b3e428e19+incompatible h1:/JKsYjsa5Ug8v5CN4zIbJGIqsvgBUkGwaP/rEScVvWM=
