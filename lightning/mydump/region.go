@@ -19,8 +19,6 @@ import (
 
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/errors"
-	"github.com/xitongsys/parquet-go-source/local"
-	"github.com/xitongsys/parquet-go/reader"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -209,29 +207,32 @@ func MakeTableRegions(
 // because parquet files can't seek efficiently, there is no benefit in split.
 // parquet file are column orient, so the offset is read line number
 func makeParquetFileRegion(
+	ctx context.Context,
+	store storage.ExternalStorage,
 	meta *MDTableMeta,
 	dataFile FileInfo,
 	prevRowIdxMax int64,
 ) (int64, *TableRegion, error) {
-	r, err := local.NewLocalFileReader(dataFile.FileMeta.Path)
+	r, err := store.Open(ctx, dataFile.FileMeta.Path)
 	if err != nil {
 		return prevRowIdxMax, nil, errors.Trace(err)
 	}
-	pReader, err := reader.NewParquetReader(r, nil, 2)
+	pr, err := NewParquetParser(ctx, store, r, dataFile.FileMeta.Path)
 	if err != nil {
 		return prevRowIdxMax, nil, errors.Trace(err)
 	}
-	defer pReader.ReadStop()
+	defer pr.Close()
 
 	// EndOffset for parquet files are the number of rows
-	rowIDMax := prevRowIdxMax + pReader.GetNumRows()
+	numberRows := pr.Reader.GetNumRows()
+	rowIDMax := prevRowIdxMax + numberRows
 	region := &TableRegion{
 		DB:       meta.DB,
 		Table:    meta.Name,
 		FileMeta: dataFile.FileMeta,
 		Chunk: Chunk{
 			Offset:       0,
-			EndOffset:    pReader.GetNumRows(),
+			EndOffset:    numberRows,
 			PrevRowIDMax: prevRowIdxMax,
 			RowIDMax:     rowIDMax,
 		},

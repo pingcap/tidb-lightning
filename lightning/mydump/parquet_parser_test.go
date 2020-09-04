@@ -1,9 +1,13 @@
 package mydump
 
 import (
+	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
+
+	"github.com/pingcap/br/pkg/storage"
 
 	"github.com/pingcap/tidb/types"
 
@@ -22,12 +26,12 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 		A int32  `parquet:"name=a, type=INT32"`
 	}
 
+	dir := c.MkDir()
 	// prepare data
 	name := "test123.parquet"
-	f, err := os.Create(name)
+	f, err := os.Create(filepath.Join(dir, name))
 	c.Assert(err, IsNil)
 	c.Assert(f.Close(), IsNil)
-	defer os.Remove(name)
 	pf, err := local.NewLocalFileWriter(name)
 	c.Assert(err, IsNil)
 	test := &Test{}
@@ -43,7 +47,11 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	c.Assert(writer.WriteStop(), IsNil)
 	c.Assert(pf.Close(), IsNil)
 
-	reader, err := NewParquetParser(name)
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+	r, err := store.Open(context.TODO(), name)
+	c.Assert(err, IsNil)
+	reader, err := NewParquetParser(context.TODO(), store, r, name)
 	c.Assert(err, IsNil)
 	defer reader.Close()
 
@@ -63,12 +71,12 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	}
 
 	// test set pos to pos < curpos + batchReadRowSize
-	reader.SetPos(15, 15)
+	c.Assert(reader.SetPos(15, 15), IsNil)
 	c.Assert(reader.ReadRow(), IsNil)
 	verifyRow(15)
 
 	// test set pos to pos > curpos + batchReadRowSize
-	reader.SetPos(80, 80)
+	c.Assert(reader.SetPos(80, 80), IsNil)
 	for i := 80; i < 100; i++ {
 		c.Assert(reader.ReadRow(), IsNil)
 		verifyRow(i)

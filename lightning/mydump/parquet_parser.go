@@ -1,14 +1,16 @@
 package mydump
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"reflect"
 
+	"github.com/pingcap/br/pkg/storage"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb/types"
-	"github.com/xitongsys/parquet-go-source/local"
 	preader "github.com/xitongsys/parquet-go/reader"
 	"github.com/xitongsys/parquet-go/source"
 )
@@ -28,28 +30,53 @@ type ParquetParser struct {
 	logger   log.Logger
 }
 
-type ReaderWrapper struct {
+// readerWrapper is a used for implement `source.ParquetFile`
+type readerWrapper struct {
 	ReadSeekCloser
+	store storage.ExternalStorage
+	ctx   context.Context
+	// current file path
+	path string
 }
 
-func (r *ReaderWrapper) Write(p []byte) (n int, err error) {
+func (r *readerWrapper) Write(p []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func (r *ReaderWrapper) Open(name string) (source.ParquetFile, error) {
-	return nil, errors.New("unsupported operation")
-}
-func (r *ReaderWrapper) Create(name string) (source.ParquetFile, error) {
-	return nil, errors.New("unsupported operation")
-}
-
-func NewParquetParser(path string) (*ParquetParser, error) {
-	r, err := local.NewLocalFileReader(path)
+func (r *readerWrapper) Open(name string) (source.ParquetFile, error) {
+	if len(name) == 0 {
+		name = r.path
+	}
+	reader, err := r.store.Open(r.ctx, name)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	return &readerWrapper{
+		ReadSeekCloser: reader,
+		store:          r.store,
+		ctx:            r.ctx,
+		path:           name,
+	}, nil
+}
+func (r *readerWrapper) Create(name string) (source.ParquetFile, error) {
+	return nil, errors.New("unsupported operation")
+}
+
+func NewParquetParser(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	r storage.ReadSeekCloser,
+	path string,
+) (*ParquetParser, error) {
+	wrapper := &readerWrapper{
+		ReadSeekCloser: r,
+		store:          store,
+		ctx:            ctx,
+		path:           path,
+	}
+
 	// FIXME: need to bench what the best value for the concurrent reader number
-	reader, err := preader.NewParquetReader(r, nil, 2)
+	reader, err := preader.NewParquetReader(wrapper, nil, 2)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -76,7 +103,7 @@ func (pp *ParquetParser) Pos() (pos int64, rowID int64) {
 
 func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	if pos < pp.curStart {
-		return errors.New("don't support seek back yet")
+		panic("don't support seek back yet")
 	}
 	pp.lastRow.RowID = rowID
 
@@ -88,7 +115,7 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 
 	if pos > pp.curStart+int64(len(pp.rows)) {
 		if err := pp.Reader.SkipRows(pos - pp.curStart - int64(len(pp.rows))); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	pp.curStart = pos
@@ -102,6 +129,7 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 }
 
 func (pp *ParquetParser) Close() error {
+	pp.Reader.ReadStop()
 	return pp.Reader.PFile.Close()
 }
 
@@ -177,7 +205,6 @@ func (pp *ParquetParser) LastRow() Row {
 }
 
 func (pp *ParquetParser) RecycleRow(row Row) {
-
 }
 
 // Columns returns the _lower-case_ column names corresponding to values in
