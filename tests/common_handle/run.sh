@@ -39,6 +39,8 @@ _EOF_
 run_sql 'DROP DATABASE IF EXISTS ch'
 # enable cluster index
 run_sql 'set @@global.tidb_enable_clustered_index = 1' || echo "tidb does not support cluster index yet, skipped!"
+# wait for global variable cache invalid
+sleep 2
 
 set +e
 run_lightning -d "$DBPATH" --backend local 2> /dev/null
@@ -49,3 +51,5 @@ check_contains "sum(i): 15"
 
 # restore global variables, other tests needs this to handle the _tidb_row_id column
 run_sql 'set @@global.tidb_enable_clustered_index = 0' || echo ""
+# wait for global variable cache invalid
+sleep 2

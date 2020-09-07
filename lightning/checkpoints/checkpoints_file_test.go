@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
@@ -21,6 +23,18 @@ var _ = Suite(&cpFileSuite{})
 type cpFileSuite struct {
 	path string
 	cpdb *checkpoints.FileCheckpointsDB
+	cfg  *config.Config
+}
+
+func newTestConfig() *config.Config {
+	cfg := config.NewConfig()
+	cfg.Mydumper.SourceDir = "/data"
+	cfg.TaskID = 123
+	cfg.TiDB.Port = 4000
+	cfg.TiDB.PdAddr = "127.0.0.1:2379"
+	cfg.TikvImporter.Addr = "127.0.0.1:8287"
+	cfg.TikvImporter.SortedKVDir = "/tmp/sorted-kv"
+	return cfg
 }
 
 func (s *cpFileSuite) SetUpTest(c *C) {
@@ -31,8 +45,8 @@ func (s *cpFileSuite) SetUpTest(c *C) {
 	cpdb := s.cpdb
 
 	// 2. initialize with checkpoint data.
-
-	err := cpdb.Initialize(ctx, map[string]*checkpoints.TidbDBInfo{
+	cfg := newTestConfig()
+	err := cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",
 			Tables: map[string]*checkpoints.TidbTableInfo{
