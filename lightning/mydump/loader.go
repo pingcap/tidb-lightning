@@ -14,17 +14,18 @@
 package mydump
 
 import (
-	"os"
+	"context"
 	"path/filepath"
 	"sort"
 
+	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pingcap/tidb-lightning/lightning/config"
-	"github.com/pingcap/tidb-lightning/lightning/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
 type MDDatabaseMeta struct {
@@ -37,7 +38,7 @@ type MDDatabaseMeta struct {
 type MDTableMeta struct {
 	DB         string
 	Name       string
-	SchemaFile string
+	SchemaFile FileInfo
 	DataFiles  []FileInfo
 	charSet    string
 	TotalSize  int64
@@ -50,11 +51,11 @@ type SourceFileMeta struct {
 	SortKey     string
 }
 
-func (m *MDTableMeta) GetSchema() string {
-	schema, err := ExportStatement(m.SchemaFile, m.charSet)
+func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
+	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
 		log.L().Error("failed to extract table schema",
-			zap.String("path", m.SchemaFile),
+			zap.String("Path", m.SchemaFile.FileMeta.Path),
 			log.ShortError(err),
 		)
 		return ""
@@ -66,7 +67,7 @@ func (m *MDTableMeta) GetSchema() string {
 	Mydumper File Loader
 */
 type MDLoader struct {
-	dir        string
+	store      storage.ExternalStorage
 	noSchema   bool
 	dbs        []*MDDatabaseMeta
 	filter     filter.Filter
@@ -84,7 +85,20 @@ type mdLoaderSetup struct {
 	tableIndexMap map[filter.Table]int
 }
 
-func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
+func NewMyDumpLoader(ctx context.Context, cfg *config.Config) (*MDLoader, error) {
+	u, err := storage.ParseBackend(cfg.Mydumper.SourceDir, nil)
+	if err != nil {
+		return nil, err
+	}
+	s, err := storage.Create(ctx, u, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewMyDumpLoaderWithStore(ctx, cfg, s)
+}
+
+func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage) (*MDLoader, error) {
 	var r *router.Table
 	var err error
 
@@ -124,7 +138,7 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 	}
 
 	mdl := &MDLoader{
-		dir:        cfg.Mydumper.SourceDir,
+		store:      store,
 		noSchema:   cfg.Mydumper.NoSchema,
 		filter:     f,
 		router:     r,
@@ -138,7 +152,7 @@ func NewMyDumpLoader(cfg *config.Config) (*MDLoader, error) {
 		tableIndexMap: make(map[filter.Table]int),
 	}
 
-	if err := setup.setup(mdl.dir); err != nil {
+	if err := setup.setup(ctx, mdl.store); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -186,18 +200,14 @@ type FileInfo struct {
 // Will sort tables by table size, this means that the big table is imported
 // at the latest, which to avoid large table take a long time to import and block
 // small table to release index worker.
-func (s *mdLoaderSetup) setup(dir string) error {
+func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage) error {
 	/*
 		Mydumper file names format
 			db    —— {db}-schema-create.sql
 			table —— {db}.{table}-schema.sql
 			sql   —— {db}.{table}.{part}.sql / {db}.{table}.sql
 	*/
-	if !common.IsDirExists(dir) {
-		return errors.Errorf("%s: mydumper dir does not exist", dir)
-	}
-
-	if err := s.listFiles(dir); err != nil {
+	if err := s.listFiles(ctx, store); err != nil {
 		return errors.Annotate(err, "list file failed")
 	}
 	if err := s.route(); err != nil {
@@ -217,7 +227,7 @@ func (s *mdLoaderSetup) setup(dir string) error {
 
 		// setup table schema
 		for _, fileInfo := range s.tableSchemas {
-			_, dbExists, tableExists := s.insertTable(fileInfo.TableName, fileInfo.FileMeta.Path)
+			_, dbExists, tableExists := s.insertTable(fileInfo)
 			if !dbExists {
 				return errors.Errorf("invalid table schema file, cannot find db '%s' - %s", fileInfo.TableName.Schema, fileInfo.FileMeta.Path)
 			} else if tableExists && s.loader.router == nil {
@@ -228,7 +238,8 @@ func (s *mdLoaderSetup) setup(dir string) error {
 
 	// Sql file for restore data
 	for _, fileInfo := range s.tableDatas {
-		tableMeta, dbExists, tableExists := s.insertTable(fileInfo.TableName, "")
+		// set a dummy `FileInfo` here without file meta because we needn't restore the table schema
+		tableMeta, dbExists, tableExists := s.insertTable(FileInfo{TableName: fileInfo.TableName})
 		if !s.loader.noSchema {
 			if !dbExists {
 				return errors.Errorf("invalid data file, miss host db '%s' - %s", fileInfo.TableName.Schema, fileInfo.FileMeta.Path)
@@ -259,23 +270,14 @@ func (s *mdLoaderSetup) setup(dir string) error {
 	return nil
 }
 
-func (s *mdLoaderSetup) listFiles(dir string) error {
-	fr := s.loader.fileRouter
+func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalStorage) error {
 	// `filepath.Walk` yields the paths in a deterministic (lexicographical) order,
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
-	err := filepath.Walk(dir, func(path string, f os.FileInfo, err error) error {
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if f == nil || f.IsDir() {
-			return nil
-		}
-
+	err := store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 		logger := log.With(zap.String("path", path))
 
-		res, err := fr.Route(filepath.ToSlash(path))
+		res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 		if err != nil {
 			return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
 		}
@@ -287,7 +289,7 @@ func (s *mdLoaderSetup) listFiles(dir string) error {
 		info := FileInfo{
 			TableName: filter.Table{Schema: res.Schema, Name: res.Name},
 			FileMeta:  SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key},
-			Size:      f.Size(),
+			Size:      size,
 		}
 
 		if s.loader.shouldSkip(&info.TableName) {
@@ -408,17 +410,17 @@ func (s *mdLoaderSetup) insertDB(dbName string, path string) (*MDDatabaseMeta, b
 	}
 }
 
-func (s *mdLoaderSetup) insertTable(tableName filter.Table, path string) (*MDTableMeta, bool, bool) {
-	dbMeta, dbExists := s.insertDB(tableName.Schema, "")
-	tableIndex, ok := s.tableIndexMap[tableName]
+func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool) {
+	dbMeta, dbExists := s.insertDB(fileInfo.TableName.Schema, "")
+	tableIndex, ok := s.tableIndexMap[fileInfo.TableName]
 	if ok {
 		return dbMeta.Tables[tableIndex], dbExists, true
 	} else {
-		s.tableIndexMap[tableName] = len(dbMeta.Tables)
+		s.tableIndexMap[fileInfo.TableName] = len(dbMeta.Tables)
 		ptr := &MDTableMeta{
-			DB:         tableName.Schema,
-			Name:       tableName.Name,
-			SchemaFile: path,
+			DB:         fileInfo.TableName.Schema,
+			Name:       fileInfo.TableName.Name,
+			SchemaFile: fileInfo,
 			DataFiles:  make([]FileInfo, 0, 16),
 			charSet:    s.loader.charSet,
 		}
@@ -429,4 +431,8 @@ func (s *mdLoaderSetup) insertTable(tableName filter.Table, path string) (*MDTab
 
 func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 	return l.dbs
+}
+
+func (l *MDLoader) GetStore() storage.ExternalStorage {
+	return l.store
 }

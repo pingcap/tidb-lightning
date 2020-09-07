@@ -20,7 +20,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/pingcap/br/pkg/storage"
+
 	. "github.com/pingcap/check"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	. "github.com/pingcap/tidb-lightning/lightning/mydump"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
@@ -60,12 +63,12 @@ func getFileSize(file string) (int64, error) {
 */
 func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	cfg := newConfigWithSourceDir("./examples")
-	loader, _ := NewMyDumpLoader(cfg)
+	loader, _ := NewMyDumpLoader(context.Background(), cfg)
 	dbMeta := loader.GetDatabases()[0]
 
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
 	for _, meta := range dbMeta.Tables {
-		regions, err := MakeTableRegions(meta, 1, cfg, ioWorkers)
+		regions, err := MakeTableRegions(context.Background(), meta, 1, cfg, ioWorkers, loader.GetStore())
 		c.Assert(err, IsNil)
 
 		table := meta.Name
@@ -242,7 +245,11 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		cfg.Mydumper.MaxRegionSize = tc.maxRegionSize
 		prevRowIdxMax := int64(0)
 		ioWorker := worker.NewPool(context.Background(), 4, "io")
-		_, regions, _, err := SplitLargeFile(meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker)
+
+		store, err := storage.NewLocalStorage(".")
+		c.Assert(err, IsNil)
+
+		_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
 		c.Assert(err, IsNil)
 		c.Assert(len(regions), Equals, tc.chkCnt)
 		for i := range tc.offsets {

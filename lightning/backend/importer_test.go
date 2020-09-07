@@ -12,6 +12,7 @@ import (
 	uuid "github.com/satori/go.uuid"
 
 	kvpb "github.com/pingcap/kvproto/pkg/import_kvpb"
+
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/mock"
