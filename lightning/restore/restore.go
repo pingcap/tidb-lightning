@@ -926,10 +926,13 @@ func (t *TableRestore) addRestoreTasks(
 	// when kill lightning after saving index engine checkpoint status before saving
 	// table checkpoint status.
 	var indexEngine *backend.OpenedEngine
+	var indexWorker *worker.Worker
 	var err error
 	if cp.Status < CheckpointStatusIndexImported {
 		if indexEngineCp.Status < CheckpointStatusClosed {
+			indexWorker = rc.indexWorkers.Apply()
 			indexEngine, err = rc.backend.OpenEngine(ctx, t.tableName, indexEngineID)
+
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -961,7 +964,13 @@ func (t *TableRestore) addRestoreTasks(
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case restoreChan <- &tableEngine{engineId: engineID, tr: t, indexEngine: indexEngine, dataEngineCp: engine, indexEngineCp: indexEngineCp, tableCp: cp}:
+				case restoreChan <- &tableEngine{
+					engineId:      engineID,
+					tr:            t,
+					indexEngine:   syncedOpenEngine{engine: indexEngine, w: indexWorker},
+					dataEngineCp:  engine,
+					indexEngineCp: indexEngineCp,
+					tableCp:       cp}:
 				}
 			}
 		}
@@ -1109,10 +1118,15 @@ func (t *TableRestore) restoreEngine(
 	return closedDataEngine, nil
 }
 
+type syncedOpenEngine struct {
+	engine *kv.OpenedEngine
+	w      *worker.Worker
+}
+
 type tableEngine struct {
 	engineId      int32
 	tr            *TableRestore
-	indexEngine   *kv.OpenedEngine
+	indexEngine   syncedOpenEngine
 	dataEngineCp  *EngineCheckpoint
 	indexEngineCp *EngineCheckpoint
 	tableCp       *TableCheckpoint
@@ -1143,7 +1157,7 @@ func (rc *RestoreController) restoreEngines(
 			defer wg.Done()
 			for task := range taskChan {
 				engineLogTask := task.tr.logger.With(zap.Int32("engineNumber", task.engineId)).Begin(zap.InfoLevel, "restore engine")
-				closedEngine, err := task.tr.restoreEngine(restoreCtx, rc, task.indexEngine, task.engineId, task.dataEngineCp)
+				closedEngine, err := task.tr.restoreEngine(restoreCtx, rc, task.indexEngine.engine, task.engineId, task.dataEngineCp)
 				engineLogTask.End(zap.ErrorLevel, err)
 				if err == nil {
 					importChan <- &importEngine{triggerCompact: true, engine: closedEngine, engineID: task.engineId, cp: task.dataEngineCp, tr: task.tr, tableCp: task.tableCp}
@@ -1157,7 +1171,8 @@ func (rc *RestoreController) restoreEngines(
 				// all data engine restore finished
 				if finishedCount == task.tr.engineCount-1 {
 					var closedIndexEngine *kv.ClosedEngine
-					closedIndexEngine, err = task.indexEngine.Close(restoreCtx)
+					closedIndexEngine, err = task.indexEngine.engine.Close(restoreCtx)
+					rc.indexWorkers.Recycle(task.indexEngine.w)
 					if task.indexEngineCp.Status < CheckpointStatusClosed {
 						rc.saveStatusCheckpoint(task.tr.tableName, indexEngineID, err, CheckpointStatusClosed)
 					}
