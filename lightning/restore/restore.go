@@ -666,10 +666,10 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		tr *TableRestore
 		cp *TableCheckpoint
 	}
-	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
-
-	restoreChan := make(chan *tableEngine, rc.cfg.App.TableConcurrency)
-	importChan := make(chan *importEngine, rc.cfg.App.TableConcurrency*2)
+	taskCh := make(chan task)
+	// restoreChan is zero length so that we can avoid open a lot of engines.
+	restoreChan := make(chan *tableEngine)
+	importChan := make(chan *importEngine, rc.cfg.App.TableConcurrency)
 	postProcessChan := make(chan *importedTable, rc.cfg.App.IndexConcurrency)
 
 	manager := newGCLifeTimeManager()
