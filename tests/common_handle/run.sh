@@ -15,13 +15,18 @@
 
 check_cluster_version 4 0 0 'local backend' || exit 0
 
+# enable cluster index
+run_sql 'set @@global.tidb_enable_clustered_index = 1' || echo "tidb does not support cluster index yet, skip this test!" && exit 0
+# wait for global variable cache invalid
+sleep 2
+
 set -euE
 
 # Populate the mydumper source
 DBPATH="$TEST_DIR/ch.mydump"
-
 mkdir -p $DBPATH
 echo 'CREATE DATABASE ch;' > "$DBPATH/ch-schema-create.sql"
+# create table with non-integer primary key, so that cluster index will be used
 echo "CREATE TABLE t(s varchar(32), i INT, j TINYINT,  PRIMARY KEY(s, i));" > "$DBPATH/ch.t-schema.sql"
 cat > "$DBPATH/ch.t.0.sql" << _EOF_
 INSERT INTO t (s, i, j) VALUES
@@ -32,24 +37,18 @@ INSERT INTO t (s, i, j) VALUES
   ("this_is_test5", 5, 5);
 _EOF_
 
-# Set minDeliverBytes to a small enough number to only write only 1 row each time
-# Set the failpoint to kill the lightning instance as soon as one row is written
+for BACKEND in local importer tidb; do
+  # Start importing the tables.
+  run_sql 'DROP DATABASE IF EXISTS ch'
 
-# Start importing the tables.
-run_sql 'DROP DATABASE IF EXISTS ch'
-# enable cluster index
-run_sql 'set @@global.tidb_enable_clustered_index = 1' || echo "tidb does not support cluster index yet, skipped!"
-# wait for global variable cache invalid
-sleep 2
+  run_lightning -d "$DBPATH" --backend $BACKEND 2> /dev/null
 
-set +e
-run_lightning -d "$DBPATH" --backend local 2> /dev/null
-set -e
-run_sql 'SELECT count(*), sum(i) FROM `ch`.t'
-check_contains "count(*): 5"
-check_contains "sum(i): 15"
+  run_sql 'SELECT count(*), sum(i) FROM `ch`.t'
+  check_contains "count(*): 5"
+  check_contains "sum(i): 15"
+done
 
 # restore global variables, other tests needs this to handle the _tidb_row_id column
-run_sql 'set @@global.tidb_enable_clustered_index = 0' || echo ""
+run_sql 'set @@global.tidb_enable_clustered_index = 0'
 # wait for global variable cache invalid
 sleep 2
