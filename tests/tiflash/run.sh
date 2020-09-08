@@ -23,14 +23,6 @@ DBPATH="$TEST_DIR/tiflash.mydump"
 mkdir -p $DBPATH
 DB=test_tiflash
 
-run_sql "DROP DATABASE IF EXISTS $DB"
-run_sql "CREATE DATABASE $DB"
-run_sql "CREATE TABLE $DB.t1 (i INT, j INT, s varchar(32), PRIMARY KEY(s, i));"
-run_sql "ALTER TABLE $DB.t1 SET TIFLASH REPLICA 1;"
-run_sql "CREATE TABLE $DB.t2 (i INT, j TINYINT);"
-run_sql "ALTER TABLE $DB.t2 SET TIFLASH REPLICA 1;"
-
-
 cat > "$DBPATH/$DB.t1.0.sql" << _EOF_
 INSERT INTO t1 (s, i, j) VALUES
   ("this_is_test1", 1, 1),
@@ -43,8 +35,30 @@ _EOF_
 echo "INSERT INTO t2 VALUES (1, 1), (2, 2)" > "$DBPATH/$DB.t2.0.sql"
 echo "INSERT INTO t2 VALUES (3, 3), (4, 4)" > "$DBPATH/$DB.t2.1.sql"
 
-for BACKEND in local importer tidb; do
-  run_lightning -d "$DBPATH" --backend local 2> /dev/null
+tiflash_replica_ready() {
+  i=0
+  run_sql "select sum(AVAILABLE) as s from information_schema.tiflash_replica WHERE TABLE_NAME = \"$1\""
+  while ! check_contains "sum(AVAILABLE): 1" check; do
+    i=$((i+1))
+    if [ "$i" -gt 30 ]; then
+        echo "wait tiflash replica ready timeout"
+        return 1
+    fi
+    sleep 1
+  done
+}
+
+for BACKEND in importer tidb local; do
+  run_sql "DROP DATABASE IF EXISTS $DB"
+  run_sql "CREATE DATABASE $DB"
+  run_sql "CREATE TABLE $DB.t1 (i INT, j INT, s varchar(32), PRIMARY KEY(s, i));"
+  run_sql "ALTER TABLE $DB.t1 SET TIFLASH REPLICA 1;"
+  tiflash_replica_ready t1
+  run_sql "CREATE TABLE $DB.t2 (i INT, j TINYINT);"
+  run_sql "ALTER TABLE $DB.t2 SET TIFLASH REPLICA 1;"
+  tiflash_replica_ready t2
+
+  run_lightning -d "$DBPATH" --backend $BACKEND 2> /dev/null
 
   run_sql "SELECT /*+ read_from_storage(tiflash[t1]) */ count(*), sum(i) FROM \`$DB\`.t1"
   check_contains "count(*): 5"

@@ -1,2 +1,2 @@
-[tikv-importer]
-region-split-size = 20
+[mydumper]
+no-schema = true

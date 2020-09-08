@@ -54,7 +54,7 @@ EOF
     openssl ecparam -out "$TT/ca.key" -name prime256v1 -genkey
     openssl req -new -batch -sha256 -subj '/CN=localhost' -key "$TT/ca.key" -out "$TT/ca.csr"
     openssl x509 -req -sha256 -days 2 -in "$TT/ca.csr" -signkey "$TT/ca.key" -out "$TT/ca.pem" 2> /dev/null
-    for cluster in tidb pd tikv importer lightning curl; do
+    for cluster in tidb pd tikv importer lightning tiflash curl; do
         openssl ecparam -out "$TT/$cluster.key" -name prime256v1 -genkey
         openssl req -new -batch -sha256 -subj '/CN=localhost' -key "$TT/$cluster.key" -out "$TT/$cluster.csr"
         openssl x509 -req -sha256 -days 1 -extensions EXT -extfile "$TT/ipsan.cnf" -in "$TT/$cluster.csr" -CA "$TT/ca.pem" -CAkey "$TT/ca.key" -CAcreateserial -out "$TT/$cluster.pem" 2> /dev/null
@@ -64,8 +64,14 @@ EOF
 data-dir = "$TEST_DIR/pd"
 client-urls = "https://127.0.0.1:2379"
 peer-urls = "https://127.0.0.1:2380"
+
 [log.file]
 filename = "$TEST_DIR/pd.log"
+
+[replication]
+enable-placement-rules = true
+max-replicas = 1
+
 [security]
 cacert-path = "$TT/ca.pem"
 cert-path = "$TT/pd.pem"
@@ -153,6 +159,25 @@ EOF
         sleep 3
     done
 
+    cat > $TEST_DIR/tiflash-learner.toml <<eof
+[rocksdb]
+wal-dir = ""
+
+[security]
+ca-path = "$TT/ca.pem"
+cert-path = "$TT/tiflash.pem"
+key-path = "$TT/tiflash.key"
+
+[server]
+addr = "0.0.0.0:20170"
+advertise-addr = "127.0.0.1:20170"
+engine-addr = "127.0.0.1:3930"
+status-addr = "127.0.0.1:17000"
+
+[storage]
+data-dir = "$TEST_DIR/tiflash/data"
+eof
+
     cat - > "$TEST_DIR/tiflash.toml" <<EOF
 default_profile = "default"
 display_name = "TiFlash"
@@ -171,7 +196,7 @@ service_addr = "127.0.0.1:3930"
 tidb_status_addr = "127.0.0.1:10080"
 
 [flash.proxy]
-config = "$PWD/tests/config/tiflash-learner.toml"
+config = "$TEST_DIR/tiflash-learner.toml"
 log-file = "$TEST_DIR/tiflash-proxy.log"
 
 [flash.flash_cluster]
@@ -220,13 +245,19 @@ execution_time = 0
 queries = 0
 read_rows = 0
 result_rows = 0
+
+[security]
+ca_path = "$TT/ca.pem"
+cert_path = "$TT/tiflash.pem"
+key_path = "$TT/tiflash.key"
 EOF
+    rm -rf $TEST_DIR/tiflash /tmp/tiflash
     echo "Starting TiFlash..."
     LD_LIBRARY_PATH=bin/ bin/tiflash server --config-file="$TEST_DIR/tiflash.toml" &
     echo "TiFlash started..."
 
     i=0
-    while ! curl -sf http://127.0.0.1:8125 1>/dev/null 2>&1; do
+    while ! run_curl https://127.0.0.1:8125 1>/dev/null 2>&1; do
         i=$((i+1))
         if [ "$i" -gt 20 ]; then
             echo "failed to start tiflash"
