@@ -40,11 +40,11 @@ tiflash_replica_ready() {
   run_sql "select sum(AVAILABLE) from information_schema.tiflash_replica WHERE TABLE_NAME = \"$1\""
   while ! check_contains "sum(AVAILABLE): 1" check; do
     i=$((i+1))
-    if [ "$i" -gt 30 ]; then
+    if [ "$i" -gt 100 ]; then
         echo "wait tiflash replica ready timeout"
         return 1
     fi
-    sleep 1
+    sleep 3
     run_sql "select sum(AVAILABLE) from information_schema.tiflash_replica WHERE TABLE_NAME = \"$1\""
   done
 }
