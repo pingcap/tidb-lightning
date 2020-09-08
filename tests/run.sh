@@ -259,7 +259,7 @@ EOF
     i=0
     while ! run_curl https://127.0.0.1:8125 1>/dev/null 2>&1; do
         i=$((i+1))
-        if [ "$i" -gt 20 ]; then
+        if [ "$i" -gt 60 ]; then
             echo "failed to start tiflash"
             return 1
         fi
