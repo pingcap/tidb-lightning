@@ -23,6 +23,7 @@ stop_services() {
     killall -9 pd-server || true
     killall -9 tidb-server || true
     killall -9 tikv-importer || true
+    killall -9 tiflash || true
 
     find "$TEST_DIR" -maxdepth 1 -not -path "$TEST_DIR" -not -name "cov.*" -not -name "*.log" | xargs rm -r || true
 }
@@ -149,6 +150,89 @@ EOF
             echo 'Failed to start TiDB'
             exit 1
         fi
+        sleep 3
+    done
+
+    cat - > "$TEST_DIR/tiflash.toml" <<EOF
+default_profile = "default"
+display_name = "TiFlash"
+http_port = 8125
+listen_host = "0.0.0.0"
+mark_cache_size = 5368709120
+path = "$TEST_DIR/tiflash/data"
+tcp_port = 9002
+tmp_path = "/tmp/tiflash"
+
+[application]
+runAsDaemon = true
+
+[flash]
+service_addr = "127.0.0.1:3930"
+tidb_status_addr = "127.0.0.1:10080"
+
+[flash.proxy]
+config = "$PWD/tests/config/tiflash-learner.toml"
+log-file = "$TEST_DIR/tiflash-proxy.log"
+
+[flash.flash_cluster]
+cluster_manager_path = "$PWD/bin/flash_cluster_manager"
+log = "$TEST_DIR/tiflash-manager.log"
+master_ttl = 60
+refresh_interval = 20
+update_rule_interval = 5
+
+[logger]
+count = 20
+level = "trace"
+log = "$TEST_DIR/tiflash-stdout.log"
+errorlog = "$TEST_DIR/tiflash-stderr.log"
+size = "1000M"
+
+[raft]
+pd_addr = "127.0.0.1:2379"
+
+[profiles]
+[profiles.default]
+load_balancing = "random"
+max_memory_usage = 10000000000
+use_uncompressed_cache = 0
+
+[users]
+[users.default]
+password = ""
+profile = "default"
+quota = "default"
+[users.default.networks]
+ip = "::/0"
+[users.readonly]
+password = ""
+profile = "readonly"
+quota = "default"
+[users.readonly.networks]
+ip = "::/0"
+
+[quotas]
+[quotas.default]
+[quotas.default.interval]
+duration = 3600
+errors = 0
+execution_time = 0
+queries = 0
+read_rows = 0
+result_rows = 0
+EOF
+    echo "Starting TiFlash..."
+    LD_LIBRARY_PATH=bin/ bin/tiflash server --config-file="$TEST_DIR/tiflash.toml" &
+    echo "TiFlash started..."
+
+    i=0
+    while ! curl -sf http://127.0.0.1:8125 1>/dev/null 2>&1; do
+        i=$((i+1))
+        if [ "$i" -gt 20 ]; then
+            echo "failed to start tiflash"
+            return 1
+        fi
+        echo "TiFlash seems doesn't started, retrying..."
         sleep 3
     done
 }
