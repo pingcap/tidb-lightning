@@ -181,11 +181,11 @@ eof
     cat - > "$TEST_DIR/tiflash.toml" <<EOF
 default_profile = "default"
 display_name = "TiFlash"
-http_port = 8125
+https_port = 8125
 listen_host = "0.0.0.0"
 mark_cache_size = 5368709120
 path = "$TEST_DIR/tiflash/data"
-tcp_port = 9002
+tcp_port_secure = 9002
 tmp_path = "/tmp/tiflash"
 
 [application]
@@ -298,4 +298,3 @@ for casename in $SELECTED_TEST_NAME; do
     CLUSTER_VERSION_REVISION="$CLUSTER_VERSION_REVISION" \
     sh "$script"
 done
-
