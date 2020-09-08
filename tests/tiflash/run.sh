@@ -37,7 +37,7 @@ echo "INSERT INTO t2 VALUES (3, 3), (4, 4)" > "$DBPATH/$DB.t2.1.sql"
 
 tiflash_replica_ready() {
   i=0
-  run_sql "select sum(AVAILABLE) as s from information_schema.tiflash_replica WHERE TABLE_NAME = \"$1\""
+  run_sql "select sum(AVAILABLE) from information_schema.tiflash_replica WHERE TABLE_NAME = \"$1\""
   while ! check_contains "sum(AVAILABLE): 1" check; do
     i=$((i+1))
     if [ "$i" -gt 30 ]; then
@@ -45,6 +45,7 @@ tiflash_replica_ready() {
         return 1
     fi
     sleep 1
+    run_sql "select sum(AVAILABLE) from information_schema.tiflash_replica WHERE TABLE_NAME = \"$1\""
   done
 }
 
