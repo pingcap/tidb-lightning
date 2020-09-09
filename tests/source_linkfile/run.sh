@@ -26,7 +26,7 @@ DB=linkfiles
 
 ROW_COUNT=1000
 
-echo "CREATE DATABASE $DB;" > "$RAW_PATH/ch-schema-create.sql"
+echo "CREATE DATABASE $DB;" > "$RAW_PATH/$DB-schema-create.sql"
 echo "CREATE TABLE t(s varchar(64), i INT, j TINYINT,  PRIMARY KEY(s, i));" > "$RAW_PATH/$DB.t-schema.sql"
 echo "CREATE TABLE t2(i INT PRIMARY KEY, s varchar(32))" > "$RAW_PATH/$DB.t2-schema.sql"
 
