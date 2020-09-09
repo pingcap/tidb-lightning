@@ -46,6 +46,10 @@ for BACKEND in local importer tidb; do
   run_sql 'SELECT count(*), sum(i) FROM `ch`.t'
   check_contains "count(*): 5"
   check_contains "sum(i): 15"
+
+  # check table kv pairs. common hanle should have no extra index kv-paris
+  run_sql "ADMIN CHECKSUM TABLE `ch`.t"
+  check_contains "Total_kvs: 5"
 done
 
 # restore global variables, other tests needs this to handle the _tidb_row_id column
