@@ -115,7 +115,7 @@ func (e *LocalFile) Cleanup(dataDir string) error {
 
 type grpcClis struct {
 	mu   sync.Mutex
-	clis map[uint64]*grpc.ClientConn
+	clis map[uint64]*ConnPool
 }
 
 type local struct {
@@ -132,6 +132,35 @@ type local struct {
 	ingestConcurrency *worker.Pool
 	batchWriteKVPairs int
 	checkpointEnabled bool
+}
+
+type ConnPool struct {
+	conns   []*grpc.ClientConn
+	next    int
+	cap     int
+	newConn func(ctx context.Context) (*grpc.ClientConn, error)
+}
+
+func (p *ConnPool) Next(ctx context.Context) (*grpc.ClientConn, error) {
+	if len(p.conns) < p.cap {
+		c, err := p.newConn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		p.conns = append(p.conns, c)
+		return c, nil
+	}
+
+	conn := p.conns[p.next]
+	p.next = (p.next + 1) % p.cap
+	return conn, nil
+}
+
+func NewConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *ConnPool {
+	return &ConnPool{
+		cap:     cap,
+		newConn: newConn,
+	}
 }
 
 // NewLocalBackend creates new connections to tikv.
@@ -183,7 +212,7 @@ func NewLocalBackend(
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
 	}
-	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
+	local.grpcClis.clis = make(map[uint64]*ConnPool)
 	return MakeBackend(local), nil
 }
 
@@ -224,13 +253,12 @@ func (local *local) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientC
 }
 
 func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	conn, err := local.makeConn(ctx, storeID)
-	if err != nil {
-		return nil, err
+	if _, ok := local.grpcClis.clis[storeID]; !ok {
+		local.grpcClis.clis[storeID] = NewConnPool(8, func(ctx context.Context) (*grpc.ClientConn, error) {
+			return local.makeConn(ctx, storeID)
+		})
 	}
-	// Cache the conn.
-	local.grpcClis.clis[storeID] = conn
-	return conn, nil
+	return local.grpcClis.clis[storeID].Next(ctx)
 }
 
 // Close the importer connection.
@@ -361,26 +389,13 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 	return local.saveEngineMeta(engineFile)
 }
 
-func (local *local) getImportClientUncached(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
-	conn, err := local.makeConn(ctx, peer.GetStoreId())
-	if err != nil {
-		return nil, err
-	}
-	return sst.NewImportSSTClient(conn), nil
-}
-
 func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
 	local.grpcClis.mu.Lock()
 	defer local.grpcClis.mu.Unlock()
-	var err error
 
-	conn, ok := local.grpcClis.clis[peer.GetStoreId()]
-	if !ok {
-		conn, err = local.getGrpcConnLocked(ctx, peer.GetStoreId())
-		if err != nil {
-			log.L().Error("could not get grpc connect ", zap.Uint64("storeId", peer.GetStoreId()))
-			return nil, err
-		}
+	conn, err := local.getGrpcConnLocked(ctx, peer.GetStoreId())
+	if err != nil {
+		return nil, err
 	}
 	return sst.NewImportSSTClient(conn), nil
 }
@@ -435,7 +450,7 @@ func (local *local) WriteToTiKV(
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
 	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
 	for _, peer := range region.Region.GetPeers() {
-		cli, err := local.getImportClientUncached(ctx, peer)
+		cli, err := local.getImportClient(ctx, peer)
 		if err != nil {
 			return nil, nil, err
 		}
