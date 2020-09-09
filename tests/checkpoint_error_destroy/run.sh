@@ -33,6 +33,10 @@ check_contains 'x: 1999-09-09 09:09:09'
 
 run_sql 'DROP DATABASE cped'
 
+CHECK_POINT_FILE="/tmp/cp_error_destroy.pb"
+
+# clean up possible old files
+rm -rf CHECK_POINT_FILE
 for i in $(seq 8); do
     ARGS="--enable-checkpoint=1 --config tests/$TEST_NAME/file.toml -d tests/$TEST_NAME/bad-data"
     set +e
