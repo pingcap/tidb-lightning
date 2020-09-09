@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"github.com/pingcap/tidb/kv"
 	"io/ioutil"
 	"math"
 	"os"
@@ -186,8 +187,7 @@ func NewLocalBackend(
 	return MakeBackend(local), nil
 }
 
-func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-
+func (local *local) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
 	store, err := local.splitCli.GetStore(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -219,6 +219,14 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 	cancel()
 	if err != nil {
 		return nil, errors.WithStack(err)
+	}
+	return conn, nil
+}
+
+func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
+	conn, err := local.makeConn(ctx, storeID)
+	if err != nil {
+		return nil, err
 	}
 	// Cache the conn.
 	local.grpcClis.clis[storeID] = conn
@@ -353,6 +361,14 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 	return local.saveEngineMeta(engineFile)
 }
 
+func (local *local) getImportClientUncached(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
+	conn, err := local.makeConn(ctx, peer.GetStoreId())
+	if err != nil {
+		return nil, err
+	}
+	return sst.NewImportSSTClient(conn), nil
+}
+
 func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
 	local.grpcClis.mu.Lock()
 	defer local.grpcClis.mu.Unlock()
@@ -378,6 +394,7 @@ func (local *local) WriteToTiKV(
 	region *split.RegionInfo,
 	start, end []byte,
 ) ([]*sst.SSTMeta, *Range, error) {
+	begin := time.Now()
 	var startKey, endKey []byte
 	if len(region.Region.StartKey) > 0 {
 		_, startKey, _ = codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -418,7 +435,7 @@ func (local *local) WriteToTiKV(
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
 	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
 	for _, peer := range region.Region.GetPeers() {
-		cli, err := local.getImportClient(ctx, peer)
+		cli, err := local.getImportClientUncached(ctx, peer)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -474,6 +491,7 @@ func (local *local) WriteToTiKV(
 		if count >= local.batchWriteKVPairs || size >= regionMaxSize || totalCount >= regionMaxKeyCount {
 			for i := range clients {
 				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+				log.L().Debug("uploading kvs", zap.Stringer("firstKey", kv.Key(pairs[0].Key)))
 				if err := clients[i].Send(requests[i]); err != nil {
 					return nil, nil, err
 				}
@@ -490,6 +508,7 @@ func (local *local) WriteToTiKV(
 	if count > 0 {
 		for i := range clients {
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+			log.L().Debug("uploading kvs", zap.Stringer("firstKey", kv.Key(pairs[0].Key)))
 			if err := clients[i].Send(requests[i]); err != nil {
 				return nil, nil, err
 			}
@@ -524,7 +543,8 @@ func (local *local) WriteToTiKV(
 	log.L().Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size),
-		zap.Int64("buf_size", bytesBuf.totalSize()))
+		zap.Int64("buf_size", bytesBuf.totalSize()),
+		zap.Stringer("time_cost", time.Since(begin)))
 
 	var remainRange *Range
 	if iter.Valid() && iter.Next() {
