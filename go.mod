@@ -15,7 +15,7 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
 	github.com/juju/loggo v0.0.0-20180524022052-584905176618 // indirect
 	github.com/onsi/ginkgo v1.13.0 // indirect
-	github.com/pingcap/br v0.0.0-20200903160657-0fcfd5be4b93
+	github.com/pingcap/br v0.0.0-20200909093836-36281d93ab13
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20200729012136-4e113ddee29e
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
