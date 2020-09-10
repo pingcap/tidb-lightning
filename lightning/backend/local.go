@@ -200,9 +200,14 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = gRPCBackOffMaxDelay
+	// we should use peer address for tiflash. for tikv, peer address is empty
+	addr := store.GetPeerAddress()
+	if addr == "" {
+		addr = store.GetAddress()
+	}
 	conn, err := grpc.DialContext(
 		ctx,
-		store.GetAddress(),
+		addr,
 		opt,
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{

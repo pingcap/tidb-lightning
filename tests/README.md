@@ -5,12 +5,14 @@ programs.
 
 ## Preparations
 
-1. The following four executables must be copied or linked into these locations:
+1. The following 6 executables must be copied or linked into these locations:
 
     * `bin/pd-server`
     * `bin/tikv-server`
     * `bin/tidb-server`
     * `bin/tikv-importer`
+    * `bin/tiflash`
+    * `bin/minio`
 
     The versions must be ≥2.1.0 as usual.
 
