@@ -36,6 +36,7 @@ INSERT INTO t (s, i, j) VALUES
   ("this_is_test4", 4, 4),
   ("this_is_test5", 5, 5);
 _EOF_
+echo 'INSERT INTO t(s, i, j) VALUES ("another test case", 6, 6);' > $DB_PATH/ch.t.1.sql
 
 for BACKEND in local importer tidb; do
   # Start importing the tables.
@@ -44,12 +45,12 @@ for BACKEND in local importer tidb; do
   run_lightning -d "$DBPATH" --backend $BACKEND 2> /dev/null
 
   run_sql 'SELECT count(*), sum(i) FROM `ch`.t'
-  check_contains "count(*): 5"
-  check_contains "sum(i): 15"
+  check_contains "count(*): 6"
+  check_contains "sum(i): 21"
 
   # check table kv pairs. common hanle should have no extra index kv-paris
-  run_sql "ADMIN CHECKSUM TABLE `ch`.t"
-  check_contains "Total_kvs: 5"
+  run_sql 'ADMIN CHECKSUM TABLE `ch`.t'
+  check_contains "Total_kvs: 6"
 done
 
 # restore global variables, other tests needs this to handle the _tidb_row_id column
