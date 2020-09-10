@@ -28,16 +28,16 @@ ROW_COUNT=1000
 
 echo "CREATE DATABASE $DB;" > "$RAW_PATH/$DB-schema-create.sql"
 echo "CREATE TABLE t(s varchar(64), i INT, j TINYINT,  PRIMARY KEY(s, i));" > "$RAW_PATH/$DB.t-schema.sql"
-echo "CREATE TABLE t2(i INT PRIMARY KEY, s varchar(32))" > "$RAW_PATH/$DB.t2-schema.sql"
+echo "CREATE TABLE t2(i INT PRIMARY KEY, s varchar(32));" > "$RAW_PATH/$DB.t2-schema.sql"
 
-echo "s,i,j" > "$RAW_PATH/$DB.t.0.sql"
+echo "s,i,j" > "$RAW_PATH/$DB.t.0.csv"
 for i in $(seq "$ROW_COUNT"); do
-    echo "\"thisisastringvalues_line$i\",$i,$i" >> "$RAW_PATH/$DB.t.0.sql"
+    echo "\"thisisastringvalues_line$i\",$i,$i" >> "$RAW_PATH/$DB.t.0.csv"
 done
 
-echo "i,s" > "$RAW_PATH/$DB.t.0.sql"
+echo "i,s" > "$RAW_PATH/$DB.t2.0.csv"
 for i in $(seq $ROW_COUNT); do
-  echo "$i,\"test123ataettaet$i\"" >> "$RAW_PATH/$DB.t2.0.sql"
+  echo "$i,\"test123ataettaet$i\"" >> "$RAW_PATH/$DB.t2.0.csv"
 done
 
 # link source files to source dir
