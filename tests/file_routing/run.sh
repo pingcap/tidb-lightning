@@ -35,18 +35,13 @@ for BACKEND in local importer; do
   echo "INSERT INTO tbl (i, j) VALUES (10, 10);" > "$DBPATH/ff/test.SQL"
   echo "INSERT INTO tbl (i, j) VALUES (11, 11);" > "$DBPATH/fr/tbl-noused.sql"
 
-  # Set minDeliverBytes to a small enough number to only write only 1 row each time
-  # Set the failpoint to kill the lightning instance as soon as one row is written
-
-  # Start importing the tables.
   run_sql 'DROP DATABASE IF EXISTS fr'
-
-  set +e
+  
+  # Start importing the tables.
   run_lightning -d "$DBPATH" --backend $BACKEND 2> /dev/null
-  set -e
+
   run_sql 'SELECT count(*) FROM `fr`.tbl'
   check_contains "count(*): 10"
-
   run_sql 'SELECT sum(j) FROM `fr`.tbl'
   check_contains "sum(j): 55"
 done
