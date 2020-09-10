@@ -146,13 +146,6 @@ func (pp *ParquetParser) ReadRow() error {
 
 		var err error
 		var rows []interface{}
-		//if len(pp.rows) < count {
-		//	rows, err = pp.Reader.ReadByNumber(count)
-		//	pp.rows = rows
-		//} else {
-		//	pp.rows = pp.rows[:count]
-		//	err = pp.Reader.Read(&pp.rows)
-		//}
 		rows, err = pp.Reader.ReadByNumber(count)
 		pp.rows = rows
 		if err != nil {
