@@ -33,7 +33,7 @@ for BACKEND in local importer tidb; do
     check_row_count item 100
     check_row_count new_order 100
     check_row_count order_line 100
-    check_row_count orders 20
+    check_row_count orders 100
     check_row_count stock 50
     check_row_count warehouse 1
 
