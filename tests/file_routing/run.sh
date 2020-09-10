@@ -15,28 +15,27 @@
 
 set -euE
 
-for BACKEND in local importer; do
+# Populate the mydumper source
+DBPATH="$TEST_DIR/fr.mydump"
 
+mkdir -p $DBPATH $DBPATH/fr $DBPATH/ff
+echo 'CREATE DATABASE fr;' > "$DBPATH/fr/schema.sql"
+echo "CREATE TABLE tbl(i TINYINT PRIMARY KEY, j INT);" > "$DBPATH/fr/tbl-table.sql"
+# the column orders in data file is different from table schema order.
+echo "INSERT INTO tbl (i, j) VALUES (1, 1),(2, 2);" > "$DBPATH/fr/tbl1.sql.0"
+echo "INSERT INTO tbl (i, j) VALUES (3, 3),(4, 4);" > "$DBPATH/fr/tbl2.sql.0"
+echo "INSERT INTO tbl (i, j) VALUES (5, 5);" > "$DBPATH/fr/tbl.sql"
+echo "INSERT INTO tbl (i, j) VALUES (6, 6), (7, 7), (8, 8), (9, 9);" > "$DBPATH/tbl1.sql.1"
+echo "INSERT INTO tbl (i, j) VALUES (10, 10);" > "$DBPATH/ff/test.SQL"
+echo "INSERT INTO tbl (i, j) VALUES (11, 11);" > "$DBPATH/fr/tbl-noused.sql"
+
+for BACKEND in local importer; do
   if [ "$BACKEND" = 'local' ]; then
     check_cluster_version 4 0 0 'local backend' || continue
   fi
 
-  # Populate the mydumper source
-  DBPATH="$TEST_DIR/fr.mydump"
-
-  mkdir -p $DBPATH $DBPATH/fr $DBPATH/ff
-  echo 'CREATE DATABASE fr;' > "$DBPATH/fr/schema.sql"
-  echo "CREATE TABLE tbl(i TINYINT PRIMARY KEY, j INT);" > "$DBPATH/fr/tbl-table.sql"
-  # the column orders in data file is different from table schema order.
-  echo "INSERT INTO tbl (i, j) VALUES (1, 1),(2, 2);" > "$DBPATH/fr/tbl1.sql.0"
-  echo "INSERT INTO tbl (i, j) VALUES (3, 3),(4, 4);" > "$DBPATH/fr/tbl2.sql.0"
-  echo "INSERT INTO tbl (i, j) VALUES (5, 5);" > "$DBPATH/fr/tbl.sql"
-  echo "INSERT INTO tbl (i, j) VALUES (6, 6), (7, 7), (8, 8), (9, 9);" > "$DBPATH/tbl1.sql.1"
-  echo "INSERT INTO tbl (i, j) VALUES (10, 10);" > "$DBPATH/ff/test.SQL"
-  echo "INSERT INTO tbl (i, j) VALUES (11, 11);" > "$DBPATH/fr/tbl-noused.sql"
-
   run_sql 'DROP DATABASE IF EXISTS fr'
-  
+
   # Start importing the tables.
   run_lightning -d "$DBPATH" --backend $BACKEND 2> /dev/null
 
