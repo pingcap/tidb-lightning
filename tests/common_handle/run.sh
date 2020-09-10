@@ -36,7 +36,7 @@ INSERT INTO t (s, i, j) VALUES
   ("this_is_test4", 4, 4),
   ("this_is_test5", 5, 5);
 _EOF_
-echo 'INSERT INTO t(s, i, j) VALUES ("another test case", 6, 6);' > $DB_PATH/ch.t.1.sql
+echo 'INSERT INTO t(s, i, j) VALUES ("another test case", 6, 6);' > "$DBPATH/ch.t.1.sql"
 
 for BACKEND in local importer tidb; do
   # Start importing the tables.
