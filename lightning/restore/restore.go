@@ -25,16 +25,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/store/tikv"
-
 	"github.com/pingcap/br/pkg/checksum"
-
-	"github.com/pingcap/tidb/store/tikv/oracle"
-
-	pd "github.com/tikv/pd/client"
-
 	"github.com/pingcap/br/pkg/storage"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -42,8 +34,11 @@ import (
 	tidbcfg "github.com/pingcap/tidb/config"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
@@ -821,7 +816,7 @@ func (rc *RestoreController) newChecksumManager() (ChecksumManager, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// for v4.0.0 or update, we can use
+	// for v4.0.0 or upper, we can use the gc ttl api
 	var manager ChecksumManager
 	if pdVersion.Major >= 4 {
 		tlsOpt := rc.tls.ToPDSecurityOption()
