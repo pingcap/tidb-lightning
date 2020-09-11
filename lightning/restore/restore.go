@@ -1772,7 +1772,7 @@ func newTiKVChecksumManager(client tidbkv.Client, pdClient pd.Client) *tikvCheck
 }
 
 func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *TidbTableInfo) (*RemoteChecksum, error) {
-	builder := checksum.NewExecutorBuilder(tableInfo.Core, 0)
+	builder := checksum.NewExecutorBuilder(tableInfo.Core, oracle.ComposeTS(time.Now().Unix()*1000, 0))
 	executor, err := builder.Build()
 	if err != nil {
 		return nil, errors.Trace(err)
