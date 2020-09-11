@@ -15,6 +15,7 @@ package restore
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
@@ -121,9 +122,9 @@ func (s *restoreSuite) TestErrorSummaries(c *C) {
 	})
 }
 
-func MockDoChecksumCtx() context.Context {
+func MockDoChecksumCtx(db *sql.DB) context.Context {
 	ctx := context.Background()
-	manager := newGCLifeTimeManager()
+	manager := newTiDBChecksumExecutor(db)
 	return context.WithValue(ctx, &checksumManagerKey, manager)
 }
 
@@ -146,8 +147,8 @@ func (s *restoreSuite) TestDoChecksum(c *C) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx()
-	checksum, err := DoChecksum(ctx, db, "`test`.`t`")
+	ctx := MockDoChecksumCtx(db)
+	checksum, err := DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
 	c.Assert(err, IsNil)
 	c.Assert(*checksum, DeepEquals, RemoteChecksum{
 		Schema:     "test",
@@ -183,7 +184,7 @@ func (s *restoreSuite) TestDoChecksumParallel(c *C) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx()
+	ctx := MockDoChecksumCtx(db)
 
 	// db.Close() will close all connections from its idle pool, set it 1 to expect one close
 	db.SetMaxIdleConns(1)
@@ -192,7 +193,7 @@ func (s *restoreSuite) TestDoChecksumParallel(c *C) {
 	for i := 0; i < 5; i++ {
 		go func() {
 			defer wg.Done()
-			checksum, err := DoChecksum(ctx, db, "`test`.`t`")
+			checksum, err := DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
 			c.Assert(err, IsNil)
 			c.Assert(*checksum, DeepEquals, RemoteChecksum{
 				Schema:     "test",
@@ -226,12 +227,12 @@ func (s *restoreSuite) TestIncreaseGCLifeTimeFail(c *C) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx()
+	ctx := MockDoChecksumCtx(db)
 	var wg sync.WaitGroup
 	wg.Add(5)
 	for i := 0; i < 5; i++ {
 		go func() {
-			_, err = DoChecksum(ctx, db, "`test`.`t`")
+			_, err = DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
 			c.Assert(err, ErrorMatches, "update GC lifetime failed: update gc error: context canceled")
 			wg.Done()
 		}()
@@ -258,8 +259,8 @@ func (s *restoreSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx()
-	_, err = DoChecksum(ctx, db, "`test`.`t`")
+	ctx := MockDoChecksumCtx(db)
+	_, err = DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
 	c.Assert(err, ErrorMatches, "compute remote checksum failed: mock syntax error.*")
 
 	c.Assert(db.Close(), IsNil)
@@ -370,7 +371,7 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	core.State = model.StatePublic
 
-	s.tableInfo = &TidbTableInfo{Name: "table", Core: core}
+	s.tableInfo = &TidbTableInfo{Name: "table", DB: "db", Core: core}
 	s.dbInfo = &TidbDBInfo{
 		Name:   "db",
 		Tables: map[string]*TidbTableInfo{"table": s.tableInfo},
@@ -590,7 +591,7 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx()
+	ctx := MockDoChecksumCtx(db)
 	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(1234567, 12345, 1234567890))
 	c.Assert(err, IsNil)
 
@@ -618,7 +619,7 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure(c *C) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx()
+	ctx := MockDoChecksumCtx(db)
 	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(9876543, 54321, 1357924680))
 	c.Assert(err, ErrorMatches, "checksum mismatched.*")
 

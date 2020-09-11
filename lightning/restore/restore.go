@@ -624,7 +624,7 @@ func (m *gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 		m.oriGCLifeTime = oriGCLifeTime
-		err = increaseGCLifeTime(ctx, db)
+		err = increaseGCLifeTime(ctx, m, db)
 		if err != nil {
 			return err
 		}
@@ -1718,14 +1718,9 @@ func DoChecksum(ctx context.Context, db *sql.DB, table *TidbTableInfo) (*RemoteC
 	return cs, err
 }
 
-func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
+func increaseGCLifeTime(ctx context.Context, manager *gcLifeTimeManager, db *sql.DB) (err error) {
 	// checksum command usually takes a long time to execute,
 	// so here need to increase the gcLifeTime for single transaction.
-
-	// try to get gcLifeTimeManager from context first.
-	// DoChecksum has assure this getting action success.
-	manager, _ := ctx.Value(&checksumManagerKey).(*gcLifeTimeManager)
-
 	var increaseGCLifeTime bool
 	if manager.oriGCLifeTime != "" {
 		ori, err := time.ParseDuration(manager.oriGCLifeTime)
