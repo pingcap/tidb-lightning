@@ -2,9 +2,10 @@ package mydump
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"reflect"
+
+	"go.uber.org/zap"
 
 	"github.com/pingcap/br/pkg/storage"
 
@@ -187,7 +188,8 @@ func setDatumValue(d *types.Datum, v reflect.Value) {
 			setDatumValue(d, v.Elem())
 		}
 	default:
-		panic(fmt.Sprintf("unknow value, kind: %d, type: %s, value: %s", v.Kind(), v.Type(), v.Interface()))
+		log.L().Fatal("unknown value", zap.Stringer("kind", v.Kind()),
+			zap.String("type", v.Type().Name()), zap.Reflect("value", v.Interface()))
 	}
 }
 
