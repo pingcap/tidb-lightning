@@ -72,6 +72,9 @@ filename = "$TEST_DIR/pd.log"
 enable-placement-rules = true
 max-replicas = 1
 
+[schedule]
+low-space-ratio = 0.99
+
 [security]
 cacert-path = "$TT/ca.pem"
 cert-path = "$TT/pd.pem"
@@ -187,6 +190,7 @@ mark_cache_size = 5368709120
 path = "$TEST_DIR/tiflash/data"
 tcp_port_secure = 9002
 tmp_path = "/tmp/tiflash"
+capacity = "10737418240"
 
 [application]
 runAsDaemon = true
