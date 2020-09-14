@@ -1719,9 +1719,12 @@ func (cr *chunkRestore) deliverLoop(
 
 	for !channelClosed {
 		var dataChecksum, indexChecksum verify.KVChecksum
-		var offset, rowID int64
 		var columns []string
 		var kvPacket []deliveredKVs
+		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
+		// chunk checkpoint should stay the same
+		offset := cr.chunk.Chunk.Offset
+		rowID := cr.chunk.Chunk.PrevRowIDMax
 		// Fetch enough KV pairs from the source.
 	populate:
 		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
