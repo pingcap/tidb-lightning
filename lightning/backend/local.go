@@ -878,13 +878,15 @@ func (local *local) WriteAndIngestPairs(
 
 	for _, meta := range metas {
 		var err error
-		for i := 0; i < maxRetryTimes; i++ {
+		errCnt := 0
+		for errCnt < maxRetryTimes {
 			log.L().Debug("ingest meta", zap.Reflect("meta", meta))
 			var resp *sst.IngestResponse
 			resp, err = local.Ingest(ctx, meta, region)
 			if err != nil {
 				log.L().Warn("ingest failed", zap.Error(err), zap.Reflect("meta", meta),
 					zap.Reflect("region", region))
+				errCnt++
 				continue
 			}
 			failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
@@ -921,7 +923,7 @@ func (local *local) WriteAndIngestPairs(
 			}
 		}
 		if err != nil {
-			log.L().Error("all retry ingest failed", zap.Reflect("ingest meta", meta), zap.Error(err))
+			log.L().Warn("all retry ingest failed", zap.Reflect("ingest meta", meta), zap.Error(err))
 			return remainRange, errors.Trace(err)
 		}
 	}
