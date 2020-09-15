@@ -11,7 +11,7 @@ programs.
     * `bin/tikv-server`
     * `bin/tidb-server`
     * `bin/tikv-importer`
-    * `bin/tiflash`
+    * `bin/tiflash` (needed if environment variable TIFLASH=1 is set)
     * `bin/minio`
 
     The versions must be ≥2.1.0 as usual.
@@ -34,6 +34,7 @@ Run `make integration_test` to execute the integration tests. This command will
 1. Check that all 4 executables exist.
 2. Build a `tidb-lightning` executable for collecting code coverage with failpoint support
 3. Execute `tests/run.sh`
+4. to start cluster with tiflash, please run `TIFLASH=1 tests/run.sh`
 
 If the first two steps are done before, you could also run `tests/run.sh` directly.
 This script will
