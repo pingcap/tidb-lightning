@@ -621,11 +621,9 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 			endKey   []byte
 		}
 
-		// for partition table, their will be multi physical table, each table contains multiple index
-
+		// for partition table, there will be multi physical table and physical each table contains multiple index
 		indexRanges := make([]*tblIndexRange, 0)
 		iter.First()
-
 		for iter.Valid() {
 			startKey := append([]byte{}, iter.Key()...)
 
@@ -639,11 +637,10 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 
 			endKey := append([]byte{}, iter.Key()...)
 			indexRanges = append(indexRanges, &tblIndexRange{tableID, indexID, startKey, endKey})
+			log.L().Debug("index key range", zap.Int64("tableID", tableID), zap.Int64("index", indexID),
+				zap.Binary("startKey", startKey), zap.Binary("endKey", endKey))
 
 			iter.Next()
-			log.L().Info("index key range", zap.Int64("tableID", tableID), zap.Int64("index", indexID),
-				zap.Binary("startKey", startKey), zap.Binary("endKey", endKey),
-				zap.Binary("nextKey", iter.Key()))
 		}
 
 		indexRangeCount := (int(n) + len(indexRanges)) / len(indexRanges)
