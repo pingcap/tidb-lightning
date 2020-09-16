@@ -1146,22 +1146,17 @@ func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int6
 	}
 
 	createSchemaQuery := "CREATE SCHEMA IF NOT EXISTS " + newSchema
-	moveChunkQuery := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, CheckpointTableNameChunk)
-	moveEngineQuery := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, CheckpointTableNameEngine)
-	moveTableQuery := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, CheckpointTableNameTable)
-
 	if e := s.Exec(ctx, "create backup checkpoints schema", createSchemaQuery); e != nil {
 		return e
 	}
-	if e := s.Exec(ctx, "move chunk checkpoints table", moveChunkQuery); e != nil {
-		return e
+	for _, tbl := range []string{CheckpointTableNameChunk, CheckpointTableNameEngine,
+		CheckpointTableNameTable, CheckpointTableNameTask} {
+		query := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, tbl)
+		if e := s.Exec(ctx, fmt.Sprintf("move %s checkpoints table", tbl), query); e != nil {
+			return e
+		}
 	}
-	if e := s.Exec(ctx, "move engine checkpoints table", moveEngineQuery); e != nil {
-		return e
-	}
-	if e := s.Exec(ctx, "move table checkpoints table", moveTableQuery); e != nil {
-		return e
-	}
+
 	return nil
 }
 
