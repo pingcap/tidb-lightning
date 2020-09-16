@@ -113,14 +113,23 @@ func (e *LocalFile) Cleanup(dataDir string) error {
 	return os.RemoveAll(dbPath)
 }
 
-type grpcClis struct {
-	mu   sync.Mutex
-	clis map[uint64]*ConnPool
+type gRPCConns struct {
+	mu    sync.Mutex
+	conns map[uint64]*ConnPool
+}
+
+func (conns *gRPCConns) Close() {
+	conns.mu.Lock()
+	defer conns.mu.Unlock()
+
+	for _, cp := range conns.conns {
+		cp.Close()
+	}
 }
 
 type local struct {
 	engines  sync.Map
-	grpcClis grpcClis
+	conns    gRPCConns
 	splitCli split.SplitClient
 	tls      *common.TLS
 	pdAddr   string
@@ -132,16 +141,32 @@ type local struct {
 	ingestConcurrency *worker.Pool
 	batchWriteKVPairs int
 	checkpointEnabled bool
+
+	tcpConcurrency int
 }
 
+// ConnPool is a lazy pool of gRPC channels.
+// When `Get` called, it lazily allocates new connection if connection not full.
+// If it's full, then it will return allocated channels round-robin.
+// This struct isn't goroutine-safe.
 type ConnPool struct {
 	conns   []*grpc.ClientConn
+	name    string
 	next    int
 	cap     int
 	newConn func(ctx context.Context) (*grpc.ClientConn, error)
 }
 
-func (p *ConnPool) Next(ctx context.Context) (*grpc.ClientConn, error) {
+func (p *ConnPool) Close() {
+	for _, c := range p.conns {
+		if err := c.Close(); err != nil {
+			log.L().Warn("failed to close clientConn", zap.String("target", c.Target()))
+		}
+	}
+}
+
+// Get tries to get an existing connection from the pool, or make a new one if the pool not full.
+func (p *ConnPool) Get(ctx context.Context) (*grpc.ClientConn, error) {
 	if len(p.conns) < p.cap {
 		c, err := p.newConn(ctx)
 		if err != nil {
@@ -156,9 +181,11 @@ func (p *ConnPool) Next(ctx context.Context) (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
+// NewConnPool creates a new ConnPool by the specified conn factory function and capacity.
 func NewConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *ConnPool {
 	return &ConnPool{
 		cap:     cap,
+		conns:   make([]*grpc.ClientConn, 0, cap),
 		newConn: newConn,
 	}
 }
@@ -209,10 +236,11 @@ func NewLocalBackend(
 
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
 		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
+		tcpConcurrency:    rangeConcurrency,
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
 	}
-	local.grpcClis.clis = make(map[uint64]*ConnPool)
+	local.conns.conns = make(map[uint64]*ConnPool)
 	return MakeBackend(local), nil
 }
 
@@ -253,12 +281,12 @@ func (local *local) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientC
 }
 
 func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	if _, ok := local.grpcClis.clis[storeID]; !ok {
-		local.grpcClis.clis[storeID] = NewConnPool(8, func(ctx context.Context) (*grpc.ClientConn, error) {
+	if _, ok := local.conns.conns[storeID]; !ok {
+		local.conns.conns[storeID] = NewConnPool(local.tcpConcurrency, func(ctx context.Context) (*grpc.ClientConn, error) {
 			return local.makeConn(ctx, storeID)
 		})
 	}
-	return local.grpcClis.clis[storeID].Next(ctx)
+	return local.conns.conns[storeID].Get(ctx)
 }
 
 // Close the importer connection.
@@ -267,6 +295,8 @@ func (local *local) Close() {
 		v.(*LocalFile).Close()
 		return true
 	})
+
+	local.conns.Close()
 
 	// if checkpoint is disable or we finish load all data successfully, then files in this
 	// dir will be useless, so we clean up this dir and all files in it.
@@ -390,8 +420,8 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 }
 
 func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
-	local.grpcClis.mu.Lock()
-	defer local.grpcClis.mu.Unlock()
+	local.conns.mu.Lock()
+	defer local.conns.mu.Unlock()
 
 	conn, err := local.getGrpcConnLocked(ctx, peer.GetStoreId())
 	if err != nil {
