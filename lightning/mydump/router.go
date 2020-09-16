@@ -21,6 +21,7 @@ const (
 	SourceTypeTableSchema
 	SourceTypeSQL
 	SourceTypeCSV
+	SourceTypeParquet
 )
 
 const (
@@ -28,6 +29,7 @@ const (
 	TableSchema  = "table-schema"
 	TypeSQL      = "sql"
 	TypeCSV      = "csv"
+	TypeParquet  = "parquet"
 	TypeIgnore   = "ignore"
 )
 
@@ -51,6 +53,8 @@ func parseSourceType(t string) (SourceType, error) {
 		return SourceTypeSQL, nil
 	case TypeCSV:
 		return SourceTypeCSV, nil
+	case TypeParquet:
+		return SourceTypeParquet, nil
 	case TypeIgnore:
 		return SourceTypeIgnore, nil
 	default:
@@ -68,6 +72,8 @@ func (s SourceType) String() string {
 		return TypeCSV
 	case SourceTypeSQL:
 		return TypeSQL
+	case SourceTypeParquet:
+		return TypeParquet
 	default:
 		return TypeIgnore
 	}
@@ -103,7 +109,7 @@ var (
 		// table schema create file pattern, matches files like '{schema}.{table}-schema.sql'
 		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql`, Schema: "$1", Table: "$2", Type: TableSchema},
 		// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}'
-		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv)$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3"},
+		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3"},
 	}
 )
 

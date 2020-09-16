@@ -93,6 +93,7 @@ lightning_for_integration_test: ensure_failpoint_ctl
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
 		-o $(LIGHTNING_CTL_BIN).test \
 		github.com/pingcap/tidb-lightning/cmd/tidb-lightning-ctl || ( $(FAILPOINT_DISABLE) && exit 1 )
+	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen tests/checkpoint_parquet/*.go
 	$(FAILPOINT_DISABLE)
 
 integration_test: lightning_for_integration_test
