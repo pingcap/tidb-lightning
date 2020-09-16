@@ -21,6 +21,9 @@ check_row_count() {
 }
 
 for BACKEND in local importer tidb; do
+    if [ "$BACKEND" = 'local' ]; then
+        check_cluster_version 4 0 0 'local backend' || continue
+    fi
     run_sql 'DROP DATABASE IF EXISTS test'
     run_sql 'CREATE DATABASE test'
     run_sql -D test "source tests/$TEST_NAME/db.sql;"
