@@ -621,7 +621,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 			endKey   []byte
 		}
 
-		// for partition table, there will be multi physical table and physical each table contains multiple index
+		// for partitioned table, there will be multiple physical tables and each physical table contains multiple indices
 		indexRanges := make([]*tblIndexRange, 0)
 		iter.First()
 		for iter.Valid() {
