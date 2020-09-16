@@ -43,12 +43,18 @@ done
 # link source files to source dir
 ls $RAW_PATH | xargs -I{} ln -s $RAW_PATH/{} $DBPATH/{}
 
-# Start importing the tables.
-run_sql "DROP DATABASE IF EXISTS $DB"
+for BACKEND in tidb local; do
+  if [ "$BACKEND" = 'local' ]; then
+    check_cluster_version 4 0 0 'local backend' || continue
+  fi
 
-run_lightning -d "$DBPATH" --backend local 2> /dev/null
-run_sql "SELECT count(*) FROM $DB.t"
-check_contains "count(*): $ROW_COUNT"
+  # Start importing the tables.
+  run_sql "DROP DATABASE IF EXISTS $DB"
 
-run_sql "SELECT count(*) FROM $DB.t2"
-check_contains "count(*): $ROW_COUNT"
+  run_lightning -d "$DBPATH" --backend $BACKEND 2> /dev/null
+  run_sql "SELECT count(*) FROM $DB.t"
+  check_contains "count(*): $ROW_COUNT"
+
+  run_sql "SELECT count(*) FROM $DB.t2"
+  check_contains "count(*): $ROW_COUNT"
+done
