@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"github.com/pingcap/tidb/kv"
 	"io/ioutil"
 	"math"
 	"os"
@@ -536,7 +535,6 @@ func (local *local) WriteToTiKV(
 		if count >= local.batchWriteKVPairs || size >= regionMaxSize || totalCount >= regionMaxKeyCount {
 			for i := range clients {
 				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-				log.L().Debug("uploading kvs", zap.Stringer("firstKey", kv.Key(pairs[0].Key)))
 				if err := clients[i].Send(requests[i]); err != nil {
 					return nil, nil, err
 				}
@@ -553,7 +551,6 @@ func (local *local) WriteToTiKV(
 	if count > 0 {
 		for i := range clients {
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-			log.L().Debug("uploading kvs", zap.Stringer("firstKey", kv.Key(pairs[0].Key)))
 			if err := clients[i].Send(requests[i]); err != nil {
 				return nil, nil, err
 			}
