@@ -17,13 +17,19 @@
 
 set -eu
 
-run_sql 'DROP DATABASE IF EXISTS partitioned;'
+for BACKEND in tidb importer local; do
+    if [ "$BACKEND" = 'local' ]; then
+      check_cluster_version 4 0 0 'local backend' || continue
+    fi
 
-run_lightning
+    run_sql 'DROP DATABASE IF EXISTS partitioned;'
 
-run_sql 'SELECT count(1), sum(a) FROM partitioned.a;'
-check_contains 'count(1): 7'
-check_contains 'sum(a): 277151781'
+    run_lightning --backend $BACKEND
 
-run_sql "SHOW TABLE STATUS FROM partitioned WHERE name = 'a';"
-check_contains 'Create_options: partitioned'
+    run_sql 'SELECT count(1), sum(a) FROM partitioned.a;'
+    check_contains 'count(1): 8'
+    check_contains 'sum(a): 277151781'
+
+    run_sql "SHOW TABLE STATUS FROM partitioned WHERE name = 'a';"
+    check_contains 'Create_options: partitioned'
+done
