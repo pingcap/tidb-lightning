@@ -9,8 +9,6 @@
 
 package mydump
 
-import "unicode/utf8"
-
 // asciiSet is a 32-byte value, where each bit represents the presence of a
 // given ASCII character in the set. The 128-bits of the lower 16 bytes,
 // starting with the least-significant bit of the lowest word to the
@@ -19,17 +17,14 @@ import "unicode/utf8"
 // ensuring that any non-ASCII character will be reported as not in the set.
 type asciiSet [8]uint32
 
-// makeASCIISet creates a set of ASCII characters and reports whether all
+// makeByteSet creates a set of ASCII characters and reports whether all
 // characters in chars are ASCII.
-func makeASCIISet(chars string) (as asciiSet, ok bool) {
+func makeByteSet(chars []byte) (as asciiSet) {
 	for i := 0; i < len(chars); i++ {
 		c := chars[i]
-		if c >= utf8.RuneSelf {
-			return as, false
-		}
 		as[c>>5] |= 1 << uint(c&31)
 	}
-	return as, true
+	return as
 }
 
 // contains reports whether c is inside the set.
