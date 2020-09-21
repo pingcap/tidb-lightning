@@ -1343,6 +1343,11 @@ func newChunkRestore(
 		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+	case mydump.SourceTypeParquet:
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.Key.Path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	default:
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
 	}
@@ -1714,9 +1719,12 @@ func (cr *chunkRestore) deliverLoop(
 
 	for !channelClosed {
 		var dataChecksum, indexChecksum verify.KVChecksum
-		var offset, rowID int64
 		var columns []string
 		var kvPacket []deliveredKVs
+		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
+		// chunk checkpoint should stay the same
+		offset := cr.chunk.Chunk.Offset
+		rowID := cr.chunk.Chunk.PrevRowIDMax
 		// Fetch enough KV pairs from the source.
 	populate:
 		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {

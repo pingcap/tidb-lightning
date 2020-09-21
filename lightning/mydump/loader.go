@@ -303,7 +303,7 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 			s.dbSchemas = append(s.dbSchemas, info)
 		case SourceTypeTableSchema:
 			s.tableSchemas = append(s.tableSchemas, info)
-		case SourceTypeSQL, SourceTypeCSV:
+		case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
 			s.tableDatas = append(s.tableDatas, info)
 		}
 

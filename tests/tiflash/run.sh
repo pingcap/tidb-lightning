@@ -13,13 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-check_cluster_version 3 1 0 'TiFlash' || exit 0
+# before v4.0.5 tiflash doesn't support tls, so we should skip this test then
+(check_cluster_version 4 0 5 'TiFlash' && [ -n "$TIFLASH" ]) || exit 0
 
 set -euE
-
 # Populate the mydumper source
 DBPATH="$TEST_DIR/tiflash.mydump"
-
 mkdir -p $DBPATH
 DB=test_tiflash
 
