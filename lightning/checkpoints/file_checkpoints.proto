@@ -33,6 +33,7 @@ message TaskCheckpointModel {
     int32 tidb_port = 6;
     string pd_addr = 7;
     string sorted_kv_dir = 8;
+    string lightning_ver = 9;
 }
 
 message TableCheckpointModel {
