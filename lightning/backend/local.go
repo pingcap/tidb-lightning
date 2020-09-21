@@ -1136,13 +1136,14 @@ func (local *local) isIngestRetryable(
 			}
 		} else {
 			var err error
-			for i := 0; i < maxRetryTimes; i++ {
+			for i := 0; ; i++ {
 				newRegion, err = local.splitCli.GetRegion(ctx, region.Region.GetStartKey())
 				if err != nil {
 					return false, nil, errors.Trace(err)
 				}
 				if newRegion == nil {
-					log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region))
+					log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
+						zap.Int("retry", i))
 					time.Sleep(time.Second)
 					continue
 				}
