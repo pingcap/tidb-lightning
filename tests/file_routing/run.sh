@@ -26,19 +26,21 @@ echo "INSERT INTO tbl (i, j) VALUES (1, 1),(2, 2);" > "$DBPATH/fr/tbl1.sql.0"
 echo "INSERT INTO tbl (i, j) VALUES (3, 3),(4, 4);" > "$DBPATH/fr/tbl2.sql.0"
 echo "INSERT INTO tbl (i, j) VALUES (5, 5);" > "$DBPATH/fr/tbl.sql"
 echo "INSERT INTO tbl (i, j) VALUES (6, 6), (7, 7), (8, 8), (9, 9);" > "$DBPATH/tbl1.sql.1"
+echo "INSERT INTO tbl (i, j) VALUES (10, 10);" > "$DBPATH/ff/test.SQL"
 echo "INSERT INTO tbl (i, j) VALUES (11, 11);" > "$DBPATH/fr/tbl-noused.sql"
 
-# Set minDeliverBytes to a small enough number to only write only 1 row each time
-# Set the failpoint to kill the lightning instance as soon as one row is written
+for BACKEND in local importer; do
+  if [ "$BACKEND" = 'local' ]; then
+    check_cluster_version 4 0 0 'local backend' || continue
+  fi
 
-# Start importing the tables.
-run_sql 'DROP DATABASE IF EXISTS fr'
+  run_sql 'DROP DATABASE IF EXISTS fr'
 
-set +e
-run_lightning -d "$DBPATH" --backend local 2> /dev/null
-set -e
-run_sql 'SELECT count(*) FROM `fr`.tbl'
-check_contains "count(*): 9"
+  # Start importing the tables.
+  run_lightning -d "$DBPATH" --backend $BACKEND 2> /dev/null
 
-run_sql 'SELECT sum(j) FROM `fr`.tbl'
-check_contains "sum(j): 45"
+  run_sql 'SELECT count(*) FROM `fr`.tbl'
+  check_contains "count(*): 10"
+  run_sql 'SELECT sum(j) FROM `fr`.tbl'
+  check_contains "sum(j): 55"
+done

@@ -482,6 +482,9 @@ func (s *cpSQLSuite) TestMoveCheckpoints(c *C) {
 	s.mock.
 		ExpectExec("RENAME TABLE `mock-schema`\\.table_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.table_v\\d+").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.
+		ExpectExec("RENAME TABLE `mock-schema`\\.task_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.task_v\\d+").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.cpdb.MoveCheckpoints(ctx, 12345678)
 	c.Assert(err, IsNil)

@@ -22,10 +22,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb-tools/pkg/filter"
-
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"
+	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -34,6 +33,11 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	"github.com/pingcap/tidb/ddl"
+	tmock "github.com/pingcap/tidb/util/mock"
+	uuid "github.com/satori/go.uuid"
+
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
@@ -44,9 +48,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
 	"github.com/pingcap/tidb-lightning/mock"
-	"github.com/pingcap/tidb/ddl"
-	tmock "github.com/pingcap/tidb/util/mock"
-	uuid "github.com/satori/go.uuid"
 )
 
 var _ = Suite(&restoreSuite{})
@@ -355,6 +356,8 @@ type tableRestoreSuiteBase struct {
 	tableInfo *TidbTableInfo
 	dbInfo    *TidbDBInfo
 	tableMeta *mydump.MDTableMeta
+
+	store storage.ExternalStorage
 }
 
 type tableRestoreSuite struct {
@@ -389,28 +392,34 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 	// Write some sample SQL dump
 
 	fakeDataDir := c.MkDir()
+
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	c.Assert(err, IsNil)
+	s.store = store
+
 	fakeDataFilesCount := 6
 	fakeDataFilesContent := []byte("INSERT INTO `table` VALUES (1, 2, 3);")
 	c.Assert(len(fakeDataFilesContent), Equals, 37)
 	fakeDataFiles := make([]mydump.FileInfo, 0, fakeDataFilesCount)
 	for i := 1; i <= fakeDataFilesCount; i++ {
-		fakeDataPath := filepath.Join(fakeDataDir, fmt.Sprintf("db.table.%d.sql", i))
+		fakeFileName := fmt.Sprintf("db.table.%d.sql", i)
+		fakeDataPath := filepath.Join(fakeDataDir, fakeFileName)
 		err = ioutil.WriteFile(fakeDataPath, fakeDataFilesContent, 0644)
 		c.Assert(err, IsNil)
-		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeDataPath, Type: mydump.SourceTypeSQL, SortKey: fmt.Sprintf("%d", i)}, Size: 37})
+		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeFileName, Type: mydump.SourceTypeSQL, SortKey: fmt.Sprintf("%d", i)}, Size: 37})
 	}
 
 	fakeCsvContent := []byte("1,2,3\r\n4,5,6\r\n")
-	fakeDataPath := filepath.Join(fakeDataDir, "db.table.99.csv")
-	err = ioutil.WriteFile(fakeDataPath, fakeCsvContent, 0644)
+	csvName := "db.table.99.csv"
+	err = ioutil.WriteFile(filepath.Join(fakeDataDir, csvName), fakeCsvContent, 0644)
 	c.Assert(err, IsNil)
-	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeDataPath, Type: mydump.SourceTypeCSV, SortKey: "99"}, Size: 14})
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: "99"}, Size: 14})
 
 	s.tableMeta = &mydump.MDTableMeta{
 		DB:         "db",
 		Name:       "table",
 		TotalSize:  222,
-		SchemaFile: filepath.Join(fakeDataDir, "db.table-schema.sql"),
+		SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: mydump.SourceFileMeta{Path: "db.table-schema.sql", Type: mydump.SourceTypeTableSchema}},
 		DataFiles:  fakeDataFiles,
 	}
 }
@@ -434,8 +443,8 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 		Engines: make(map[int32]*EngineCheckpoint),
 	}
 
-	rc := &RestoreController{cfg: s.cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io")}
-	err := s.tr.populateChunks(rc, cp)
+	rc := &RestoreController{cfg: s.cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: s.store}
+	err := s.tr.populateChunks(context.Background(), rc, cp)
 	c.Assert(err, IsNil)
 	c.Assert(cp.Engines, DeepEquals, map[int32]*EngineCheckpoint{
 		-1: {
@@ -540,7 +549,7 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	s.cfg.Mydumper.StrictFormat = true
 	regionSize := s.cfg.Mydumper.MaxRegionSize
 	s.cfg.Mydumper.MaxRegionSize = 5
-	err = s.tr.populateChunks(rc, cp)
+	err = s.tr.populateChunks(context.Background(), rc, cp)
 	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, `.*unknown columns in header \[1 2 3\]`)
 	s.cfg.Mydumper.MaxRegionSize = regionSize
@@ -718,7 +727,7 @@ func (s *chunkRestoreSuite) SetUpTest(c *C) {
 	}
 
 	var err error
-	s.cr, err = newChunkRestore(1, s.cfg, &chunk, w, nil)
+	s.cr, err = newChunkRestore(context.Background(), 1, s.cfg, &chunk, w, s.store, nil)
 	c.Assert(err, IsNil)
 }
 
@@ -913,7 +922,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	cfg := config.NewConfig()
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
-	c.Assert(err, ErrorMatches, `in file .*[/\\]db\.table\.2\.sql:0 at offset 0:.*file already closed`)
+	c.Assert(err, ErrorMatches, `in file .*[/\\]?db\.table\.2\.sql:0 at offset 0:.*file already closed`)
 	c.Assert(kvsCh, HasLen, 0)
 }
 

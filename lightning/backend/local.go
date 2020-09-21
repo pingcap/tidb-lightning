@@ -22,6 +22,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -64,6 +64,9 @@ const (
 	gRPCBackOffMaxDelay  = 3 * time.Second
 
 	LocalMemoryTableSize = 512 << 20
+
+	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
+	regionMaxKeyCount = 1_440_000
 )
 
 var (
@@ -125,6 +128,7 @@ type local struct {
 	regionSplitSize int64
 
 	rangeConcurrency  *worker.Pool
+	ingestConcurrency *worker.Pool
 	batchWriteKVPairs int
 	checkpointEnabled bool
 }
@@ -174,6 +178,7 @@ func NewLocalBackend(
 		regionSplitSize: regionSplitSize,
 
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
+		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
 	}
@@ -195,9 +200,14 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = gRPCBackOffMaxDelay
+	// we should use peer address for tiflash. for tikv, peer address is empty
+	addr := store.GetPeerAddress()
+	if addr == "" {
+		addr = store.GetAddress()
+	}
 	conn, err := grpc.DialContext(
 		ctx,
-		store.GetAddress(),
+		addr,
 		opt,
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
@@ -365,19 +375,31 @@ func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst
 func (local *local) WriteToTiKV(
 	ctx context.Context,
 	engineFile *LocalFile,
-	region *split.RegionInfo) ([]*sst.SSTMeta, error) {
+	region *split.RegionInfo,
+	start, end []byte,
+) ([]*sst.SSTMeta, *Range, error) {
 	var startKey, endKey []byte
 	if len(region.Region.StartKey) > 0 {
 		_, startKey, _ = codec.DecodeBytes(region.Region.StartKey, []byte{})
 	}
+	if bytes.Compare(startKey, start) < 0 {
+		startKey = start
+	}
 	if len(region.Region.EndKey) > 0 {
 		_, endKey, _ = codec.DecodeBytes(region.Region.EndKey, []byte{})
+	}
+	if beforeEnd(end, endKey) {
+		endKey = end
 	}
 	opt := &pebble.IterOptions{LowerBound: startKey, UpperBound: endKey}
 	iter := engineFile.db.NewIter(opt)
 	defer iter.Close()
 
-	iter.First()
+	if !iter.First() {
+		log.L().Warn("keys within region is empty, skip ingest")
+		return nil, nil, nil
+	}
+
 	firstKey := codec.EncodeBytes([]byte{}, iter.Key())
 	iter.Last()
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
@@ -398,12 +420,12 @@ func (local *local) WriteToTiKV(
 	for _, peer := range region.Region.GetPeers() {
 		cli, err := local.getImportClient(ctx, peer)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		wstream, err := cli.Write(ctx)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		// Bind uuid for this write request
@@ -413,7 +435,7 @@ func (local *local) WriteToTiKV(
 			},
 		}
 		if err = wstream.Send(req); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		req.Chunk = &sst.WriteRequest_Batch{
 			Batch: &sst.WriteBatch{
@@ -431,6 +453,8 @@ func (local *local) WriteToTiKV(
 	size := int64(0)
 	totalCount := 0
 	firstLoop := true
+	regionMaxSize := local.regionSplitSize * 4 / 3
+
 	for iter.First(); iter.Valid(); iter.Next() {
 		size += int64(len(iter.Key()) + len(iter.Value()))
 		// here we reuse the `*sst.Pair`s to optimize object allocation
@@ -447,16 +471,19 @@ func (local *local) WriteToTiKV(
 		count++
 		totalCount++
 
-		if count >= local.batchWriteKVPairs {
+		if count >= local.batchWriteKVPairs || size >= regionMaxSize || totalCount >= regionMaxKeyCount {
 			for i := range clients {
-				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs
+				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 				if err := clients[i].Send(requests[i]); err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 			}
 			count = 0
 			bytesBuf.reset()
 			firstLoop = false
+		}
+		if size >= regionMaxSize || totalCount >= regionMaxKeyCount {
+			break
 		}
 	}
 
@@ -464,19 +491,19 @@ func (local *local) WriteToTiKV(
 		for i := range clients {
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
 
 	if iter.Error() != nil {
-		return nil, errors.Trace(iter.Error())
+		return nil, nil, errors.Trace(iter.Error())
 	}
 
 	var leaderPeerMetas []*sst.SSTMeta
 	for i, wStream := range clients {
 		if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
-			return nil, closeErr
+			return nil, nil, closeErr
 		} else {
 			if leaderID == region.Region.Peers[i].GetId() {
 				leaderPeerMetas = resp.Metas
@@ -488,8 +515,9 @@ func (local *local) WriteToTiKV(
 	// if there is not leader currently, we should directly return an error
 	if leaderPeerMetas == nil {
 		log.L().Error("write to tikv no leader", zap.Reflect("region", region),
-			zap.Uint64("leader_id", leaderID), zap.Reflect("meta", meta))
-		return nil, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
+			zap.Uint64("leader_id", leaderID), zap.Reflect("meta", meta),
+			zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size))
+		return nil, nil, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
 			region.Region.Id, leaderID)
 	}
 
@@ -498,7 +526,17 @@ func (local *local) WriteToTiKV(
 		zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size),
 		zap.Int64("buf_size", bytesBuf.totalSize()))
 
-	return leaderPeerMetas, nil
+	var remainRange *Range
+	if iter.Valid() && iter.Next() {
+		firstKey := append([]byte{}, iter.Key()...)
+		remainRange = &Range{start: firstKey, end: endKey}
+		log.L().Info("write to tikv partial finish", zap.Int("count", totalCount),
+			zap.Int64("size", size), zap.Binary("startKey", startKey), zap.Binary("endKey", endKey),
+			zap.Binary("remainStart", remainRange.start), zap.Binary("remainEnd", remainRange.end),
+			zap.Reflect("region", region))
+	}
+
+	return leaderPeerMetas, remainRange, nil
 }
 
 func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
@@ -528,7 +566,7 @@ func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split
 	return resp, nil
 }
 
-func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid.UUID) ([]Range, error) {
+func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid.UUID) ([]Range, error) {
 	if engineFile.Length == 0 {
 		return nil, nil
 	}
@@ -536,153 +574,90 @@ func (local *local) ReadAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
 
-	var startKey, endKey []byte
+	var firstKey, lastKey []byte
 	if iter.First() {
-		startKey = append([]byte{}, iter.Key()...)
+		firstKey = append([]byte{}, iter.Key()...)
 	} else {
 		return nil, errors.New("could not find first pair, this shouldn't happen")
 	}
 	if iter.Last() {
-		endKey = append([]byte{}, iter.Key()...)
+		lastKey = append([]byte{}, iter.Key()...)
 	} else {
 		return nil, errors.New("could not find last pair, this shouldn't happen")
 	}
+	endKey := nextKey(lastKey)
 
 	// <= 96MB no need to split into range
 	if engineFile.TotalSize <= local.regionSplitSize {
-		ranges := []Range{{start: startKey, end: nextKey(endKey), length: int(engineFile.Length)}}
+		ranges := []Range{{start: firstKey, end: endKey, length: int(engineFile.Length)}}
 		return ranges, nil
 	}
 
-	log.L().Info("ReadAndSplitIntoRange", zap.Binary("start", startKey), zap.Binary("end", endKey))
+	log.L().Info("doReadAndSplitIntoRange", zap.Binary("firstKey", firstKey), zap.Binary("lastKey", lastKey))
 
-	// split data into n ranges, then seek n times to get n + 1 ranges
-	n := (engineFile.TotalSize + local.regionSplitSize - 1) / local.regionSplitSize
+	// split data into n * 4/3 ranges, then seek n times to get n + 1 ranges
+	// because we don't split very accurate, so wo try to split 1/4 more regions to avoid region to be too big
+	// estimiate regions size by the bigger of region size in bytes and kv count
+	splitTargetSize := (local.regionSplitSize*3 + 3) / 4
+	n := (engineFile.TotalSize + splitTargetSize - 1) / splitTargetSize
+	numByKeyCount := engineFile.Length / (regionMaxKeyCount * 3 / 4)
+	if n < numByKeyCount {
+		n = numByKeyCount
+	}
 
 	ranges := make([]Range, 0, n+1)
-	if tablecodec.IsIndexKey(startKey) {
-		// index engine
-		tableID, startIndexID, _, err := tablecodec.DecodeKeyHead(startKey)
-		if err != nil {
-			return nil, err
+	appendRanges := func(ranges []Range, start []byte, ends [][]byte) []Range {
+		for _, e := range ends {
+			ranges = append(ranges, Range{start: start, end: e})
+			start = e
 		}
-		tableID, endIndexID, _, err := tablecodec.DecodeKeyHead(endKey)
-		if err != nil {
-			return nil, err
+		return ranges
+	}
+	if tablecodec.IsIndexKey(firstKey) {
+		type tblIndexRange struct {
+			tblID    int64
+			indexID  int64
+			startKey []byte
+			endKey   []byte
 		}
-		indexCount := (endIndexID - startIndexID) + 1
 
-		// each index has to split into n / indexCount ranges
-		indexRangeCount := (n + indexCount - 1) / indexCount
-		for i := startIndexID; i <= endIndexID; i++ {
-			k := tablecodec.EncodeTableIndexPrefix(tableID, i)
-			iter.SeekGE(k)
-			// get first key of index i
-			startKeyOfIndex := append([]byte{}, iter.Key()...)
+		// for partitioned table, there will be multiple physical tables and each physical table contains multiple indices
+		indexRanges := make([]*tblIndexRange, 0)
+		iter.First()
+		for iter.Valid() {
+			startKey := append([]byte{}, iter.Key()...)
 
-			k = tablecodec.EncodeTableIndexPrefix(tableID, i+1)
-			// get last key of index i
+			tableID, indexID, _, err := tablecodec.DecodeKeyHead(startKey)
+			if err != nil {
+				return nil, err
+			}
+
+			k := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 			iter.SeekLT(k)
 
-			lastKeyOfIndex := append([]byte{}, iter.Key()...)
-
-			_, startIndexID, _, err := tablecodec.DecodeKeyHead(startKeyOfIndex)
-			if err != nil {
-				return nil, err
-			}
-			startValues := tablecodec.CutIndexPrefix(startKeyOfIndex)
-			_, endIndexID, _, err := tablecodec.DecodeKeyHead(lastKeyOfIndex)
-			if err != nil {
-				return nil, err
-			}
-			endValues := tablecodec.CutIndexPrefix(lastKeyOfIndex)
-
-			if startIndexID != endIndexID {
-				// this shouldn't happen
-				log.L().DPanic("index ID not match",
-					zap.Int64("startID", startIndexID), zap.Int64("endID", endIndexID))
-				return nil, errors.New("index ID not match")
-			}
-
-			// if index is Unique or Primary, the key is encoded as
-			// tablePrefix{tableID}_indexPrefixSep{indexID}_indexedColumnsValue
-			// if index is non-Unique, key is encoded as
-			// tablePrefix{tableID}_indexPrefixSep{indexID}_indexedColumnsValue_rowID
-
-			// we can split by indexColumnsValue to get indexRangeCount ranges from above Keys
-
-			log.L().Info("split index to range",
-				zap.Int64("indexID", i), zap.Int64("rangeCount", indexRangeCount),
-				zap.Binary("start", startKeyOfIndex), zap.Binary("end", lastKeyOfIndex))
-
-			values := splitValuesToRange(startValues, endValues, indexRangeCount)
-
-			keyPrefix := tablecodec.EncodeTableIndexPrefix(tableID, i)
-			for _, v := range values {
-				e := append(keyPrefix, v...)
-				rangeEnd := nextKey(e)
-				ranges = append(ranges, Range{start: startKeyOfIndex, end: rangeEnd})
-				startKeyOfIndex = rangeEnd
-			}
-		}
-	} else {
-		// data engine
-		tableID, startHandleInterface, err := tablecodec.DecodeRecordKey(startKey)
-		if err != nil {
-			return nil, err
-		}
-		endHandleInterface, err := tablecodec.DecodeRowKey(endKey)
-		if err != nil {
-			return nil, err
-		}
-
-		if startHandleInterface.IsInt() {
-			// handle value, can split as int value
-			endHandle := endHandleInterface.IntValue()
-			startHandle := startHandleInterface.IntValue()
-			step := (endHandle - startHandle + n - 1) / n
-			index := int64(0)
-			var sKey, eKey []byte
-
-			log.L().Info("split data ranges", zap.Int64("step", step),
-				zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle),
-				zap.String("engine", engineUUID.String()))
-
-			for i := startHandle; i+step <= endHandle; i += step {
-				sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i))
-				endValue := i + step - 1
-				if endValue > endHandle {
-					endValue = endHandle
-				}
-				eKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(endValue))
-				index = i
-				log.L().Debug("data engine append range", zap.Int64("start handle", i),
-					zap.Int64("end handle", i+step-1), zap.Binary("start key", sKey),
-					zap.Binary("end key", eKey), zap.Int64("step", step))
-
-				ranges = append(ranges, Range{start: sKey, end: nextKey(eKey)})
-			}
-			log.L().Debug("data engine append range at final",
-				zap.Int64("start handle", index+step), zap.Int64("end handle", endHandle),
-				zap.Binary("start key", sKey), zap.Binary("end key", endKey),
-				zap.Int64("step", endHandle-index-step+1))
-
-			sKey = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(index+step))
-			ranges = append(ranges, Range{start: sKey, end: nextKey(endKey)})
-		} else {
-			// common handle, should split by bytes value
-			log.L().Info("split common handle to range",
+			endKey := append([]byte{}, iter.Key()...)
+			indexRanges = append(indexRanges, &tblIndexRange{tableID, indexID, startKey, endKey})
+			log.L().Debug("index key range", zap.Int64("tableID", tableID), zap.Int64("index", indexID),
 				zap.Binary("startKey", startKey), zap.Binary("endKey", endKey))
 
-			values := splitValuesToRange(startHandleInterface.Encoded(), endHandleInterface.Encoded(), n)
-			start := startKey
-			for _, v := range values {
-				e := tablecodec.EncodeRowKey(tableID, v)
-				rangeEnd := nextKey(e)
-				ranges = append(ranges, Range{start: start, end: rangeEnd})
-				start = rangeEnd
-			}
+			iter.Next()
 		}
+
+		indexRangeCount := (int(n) + len(indexRanges)) / len(indexRanges)
+
+		log.L().Info("split table index kv to range",
+			zap.Int("total index count", len(indexRanges)), zap.Int64("ranges", n),
+			zap.Int("index range count", indexRangeCount))
+
+		for _, indexRange := range indexRanges {
+			values := engineFile.splitValuesToRange(indexRange.startKey, nextKey(indexRange.endKey), int64(indexRangeCount), len(indexRanges))
+			ranges = appendRanges(ranges, indexRange.startKey, values)
+		}
+	} else {
+		// data engine, we split keys by sample keys instead of by handle
+		// because handles are also not distributed evenly
+		values := engineFile.splitValuesToRange(firstKey, endKey, n, 1)
+		ranges = appendRanges(ranges, firstKey, values)
 	}
 	return ranges, nil
 }
@@ -784,9 +759,11 @@ func (b *bytesBuffer) addBytes(bytes []byte) []byte {
 }
 
 func (local *local) writeAndIngestByRange(
-	ctx context.Context,
+	ctxt context.Context,
 	engineFile *LocalFile,
-	start, end []byte) error {
+	start, end []byte,
+	remainRanges *syncdRanges,
+) error {
 	ito := &pebble.IterOptions{
 		LowerBound: start,
 		UpperBound: end,
@@ -809,8 +786,9 @@ func (local *local) writeAndIngestByRange(
 
 	var regions []*split.RegionInfo
 	var err error
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctxt)
 	defer cancel()
+
 WriteAndIngest:
 	for retry := 0; retry < maxRetryTimes; retry++ {
 		if retry != 0 {
@@ -839,13 +817,26 @@ WriteAndIngest:
 			// generate new uuid for concurrent write to tikv
 
 			if len(regions) == 1 {
-				if err = local.WriteAndIngestPairs(ctx, engineFile, region); err != nil {
+				w := local.ingestConcurrency.Apply()
+				rg, err1 := local.WriteAndIngestPairs(ctx, engineFile, region, start, end)
+				local.ingestConcurrency.Recycle(w)
+				if err1 != nil {
+					err = err1
 					continue WriteAndIngest
+				}
+				if rg != nil {
+					remainRanges.add(*rg)
 				}
 			} else {
 				shouldWait = true
 				go func(r *split.RegionInfo) {
-					errChan <- local.WriteAndIngestPairs(ctx, engineFile, r)
+					w := local.ingestConcurrency.Apply()
+					rg, err := local.WriteAndIngestPairs(ctx, engineFile, r, start, end)
+					local.ingestConcurrency.Recycle(w)
+					errChan <- err
+					if err == nil && rg != nil {
+						remainRanges.add(*rg)
+					}
 				}(region)
 			}
 		}
@@ -877,11 +868,12 @@ func (local *local) WriteAndIngestPairs(
 	ctx context.Context,
 	engineFile *LocalFile,
 	region *split.RegionInfo,
-) error {
-	metas, err := local.WriteToTiKV(ctx, engineFile, region)
+	start, end []byte,
+) (*Range, error) {
+	metas, remainRange, err := local.WriteToTiKV(ctx, engineFile, region, start, end)
 	if err != nil {
 		log.L().Warn("write to tikv failed", zap.Error(err))
-		return err
+		return remainRange, err
 	}
 
 	for _, meta := range metas {
@@ -916,7 +908,7 @@ func (local *local) WriteAndIngestPairs(
 				log.L().Warn("ingest failed noretry", zap.Error(err), zap.Reflect("meta", meta),
 					zap.Reflect("region", region))
 				// met non-retryable error retry whole Write procedure
-				return err
+				return remainRange, err
 			}
 			// retry with not leader and epoch not match error
 			if newRegion != nil {
@@ -925,20 +917,21 @@ func (local *local) WriteAndIngestPairs(
 				log.L().Warn("retry ingest due to",
 					zap.Reflect("meta", meta), zap.Reflect("region", region),
 					zap.Reflect("new region", newRegion), zap.Error(err))
-				return err
+				return remainRange, err
 			}
 		}
 		if err != nil {
 			log.L().Error("all retry ingest failed", zap.Reflect("ingest meta", meta), zap.Error(err))
-			return errors.Trace(err)
+			return remainRange, errors.Trace(err)
 		}
 	}
-	return nil
+	return remainRange, nil
 }
 
-func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range) error {
+func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainRanges *syncdRanges) error {
 	if engineFile.Length == 0 {
-		log.L().Error("the ranges is empty")
+		// engine is empty, this is likes because it's a index engine but the table contains no index
+		log.L().Warn("engine contains no data", zap.Stringer("uuid", engineFile.Uuid))
 		return nil
 	}
 	log.L().Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
@@ -952,12 +945,10 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *Loca
 		endKey := r.end
 		w := local.rangeConcurrency.Apply()
 		go func(w *worker.Worker) {
-			defer func() {
-				local.rangeConcurrency.Recycle(w)
-			}()
+			defer local.rangeConcurrency.Recycle(w)
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
-				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey); err != nil {
+				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainRanges); err != nil {
 					log.L().Warn("write and ingest by range failed",
 						zap.Int("retry time", i+1), zap.Error(err))
 				} else {
@@ -977,6 +968,30 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *Loca
 	return nil
 }
 
+type syncdRanges struct {
+	sync.Mutex
+	ranges []Range
+}
+
+func (r *syncdRanges) add(g Range) {
+	r.Lock()
+	r.ranges = append(r.ranges, g)
+	r.Unlock()
+}
+
+func (r *syncdRanges) take() []Range {
+	r.Lock()
+	rg := r.ranges
+	r.ranges = []Range{}
+	r.Unlock()
+	if len(rg) > 0 {
+		sort.Slice(rg, func(i, j int) bool {
+			return bytes.Compare(rg[i].start, rg[j].start) < 0
+		})
+	}
+	return rg
+}
+
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	engineFile, ok := local.engines.Load(engineUUID)
 	if !ok {
@@ -984,22 +999,34 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		return nil
 	}
 	// split sorted file into range by 96MB size per file
-	ranges, err := local.ReadAndSplitIntoRange(engineFile.(*LocalFile), engineUUID)
+	ranges, err := local.readAndSplitIntoRange(engineFile.(*LocalFile), engineUUID)
 	if err != nil {
 		return err
 	}
-	// split region by given ranges
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges)
-	if err != nil {
-		log.L().Error("split & scatter ranges failed", zap.Error(err))
-		return err
+	remains := &syncdRanges{}
+
+	for {
+		// split region by given ranges
+		err = local.SplitAndScatterRegionByRanges(ctx, ranges)
+		if err != nil {
+			log.L().Error("split & scatter ranges failed", zap.Error(err))
+			return err
+		}
+		// start to write to kv and ingest
+		err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
+		if err != nil {
+			log.L().Error("write and ingest ranges failed", zap.Error(err))
+			return err
+		}
+
+		unfinishedRanges := remains.take()
+		if len(unfinishedRanges) == 0 {
+			break
+		}
+		log.L().Debug("ingest ranges unfinished", zap.Int("remain ranges", len(unfinishedRanges)))
+		ranges = unfinishedRanges
 	}
-	// start to write to kv and ingest
-	err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges)
-	if err != nil {
-		log.L().Error("write and ingest ranges failed", zap.Error(err))
-		return err
-	}
+
 	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID))
 	return nil
 }
@@ -1149,17 +1176,18 @@ func nextKey(key []byte) []byte {
 	return res
 }
 
-// splitValuesToRange try to cut [start, end] to count range approximately
-// just like [start, v1], [v1, v2]... [vCount-1, end]
+// splitValuesToRange try to cut [start, end) to count range approximately
+// just like [start, v1), [v1, v2)... [vCount-1, end)
 // return value []{v1, v2... vCount-1, End}
-func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
-	if bytes.Equal(start, end) {
-		log.L().Info("couldn't split range due to start end are same",
-			zap.Binary("start", start),
-			zap.Binary("end", end),
-			zap.Int64("count", count))
-		return [][]byte{end}
-	}
+func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sampleFactor int) [][]byte {
+	opt := &pebble.IterOptions{LowerBound: start, UpperBound: end}
+	iter := l.db.NewIter(opt)
+	defer iter.Close()
+
+	iter.First()
+	start = append([]byte{}, iter.Key()...)
+	iter.Last()
+	end = nextKey(iter.Key())
 
 	startBytes := make([]byte, 8)
 	endBytes := make([]byte, 8)
@@ -1183,19 +1211,88 @@ func splitValuesToRange(start []byte, end []byte, count int64) [][]byte {
 	sValue := binary.BigEndian.Uint64(startBytes)
 	eValue := binary.BigEndian.Uint64(endBytes)
 
-	step := (eValue - sValue) / uint64(count)
-	if step == uint64(0) {
-		step = uint64(1)
+	naiveFn := func() [][]byte {
+		step := (eValue - sValue) / uint64(count)
+		if step == uint64(0) {
+			step = uint64(1)
+		}
+
+		res := make([][]byte, 0, count)
+		var curBytes []byte
+		iter.First()
+		for cur := sValue + step; cur <= eValue-step; cur += step {
+			curBytes = make([]byte, offset+8)
+			copy(curBytes, start[:offset])
+			binary.BigEndian.PutUint64(curBytes[offset:], cur)
+			// if range is empty, skip range
+			if bytes.Compare(curBytes, iter.Key()) < 0 {
+				continue
+			}
+			// move to next range
+			iter.SeekGE(curBytes)
+			res = append(res, curBytes)
+		}
+		res = append(res, end)
+
+		log.L().Info("split value naively", zap.Int64("count", count),
+			zap.Int("ranges", len(res)))
+
+		return res
 	}
+
+	sampleCount := uint64(l.Length) / 100 / uint64(sampleFactor)
+
+	if sampleCount == 0 || eValue-sValue < sampleCount*20 {
+		return naiveFn()
+	}
+
+	step := (eValue - sValue) / sampleCount
+
+	sampleValues := make([]uint64, 0, sampleCount/10)
+
+	lastValue := uint64(0)
+	valueBuf := make([]byte, 8)
+	seekKey := make([]byte, offset+8)
+	copy(seekKey, start[:offset])
+	for i := sValue; i < eValue; i += step {
+		if i <= lastValue {
+			continue
+		}
+		binary.BigEndian.PutUint64(seekKey[offset:], i)
+		iter.SeekGE(seekKey)
+		copy(valueBuf, iter.Key()[offset:])
+		value := binary.BigEndian.Uint64(valueBuf)
+		sampleValues = append(sampleValues, value)
+		lastValue = value
+	}
+
+	// if too few sample values, fall back to naive func
+	if len(sampleValues) < int(count)*20 {
+		log.L().Info("too few samples, fallback to naive split", zap.Int64("count", count),
+			zap.Int("samples", len(sampleValues)), zap.Binary("start", start),
+			zap.Binary("end", end), zap.Int64("engine_kv", l.Length))
+		return naiveFn()
+	}
+
+	s := float64(len(sampleValues)) / float64(count)
 
 	res := make([][]byte, 0, count)
-	for cur := sValue + step; cur <= eValue-step; cur += step {
+	for i := s - 1; int(i) < len(sampleValues); i += s {
 		curBytes := make([]byte, offset+8)
 		copy(curBytes, start[:offset])
-		binary.BigEndian.PutUint64(curBytes[offset:], cur)
+		binary.BigEndian.PutUint64(curBytes[offset:], sampleValues[int(i)])
 		res = append(res, curBytes)
 	}
-	res = append(res, end)
-
+	// adjust last value
+	if bytes.Compare(res[len(res)-1], end) < 0 {
+		if len(res) < int(count) {
+			res = append(res, end)
+		} else {
+			res[len(res)-1] = end
+		}
+	}
+	log.L().Info("split value with sample", zap.Int64("count", count),
+		zap.Int("ranges", len(res)), zap.Int("samples", len(sampleValues)),
+		zap.Int64("engine_kv", l.Length))
 	return res
 }

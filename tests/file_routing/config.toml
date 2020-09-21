@@ -19,6 +19,12 @@ table = "$2"
 type = "table-schema"
 
 [[mydumper.files]]
+path = "ff/test.SQL"
+schema = "fr"
+table = "tbl"
+type = "sql"
+
+[[mydumper.files]]
 pattern = "(?i)^(?:[^/]*/)*([^./]+)/([a-z]+)[0-9]*\\.(sql|csv)(?:\\.([0-9]+))?$"
 schema = "$1"
 table = "$2"

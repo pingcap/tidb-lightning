@@ -20,9 +20,10 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/types"
+
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-	"github.com/pingcap/tidb/types"
 )
 
 var (

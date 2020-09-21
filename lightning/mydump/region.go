@@ -14,9 +14,11 @@
 package mydump
 
 import (
+	"context"
 	"math"
-	"os"
 
+	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/errors"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
@@ -123,10 +125,12 @@ func AllocateEngineIDs(
 }
 
 func MakeTableRegions(
+	ctx context.Context,
 	meta *MDTableMeta,
 	columns int,
 	cfg *config.Config,
 	ioWorkers *worker.Pool,
+	store storage.ExternalStorage,
 ) ([]*TableRegion, error) {
 	// Split files into regions
 	filesRegions := make([]*TableRegion, 0, len(meta.DataFiles))
@@ -134,6 +138,18 @@ func MakeTableRegions(
 	prevRowIDMax := int64(0)
 	var err error
 	for _, dataFile := range meta.DataFiles {
+		if dataFile.FileMeta.Type == SourceTypeParquet {
+			rowIDMax, region, err := makeParquetFileRegion(ctx, store, meta, dataFile, prevRowIDMax)
+			if err != nil {
+				return nil, err
+			}
+			prevRowIDMax = rowIDMax
+			filesRegions = append(filesRegions, region)
+			// TODO: how to estimate raw data size for parquet file
+			dataFileSizes = append(dataFileSizes, float64(dataFile.Size))
+			continue
+		}
+
 		dataFileSize := dataFile.Size
 
 		divisor := int64(columns)
@@ -141,14 +157,15 @@ func MakeTableRegions(
 		if !isCsvFile {
 			divisor += 2
 		}
-		// If a csv file is overlarge, we need to split it into mutiple regions.
-		// Note: We can only split a csv file whose format is strict and header is empty.
+
+		// If a csv file is overlarge, we need to split it into multiple regions.
+		// Note: We can only split a csv file whose format is strict.
 		if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat {
 			var (
 				regions      []*TableRegion
 				subFileSizes []float64
 			)
-			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(meta, cfg, dataFile, divisor, prevRowIDMax, ioWorkers)
+			prevRowIDMax, regions, subFileSizes, err = SplitLargeFile(ctx, meta, cfg, dataFile, divisor, prevRowIDMax, ioWorkers, store)
 			if err != nil {
 				return nil, err
 			}
@@ -156,14 +173,14 @@ func MakeTableRegions(
 			filesRegions = append(filesRegions, regions...)
 			continue
 		}
-		rowIDMax := prevRowIDMax + dataFileSize/divisor
+		rowIDMax := prevRowIDMax + dataFile.Size/divisor
 		tableRegion := &TableRegion{
 			DB:       meta.DB,
 			Table:    meta.Name,
 			FileMeta: dataFile.FileMeta,
 			Chunk: Chunk{
 				Offset:       0,
-				EndOffset:    dataFileSize,
+				EndOffset:    dataFile.Size,
 				PrevRowIDMax: prevRowIDMax,
 				RowIDMax:     rowIDMax,
 			},
@@ -176,7 +193,7 @@ func MakeTableRegions(
 				zap.Int64("size", dataFileSize))
 		}
 		prevRowIDMax = rowIDMax
-		dataFileSizes = append(dataFileSizes, float64(dataFileSize))
+		dataFileSizes = append(dataFileSizes, float64(dataFile.Size))
 	}
 
 	log.L().Debug("in makeTableRegions",
@@ -187,6 +204,42 @@ func MakeTableRegions(
 	return filesRegions, nil
 }
 
+// because parquet files can't seek efficiently, there is no benefit in split.
+// parquet file are column orient, so the offset is read line number
+func makeParquetFileRegion(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	meta *MDTableMeta,
+	dataFile FileInfo,
+	prevRowIdxMax int64,
+) (int64, *TableRegion, error) {
+	r, err := store.Open(ctx, dataFile.FileMeta.Path)
+	if err != nil {
+		return prevRowIdxMax, nil, errors.Trace(err)
+	}
+	pr, err := NewParquetParser(ctx, store, r, dataFile.FileMeta.Path)
+	if err != nil {
+		return prevRowIdxMax, nil, errors.Trace(err)
+	}
+	defer pr.Close()
+
+	// EndOffset for parquet files are the number of rows
+	numberRows := pr.Reader.GetNumRows()
+	rowIDMax := prevRowIdxMax + numberRows
+	region := &TableRegion{
+		DB:       meta.DB,
+		Table:    meta.Name,
+		FileMeta: dataFile.FileMeta,
+		Chunk: Chunk{
+			Offset:       0,
+			EndOffset:    numberRows,
+			PrevRowIDMax: prevRowIdxMax,
+			RowIDMax:     rowIDMax,
+		},
+	}
+	return rowIDMax, region, nil
+}
+
 // SplitLargeFile splits a large csv file into multiple regions, the size of
 // each regions is specified by `config.MaxRegionSize`.
 // Note: We split the file coarsely, thus the format of csv file is needed to be
@@ -195,23 +248,25 @@ func MakeTableRegions(
 // - CSV file with header is invalid
 // - a complete tuple split into multiple lines is invalid
 func SplitLargeFile(
+	ctx context.Context,
 	meta *MDTableMeta,
 	cfg *config.Config,
 	dataFile FileInfo,
 	divisor int64,
 	prevRowIdxMax int64,
 	ioWorker *worker.Pool,
+	store storage.ExternalStorage,
 ) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := cfg.Mydumper.MaxRegionSize
 	dataFileSizes = make([]float64, 0, dataFile.Size/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
 	var columns []string
 	if cfg.Mydumper.CSV.Header {
-		reader, err := os.Open(dataFile.FileMeta.Path)
+		r, err := store.Open(ctx, dataFile.FileMeta.Path)
 		if err != nil {
 			return 0, nil, nil, err
 		}
-		parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker, true)
+		parser := NewCSVParser(&cfg.Mydumper.CSV, r, cfg.Mydumper.ReadBlockSize, ioWorker, true)
 		if err = parser.ReadColumns(); err != nil {
 			return 0, nil, nil, err
 		}
@@ -223,12 +278,14 @@ func SplitLargeFile(
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFile.Size {
-			reader, err := os.Open(dataFile.FileMeta.Path)
+			r, err := store.Open(ctx, dataFile.FileMeta.Path)
 			if err != nil {
 				return 0, nil, nil, err
 			}
-			parser := NewCSVParser(&cfg.Mydumper.CSV, reader, cfg.Mydumper.ReadBlockSize, ioWorker, false)
-			parser.SetPos(endOffset, prevRowIdMax)
+			parser := NewCSVParser(&cfg.Mydumper.CSV, r, cfg.Mydumper.ReadBlockSize, ioWorker, false)
+			if err = parser.SetPos(endOffset, prevRowIdMax); err != nil {
+				return 0, nil, nil, err
+			}
 			pos, err := parser.ReadUntilTokNewLine()
 			if err != nil {
 				return 0, nil, nil, err
