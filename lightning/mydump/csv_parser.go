@@ -15,7 +15,6 @@ package mydump
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"strings"
 	"unicode"
@@ -245,18 +244,43 @@ func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
 	}
 
 	processQuote := func(b byte) error {
-		if len(parser.quote) > 1 {
+		return parser.readQuotedField()
+	}
+	if len(parser.quote) > 1 {
+		processQuote = func(b byte) error {
 			pb, err := parser.peekBytes(len(parser.quote) - 1)
 			if err != nil && err != io.EOF {
 				return err
 			}
 			if bytes.Equal(pb, parser.quote[1:]) {
 				parser.skipBytes(len(parser.quote) - 1)
-			} else {
-				return processDefault(b)
+				return parser.readQuotedField()
 			}
+			return processDefault(b)
 		}
-		return parser.readQuotedField()
+	}
+
+	processComma := func(b byte) error {
+		parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
+		return nil
+	}
+	if len(parser.comma) > 1 {
+		processNotComma := processDefault
+		if parser.comma[0] == parser.quote[0] {
+			processNotComma = processQuote
+		}
+		processComma = func(b byte) error {
+			pb, err := parser.peekBytes(len(parser.comma) - 1)
+			if err != nil && err != io.EOF {
+				return err
+			}
+			if bytes.Equal(pb, parser.comma[1:]) {
+				parser.skipBytes(len(parser.comma) - 1)
+				parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
+				return nil
+			}
+			return processNotComma(b)
+		}
 	}
 
 outside:
@@ -273,25 +297,8 @@ outside:
 		switch firstByte {
 		case parser.comma[0]:
 			whitespaceLine = false
-			isComma := true
-			if len(parser.comma) > 1 {
-				pb, err := parser.peekBytes(len(parser.comma) - 1)
-				if err != nil && err != io.EOF {
-					return nil, err
-				}
-				isComma = bytes.Equal(pb, parser.comma[1:])
-			}
-			if isComma {
-				parser.skipBytes(len(parser.comma) - 1)
-				parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
-			} else if parser.comma[0] == parser.quote[0] {
-				if err = processQuote(firstByte); err != nil {
-					return nil, err
-				}
-			} else {
-				if err = processDefault(firstByte); err != nil {
-					return nil, err
-				}
+			if err = processComma(firstByte); err != nil {
+				return nil, err
 			}
 
 		case parser.quote[0]:
@@ -348,14 +355,15 @@ func (parser *CSVParser) readByteForBackslashEscape() error {
 
 func (parser *CSVParser) readQuotedField() error {
 	processDefault := func() error {
-		fmt.Printf("  parser pos: %d\n", parser.pos)
 		// in all other cases, we've got a syntax error.
 		parser.logSyntaxError()
 		return errors.AddStack(errUnexpectedQuoteField)
 	}
 
-	processComma := func() error {
-		if len(parser.comma) > 1 {
+	processComma := func() error { return nil }
+	if len(parser.comma) > 1 {
+		processComma = func() error {
+
 			b, err := parser.peekBytes(len(parser.comma))
 			if err != nil && err != io.EOF {
 				return err
@@ -363,14 +371,13 @@ func (parser *CSVParser) readQuotedField() error {
 			if !bytes.Equal(b, parser.comma) {
 				return processDefault()
 			}
+			return nil
 		}
-		return nil
 	}
 	for {
 		content, terminator, err := parser.readUntil(parser.quoteIndexFunc)
 		err = parser.replaceEOF(err, errUnterminatedQuotedField)
 		if err != nil {
-			fmt.Printf("  content: %s, len: %d, pos: %d\n", string(content), len(content), parser.pos)
 			return err
 		}
 		parser.recordBuffer = append(parser.recordBuffer, content...)
@@ -402,10 +409,12 @@ func (parser *CSVParser) readQuotedField() error {
 					if err != nil && err != io.EOF {
 						return err
 					}
-					if !bytes.Equal(b, parser.quote) && parser.quote[0] == parser.comma[0] {
-						return processComma()
-					} else {
-						return processDefault()
+					if !bytes.Equal(b, parser.quote) {
+						if parser.quote[0] == parser.comma[0] {
+							return processComma()
+						} else {
+							return processDefault()
+						}
 					}
 				}
 				parser.skipBytes(len(parser.quote))
@@ -428,6 +437,31 @@ func (parser *CSVParser) readQuotedField() error {
 }
 
 func (parser *CSVParser) readUnquoteField() error {
+	addByte := func(b byte) {
+		// read the following byte
+		parser.recordBuffer = append(parser.recordBuffer, b)
+		parser.skipByte()
+	}
+	parseQuote := func(b byte) error {
+		r, err := parser.checkBytes(parser.quote)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if r {
+			parser.logSyntaxError()
+			return errors.AddStack(errUnexpectedQuoteField)
+		}
+		addByte(b)
+		return nil
+	}
+
+	parserNoComma := func(b byte) error {
+		addByte(b)
+		return nil
+	}
+	if parser.comma[0] == parser.quote[0] {
+		parserNoComma = parseQuote
+	}
 	for {
 		content, terminator, err := parser.readUntil(parser.unquoteIndexFunc)
 		parser.recordBuffer = append(parser.recordBuffer, content...)
@@ -440,20 +474,22 @@ func (parser *CSVParser) readUnquoteField() error {
 		case '\r', '\n', 0:
 			return nil
 		case parser.comma[0]:
-			r, err := parser.checkOrReadBytes(parser.comma)
+			r, err := parser.checkBytes(parser.comma)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if r {
 				return nil
 			}
+			if err = parserNoComma(terminator); err != nil {
+				return err
+			}
 		case parser.quote[0]:
-			r, err := parser.checkOrReadBytes(parser.quote)
+			r, err := parser.checkBytes(parser.quote)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if r {
-				fmt.Printf("  quote: %s, got: %c, pos: %d\n", parser.quote, terminator, parser.pos)
 				parser.logSyntaxError()
 				return errors.AddStack(errUnexpectedQuoteField)
 			}
@@ -466,7 +502,7 @@ func (parser *CSVParser) readUnquoteField() error {
 	}
 }
 
-func (parser *CSVParser) checkOrReadBytes(b []byte) (bool, error) {
+func (parser *CSVParser) checkBytes(b []byte) (bool, error) {
 	if len(b) == 1 {
 		return true, nil
 	}
@@ -474,13 +510,7 @@ func (parser *CSVParser) checkOrReadBytes(b []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if bytes.Equal(pb, b) {
-		return true, nil
-	}
-	// read the following byte
-	parser.recordBuffer = append(parser.recordBuffer, pb[0])
-	parser.skipByte()
-	return false, nil
+	return bytes.Equal(pb, b), nil
 }
 
 func (parser *CSVParser) replaceEOF(err error, replaced error) error {
@@ -564,4 +594,7 @@ func (parser *CSVParser) ReadUntilTokNewLine() (int64, error) {
 	}
 	parser.skipByte()
 	return parser.pos, nil
+}
+
+type node struct {
 }

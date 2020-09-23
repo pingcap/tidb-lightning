@@ -15,10 +15,8 @@ package mydump_test
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
 	"github.com/pingcap/br/pkg/storage"
 
@@ -70,18 +68,6 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 	for _, meta := range dbMeta.Tables {
 		regions, err := MakeTableRegions(context.Background(), meta, 1, cfg, ioWorkers, loader.GetStore())
 		c.Assert(err, IsNil)
-
-		table := meta.Name
-		fmt.Printf("[%s] region count ===============> %d\n", table, len(regions))
-		for _, region := range regions {
-			fname := filepath.Base(region.FileMeta.Path)
-			fmt.Printf("[%s] rowID = %5d / rows = %5d / offset = %10d / size = %10d \n",
-				fname,
-				region.RowIDMin(),
-				region.Rows(),
-				region.Offset(),
-				region.Size())
-		}
 
 		// check - region-size vs file-size
 		var tolFileSize int64 = 0

@@ -3,7 +3,6 @@ package mydump_test
 import (
 	"context"
 	"encoding/csv"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -114,15 +113,15 @@ func tpchDatums() [][]types.Datum {
 	return datums
 }
 
-func datumsToString(datums [][]types.Datum, delimetor string, quote string) string {
+func datumsToString(datums [][]types.Datum, delimitor string, quote string, lastSep bool) string {
 	var b strings.Builder
 	for _, ds := range datums {
 		for i, d := range ds {
 			b.WriteString(quote)
 			b.WriteString(d.GetString())
 			b.WriteString(quote)
-			if i < len(ds)-1 {
-				b.WriteString(delimetor)
+			if lastSep || i < len(ds)-1 {
+				b.WriteString(delimitor)
 			}
 		}
 		b.WriteString("\r\n")
@@ -131,13 +130,10 @@ func datumsToString(datums [][]types.Datum, delimetor string, quote string) stri
 }
 
 func (s *testMydumpCSVParserSuite) TestTPCH(c *C) {
-	reader := mydump.NewStringReader(
-		`1|goldenrod lavender spring chocolate lace|Manufacturer#1|Brand#13|PROMO BURNISHED COPPER|7|JUMBO PKG|901.00|ly. slyly ironi|
-2|blush thistle blue yellow saddle|Manufacturer#1|Brand#13|LARGE BRUSHED BRASS|1|LG CASE|902.00|lar accounts amo|
-3|spring green yellow purple cornsilk|Manufacturer#4|Brand#42|STANDARD POLISHED BRASS|21|WRAP CASE|903.00|egular deposits hag|
-`)
-
 	datums := tpchDatums()
+	input := datumsToString(datums, "|", "", true)
+	reader := mydump.NewStringReader(input)
+
 	cfg := config.CSVConfig{
 		Separator:   "|",
 		Delimiter:   "",
@@ -158,14 +154,14 @@ func (s *testMydumpCSVParserSuite) TestTPCH(c *C) {
 		RowID: 2,
 		Row:   datums[1],
 	})
-	c.Assert(parser, posEq, 240, 2)
+	c.Assert(parser, posEq, 241, 2)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 3,
 		Row:   datums[2],
 	})
-	c.Assert(parser, posEq, 367, 3)
+	c.Assert(parser, posEq, 369, 3)
 
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 }
@@ -173,8 +169,10 @@ func (s *testMydumpCSVParserSuite) TestTPCH(c *C) {
 func (s *testMydumpCSVParserSuite) TestTPCHMultiBytes(c *C) {
 	datums := tpchDatums()
 	deliAndSeps := [][2]string{
+		{",", ""},
 		{"，", ""},
 		{"🤔", ""},
+		{"，", "。"},
 		{"||", ""},
 		{"|+|", ""},
 		{"##", ""},
@@ -183,11 +181,12 @@ func (s *testMydumpCSVParserSuite) TestTPCHMultiBytes(c *C) {
 		{"🤔", `''`},
 		{"🤔", `"'`},
 		{"🤔", `"'`},
+		{"🤔", "🌚"}, // this two emoji have same prefix bytes
 		{"##", "#-"},
+		{"\\s", "\\q"},
 	}
 	for _, SepAndQuote := range deliAndSeps {
-		inputStr := datumsToString(datums, SepAndQuote[0], SepAndQuote[1])
-		fmt.Printf("== input: ==\n%s\n", inputStr)
+		inputStr := datumsToString(datums, SepAndQuote[0], SepAndQuote[1], false)
 		cfg := config.CSVConfig{
 			Separator:   SepAndQuote[0],
 			Delimiter:   SepAndQuote[1],
@@ -219,7 +218,6 @@ func (s *testMydumpCSVParserSuite) TestTPCHMultiBytes(c *C) {
 		c.Assert(parser, posEq, 342+8*3*len(SepAndQuote[0])+18*3*len(SepAndQuote[1]), 3)
 
 		c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
-		fmt.Printf("sep: %s, quote: %s\n", SepAndQuote[0], SepAndQuote[1])
 	}
 }
 
