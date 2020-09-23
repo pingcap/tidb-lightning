@@ -275,14 +275,15 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 				[mydumper.csv]
 				separator = ''
 			`,
-			err: "invalid config: `mydumper.csv.separator` must be exactly one byte long",
+			err: "invalid config: `mydumper.csv.separator` must not be empty",
 		},
 		{
 			input: `
 				[mydumper.csv]
 				separator = 'hello'
+				delimiter = 'hel'
 			`,
-			err: "invalid config: `mydumper.csv.separator` must be exactly one byte long",
+			err: "invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other",
 		},
 		{
 			input: `
@@ -297,7 +298,7 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 				[mydumper.csv]
 				separator = '，'
 			`,
-			err: "invalid config: `mydumper.csv.separator` must be exactly one byte long",
+			err: "",
 		},
 		{
 			input: `
@@ -311,7 +312,7 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 				[mydumper.csv]
 				delimiter = 'hello'
 			`,
-			err: "invalid config: `mydumper.csv.delimiter` must be one byte long or empty",
+			err: "",
 		},
 		{
 			input: `
@@ -324,9 +325,10 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 		{
 			input: `
 				[mydumper.csv]
-				delimiter = '“'
+				separator = '\s'
+				delimiter = '\d'
 			`,
-			err: "invalid config: `mydumper.csv.delimiter` must be one byte long or empty",
+			err: "",
 		},
 		{
 			input: `
@@ -334,7 +336,7 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 				separator = '|'
 				delimiter = '|'
 			`,
-			err: "invalid config: cannot use the same character for both CSV delimiter and separator",
+			err: "invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other",
 		},
 		{
 			input: `

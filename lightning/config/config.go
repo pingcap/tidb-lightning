@@ -392,10 +392,6 @@ func (cfg *Config) Adjust() error {
 		return errors.New("invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
 	}
 
-	if csv.Separator == csv.Delimiter {
-		return errors.New("invalid config: cannot use the same character for both CSV delimiter and separator")
-	}
-
 	if csv.BackslashEscape {
 		if csv.Separator == `\` {
 			return errors.New("invalid config: cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true")
