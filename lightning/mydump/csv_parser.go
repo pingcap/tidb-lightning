@@ -157,34 +157,17 @@ func (parser *CSVParser) readBytes(buf []byte) (int, error) {
 	return cnt, nil
 }
 
-func (parser *CSVParser) peekByte() (byte, error) {
-	if len(parser.buf) == 0 {
-		if err := parser.readBlock(); err != nil {
-			return 0, err
-		}
-	}
-	if len(parser.buf) == 0 {
-		return 0, io.EOF
-	}
-	return parser.buf[0], nil
-}
-
 func (parser *CSVParser) peekBytes(cnt int) ([]byte, error) {
 	if len(parser.buf) < cnt {
 		if err := parser.readBlock(); err != nil {
-			return []byte{}, err
+			return []byte{0}, err
 		}
 	}
 	if len(parser.buf) == 0 {
-		return []byte{}, io.EOF
+		return []byte{0}, io.EOF
 	}
 	cnt = utils.MinInt(cnt, len(parser.buf))
 	return parser.buf[:cnt], nil
-}
-
-func (parser *CSVParser) skipByte() {
-	parser.buf = parser.buf[1:]
-	parser.pos++
 }
 
 func (parser *CSVParser) skipBytes(n int) {
@@ -381,7 +364,7 @@ func (parser *CSVParser) readQuotedField() error {
 			return err
 		}
 		parser.recordBuffer = append(parser.recordBuffer, content...)
-		parser.skipByte()
+		parser.skipBytes(1)
 		switch terminator {
 		case parser.quote[0]:
 			if len(parser.quote) > 1 {
@@ -396,12 +379,12 @@ func (parser *CSVParser) readQuotedField() error {
 				parser.skipBytes(len(parser.quote) - 1)
 			}
 			// encountered '"' -> continue if we're seeing '""'.
-			b, err := parser.peekByte()
+			b, err := parser.peekBytes(1)
 			err = parser.replaceEOF(err, nil)
 			if err != nil {
 				return err
 			}
-			switch b {
+			switch b[0] {
 			case parser.quote[0]:
 				// consume the double quotation mark and continue
 				if len(parser.quote) > 1 {
@@ -440,7 +423,7 @@ func (parser *CSVParser) readUnquoteField() error {
 	addByte := func(b byte) {
 		// read the following byte
 		parser.recordBuffer = append(parser.recordBuffer, b)
-		parser.skipByte()
+		parser.skipBytes(1)
 	}
 	parseQuote := func(b byte) error {
 		r, err := parser.checkBytes(parser.quote)
@@ -494,7 +477,7 @@ func (parser *CSVParser) readUnquoteField() error {
 				return errors.AddStack(errUnexpectedQuoteField)
 			}
 		case '\\':
-			parser.skipByte()
+			parser.skipBytes(1)
 			if err := parser.readByteForBackslashEscape(); err != nil {
 				return err
 			}
@@ -592,7 +575,7 @@ func (parser *CSVParser) ReadUntilTokNewLine() (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	parser.skipByte()
+	parser.skipBytes(1)
 	return parser.pos, nil
 }
 
