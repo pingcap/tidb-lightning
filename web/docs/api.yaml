@@ -1,7 +1,7 @@
 openapi: 3.0.2
 info:
   title: TiDB Lightning web interface
-  version: 3.0.0
+  version: 4.0.6
 servers:
   - url: http://127.0.0.1:8289/
 tags:
@@ -11,6 +11,8 @@ tags:
     description: Task progress
   - name: Pause
     description: Pause/resume tasks
+  - name: Log
+    description: Logging
 components:
   schemas:
     Error:
@@ -236,6 +238,23 @@ components:
       properties:
         paused:
           type: boolean
+    LogLevel:
+      type: object
+      required:
+        - level
+      additionalProperties: false
+      properties:
+        level:
+          type: string
+          description: Log level
+          enum:
+            - debug
+            - info
+            - warn
+            - error
+            - dpanic
+            - panic
+            - fatal
   parameters:
     TaskId:
       name: taskId
@@ -255,6 +274,13 @@ components:
           example: |
             [mydumper]
             data-source-dir = '/data/db1'
+    LogLevel:
+      description: Log level
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LogLevel'
   responses:
     serverModeDisabled:
       description: Server mode disabled
@@ -465,3 +491,31 @@ paths:
       responses:
         200:
           description: The program is resumed
+  /loglevel:
+    get:
+      summary: Get the current log level
+      operationId: GetLogLevel
+      tags: [Log]
+      responses:
+        200:
+          description: Current log level
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogLevel'
+    put:
+      summary: Change the current log level
+      operationId: PutLogLevel
+      tags: [Log]
+      requestBody:
+        $ref: '#/components/requestBodies/LogLevel'
+      responses:
+        200:
+          description: Log level is updated
+        400:
+          description: Invalid log level
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+

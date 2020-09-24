@@ -16,7 +16,7 @@
 check_cluster_version 4 0 0 'local backend' || exit 0
 
 # enable cluster index
-run_sql 'set @@global.tidb_enable_clustered_index = 1' || (echo "tidb does not support cluster index yet, skip this test!" && exit 0)
+run_sql 'set @@global.tidb_enable_clustered_index = 1' || exit 0
 # wait for global variable cache invalid
 sleep 2
 

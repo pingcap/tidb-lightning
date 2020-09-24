@@ -679,60 +679,44 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, engineUUID uuid
 		return ranges
 	}
 	if tablecodec.IsIndexKey(firstKey) {
-		// index engine
-		tableID, startIndexID, _, err := tablecodec.DecodeKeyHead(firstKey)
-		if err != nil {
-			return nil, err
+		type tblIndexRange struct {
+			tblID    int64
+			indexID  int64
+			startKey []byte
+			endKey   []byte
 		}
-		tableID, endIndexID, _, err := tablecodec.DecodeKeyHead(lastKey)
-		if err != nil {
-			return nil, err
-		}
-		indexCount := (endIndexID - startIndexID) + 1
 
-		// each index has to split into n / indexCount ranges
-		indexRangeCount := (n + indexCount - 1) / indexCount
-		for i := startIndexID; i <= endIndexID; i++ {
-			k := tablecodec.EncodeTableIndexPrefix(tableID, i)
-			iter.SeekGE(k)
-			// get first key of index i
-			startKeyOfIndex := append([]byte{}, iter.Key()...)
+		// for partitioned table, there will be multiple physical tables and each physical table contains multiple indices
+		indexRanges := make([]*tblIndexRange, 0)
+		iter.First()
+		for iter.Valid() {
+			startKey := append([]byte{}, iter.Key()...)
 
-			k = tablecodec.EncodeTableIndexPrefix(tableID, i+1)
-			// get last key of index i
+			tableID, indexID, _, err := tablecodec.DecodeKeyHead(startKey)
+			if err != nil {
+				return nil, err
+			}
+
+			k := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 			iter.SeekLT(k)
 
-			lastKeyOfIndex := append([]byte{}, iter.Key()...)
+			endKey := append([]byte{}, iter.Key()...)
+			indexRanges = append(indexRanges, &tblIndexRange{tableID, indexID, startKey, endKey})
+			log.L().Debug("index key range", zap.Int64("tableID", tableID), zap.Int64("index", indexID),
+				zap.Binary("startKey", startKey), zap.Binary("endKey", endKey))
 
-			_, startIndexID, _, err := tablecodec.DecodeKeyHead(startKeyOfIndex)
-			if err != nil {
-				return nil, err
-			}
-			_, endIndexID, _, err := tablecodec.DecodeKeyHead(lastKeyOfIndex)
-			if err != nil {
-				return nil, err
-			}
+			iter.Next()
+		}
 
-			if startIndexID != endIndexID {
-				// this shouldn't happen
-				log.L().DPanic("index ID not match",
-					zap.Int64("startID", startIndexID), zap.Int64("endID", endIndexID))
-				return nil, errors.New("index ID not match")
-			}
+		indexRangeCount := (int(n) + len(indexRanges)) / len(indexRanges)
 
-			// if index is Unique or Primary, the key is encoded as
-			// tablePrefix{tableID}_indexPrefixSep{indexID}_indexedColumnsValue
-			// if index is non-Unique, key is encoded as
-			// tablePrefix{tableID}_indexPrefixSep{indexID}_indexedColumnsValue_rowID
+		log.L().Info("split table index kv to range",
+			zap.Int("total index count", len(indexRanges)), zap.Int64("ranges", n),
+			zap.Int("index range count", indexRangeCount))
 
-			// we can split by indexColumnsValue to get indexRangeCount ranges from above Keys
-
-			log.L().Info("split index to range",
-				zap.Int64("indexID", i), zap.Int64("rangeCount", indexRangeCount),
-				zap.Binary("start", startKeyOfIndex), zap.Binary("end", lastKeyOfIndex))
-
-			values := engineFile.splitValuesToRange(startKeyOfIndex, nextKey(lastKeyOfIndex), indexRangeCount, int(indexCount))
-			ranges = appendRanges(ranges, startKeyOfIndex, values)
+		for _, indexRange := range indexRanges {
+			values := engineFile.splitValuesToRange(indexRange.startKey, nextKey(indexRange.endKey), int64(indexRangeCount), len(indexRanges))
+			ranges = appendRanges(ranges, indexRange.startKey, values)
 		}
 	} else {
 		// data engine, we split keys by sample keys instead of by handle

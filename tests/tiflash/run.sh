@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# fi cluster version < v3.1.0 || $TIFLASH is not set, skip this test
-(check_cluster_version 3 1 0 'TiFlash' && [ -n "$TIFLASH" ]) || exit 0
+# before v4.0.5 tiflash doesn't support tls, so we should skip this test then
+(check_cluster_version 4 0 5 'TiFlash' && [ -n "$TIFLASH" ]) || exit 0
 
 set -euE
 # Populate the mydumper source
