@@ -9,17 +9,12 @@
 
 package mydump
 
-// asciiSet is a 32-byte value, where each bit represents the presence of a
-// given ASCII character in the set. The 128-bits of the lower 16 bytes,
-// starting with the least-significant bit of the lowest word to the
-// most-significant bit of the highest word, map to the full range of all
-// 128 ASCII characters. The 128-bits of the upper 16 bytes will be zeroed,
-// ensuring that any non-ASCII character will be reported as not in the set.
-type asciiSet [8]uint32
+// byteSet is a 32-byte value, where each bit represents the presence of a
+// given byte value in the set.
+type byteSet [8]uint32
 
-// makeByteSet creates a set of ASCII characters and reports whether all
-// characters in chars are ASCII.
-func makeByteSet(chars []byte) (as asciiSet) {
+// makeByteSet creates a set of byte value.
+func makeByteSet(chars []byte) (as byteSet) {
 	for i := 0; i < len(chars); i++ {
 		c := chars[i]
 		as[c>>5] |= 1 << uint(c&31)
@@ -28,19 +23,17 @@ func makeByteSet(chars []byte) (as asciiSet) {
 }
 
 // contains reports whether c is inside the set.
-func (as *asciiSet) contains(c byte) bool {
+func (as *byteSet) contains(c byte) bool {
 	return (as[c>>5] & (1 << uint(c&31))) != 0
 }
 
-// IndexAnyAscii returns the byte index of the first occurrence in s of any of the Unicode
-// code points in chars. It returns -1 if  there is no code
-// point in common.
-func IndexAnyAscii(s []byte, as *asciiSet) int {
+// IndexAnyByte returns the byte index of the first occurrence in s of any of the byte
+// points in chars. It returns -1 if  there is no code point in common.
+func IndexAnyByte(s []byte, as *byteSet) int {
 	for i, c := range s {
 		if as.contains(c) {
 			return i
 		}
 	}
 	return -1
-
 }

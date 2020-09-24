@@ -288,6 +288,14 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 		{
 			input: `
 				[mydumper.csv]
+				separator = 'hel'
+				delimiter = 'hello'
+			`,
+			err: "invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other",
+		},
+		{
+			input: `
+				[mydumper.csv]
 				separator = '\'
 				backslash-escape = false
 			`,

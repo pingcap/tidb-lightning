@@ -388,7 +388,7 @@ func (cfg *Config) Adjust() error {
 		return errors.New("invalid config: `mydumper.csv.separator` must not be empty")
 	}
 
-	if len(csv.Delimiter) > 0 && (strings.Index(csv.Separator, csv.Delimiter) == 0 || strings.Index(csv.Delimiter, csv.Separator) == 0) {
+	if len(csv.Delimiter) > 0 && (strings.HasPrefix(csv.Separator, csv.Delimiter) || strings.HasPrefix(csv.Delimiter, csv.Separator)) {
 		return errors.New("invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
 	}
 

@@ -170,6 +170,7 @@ func (s *testMydumpCSVParserSuite) TestTPCHMultiBytes(c *C) {
 	datums := tpchDatums()
 	deliAndSeps := [][2]string{
 		{",", ""},
+		{"\000", ""},
 		{"，", ""},
 		{"🤔", ""},
 		{"，", "。"},
