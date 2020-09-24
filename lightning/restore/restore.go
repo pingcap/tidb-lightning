@@ -1300,8 +1300,10 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 }
 
 func (rc *RestoreController) setGlobalVariables(ctx context.Context) error {
-	// try to enable new collation
+	// set new collation flag base on tidb config
 	enabled := ObtainNewCollationEnabled(ctx, rc.tidbMgr.db)
+	// we should enable/disable new collation here since in server mode, tidb config
+	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
 	return nil
 }
