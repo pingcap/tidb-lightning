@@ -14,13 +14,13 @@
 # limitations under the License.
 
 # enable start tiflash
-TIFLASH="$TIFLASH"
-NEW_COLLATION="$NEW_COLLATION"
+export TIFLASH="$TIFLASH"
+export NEW_COLLATION="$NEW_COLLATION"
 set -eu
 TEST_DIR=/tmp/lightning_test_result
 SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.sh | cut -d/ -f2 | sort)}"
 export PATH="tests/_utils:$PATH"
-source $cur/_utils/run_services
+source tests/_utils/run_services
 
 trap stop_services EXIT
 start_services

@@ -13,9 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-check_cluster_version 4 0 0 'local backend' || exit 0
+check_cluster_version 4 0 0 'new collation' || { echo 'TiDB does not support new collation! skipping test'; exit 0; }
 
 set -euE
+
+cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+source $cur/../_utils/run_services
 
 COLLATION_ENABLED=$NEW_COLLATION
 # restart cluster with new collation enabled
@@ -55,7 +58,7 @@ for BACKEND in local importer tidb; do
 
 done
 
-# restart cluster with new collation disabled
+# restart with original config if needed
 if [ -z "$COLLATION_ENABLED" ]; then
     NEW_COLLATION= start_services
 fi
