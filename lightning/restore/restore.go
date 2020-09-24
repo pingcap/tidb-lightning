@@ -1302,9 +1302,7 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 func (rc *RestoreController) setGlobalVariables(ctx context.Context) error {
 	// try to enable new collation
 	enabled := ObtainNewCollationEnabled(ctx, rc.tidbMgr.db)
-	if enabled {
-		collate.EnableNewCollations()
-	}
+	collate.SetNewCollationEnabledForTest(enabled)
 	return nil
 }
 
