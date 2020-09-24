@@ -267,7 +267,7 @@ func ObtainRowFormatVersion(ctx context.Context, db *sql.DB) (rowFormatVersion s
 func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) bool {
 	var newCollationVal string
 	err := common.SQLWithRetry{DB: db, Logger: log.L()}.QueryRow(ctx, "obtain new collation enabled",
-		"select variable_value from mysql.tidb where variable_name = 'new_collation_enabled'",
+		"SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'",
 		&newCollationVal,
 	)
 	newCollationEnabled := false
