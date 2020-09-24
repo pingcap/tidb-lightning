@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/util/collate"
+
 	"github.com/pingcap/br/pkg/storage"
 
 	"github.com/pingcap/errors"
@@ -127,21 +129,22 @@ func (es *errorSummaries) record(tableName string, err error, status CheckpointS
 }
 
 type RestoreController struct {
-	cfg             *config.Config
-	dbMetas         []*mydump.MDDatabaseMeta
-	dbInfos         map[string]*TidbDBInfo
-	tableWorkers    *worker.Pool
-	indexWorkers    *worker.Pool
-	regionWorkers   *worker.Pool
-	ioWorkers       *worker.Pool
-	pauser          *common.Pauser
-	backend         kv.Backend
-	tidbMgr         *TiDBManager
-	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
-	alterTableLock  sync.Mutex
-	compactState    int32
-	rowFormatVer    string
-	tls             *common.TLS
+	cfg                 *config.Config
+	dbMetas             []*mydump.MDDatabaseMeta
+	dbInfos             map[string]*TidbDBInfo
+	tableWorkers        *worker.Pool
+	indexWorkers        *worker.Pool
+	regionWorkers       *worker.Pool
+	ioWorkers           *worker.Pool
+	pauser              *common.Pauser
+	backend             kv.Backend
+	tidbMgr             *TiDBManager
+	postProcessLock     sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
+	alterTableLock      sync.Mutex
+	compactState        int32
+	rowFormatVer        string
+	newCollationEnabled bool
+	tls                 *common.TLS
 
 	errorSummaries errorSummaries
 
@@ -269,6 +272,7 @@ func (rc *RestoreController) Close() {
 func (rc *RestoreController) Run(ctx context.Context) error {
 	opts := []func(context.Context) error{
 		rc.checkRequirements,
+		rc.setGlobalVariables,
 		rc.restoreSchema,
 		rc.restoreTables,
 		rc.fullCompact,
@@ -356,6 +360,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	go rc.listenCheckpointUpdates()
 
 	rc.rowFormatVer = ObtainRowFormatVersion(ctx, tidbMgr.db)
+	rc.newCollationEnabled = ObtainNewCollationEnabled(ctx, tidbMgr.db)
 
 	// Estimate the number of chunks for progress reporting
 	rc.estimateChunkCountIntoMetrics()
@@ -1294,6 +1299,14 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 		return nil
 	}
 	return rc.backend.CheckRequirements()
+}
+
+func (rc *RestoreController) setGlobalVariables(ctx context.Context) error {
+	enabled := ObtainNewCollationEnabled(ctx, rc.tidbMgr.db)
+	if enabled {
+		collate.EnableNewCollations()
+	}
+	return nil
 }
 
 func (rc *RestoreController) waitCheckpointFinish() {
