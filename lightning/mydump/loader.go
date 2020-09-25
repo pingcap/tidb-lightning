@@ -282,7 +282,7 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 			return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
 		}
 		if res == nil {
-			logger.Info("[loader] file is filtered by file router")
+			logger.Debug("[loader] file is filtered by file router")
 			return nil
 		}
 
@@ -303,11 +303,11 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 			s.dbSchemas = append(s.dbSchemas, info)
 		case SourceTypeTableSchema:
 			s.tableSchemas = append(s.tableSchemas, info)
-		case SourceTypeSQL, SourceTypeCSV:
+		case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
 			s.tableDatas = append(s.tableDatas, info)
 		}
 
-		logger.Info("file route result", zap.String("schema", res.Schema),
+		logger.Debug("file route result", zap.String("schema", res.Schema),
 			zap.String("table", res.Name), zap.Stringer("type", res.Type))
 
 		return nil

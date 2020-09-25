@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# enable start tiflash
+TIFLASH="$TIFLASH"
 set -eu
 TEST_DIR=/tmp/lightning_test_result
 SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.sh | cut -d/ -f2 | sort)}"
@@ -71,6 +73,9 @@ filename = "$TEST_DIR/pd.log"
 [replication]
 enable-placement-rules = true
 max-replicas = 1
+
+[schedule]
+low-space-ratio = 0.99
 
 [security]
 cacert-path = "$TT/ca.pem"
@@ -187,6 +192,7 @@ mark_cache_size = 5368709120
 path = "$TEST_DIR/tiflash/data"
 tcp_port_secure = 9002
 tmp_path = "/tmp/tiflash"
+capacity = "10737418240"
 
 [application]
 runAsDaemon = true
@@ -251,21 +257,23 @@ ca_path = "$TT/ca.pem"
 cert_path = "$TT/tiflash.pem"
 key_path = "$TT/tiflash.key"
 EOF
-    rm -rf $TEST_DIR/tiflash /tmp/tiflash
-    echo "Starting TiFlash..."
-    LD_LIBRARY_PATH=bin/ bin/tiflash server --config-file="$TEST_DIR/tiflash.toml" &
-    echo "TiFlash started..."
+    if [ -n "$TIFLASH" ]; then
+        rm -rf $TEST_DIR/tiflash /tmp/tiflash
+        echo "Starting TiFlash..."
+        LD_LIBRARY_PATH=bin/ bin/tiflash server --config-file="$TEST_DIR/tiflash.toml" &
+        echo "TiFlash started..."
 
-    i=0
-    while ! run_curl https://127.0.0.1:8125 1>/dev/null 2>&1; do
-        i=$((i+1))
-        if [ "$i" -gt 60 ]; then
-            echo "failed to start tiflash"
-            return 1
-        fi
-        echo "TiFlash seems doesn't started, retrying..."
-        sleep 3
-    done
+        i=0
+        while ! run_curl https://127.0.0.1:8125 1>/dev/null 2>&1; do
+            i=$((i+1))
+            if [ "$i" -gt 60 ]; then
+                echo "failed to start tiflash"
+                return 1
+            fi
+            echo "TiFlash seems doesn't started, retrying..."
+            sleep 3
+        done
+    fi
 }
 
 trap stop_services EXIT

@@ -368,12 +368,27 @@ func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
 		return nil
 	}
 	// always check the backend value even with 'check-requirements = false'
-	retryUsage := "destroy all checkpoints and remove all restored tables and try again"
+	retryUsage := "destroy all checkpoints"
+	if cfg.Checkpoint.Driver == config.CheckpointDriverFile {
+		retryUsage = fmt.Sprintf("delete the file '%s'", cfg.Checkpoint.DSN)
+	}
+	retryUsage += " and remove all restored tables and try again"
+
 	if cfg.TikvImporter.Backend != taskCp.Backend {
 		return errors.Errorf("config 'tikv-importer.backend' value '%s' different from checkpoint value '%s', please %s", cfg.TikvImporter.Backend, taskCp.Backend, retryUsage)
 	}
 
 	if cfg.App.CheckRequirements {
+		if common.ReleaseVersion != taskCp.LightningVer {
+			var displayVer string
+			if len(taskCp.LightningVer) != 0 {
+				displayVer = fmt.Sprintf("at '%s'", taskCp.LightningVer)
+			} else {
+				displayVer = "before v4.0.6/v3.0.19"
+			}
+			return errors.Errorf("lightning version is '%s', but checkpoint was created %s, please %s", common.ReleaseVersion, displayVer, retryUsage)
+		}
+
 		errorFmt := "config '%s' value '%s' different from checkpoint value '%s'. You may set 'check-requirements = false' to skip this check or " + retryUsage
 		if cfg.Mydumper.SourceDir != taskCp.SourceDir {
 			return errors.Errorf(errorFmt, "mydumper.data-source-dir", cfg.Mydumper.SourceDir, taskCp.SourceDir)
@@ -1343,6 +1358,11 @@ func newChunkRestore(
 		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+	case mydump.SourceTypeParquet:
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.Key.Path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	default:
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
 	}
@@ -1714,9 +1734,12 @@ func (cr *chunkRestore) deliverLoop(
 
 	for !channelClosed {
 		var dataChecksum, indexChecksum verify.KVChecksum
-		var offset, rowID int64
 		var columns []string
 		var kvPacket []deliveredKVs
+		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
+		// chunk checkpoint should stay the same
+		offset := cr.chunk.Chunk.Offset
+		rowID := cr.chunk.Chunk.PrevRowIDMax
 		// Fetch enough KV pairs from the source.
 	populate:
 		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {

@@ -139,7 +139,7 @@ strict-format = false
 # The default file routing rules' behavior is the same as former versions without this conf, that is:
 #   {schema}-schema-create.sql --> schema create sql file
 #   {schema}.{table}-schema.sql --> table schema sql file
-#   {schema}.{table}.{0001}.{sql|csv} --> data source file
+#   {schema}.{table}.{0001}.{sql|csv|parquet} --> data source file
 #   *-schema-view.sql, *-schema-trigger.sql, *-schema-post.sql --> ignore all the sql files end with these pattern
 #default-file-rules = false
 

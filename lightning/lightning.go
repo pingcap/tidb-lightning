@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/net/http/httpproxy"
 
 	"github.com/pingcap/tidb-lightning/lightning/backend"
@@ -108,6 +109,7 @@ func (l *Lightning) GoServe() error {
 	mux.HandleFunc("/progress/table", handleProgressTable)
 	mux.HandleFunc("/pause", handlePause)
 	mux.HandleFunc("/resume", handleResume)
+	mux.HandleFunc("/loglevel", handleLogLevel)
 
 	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
 		IndexHTML: true,
@@ -551,6 +553,36 @@ func handleResume(w http.ResponseWriter, req *http.Request) {
 	default:
 		w.Header().Set("Allow", http.MethodPut)
 		writeJSONError(w, http.StatusMethodNotAllowed, "only PUT is allowed", nil)
+	}
+}
+
+func handleLogLevel(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var logLevel struct {
+		Level zapcore.Level `json:"level"`
+	}
+
+	switch req.Method {
+	case http.MethodGet:
+		logLevel.Level = log.Level()
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(logLevel)
+
+	case http.MethodPut, http.MethodPost:
+		if err := json.NewDecoder(req.Body).Decode(&logLevel); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid log level", err)
+			return
+		}
+		oldLevel := log.SetLevel(zapcore.InfoLevel)
+		log.L().Info("changed log level", zap.Stringer("old", oldLevel), zap.Stringer("new", logLevel.Level))
+		log.SetLevel(logLevel.Level)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{}"))
+
+	default:
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPut+", "+http.MethodPost)
+		writeJSONError(w, http.StatusMethodNotAllowed, "only GET, PUT and POST are allowed", nil)
 	}
 }
 

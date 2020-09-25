@@ -106,6 +106,11 @@ func L() Logger {
 	return appLogger
 }
 
+// Level returns the current global log level.
+func Level() zapcore.Level {
+	return appLevel.Level()
+}
+
 // SetLevel modifies the log level of the global logger. Returns the previous
 // level.
 func SetLevel(level zapcore.Level) zapcore.Level {
