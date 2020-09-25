@@ -114,7 +114,7 @@ func (e *LocalFile) Cleanup(dataDir string) error {
 
 type gRPCConns struct {
 	mu    sync.Mutex
-	conns map[uint64]*ConnPool
+	conns map[uint64]*connPool
 }
 
 func (conns *gRPCConns) Close() {
@@ -144,11 +144,12 @@ type local struct {
 	tcpConcurrency int
 }
 
-// ConnPool is a lazy pool of gRPC channels.
+// connPool is a lazy pool of gRPC channels.
 // When `Get` called, it lazily allocates new connection if connection not full.
 // If it's full, then it will return allocated channels round-robin.
-// This struct isn't goroutine-safe.
-type ConnPool struct {
+type connPool struct {
+	*sync.Mutex
+
 	conns   []*grpc.ClientConn
 	name    string
 	next    int
@@ -156,7 +157,9 @@ type ConnPool struct {
 	newConn func(ctx context.Context) (*grpc.ClientConn, error)
 }
 
-func (p *ConnPool) Close() {
+func (p *connPool) Close() {
+	p.Lock()
+	defer p.Unlock()
 	for _, c := range p.conns {
 		if err := c.Close(); err != nil {
 			log.L().Warn("failed to close clientConn", zap.String("target", c.Target()))
@@ -165,7 +168,9 @@ func (p *ConnPool) Close() {
 }
 
 // Get tries to get an existing connection from the pool, or make a new one if the pool not full.
-func (p *ConnPool) Get(ctx context.Context) (*grpc.ClientConn, error) {
+func (p *connPool) Get(ctx context.Context) (*grpc.ClientConn, error) {
+	p.Lock()
+	defer p.Unlock()
 	if len(p.conns) < p.cap {
 		c, err := p.newConn(ctx)
 		if err != nil {
@@ -180,9 +185,9 @@ func (p *ConnPool) Get(ctx context.Context) (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
-// NewConnPool creates a new ConnPool by the specified conn factory function and capacity.
-func NewConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *ConnPool {
-	return &ConnPool{
+// NewConnPool creates a new connPool by the specified conn factory function and capacity.
+func NewConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *connPool {
+	return &connPool{
 		cap:     cap,
 		conns:   make([]*grpc.ClientConn, 0, cap),
 		newConn: newConn,
@@ -239,7 +244,7 @@ func NewLocalBackend(
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
 	}
-	local.conns.conns = make(map[uint64]*ConnPool)
+	local.conns.conns = make(map[uint64]*connPool)
 	return MakeBackend(local), nil
 }
 
