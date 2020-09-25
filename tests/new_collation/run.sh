@@ -18,7 +18,7 @@ check_cluster_version 4 0 0 'new collation' || { echo 'TiDB does not support new
 set -euE
 
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
-source $cur/../_utils/run_services
+. $cur/../_utils/run_services
 
 COLLATION_ENABLED=$NEW_COLLATION
 # restart cluster with new collation enabled
@@ -53,7 +53,7 @@ for BACKEND in local importer tidb; do
   check_contains "sum(i): 21"
 
   # run sql with index `s_j`, if lightning don't support new collation, no result will be returned.
-  run_sql "SELECT j FROM nc.t WHERE s = 'this_is_test4'";
+  run_sql "SELECT j FROM nc.t WHERE s = 'This_Is_Test4'";
   check_contains "j: 4"
 
 done
