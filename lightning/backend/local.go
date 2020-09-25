@@ -191,6 +191,8 @@ func NewConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, e
 		cap:     cap,
 		conns:   make([]*grpc.ClientConn, 0, cap),
 		newConn: newConn,
+
+		Mutex: new(sync.Mutex),
 	}
 }
 
