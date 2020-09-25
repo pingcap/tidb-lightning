@@ -352,3 +352,28 @@ func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 	version := ObtainRowFormatVersion(ctx, s.timgr.db)
 	c.Assert(version, Equals, "1")
 }
+
+func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
+	ctx := context.Background()
+
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E")
+	version := ObtainNewCollationEnabled(ctx, s.timgr.db)
+	c.Assert(version, Equals, false)
+
+	kvMap := map[string]bool{
+		"True":  true,
+		"False": false,
+	}
+	for k, v := range kvMap {
+		s.mockDB.
+			ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+			WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).AddRow(k))
+
+		version := ObtainNewCollationEnabled(ctx, s.timgr.db)
+		c.Assert(version, Equals, v)
+	}
+	s.mockDB.
+		ExpectClose()
+
+}

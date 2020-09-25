@@ -61,15 +61,19 @@ const WholeTableEngineID = math.MaxInt32
 const (
 	// the table names to store each kind of checkpoint in the checkpoint database
 	// remember to increase the version number in case of incompatible change.
-	CheckpointTableNameTask   = "task_v1"
+	CheckpointTableNameTask   = "task_v2"
 	CheckpointTableNameTable  = "table_v6"
 	CheckpointTableNameEngine = "engine_v5"
 	CheckpointTableNameChunk  = "chunk_v5"
 )
 
 func IsCheckpointTable(name string) bool {
-	return name == CheckpointTableNameTask || name == CheckpointTableNameTable ||
-		name == CheckpointTableNameEngine || name == CheckpointTableNameChunk
+	switch name {
+	case CheckpointTableNameTask, CheckpointTableNameTable, CheckpointTableNameEngine, CheckpointTableNameChunk:
+		return true
+	default:
+		return false
+	}
 }
 
 func (status CheckpointStatus) MetricName() string {
@@ -342,6 +346,7 @@ type TaskCheckpoint struct {
 	TiDBPort     int
 	PdAddr       string
 	SortedKVDir  string
+	LightningVer string
 }
 
 type CheckpointsDB interface {
@@ -426,12 +431,13 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 			id tinyint(1) PRIMARY KEY,
 			task_id bigint NOT NULL,
 			source_dir varchar(256) NOT NULL,
-			backend varchar(16) NOT NULL, 
-			importer_addr varchar(32),
+			backend varchar(16) NOT NULL,
+			importer_addr varchar(256),
 			tidb_host varchar(128) NOT NULL,
 			tidb_port int NOT NULL,
 			pd_addr varchar(128) NOT NULL,
-			sorted_kv_dir varchar(256) NOT NULL
+			sorted_kv_dir varchar(256) NOT NULL,
+			lightning_ver varchar(48) NOT NULL
 		);
 	`, schema, CheckpointTableNameTask))
 	if err != nil {
@@ -509,15 +515,16 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.L()}
 	err := s.Transact(ctx, "insert checkpoints", func(c context.Context, tx *sql.Tx) error {
 		taskStmt, err := tx.PrepareContext(c, fmt.Sprintf(`
-			REPLACE INTO %s.%s (id, task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir) 
-			VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?);
+			REPLACE INTO %s.%s (id, task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir, lightning_ver)
+			VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 		`, cpdb.schema, CheckpointTableNameTask))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		defer taskStmt.Close()
 		_, err = taskStmt.ExecContext(ctx, cfg.TaskID, cfg.Mydumper.SourceDir, cfg.TikvImporter.Backend,
-			cfg.TikvImporter.Addr, cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.PdAddr, cfg.TikvImporter.SortedKVDir)
+			cfg.TikvImporter.Addr, cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.PdAddr, cfg.TikvImporter.SortedKVDir,
+			common.ReleaseVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -566,12 +573,12 @@ func (cpdb *MySQLCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckp
 	}
 
 	taskQuery := fmt.Sprintf(
-		"SELECT task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir FROM %s.%s WHERE id = 1",
+		"SELECT task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir, lightning_ver FROM %s.%s WHERE id = 1",
 		cpdb.schema, CheckpointTableNameTask,
 	)
 	taskCp := &TaskCheckpoint{}
 	err := s.QueryRow(ctx, "fetch task checkpoint", taskQuery, &taskCp.TaskId, &taskCp.SourceDir, &taskCp.Backend,
-		&taskCp.ImporterAddr, &taskCp.TiDBHost, &taskCp.TiDBPort, &taskCp.PdAddr, &taskCp.SortedKVDir)
+		&taskCp.ImporterAddr, &taskCp.TiDBHost, &taskCp.TiDBPort, &taskCp.PdAddr, &taskCp.SortedKVDir, &taskCp.LightningVer)
 
 	if err != nil {
 		// if task checkpoint is empty, return nil
@@ -898,6 +905,7 @@ func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Confi
 		TidbPort:     int32(cfg.TiDB.Port),
 		PdAddr:       cfg.TiDB.PdAddr,
 		SortedKvDir:  cfg.TikvImporter.SortedKVDir,
+		LightningVer: common.ReleaseVersion,
 	}
 
 	if cpdb.checkpoints.Checkpoints == nil {
@@ -937,6 +945,7 @@ func (cpdb *FileCheckpointsDB) TaskCheckpoint(_ context.Context) (*TaskCheckpoin
 		TiDBPort:     int(cp.TidbPort),
 		PdAddr:       cp.PdAddr,
 		SortedKVDir:  cp.SortedKvDir,
+		LightningVer: cp.LightningVer,
 	}, nil
 }
 
@@ -1146,22 +1155,17 @@ func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int6
 	}
 
 	createSchemaQuery := "CREATE SCHEMA IF NOT EXISTS " + newSchema
-	moveChunkQuery := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, CheckpointTableNameChunk)
-	moveEngineQuery := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, CheckpointTableNameEngine)
-	moveTableQuery := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, CheckpointTableNameTable)
-
 	if e := s.Exec(ctx, "create backup checkpoints schema", createSchemaQuery); e != nil {
 		return e
 	}
-	if e := s.Exec(ctx, "move chunk checkpoints table", moveChunkQuery); e != nil {
-		return e
+	for _, tbl := range []string{CheckpointTableNameChunk, CheckpointTableNameEngine,
+		CheckpointTableNameTable, CheckpointTableNameTask} {
+		query := fmt.Sprintf("RENAME TABLE %[1]s.%[3]s TO %[2]s.%[3]s", cpdb.schema, newSchema, tbl)
+		if e := s.Exec(ctx, fmt.Sprintf("move %s checkpoints table", tbl), query); e != nil {
+			return e
+		}
 	}
-	if e := s.Exec(ctx, "move engine checkpoints table", moveEngineQuery); e != nil {
-		return e
-	}
-	if e := s.Exec(ctx, "move table checkpoints table", moveTableQuery); e != nil {
-		return e
-	}
+
 	return nil
 }
 
