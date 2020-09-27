@@ -24,6 +24,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/br/pkg/conn"
+	pd "github.com/tikv/pd/client"
+
 	"github.com/pingcap/tidb/util/collate"
 
 	"github.com/pingcap/br/pkg/storage"
@@ -672,8 +675,35 @@ var gcLifeTimeKey struct{}
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 
-	var wg sync.WaitGroup
+	// for importer/local backend, we should disable some pd scheduler and change some settings, to
+	// make split region and ingest sst more stable
+	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+		// disable some pd schedulers
+		opt := pd.SecurityOption{}
+		if rc.cfg.Security.CAPath != "" {
+			opt.CAPath = rc.cfg.Security.CAPath
+			opt.CertPath = rc.cfg.Security.CertPath
+			opt.KeyPath = rc.cfg.Security.KeyPath
+		}
+		pdController, err := conn.NewPdController(ctx, rc.cfg.TiDB.PdAddr, rc.tls.TLSConfig(), opt)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.L().Info("removing some PD schedulers")
+		restoreFn, e := pdController.RemoveSchedulers(ctx)
+		defer func() {
+			if restoreE := restoreFn(ctx); restoreE != nil {
+				log.L().Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+				return
+			}
+			log.L().Info("add back PD schedulers")
+		}()
+		if e != nil {
+			return errors.Trace(err)
+		}
+	}
 
+	var wg sync.WaitGroup
 	var restoreErr common.OnceError
 
 	stopPeriodicActions := make(chan struct{})
