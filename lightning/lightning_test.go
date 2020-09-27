@@ -153,7 +153,7 @@ func (s *lightningServerSuite) TestRunServer(c *C) {
 	c.Assert(data["error"], Matches, "cannot parse task.*")
 	resp.Body.Close()
 
-	resp, err = http.Post(url, "application/toml", strings.NewReader("[mydumper.csv]\nseparator = 'fooo'"))
+	resp, err = http.Post(url, "application/toml", strings.NewReader("[mydumper.csv]\nseparator = 'fooo'\ndelimiter= 'foo'"))
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 	err = json.NewDecoder(resp.Body).Decode(&data)
