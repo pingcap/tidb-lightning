@@ -24,13 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/br/pkg/conn"
-	pd "github.com/tikv/pd/client"
-
-	"github.com/pingcap/tidb/util/collate"
-
+	"github.com/pingcap/br/pkg/pdutil"
 	"github.com/pingcap/br/pkg/storage"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -39,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/collate"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
@@ -685,7 +682,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			opt.CertPath = rc.cfg.Security.CertPath
 			opt.KeyPath = rc.cfg.Security.KeyPath
 		}
-		pdController, err := conn.NewPdController(ctx, rc.cfg.TiDB.PdAddr, rc.tls.TLSConfig(), opt)
+		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr, rc.tls.TLSConfig(), opt)
 		if err != nil {
 			return errors.Trace(err)
 		}
