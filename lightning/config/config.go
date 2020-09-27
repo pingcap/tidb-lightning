@@ -384,16 +384,12 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 func (cfg *Config) Adjust() error {
 	// Reject problematic CSV configurations.
 	csv := &cfg.Mydumper.CSV
-	if len(csv.Separator) != 1 {
-		return errors.New("invalid config: `mydumper.csv.separator` must be exactly one byte long")
+	if len(csv.Separator) == 0 {
+		return errors.New("invalid config: `mydumper.csv.separator` must not be empty")
 	}
 
-	if len(csv.Delimiter) > 1 {
-		return errors.New("invalid config: `mydumper.csv.delimiter` must be one byte long or empty")
-	}
-
-	if csv.Separator == csv.Delimiter {
-		return errors.New("invalid config: cannot use the same character for both CSV delimiter and separator")
+	if len(csv.Delimiter) > 0 && (strings.HasPrefix(csv.Separator, csv.Delimiter) || strings.HasPrefix(csv.Delimiter, csv.Separator)) {
+		return errors.New("invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
 	}
 
 	if csv.BackslashEscape {
