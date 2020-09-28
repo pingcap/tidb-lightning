@@ -17,7 +17,7 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
 	github.com/juju/loggo v0.0.0-20180524022052-584905176618 // indirect
 	github.com/onsi/ginkgo v1.13.0 // indirect
-	github.com/pingcap/br v0.0.0-20200909093836-36281d93ab13
+	github.com/pingcap/br v0.0.0-20200928064155-3bf2cdee5b85
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20200902104258-eba4f1d8f6de
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
@@ -44,5 +44,3 @@ require (
 	gopkg.in/mgo.v2 v2.0.0-20180705113604-9856a29383ce // indirect
 	modernc.org/mathutil v1.0.0
 )
-
-replace github.com/pingcap/br => github.com/glorv/br v0.0.0-20200927084636-cae579613f38
