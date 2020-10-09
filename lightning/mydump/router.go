@@ -19,6 +19,7 @@ const (
 	SourceTypeIgnore SourceType = iota
 	SourceTypeSchemaSchema
 	SourceTypeTableSchema
+	SourceTypeViewSchema
 	SourceTypeSQL
 	SourceTypeCSV
 	SourceTypeParquet
@@ -27,6 +28,7 @@ const (
 const (
 	SchemaSchema = "schema-schema"
 	TableSchema  = "table-schema"
+	ViewSchema   = "view-schema"
 	TypeSQL      = "sql"
 	TypeCSV      = "csv"
 	TypeParquet  = "parquet"
@@ -49,6 +51,8 @@ func parseSourceType(t string) (SourceType, error) {
 		return SourceTypeSchemaSchema, nil
 	case TableSchema:
 		return SourceTypeTableSchema, nil
+	case ViewSchema:
+		return SourceTypeViewSchema, nil
 	case TypeSQL:
 		return SourceTypeSQL, nil
 	case TypeCSV:
@@ -68,6 +72,8 @@ func (s SourceType) String() string {
 		return SchemaSchema
 	case SourceTypeTableSchema:
 		return TableSchema
+	case SourceTypeViewSchema:
+		return ViewSchema
 	case SourceTypeCSV:
 		return TypeCSV
 	case SourceTypeSQL:
@@ -102,12 +108,14 @@ var (
 
 var (
 	defaultFileRouteRules = []*config.FileRouteRule{
-		// ignore *-schema-view.sql,-schema-trigger.sql,-schema-post.sql files
-		{Pattern: `(?i).*(-schema-view|-schema-trigger|-schema-post)\.sql`, Type: "ignore"},
+		// ignore *-schema-trigger.sql, *-schema-post.sql files
+		{Pattern: `(?i).*(-schema-trigger|-schema-post)\.sql$`, Type: "ignore"},
 		// db schema create file pattern, matches files like '{schema}-schema-create.sql'
-		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql`, Schema: "$1", Table: "", Type: SchemaSchema},
+		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql$`, Schema: "$1", Table: "", Type: SchemaSchema},
 		// table schema create file pattern, matches files like '{schema}.{table}-schema.sql'
-		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql`, Schema: "$1", Table: "$2", Type: TableSchema},
+		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema\.sql$`, Schema: "$1", Table: "$2", Type: TableSchema},
+		// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql'
+		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql$`, Schema: "$1", Table: "$2", Type: ViewSchema},
 		// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}'
 		{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)$`, Schema: "$1", Table: "$2", Type: "$4", Key: "$3"},
 	}

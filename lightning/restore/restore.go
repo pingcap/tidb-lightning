@@ -339,6 +339,24 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 				return errors.Annotatef(err, "restore table schema %s failed", dbMeta.Name)
 			}
 		}
+
+		// restore views. Since views can cross database we must restore views after all table schemas are restored.
+		for _, dbMeta := range rc.dbMetas {
+			if len(dbMeta.Views) > 0 {
+				task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore view schema")
+				viewsSchema := make(map[string]string)
+				for _, viewMeta := range dbMeta.Views {
+					viewsSchema[viewMeta.Name] = viewMeta.GetSchema(ctx, rc.store)
+				}
+				err = tidbMgr.InitSchema(ctx, dbMeta.Name, viewsSchema)
+
+				task.End(zap.ErrorLevel, err)
+				if err != nil {
+					return errors.Annotatef(err, "restore view schema %s failed", dbMeta.Name)
+				}
+			}
+
+		}
 	}
 	dbInfos, err := tidbMgr.LoadSchemaInfo(ctx, rc.dbMetas, rc.backend.FetchRemoteTableModels)
 	if err != nil {
@@ -1166,8 +1184,9 @@ func (t *TableRestore) importEngine(
 }
 
 func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
-	if !rc.backend.ShouldPostProcess() {
-		t.logger.Debug("skip post-processing, not supported by backend")
+	// if post-process is disabled or the table is empty, just skip
+	if !rc.backend.ShouldPostProcess() || len(cp.Engines) == 1 {
+		t.logger.Debug("skip post-processing, not supported by backend or table is empty")
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 		return nil
 	}
