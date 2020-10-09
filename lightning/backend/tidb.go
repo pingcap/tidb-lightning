@@ -363,36 +363,43 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 	}
 	err = s.Transact(context.Background(), "fetch table columns", func(c context.Context, tx *sql.Tx) error {
 		rows, e := tx.Query(`
-			SELECT table_name, group_concat(column_name SEPARATOR '\n')
+			SELECT table_name, column_name
 			FROM information_schema.columns
 			WHERE table_schema = ?
-			GROUP BY table_name;
+			ORDER BY table_name;
 		`, schemaName)
 		if e != nil {
 			return e
 		}
 		defer rows.Close()
 
+		var (
+			curTableName string
+			curColOffset int
+			curTable     *model.TableInfo
+		)
 		for rows.Next() {
-			var tableName, columnNamesConcat string
-			if e := rows.Scan(&tableName, &columnNamesConcat); e != nil {
+			var tableName, columnName string
+			if e := rows.Scan(&tableName, &columnName); e != nil {
 				return e
 			}
-			columnNames := strings.Split(columnNamesConcat, "\n")
-			columns := make([]*model.ColumnInfo, 0, len(columnNames))
-			for i, columnName := range columnNames {
-				columns = append(columns, &model.ColumnInfo{
-					Name:   model.NewCIStr(columnName),
-					Offset: i,
-					State:  model.StatePublic,
-				})
+			if tableName != curTableName {
+				curTable = &model.TableInfo{
+					Name:       model.NewCIStr(tableName),
+					State:      model.StatePublic,
+					PKIsHandle: true,
+				}
+				tables = append(tables, curTable)
+				curTableName = tableName
+				curColOffset = 0
 			}
-			tables = append(tables, &model.TableInfo{
-				Name:       model.NewCIStr(tableName),
-				Columns:    columns,
-				State:      model.StatePublic,
-				PKIsHandle: true,
+
+			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
+				Name:   model.NewCIStr(columnName),
+				Offset: curColOffset,
+				State:  model.StatePublic,
 			})
+			curColOffset++
 		}
 		return rows.Err()
 	})

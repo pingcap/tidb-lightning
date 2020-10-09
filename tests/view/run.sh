@@ -16,7 +16,8 @@
 set -euE
 
 # Populate the mydumper source
-DBPATH="$TEST_DIR/fr.mydump"
+DBPATH="$TEST_DIR/test_view"
+mkdir -p $DBPATH
 
 echo 'CREATE DATABASE db1;' > "$DBPATH/db1-schema-create.sql"
 echo 'CREATE DATABASE db0;' > "$DBPATH/db0-schema-create.sql"
