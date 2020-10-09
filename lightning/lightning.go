@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -57,6 +58,7 @@ type Lightning struct {
 	shutdown   context.CancelFunc
 	server     http.Server
 	serverAddr net.Addr
+	serverLock sync.Mutex
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -88,10 +90,37 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 }
 
 func (l *Lightning) GoServe() error {
-	if len(l.globalCfg.App.StatusAddr) == 0 {
+	handleSigUsr1(func() {
+		l.serverLock.Lock()
+		statusAddr := l.globalCfg.App.StatusAddr
+		shouldStartServer := len(statusAddr) == 0
+		if shouldStartServer {
+			l.globalCfg.App.StatusAddr = ":"
+		}
+		l.serverLock.Unlock()
+
+		if shouldStartServer {
+			// open a random port and start the server if SIGUSR1 is received.
+			if err := l.goServe(":", os.Stderr); err != nil {
+				log.L().Warn("failed to start HTTP server", log.ShortError(err))
+			}
+		} else {
+			// just prints the server address if it is already started.
+			log.L().Info("already started HTTP server", zap.Stringer("address", l.serverAddr))
+		}
+	})
+
+	l.serverLock.Lock()
+	statusAddr := l.globalCfg.App.StatusAddr
+	l.serverLock.Unlock()
+
+	if len(statusAddr) == 0 {
 		return nil
 	}
+	return l.goServe(statusAddr, ioutil.Discard)
+}
 
+func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
 	mux.Handle("/metrics", promhttp.Handler())
@@ -122,11 +151,13 @@ func (l *Lightning) GoServe() error {
 		},
 	})))
 
-	listener, err := net.Listen("tcp", l.globalCfg.App.StatusAddr)
+	listener, err := net.Listen("tcp", statusAddr)
 	if err != nil {
 		return err
 	}
 	l.serverAddr = listener.Addr()
+	log.L().Info("starting HTTP server", zap.Stringer("address", l.serverAddr))
+	fmt.Fprintln(realAddrWriter, "started HTTP server on", l.serverAddr)
 	l.server.Handler = mux
 	listener = l.globalTLS.WrapListener(listener)
 
