@@ -80,17 +80,21 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile
 	data := make([]byte, 0, sqlFile.Size+1)
 	buffer := make([]byte, 0, sqlFile.Size+1)
 	for {
-		line, err := br.ReadString('\n')
-		if errors.Cause(err) == io.EOF && len(line) == 0 { // it will return EOF if there is no trailing new line.
-			break
+		line, err := br.ReadBytes('\n')
+		if errors.Cause(err) == io.EOF {
+			if len(line) == 0 { // it will return EOF if there is no trailing new line.
+				break
+			}
+		} else if err != nil {
+			return nil, errors.Trace(err)
 		}
 
-		line = strings.TrimSpace(line)
+		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
 		}
 
-		buffer = append(buffer, []byte(line)...)
+		buffer = append(buffer, line...)
 		if buffer[len(buffer)-1] == ';' {
 			statement := string(buffer)
 			if !(strings.HasPrefix(statement, "/*") && strings.HasSuffix(statement, "*/;")) {
