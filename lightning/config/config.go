@@ -565,10 +565,25 @@ func (cfg *Config) Adjust() error {
 		}
 	}
 
-	u, err := url.Parse(cfg.Mydumper.SourceDir)
-	if err != nil {
-		return errors.Trace(err)
+	var u *url.URL
+
+	// An absolute Windows path like "C:\Users\XYZ" would be interpreted as
+	// an URL with scheme "C" and opaque data "\Users\XYZ".
+	// Therefore, we only perform URL parsing if we are sure the path is not
+	// an absolute Windows path.
+	// Here we use the `filepath.VolumeName` which can identify the "C:" part
+	// out of the path. On Linux this method always return an empty string.
+	// On Windows, the drive letter can only be single letters from "A:" to "Z:",
+	// so this won't mistake "S3:" as a Windows path.
+	if len(filepath.VolumeName(cfg.Mydumper.SourceDir)) == 0 {
+		u, err = url.Parse(cfg.Mydumper.SourceDir)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		u = &url.URL{}
 	}
+
 	// convert path and relative path to a valid file url
 	if u.Scheme == "" {
 		if !common.IsDirExists(cfg.Mydumper.SourceDir) {
@@ -578,7 +593,7 @@ func (cfg *Config) Adjust() error {
 		if err != nil {
 			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
 		}
-		cfg.Mydumper.SourceDir = fmt.Sprintf("file://%s", absPath)
+		cfg.Mydumper.SourceDir = "file://" + filepath.ToSlash(absPath)
 		u.Path = absPath
 		u.Scheme = "file"
 	}
