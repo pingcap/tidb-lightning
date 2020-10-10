@@ -66,7 +66,7 @@ func (s *lightningSuite) TestRun(c *C) {
 	path, _ := filepath.Abs(".")
 	err = lightning.run(&config.Config{
 		Mydumper: config.MydumperRuntime{
-			SourceDir:        fmt.Sprintf("file://%s", path),
+			SourceDir:        "file://" + filepath.ToSlash(path),
 			Filter:           []string{"*.*"},
 			DefaultFileRules: true,
 		},
