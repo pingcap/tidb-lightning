@@ -19,20 +19,20 @@ const (
 	SourceTypeIgnore SourceType = iota
 	SourceTypeSchemaSchema
 	SourceTypeTableSchema
-	SourceTypeViewSchema
 	SourceTypeSQL
 	SourceTypeCSV
 	SourceTypeParquet
+	SourceTypeViewSchema
 )
 
 const (
 	SchemaSchema = "schema-schema"
 	TableSchema  = "table-schema"
+	ViewSchema   = "view-schema"
 	TypeSQL      = "sql"
 	TypeCSV      = "csv"
 	TypeParquet  = "parquet"
 	TypeIgnore   = "ignore"
-	ViewSchema   = "view-schema"
 )
 
 type Compression int
