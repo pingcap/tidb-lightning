@@ -947,13 +947,15 @@ func (local *local) WriteAndIngestPairs(
 
 	for _, meta := range metas {
 		var err error
-		for i := 0; i < maxRetryTimes; i++ {
+		errCnt := 0
+		for errCnt < maxRetryTimes {
 			log.L().Debug("ingest meta", zap.Reflect("meta", meta))
 			var resp *sst.IngestResponse
 			resp, err = local.Ingest(ctx, meta, region)
 			if err != nil {
 				log.L().Warn("ingest failed", zap.Error(err), zap.Reflect("meta", meta),
 					zap.Reflect("region", region))
+				errCnt++
 				continue
 			}
 			failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
@@ -968,7 +970,7 @@ func (local *local) WriteAndIngestPairs(
 			})
 			var needRetry bool
 			var newRegion *split.RegionInfo
-			needRetry, newRegion, err = isIngestRetryable(resp, region, meta)
+			needRetry, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
 			if err == nil {
 				// ingest next meta
 				break
@@ -990,7 +992,7 @@ func (local *local) WriteAndIngestPairs(
 			}
 		}
 		if err != nil {
-			log.L().Error("all retry ingest failed", zap.Reflect("ingest meta", meta), zap.Error(err))
+			log.L().Warn("all retry ingest failed", zap.Reflect("ingest meta", meta), zap.Error(err))
 			return remainRange, errors.Trace(err)
 		}
 	}
@@ -1183,7 +1185,12 @@ func (local *local) NewEncoder(tbl table.Table, options *SessionOptions) Encoder
 	return NewTableKVEncoder(tbl, options)
 }
 
-func isIngestRetryable(resp *sst.IngestResponse, region *split.RegionInfo, meta *sst.SSTMeta) (bool, *split.RegionInfo, error) {
+func (local *local) isIngestRetryable(
+	ctx context.Context,
+	resp *sst.IngestResponse,
+	region *split.RegionInfo,
+	meta *sst.SSTMeta,
+) (bool, *split.RegionInfo, error) {
 	if resp.GetError() == nil {
 		return false, nil, nil
 	}
@@ -1196,8 +1203,23 @@ func isIngestRetryable(resp *sst.IngestResponse, region *split.RegionInfo, meta 
 				Leader: newLeader,
 				Region: region.Region,
 			}
-			return true, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+		} else {
+			var err error
+			for i := 0; ; i++ {
+				newRegion, err = local.splitCli.GetRegion(ctx, region.Region.GetStartKey())
+				if err != nil {
+					return false, nil, errors.Trace(err)
+				}
+				if newRegion == nil {
+					log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
+						zap.Int("retry", i))
+					time.Sleep(time.Second)
+					continue
+				}
+			}
 		}
+		canRetry := newRegion != nil
+		return canRetry, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
