@@ -431,7 +431,7 @@ func (s *cpSQLSuite) TestDump(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(csvBuilder.String(), Equals,
 		"table_name,path,offset,type,compression,sort_key,columns,pos,end_offset,prev_rowid_max,rowid_max,kvc_bytes,kvc_kvs,kvc_checksum,create_time,update_time\n"+
-			"`db1`.`t2`,/tmp/path/1.sql,0,4,0,,[],55904,102400,681,5000,4491,586,486070148917,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
+			"`db1`.`t2`,/tmp/path/1.sql,0,3,0,,[],55904,102400,681,5000,4491,586,486070148917,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
 	)
 
 	s.mock.

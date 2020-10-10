@@ -28,11 +28,11 @@ const (
 const (
 	SchemaSchema = "schema-schema"
 	TableSchema  = "table-schema"
-	ViewSchema   = "view-schema"
 	TypeSQL      = "sql"
 	TypeCSV      = "csv"
 	TypeParquet  = "parquet"
 	TypeIgnore   = "ignore"
+	ViewSchema   = "view-schema"
 )
 
 type Compression int
@@ -51,8 +51,6 @@ func parseSourceType(t string) (SourceType, error) {
 		return SourceTypeSchemaSchema, nil
 	case TableSchema:
 		return SourceTypeTableSchema, nil
-	case ViewSchema:
-		return SourceTypeViewSchema, nil
 	case TypeSQL:
 		return SourceTypeSQL, nil
 	case TypeCSV:
@@ -61,6 +59,8 @@ func parseSourceType(t string) (SourceType, error) {
 		return SourceTypeParquet, nil
 	case TypeIgnore:
 		return SourceTypeIgnore, nil
+	case ViewSchema:
+		return SourceTypeViewSchema, nil
 	default:
 		return SourceTypeIgnore, errors.Errorf("unknown source type '%s'", t)
 	}
@@ -72,14 +72,14 @@ func (s SourceType) String() string {
 		return SchemaSchema
 	case SourceTypeTableSchema:
 		return TableSchema
-	case SourceTypeViewSchema:
-		return ViewSchema
 	case SourceTypeCSV:
 		return TypeCSV
 	case SourceTypeSQL:
 		return TypeSQL
 	case SourceTypeParquet:
 		return TypeParquet
+	case SourceTypeViewSchema:
+		return ViewSchema
 	default:
 		return TypeIgnore
 	}
