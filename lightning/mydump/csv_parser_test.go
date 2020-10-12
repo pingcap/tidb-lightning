@@ -74,12 +74,65 @@ func (s *testMydumpCSVParserSuite) runFailingTestCases(c *C, cfg *config.CSVConf
 	}
 }
 
+func tpchDatums() [][]types.Datum {
+	datums := make([][]types.Datum, 0, 3)
+	datums = append(datums, []types.Datum{
+		types.NewStringDatum("1"),
+		types.NewStringDatum("goldenrod lavender spring chocolate lace"),
+		types.NewStringDatum("Manufacturer#1"),
+		types.NewStringDatum("Brand#13"),
+		types.NewStringDatum("PROMO BURNISHED COPPER"),
+		types.NewStringDatum("7"),
+		types.NewStringDatum("JUMBO PKG"),
+		types.NewStringDatum("901.00"),
+		types.NewStringDatum("ly. slyly ironi"),
+	})
+	datums = append(datums, []types.Datum{
+		types.NewStringDatum("2"),
+		types.NewStringDatum("blush thistle blue yellow saddle"),
+		types.NewStringDatum("Manufacturer#1"),
+		types.NewStringDatum("Brand#13"),
+		types.NewStringDatum("LARGE BRUSHED BRASS"),
+		types.NewStringDatum("1"),
+		types.NewStringDatum("LG CASE"),
+		types.NewStringDatum("902.00"),
+		types.NewStringDatum("lar accounts amo"),
+	})
+	datums = append(datums, []types.Datum{
+		types.NewStringDatum("3"),
+		types.NewStringDatum("spring green yellow purple cornsilk"),
+		types.NewStringDatum("Manufacturer#4"),
+		types.NewStringDatum("Brand#42"),
+		types.NewStringDatum("STANDARD POLISHED BRASS"),
+		types.NewStringDatum("21"),
+		types.NewStringDatum("WRAP CASE"),
+		types.NewStringDatum("903.00"),
+		types.NewStringDatum("egular deposits hag"),
+	})
+
+	return datums
+}
+
+func datumsToString(datums [][]types.Datum, delimitor string, quote string, lastSep bool) string {
+	var b strings.Builder
+	for _, ds := range datums {
+		for i, d := range ds {
+			b.WriteString(quote)
+			b.WriteString(d.GetString())
+			b.WriteString(quote)
+			if lastSep || i < len(ds)-1 {
+				b.WriteString(delimitor)
+			}
+		}
+		b.WriteString("\r\n")
+	}
+	return b.String()
+}
+
 func (s *testMydumpCSVParserSuite) TestTPCH(c *C) {
-	reader := mydump.NewStringReader(
-		`1|goldenrod lavender spring chocolate lace|Manufacturer#1|Brand#13|PROMO BURNISHED COPPER|7|JUMBO PKG|901.00|ly. slyly ironi|
-2|blush thistle blue yellow saddle|Manufacturer#1|Brand#13|LARGE BRUSHED BRASS|1|LG CASE|902.00|lar accounts amo|
-3|spring green yellow purple cornsilk|Manufacturer#4|Brand#42|STANDARD POLISHED BRASS|21|WRAP CASE|903.00|egular deposits hag|
-`)
+	datums := tpchDatums()
+	input := datumsToString(datums, "|", "", true)
+	reader := mydump.NewStringReader(input)
 
 	cfg := config.CSVConfig{
 		Separator:   "|",
@@ -92,55 +145,81 @@ func (s *testMydumpCSVParserSuite) TestTPCH(c *C) {
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 1,
-		Row: []types.Datum{
-			types.NewStringDatum("1"),
-			types.NewStringDatum("goldenrod lavender spring chocolate lace"),
-			types.NewStringDatum("Manufacturer#1"),
-			types.NewStringDatum("Brand#13"),
-			types.NewStringDatum("PROMO BURNISHED COPPER"),
-			types.NewStringDatum("7"),
-			types.NewStringDatum("JUMBO PKG"),
-			types.NewStringDatum("901.00"),
-			types.NewStringDatum("ly. slyly ironi"),
-		},
+		Row:   datums[0],
 	})
 	c.Assert(parser, posEq, 126, 1)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 2,
-		Row: []types.Datum{
-			types.NewStringDatum("2"),
-			types.NewStringDatum("blush thistle blue yellow saddle"),
-			types.NewStringDatum("Manufacturer#1"),
-			types.NewStringDatum("Brand#13"),
-			types.NewStringDatum("LARGE BRUSHED BRASS"),
-			types.NewStringDatum("1"),
-			types.NewStringDatum("LG CASE"),
-			types.NewStringDatum("902.00"),
-			types.NewStringDatum("lar accounts amo"),
-		},
+		Row:   datums[1],
 	})
-	c.Assert(parser, posEq, 240, 2)
+	c.Assert(parser, posEq, 241, 2)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
 		RowID: 3,
-		Row: []types.Datum{
-			types.NewStringDatum("3"),
-			types.NewStringDatum("spring green yellow purple cornsilk"),
-			types.NewStringDatum("Manufacturer#4"),
-			types.NewStringDatum("Brand#42"),
-			types.NewStringDatum("STANDARD POLISHED BRASS"),
-			types.NewStringDatum("21"),
-			types.NewStringDatum("WRAP CASE"),
-			types.NewStringDatum("903.00"),
-			types.NewStringDatum("egular deposits hag"),
-		},
+		Row:   datums[2],
 	})
-	c.Assert(parser, posEq, 367, 3)
+	c.Assert(parser, posEq, 369, 3)
 
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
+}
+
+func (s *testMydumpCSVParserSuite) TestTPCHMultiBytes(c *C) {
+	datums := tpchDatums()
+	deliAndSeps := [][2]string{
+		{",", ""},
+		{"\000", ""},
+		{"，", ""},
+		{"🤔", ""},
+		{"，", "。"},
+		{"||", ""},
+		{"|+|", ""},
+		{"##", ""},
+		{"，", "'"},
+		{"，", `"`},
+		{"🤔", `''`},
+		{"🤔", `"'`},
+		{"🤔", `"'`},
+		{"🤔", "🌚"}, // this two emoji have same prefix bytes
+		{"##", "#-"},
+		{"\\s", "\\q"},
+	}
+	for _, SepAndQuote := range deliAndSeps {
+		inputStr := datumsToString(datums, SepAndQuote[0], SepAndQuote[1], false)
+		cfg := config.CSVConfig{
+			Separator:   SepAndQuote[0],
+			Delimiter:   SepAndQuote[1],
+			TrimLastSep: false,
+		}
+
+		reader := mydump.NewStringReader(inputStr)
+		parser := mydump.NewCSVParser(&cfg, reader, config.ReadBlockSize, s.ioWorkers, false)
+		c.Assert(parser.ReadRow(), IsNil)
+		c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+			RowID: 1,
+			Row:   datums[0],
+		})
+
+		c.Assert(parser, posEq, 117+8*len(SepAndQuote[0])+18*len(SepAndQuote[1]), 1)
+
+		c.Assert(parser.ReadRow(), IsNil)
+		c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+			RowID: 2,
+			Row:   datums[1],
+		})
+		c.Assert(parser, posEq, 223+8*2*len(SepAndQuote[0])+18*2*len(SepAndQuote[1]), 2)
+
+		c.Assert(parser.ReadRow(), IsNil)
+		c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+			RowID: 3,
+			Row:   datums[2],
+		})
+		c.Assert(parser, posEq, 342+8*3*len(SepAndQuote[0])+18*3*len(SepAndQuote[1]), 3)
+
+		c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
+	}
 }
 
 func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/pingcap/br/pkg/utils"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 
@@ -38,8 +40,8 @@ type CSVParser struct {
 	cfg       *config.CSVConfig
 	escFlavor backslashEscapeFlavor
 
-	comma            byte
-	quote            byte
+	comma            []byte
+	quote            []byte
 	quoteIndexFunc   func([]byte) int
 	unquoteIndexFunc func([]byte) int
 
@@ -66,18 +68,17 @@ func NewCSVParser(
 	ioWorkers *worker.Pool,
 	shouldParseHeader bool,
 ) *CSVParser {
-	quote := byte(0)
-	if len(cfg.Delimiter) > 0 {
-		quote = cfg.Delimiter[0]
-	}
-
 	escFlavor := backslashEscapeFlavorNone
-	quoteStopSet := cfg.Delimiter
-	unquoteStopSet := "\r\n" + cfg.Separator + cfg.Delimiter
+	var quoteStopSet []byte
+	unquoteStopSet := []byte{'\r', '\n', cfg.Separator[0]}
+	if len(cfg.Delimiter) > 0 {
+		quoteStopSet = []byte{cfg.Delimiter[0]}
+		unquoteStopSet = append(unquoteStopSet, cfg.Delimiter[0])
+	}
 	if cfg.BackslashEscape {
 		escFlavor = backslashEscapeFlavorMySQL
-		quoteStopSet += `\`
-		unquoteStopSet += `\`
+		quoteStopSet = append(quoteStopSet, '\\')
+		unquoteStopSet = append(unquoteStopSet, '\\')
 		// we need special treatment of the NULL value \N, used by MySQL.
 		if !cfg.NotNull && cfg.Null == `\N` {
 			escFlavor = backslashEscapeFlavorMySQLWithNull
@@ -87,8 +88,8 @@ func NewCSVParser(
 	return &CSVParser{
 		blockParser:       makeBlockParser(reader, blockBufSize, ioWorkers),
 		cfg:               cfg,
-		comma:             cfg.Separator[0],
-		quote:             quote,
+		comma:             []byte(cfg.Separator),
+		quote:             []byte(cfg.Delimiter),
 		escFlavor:         escFlavor,
 		quoteIndexFunc:    makeBytesIndexFunc(quoteStopSet),
 		unquoteIndexFunc:  makeBytesIndexFunc(unquoteStopSet),
@@ -96,11 +97,11 @@ func NewCSVParser(
 	}
 }
 
-func makeBytesIndexFunc(chars string) func([]byte) int {
+func makeBytesIndexFunc(chars []byte) func([]byte) int {
 	// chars are guaranteed to be ascii str, so this call will always success
-	as, _ := makeASCIISet(chars)
+	as := makeByteSet(chars)
 	return func(s []byte) int {
-		return IndexAnyAscii(s, &as)
+		return IndexAnyByte(s, &as)
 	}
 }
 
@@ -130,21 +131,43 @@ func (parser *CSVParser) readByte() (byte, error) {
 	return b, nil
 }
 
-func (parser *CSVParser) peekByte() (byte, error) {
-	if len(parser.buf) == 0 {
+func (parser *CSVParser) readBytes(buf []byte) (int, error) {
+	cnt := 0
+	for cnt < len(buf) {
+		if len(parser.buf) == 0 {
+			if err := parser.readBlock(); err != nil {
+				return cnt, err
+			}
+		}
+		if len(parser.buf) == 0 {
+			parser.pos += int64(cnt)
+			return cnt, io.EOF
+		}
+		readCnt := utils.MinInt(len(buf)-cnt, len(parser.buf))
+		copy(buf[cnt:], parser.buf[:readCnt])
+		parser.buf = parser.buf[readCnt:]
+		cnt += readCnt
+	}
+	parser.pos += int64(cnt)
+	return cnt, nil
+}
+
+func (parser *CSVParser) peekBytes(cnt int) ([]byte, error) {
+	if len(parser.buf) < cnt {
 		if err := parser.readBlock(); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 	if len(parser.buf) == 0 {
-		return 0, io.EOF
+		return nil, io.EOF
 	}
-	return parser.buf[0], nil
+	cnt = utils.MinInt(cnt, len(parser.buf))
+	return parser.buf[:cnt], nil
 }
 
-func (parser *CSVParser) skipByte() {
-	parser.buf = parser.buf[1:]
-	parser.pos++
+func (parser *CSVParser) skipBytes(n int) {
+	parser.buf = parser.buf[n:]
+	parser.pos += int64(n)
 }
 
 // readUntil reads the buffer until any character from the `chars` set is found.
@@ -186,6 +209,58 @@ func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
 
 	isEmptyLine := true
 	whitespaceLine := true
+
+	processDefault := func(b byte) error {
+		if b == '\\' && parser.escFlavor != backslashEscapeFlavorNone {
+			if err := parser.readByteForBackslashEscape(); err != nil {
+				return err
+			}
+		} else {
+			parser.recordBuffer = append(parser.recordBuffer, b)
+		}
+		return parser.readUnquoteField()
+	}
+
+	processQuote := func(b byte) error {
+		return parser.readQuotedField()
+	}
+	if len(parser.quote) > 1 {
+		processQuote = func(b byte) error {
+			pb, err := parser.peekBytes(len(parser.quote) - 1)
+			if err != nil && errors.Cause(err) != io.EOF {
+				return err
+			}
+			if bytes.Equal(pb, parser.quote[1:]) {
+				parser.skipBytes(len(parser.quote) - 1)
+				return parser.readQuotedField()
+			}
+			return processDefault(b)
+		}
+	}
+
+	processComma := func(b byte) error {
+		parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
+		return nil
+	}
+	if len(parser.comma) > 1 {
+		processNotComma := processDefault
+		if len(parser.quote) > 0 && parser.comma[0] == parser.quote[0] {
+			processNotComma = processQuote
+		}
+		processComma = func(b byte) error {
+			pb, err := parser.peekBytes(len(parser.comma) - 1)
+			if err != nil && errors.Cause(err) != io.EOF {
+				return err
+			}
+			if bytes.Equal(pb, parser.comma[1:]) {
+				parser.skipBytes(len(parser.comma) - 1)
+				parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
+				return nil
+			}
+			return processNotComma(b)
+		}
+	}
+
 outside:
 	for {
 		firstByte, err := parser.readByte()
@@ -197,17 +272,19 @@ outside:
 			firstByte = '\n'
 		}
 
-		switch firstByte {
-		case parser.comma:
-			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
+		switch {
+		case firstByte == parser.comma[0]:
 			whitespaceLine = false
-		case parser.quote:
-			if err := parser.readQuotedField(); err != nil {
+			if err = processComma(firstByte); err != nil {
+				return nil, err
+			}
+
+		case len(parser.quote) > 0 && firstByte == parser.quote[0]:
+			if err = processQuote(firstByte); err != nil {
 				return nil, err
 			}
 			whitespaceLine = false
-
-		case '\r', '\n':
+		case firstByte == '\r', firstByte == '\n':
 			// new line = end of record (ignore empty lines)
 			if isEmptyLine {
 				continue
@@ -219,22 +296,13 @@ outside:
 			}
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
 			break outside
-
 		default:
-			if firstByte == '\\' && parser.escFlavor != backslashEscapeFlavorNone {
-				if err := parser.readByteForBackslashEscape(); err != nil {
-					return nil, err
-				}
-			} else {
-				parser.recordBuffer = append(parser.recordBuffer, firstByte)
-			}
-			if err := parser.readUnquoteField(); err != nil {
+			if err = processDefault(firstByte); err != nil {
 				return nil, err
 			}
 		}
 		isEmptyLine = false
 	}
-
 	// Create a single string and create slices out of it.
 	// This pins the memory of the fields together, but allocates once.
 	str := string(parser.recordBuffer) // Convert to string once to batch allocations
@@ -264,6 +332,25 @@ func (parser *CSVParser) readByteForBackslashEscape() error {
 }
 
 func (parser *CSVParser) readQuotedField() error {
+	processDefault := func() error {
+		// in all other cases, we've got a syntax error.
+		parser.logSyntaxError()
+		return errors.AddStack(errUnexpectedQuoteField)
+	}
+
+	processComma := func() error { return nil }
+	if len(parser.comma) > 1 {
+		processComma = func() error {
+			b, err := parser.peekBytes(len(parser.comma))
+			if err != nil && errors.Cause(err) != io.EOF {
+				return err
+			}
+			if !bytes.Equal(b, parser.comma) {
+				return processDefault()
+			}
+			return nil
+		}
+	}
 	for {
 		content, terminator, err := parser.readUntil(parser.quoteIndexFunc)
 		err = parser.replaceEOF(err, errUnterminatedQuotedField)
@@ -271,29 +358,56 @@ func (parser *CSVParser) readQuotedField() error {
 			return err
 		}
 		parser.recordBuffer = append(parser.recordBuffer, content...)
-		parser.skipByte()
-		switch terminator {
-		case parser.quote:
+		parser.skipBytes(1)
+		switch {
+		case len(parser.quote) > 0 && terminator == parser.quote[0]:
+			if len(parser.quote) > 1 {
+				b, err := parser.peekBytes(len(parser.quote) - 1)
+				if err != nil && err != io.EOF {
+					return err
+				}
+				if !bytes.Equal(b, parser.quote[1:]) {
+					parser.recordBuffer = append(parser.recordBuffer, terminator)
+					continue
+				}
+				parser.skipBytes(len(parser.quote) - 1)
+			}
 			// encountered '"' -> continue if we're seeing '""'.
-			b, err := parser.peekByte()
-			err = parser.replaceEOF(err, nil)
+			b, err := parser.peekBytes(1)
 			if err != nil {
+				if err == io.EOF {
+					err = nil
+				}
 				return err
 			}
-			switch b {
-			case parser.quote:
+			switch b[0] {
+			case parser.quote[0]:
 				// consume the double quotation mark and continue
-				parser.skipByte()
+				if len(parser.quote) > 1 {
+					b, err := parser.peekBytes(len(parser.quote))
+					if err != nil && err != io.EOF {
+						return err
+					}
+					if !bytes.Equal(b, parser.quote) {
+						if parser.quote[0] == parser.comma[0] {
+							return processComma()
+						} else {
+							return processDefault()
+						}
+					}
+				}
+				parser.skipBytes(len(parser.quote))
 				parser.recordBuffer = append(parser.recordBuffer, '"')
-			case '\r', '\n', parser.comma, 0:
+			case '\r', '\n':
 				// end the field if the next is a separator
 				return nil
+			case parser.comma[0]:
+				return processComma()
 			default:
-				// in all other cases, we've got a syntax error.
-				parser.logSyntaxError()
-				return errors.AddStack(errUnexpectedQuoteField)
+				return processDefault()
 			}
-		case '\\':
+
+		case terminator == '\\':
 			if err := parser.readByteForBackslashEscape(); err != nil {
 				return err
 			}
@@ -302,27 +416,86 @@ func (parser *CSVParser) readQuotedField() error {
 }
 
 func (parser *CSVParser) readUnquoteField() error {
+	addByte := func(b byte) {
+		// read the following byte
+		parser.recordBuffer = append(parser.recordBuffer, b)
+		parser.skipBytes(1)
+	}
+	parseQuote := func(b byte) error {
+		r, err := parser.checkBytes(parser.quote)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if r {
+			parser.logSyntaxError()
+			return errors.AddStack(errUnexpectedQuoteField)
+		}
+		addByte(b)
+		return nil
+	}
+
+	parserNoComma := func(b byte) error {
+		addByte(b)
+		return nil
+	}
+	if len(parser.quote) > 0 && parser.comma[0] == parser.quote[0] {
+		parserNoComma = parseQuote
+	}
 	for {
 		content, terminator, err := parser.readUntil(parser.unquoteIndexFunc)
 		parser.recordBuffer = append(parser.recordBuffer, content...)
-		err = parser.replaceEOF(err, nil)
+		finished := false
 		if err != nil {
-			return err
+			if errors.Cause(err) == io.EOF {
+				finished = true
+				err = nil
+			}
+			if err != nil {
+				return err
+			}
 		}
 
-		switch terminator {
-		case '\r', '\n', parser.comma, 0:
+		switch {
+		case terminator == '\r', terminator == '\n', finished:
 			return nil
-		case parser.quote:
-			parser.logSyntaxError()
-			return errors.AddStack(errUnexpectedQuoteField)
-		case '\\':
-			parser.skipByte()
+		case terminator == parser.comma[0]:
+			r, err := parser.checkBytes(parser.comma)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if r {
+				return nil
+			}
+			if err = parserNoComma(terminator); err != nil {
+				return err
+			}
+		case len(parser.quote) > 0 && terminator == parser.quote[0]:
+			r, err := parser.checkBytes(parser.quote)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if r {
+				parser.logSyntaxError()
+				return errors.AddStack(errUnexpectedQuoteField)
+			}
+		case terminator == '\\':
+			parser.skipBytes(1)
 			if err := parser.readByteForBackslashEscape(); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+func (parser *CSVParser) checkBytes(b []byte) (bool, error) {
+	if len(b) == 1 {
+		return true, nil
+	}
+	pb, err := parser.peekBytes(len(b))
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(pb, b), nil
 }
 
 func (parser *CSVParser) replaceEOF(err error, replaced error) error {
@@ -394,16 +567,16 @@ func (parser *CSVParser) ReadColumns() error {
 	return nil
 }
 
-var newLineAsciiSet, _ = makeASCIISet("\r\n")
+var newLineAsciiSet = makeByteSet([]byte{'\r', '\n'})
 
 func indexOfNewLine(b []byte) int {
-	return IndexAnyAscii(b, &newLineAsciiSet)
+	return IndexAnyByte(b, &newLineAsciiSet)
 }
 func (parser *CSVParser) ReadUntilTokNewLine() (int64, error) {
 	_, _, err := parser.readUntil(indexOfNewLine)
 	if err != nil {
 		return 0, err
 	}
-	parser.skipByte()
+	parser.skipBytes(1)
 	return parser.pos, nil
 }
