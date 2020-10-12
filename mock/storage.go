@@ -8,9 +8,10 @@ package mock
 
 import (
 	context "context"
+	reflect "reflect"
+
 	gomock "github.com/golang/mock/gomock"
 	storage "github.com/pingcap/br/pkg/storage"
-	reflect "reflect"
 )
 
 // MockExternalStorage is a mock of ExternalStorage interface
@@ -94,6 +95,20 @@ func (m *MockExternalStorage) Read(arg0 context.Context, arg1 string) ([]byte, e
 func (mr *MockExternalStorageMockRecorder) Read(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Read", reflect.TypeOf((*MockExternalStorage)(nil).Read), arg0, arg1)
+}
+
+// URI mocks base method
+func (m *MockExternalStorage) URI() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "URI")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// URI indicates an expected call of URI
+func (mr *MockExternalStorageMockRecorder) URI() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "URI", reflect.TypeOf((*MockExternalStorage)(nil).URI))
 }
 
 // WalkDir mocks base method
