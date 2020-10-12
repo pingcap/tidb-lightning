@@ -148,7 +148,7 @@ type local struct {
 // When `Get` called, it lazily allocates new connection if connection not full.
 // If it's full, then it will return allocated channels round-robin.
 type connPool struct {
-	*sync.Mutex
+	mu sync.Mutex
 
 	conns   []*grpc.ClientConn
 	name    string
@@ -157,20 +157,27 @@ type connPool struct {
 	newConn func(ctx context.Context) (*grpc.ClientConn, error)
 }
 
+func (p *connPool) takeConns() (conns []*grpc.ClientConn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.conns, conns = nil, p.conns
+	p.next = 0
+	return conns
+}
+
+// Close closes the conn pool.
 func (p *connPool) Close() {
-	p.Lock()
-	defer p.Unlock()
-	for _, c := range p.conns {
+	for _, c := range p.takeConns() {
 		if err := c.Close(); err != nil {
-			log.L().Warn("failed to close clientConn", zap.String("target", c.Target()))
+			log.L().Warn("failed to close clientConn", zap.String("target", c.Target()), log.ShortError(err))
 		}
 	}
 }
 
-// Get tries to get an existing connection from the pool, or make a new one if the pool not full.
-func (p *connPool) Get(ctx context.Context) (*grpc.ClientConn, error) {
-	p.Lock()
-	defer p.Unlock()
+// get tries to get an existing connection from the pool, or make a new one if the pool not full.
+func (p *connPool) get(ctx context.Context) (*grpc.ClientConn, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if len(p.conns) < p.cap {
 		c, err := p.newConn(ctx)
 		if err != nil {
@@ -185,14 +192,14 @@ func (p *connPool) Get(ctx context.Context) (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
-// NewConnPool creates a new connPool by the specified conn factory function and capacity.
-func NewConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *connPool {
+// newConnPool creates a new connPool by the specified conn factory function and capacity.
+func newConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *connPool {
 	return &connPool{
 		cap:     cap,
 		conns:   make([]*grpc.ClientConn, 0, cap),
 		newConn: newConn,
 
-		Mutex: new(sync.Mutex),
+		mu: sync.Mutex{},
 	}
 }
 
@@ -288,11 +295,11 @@ func (local *local) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientC
 
 func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
 	if _, ok := local.conns.conns[storeID]; !ok {
-		local.conns.conns[storeID] = NewConnPool(local.tcpConcurrency, func(ctx context.Context) (*grpc.ClientConn, error) {
+		local.conns.conns[storeID] = newConnPool(local.tcpConcurrency, func(ctx context.Context) (*grpc.ClientConn, error) {
 			return local.makeConn(ctx, storeID)
 		})
 	}
-	return local.conns.conns[storeID].Get(ctx)
+	return local.conns.conns[storeID].get(ctx)
 }
 
 // Close the importer connection.
@@ -593,7 +600,7 @@ func (local *local) WriteToTiKV(
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size),
 		zap.Int64("buf_size", bytesBuf.totalSize()),
-		zap.Stringer("time_cost", time.Since(begin)))
+		zap.Stringer("takeTime", time.Since(begin)))
 
 	var remainRange *Range
 	if iter.Valid() && iter.Next() {
