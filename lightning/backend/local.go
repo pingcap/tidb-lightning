@@ -1009,11 +1009,17 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 	for {
 		// split region by given ranges
-		err = local.SplitAndScatterRegionByRanges(ctx, ranges)
+		for i := 0; i < maxRetryTimes; i++ {
+			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
+			if err == nil {
+				break
+			}
+		}
 		if err != nil {
 			log.L().Error("split & scatter ranges failed", zap.Error(err))
 			return err
 		}
+
 		// start to write to kv and ingest
 		err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
 		if err != nil {
@@ -1150,32 +1156,6 @@ func (local *local) isIngestRetryable(
 			}
 		}
 		return true, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
-	case errPb.EpochNotMatch != nil:
-		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
-			var currentRegion *metapb.Region
-			for _, r := range currentRegions {
-				if insideRegion(r, meta) {
-					currentRegion = r
-					break
-				}
-			}
-			if currentRegion != nil {
-				var newLeader *metapb.Peer
-				for _, p := range currentRegion.Peers {
-					if p.GetStoreId() == region.Leader.GetStoreId() {
-						newLeader = p
-						break
-					}
-				}
-				if newLeader != nil {
-					newRegion = &split.RegionInfo{
-						Leader: newLeader,
-						Region: currentRegion,
-					}
-				}
-			}
-		}
-		return true, newRegion, errors.Errorf("epoch not match: %s", errPb.GetMessage())
 	}
 	return false, nil, errors.Errorf("non retryable error: %s", resp.GetError().GetMessage())
 }
