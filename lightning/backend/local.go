@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1132,7 +1133,23 @@ func (local *local) isIngestRetryable(
 		return false, nil, nil
 	}
 
+	getRegion := func() (*split.RegionInfo, error) {
+		for i := 0; ; i++ {
+			newRegion, err := local.splitCli.GetRegion(ctx, region.Region.GetStartKey())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if newRegion != nil {
+				return newRegion, nil
+			}
+			log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
+				zap.Int("retry", i))
+			time.Sleep(time.Second)
+		}
+	}
+
 	var newRegion *split.RegionInfo
+	var err error
 	switch errPb := resp.GetError(); {
 	case errPb.NotLeader != nil:
 		if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
@@ -1141,23 +1158,21 @@ func (local *local) isIngestRetryable(
 				Region: region.Region,
 			}
 		} else {
-			var err error
-			for i := 0; ; i++ {
-				newRegion, err = local.splitCli.GetRegion(ctx, region.Region.GetStartKey())
-				if err != nil {
-					return false, nil, errors.Trace(err)
-				}
-				if newRegion != nil {
-					break
-				}
-				log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
-					zap.Int("retry", i))
-				time.Sleep(time.Second)
+			newRegion, err = getRegion()
+			if err != nil {
+				return false, nil, errors.Trace(err)
 			}
 		}
 		return true, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+	case strings.Contains(errPb.Message, "Raft raft: proposal dropped"):
+		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
+		newRegion, err = getRegion()
+		if err != nil {
+			return false, nil, errors.Trace(err)
+		}
+		return true, newRegion, errors.New(errPb.GetMessage())
 	}
-	return false, nil, errors.Errorf("non retryable error: %s", resp.GetError().GetMessage())
+	return false, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
 
 func nextKey(key []byte) []byte {
