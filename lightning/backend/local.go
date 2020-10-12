@@ -1141,16 +1141,15 @@ func (local *local) isIngestRetryable(
 				if err != nil {
 					return false, nil, errors.Trace(err)
 				}
-				if newRegion == nil {
-					log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
-						zap.Int("retry", i))
-					time.Sleep(time.Second)
-					continue
+				if newRegion != nil {
+					break
 				}
+				log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
+					zap.Int("retry", i))
+				time.Sleep(time.Second)
 			}
 		}
-		canRetry := newRegion != nil
-		return canRetry, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+		return true, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
