@@ -136,7 +136,8 @@ const (
 )
 
 func (t *PostOpLevel) UnmarshalText(text []byte) error {
-	switch strings.ToLower(string(text)) {
+
+	switch strings.ToLower(strings.Trim(string(text), `'"`)) {
 	case "off", "false":
 		*t = OpLevelOff
 	case "required", "true":
