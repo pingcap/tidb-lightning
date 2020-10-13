@@ -219,7 +219,7 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 	)
 	cancel()
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, errors.Trace(err)
 	}
 	// Cache the conn.
 	local.grpcClis.clis[storeID] = conn
@@ -363,7 +363,7 @@ func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst
 	if !ok {
 		conn, err = local.getGrpcConnLocked(ctx, peer.GetStoreId())
 		if err != nil {
-			log.L().Error("could not get grpc connect ", zap.Uint64("storeId", peer.GetStoreId()))
+			log.L().Warn("could not get grpc connect ", zap.Uint64("storeId", peer.GetStoreId()), zap.Error(err))
 			return nil, err
 		}
 	}
@@ -426,7 +426,7 @@ func (local *local) WriteToTiKV(
 
 		wstream, err := cli.Write(ctx)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, errors.Trace(err)
 		}
 
 		// Bind uuid for this write request
@@ -436,7 +436,7 @@ func (local *local) WriteToTiKV(
 			},
 		}
 		if err = wstream.Send(req); err != nil {
-			return nil, nil, err
+			return nil, nil, errors.Trace(err)
 		}
 		req.Chunk = &sst.WriteRequest_Batch{
 			Batch: &sst.WriteBatch{
@@ -515,7 +515,7 @@ func (local *local) WriteToTiKV(
 
 	// if there is not leader currently, we should directly return an error
 	if leaderPeerMetas == nil {
-		log.L().Error("write to tikv no leader", zap.Reflect("region", region),
+		log.L().Warn("write to tikv no leader", zap.Reflect("region", region),
 			zap.Uint64("leader_id", leaderID), zap.Reflect("meta", meta),
 			zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size))
 		return nil, nil, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
@@ -1055,7 +1055,7 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 		}
 		local.engines.Delete(engineUUID)
 	} else {
-		log.L().Error("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 	}
 	return nil
 }
