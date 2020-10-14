@@ -1175,6 +1175,8 @@ func (local *local) isIngestRetryable(
 	return false, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
 
+// return the smallest []byte that is bigger than current bytes.
+// special case when key is empty, empty bytes means infinity in our context, so directly return itself.
 func nextKey(key []byte) []byte {
 	if len(key) == 0 {
 		return []byte{}
