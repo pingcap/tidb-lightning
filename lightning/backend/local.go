@@ -1180,15 +1180,8 @@ func nextKey(key []byte) []byte {
 		return []byte{}
 	}
 	res := make([]byte, 0, len(key)+1)
-	pos := 0
-	for i := len(key) - 1; i >= 0; i-- {
-		if key[i] != '\xff' {
-			pos = i
-			break
-		}
-	}
-	s, e := key[:pos], key[pos]+1
-	res = append(append(res, s...), e)
+	res = append(res, key...)
+	res = append(res, 0)
 	return res
 }
 
