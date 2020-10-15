@@ -247,10 +247,10 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 		cfg.Mydumper.NoSchema = true
 	}
 	if *checksum != "" {
-		_ = cfg.PostRestore.Checksum.UnmarshalText([]byte(*checksum))
+		_ = cfg.PostRestore.Checksum.FromStringValue(*checksum)
 	}
 	if *analyze != "" {
-		_ = cfg.PostRestore.Analyze.UnmarshalText([]byte(*checksum))
+		_ = cfg.PostRestore.Analyze.FromStringValue(*analyze)
 	}
 	if cfg.App.StatusAddr == "" && cfg.App.PProfPort != 0 {
 		cfg.App.StatusAddr = fmt.Sprintf(":%d", cfg.App.PProfPort)

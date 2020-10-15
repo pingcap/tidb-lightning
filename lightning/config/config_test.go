@@ -550,7 +550,13 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		[post-restore]
 		checksum = "req"
 	`))
-	c.Assert(err, ErrorMatches, regexp.QuoteMeta("invalid post process type 'req', please choose valid option between ['off', 'optional', 'required']"))
+	c.Assert(err, ErrorMatches, regexp.QuoteMeta("invalid op level 'req', please choose valid option between ['off', 'optional', 'required']"))
+
+	err = cfg.LoadFromTOML([]byte(`
+		[post-restore]
+		analyze = 123
+	`))
+	c.Assert(err, ErrorMatches, regexp.QuoteMeta("invalid op level '123', please choose valid option between ['off', 'optional', 'required']"))
 
 	kvMap := map[string]config.PostOpLevel{
 		`"off"`:      config.OpLevelOff,

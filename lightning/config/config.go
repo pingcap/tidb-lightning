@@ -135,9 +135,25 @@ const (
 	OpLevelRequired
 )
 
-func (t *PostOpLevel) UnmarshalText(text []byte) error {
+func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
+	switch v.(type) {
+	case bool:
+		if v.(bool) {
+			*t = OpLevelRequired
+		} else {
+			*t = OpLevelOff
+		}
+	case string:
+		return t.FromStringValue(v.(string))
+	default:
+		return errors.Errorf("invalid op level '%v', please choose valid option between ['off', 'optional', 'required']", v)
+	}
+	return nil
+}
 
-	switch strings.ToLower(strings.Trim(string(text), `'"`)) {
+// parser command line parameter
+func (t *PostOpLevel) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
 	case "off", "false":
 		*t = OpLevelOff
 	case "required", "true":
@@ -145,17 +161,13 @@ func (t *PostOpLevel) UnmarshalText(text []byte) error {
 	case "optional":
 		*t = OPLevelOptional
 	default:
-		return errors.Errorf("invalid post process type '%s', please choose valid option between ['off', 'optional', 'required']", string(text))
+		return errors.Errorf("invalid op level '%s', please choose valid option between ['off', 'optional', 'required']", s)
 	}
 	return nil
 }
 
 func (t *PostOpLevel) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + t.String() + `"`), nil
-}
-
-func (t *PostOpLevel) UnmarshalJSON(data []byte) error {
-	return t.UnmarshalText(data)
 }
 
 func (t PostOpLevel) String() string {
