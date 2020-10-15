@@ -106,7 +106,7 @@ func NewGlobalConfig() *GlobalConfig {
 		},
 		PostRestore: GlobalPostRestore{
 			Checksum: OpLevelRequired,
-			Analyze:  OPLevelOptional,
+			Analyze:  OpLevelOptional,
 		},
 	}
 }

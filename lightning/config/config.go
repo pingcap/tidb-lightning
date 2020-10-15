@@ -131,20 +131,20 @@ type PostOpLevel int
 
 const (
 	OpLevelOff PostOpLevel = iota
-	OPLevelOptional
+	OpLevelOptional
 	OpLevelRequired
 )
 
 func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
-	switch v.(type) {
+	switch val := v.(type) {
 	case bool:
-		if v.(bool) {
+		if val {
 			*t = OpLevelRequired
 		} else {
 			*t = OpLevelOff
 		}
 	case string:
-		return t.FromStringValue(v.(string))
+		return t.FromStringValue(val)
 	default:
 		return errors.Errorf("invalid op level '%v', please choose valid option between ['off', 'optional', 'required']", v)
 	}
@@ -159,7 +159,7 @@ func (t *PostOpLevel) FromStringValue(s string) error {
 	case "required", "true":
 		*t = OpLevelRequired
 	case "optional":
-		*t = OPLevelOptional
+		*t = OpLevelOptional
 	default:
 		return errors.Errorf("invalid op level '%s', please choose valid option between ['off', 'optional', 'required']", s)
 	}
@@ -170,11 +170,15 @@ func (t *PostOpLevel) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + t.String() + `"`), nil
 }
 
+func (t *PostOpLevel) UnmarshalJSON(data []byte) error {
+	return t.FromStringValue(strings.Trim(string(data), `"`))
+}
+
 func (t PostOpLevel) String() string {
 	switch t {
 	case OpLevelOff:
 		return "off"
-	case OPLevelOptional:
+	case OpLevelOptional:
 		return "optional"
 	case OpLevelRequired:
 		return "required"
@@ -343,7 +347,7 @@ func NewConfig() *Config {
 		},
 		PostRestore: PostRestore{
 			Checksum: OpLevelRequired,
-			Analyze:  OPLevelOptional,
+			Analyze:  OpLevelOptional,
 		},
 	}
 }

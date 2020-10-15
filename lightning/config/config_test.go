@@ -485,13 +485,13 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	c.Assert(cfg.Mydumper.SourceDir, Equals, path)
 	c.Assert(cfg.TikvImporter.Addr, Equals, "172.16.30.11:23008")
 	c.Assert(cfg.PostRestore.Checksum, Equals, config.OpLevelOff)
-	c.Assert(cfg.PostRestore.Analyze, Equals, config.OPLevelOptional)
+	c.Assert(cfg.PostRestore.Analyze, Equals, config.OpLevelOptional)
 
 	taskCfg := config.NewConfig()
 	err = taskCfg.LoadFromGlobal(cfg)
 	c.Assert(err, IsNil)
 	c.Assert(taskCfg.PostRestore.Checksum, Equals, config.OpLevelOff)
-	c.Assert(taskCfg.PostRestore.Analyze, Equals, config.OPLevelOptional)
+	c.Assert(taskCfg.PostRestore.Analyze, Equals, config.OpLevelOptional)
 
 	taskCfg.Checkpoint.DSN = ""
 	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
@@ -561,7 +561,7 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 	kvMap := map[string]config.PostOpLevel{
 		`"off"`:      config.OpLevelOff,
 		`"required"`: config.OpLevelRequired,
-		`"optional"`: config.OPLevelOptional,
+		`"optional"`: config.OpLevelOptional,
 		"true":       config.OpLevelRequired,
 		"false":      config.OpLevelOff,
 	}

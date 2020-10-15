@@ -1206,7 +1206,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		} else {
 			err := t.compareChecksum(ctx, rc.tidbMgr.db, localChecksum)
 			// witch post restore level 'optional', we will skip checksum error
-			if rc.cfg.PostRestore.Checksum == config.OPLevelOptional {
+			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
 				if err != nil {
 					t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
 					err = nil
@@ -1227,7 +1227,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		} else {
 			err := t.analyzeTable(ctx, rc.tidbMgr.db)
 			// witch post restore level 'optional', we will skip analyze error
-			if rc.cfg.PostRestore.Analyze == config.OPLevelOptional {
+			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
 				if err != nil {
 					t.logger.Warn("analyze table failed, will skip this error and go on", log.ShortError(err))
 					err = nil
