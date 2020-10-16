@@ -6,12 +6,13 @@ require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.4.1
 	github.com/carlmjohnson/flagext v0.0.11
-	github.com/cockroachdb/pebble v0.0.0-20200617141519-3b241b76ed3b
+	github.com/cockroachdb/pebble v0.0.0-20201007144542-b79d619f4761
 	github.com/coreos/go-semver v0.3.0
 	github.com/dgraph-io/ristretto v0.0.2-0.20200115201040-8f368f2f2ab3 // indirect
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/mock v1.4.4
+	github.com/google/btree v1.0.0
 	github.com/google/go-cmp v0.5.0 // indirect
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
 	github.com/juju/loggo v0.0.0-20180524022052-584905176618 // indirect
@@ -41,3 +42,5 @@ require (
 	gopkg.in/mgo.v2 v2.0.0-20180705113604-9856a29383ce // indirect
 	modernc.org/mathutil v1.0.0
 )
+
+replace github.com/cockroachdb/pebble => github.com/glorv/pebble v0.0.0-20201016054324-9e202fb8089f
