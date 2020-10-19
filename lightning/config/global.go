@@ -79,8 +79,8 @@ type GlobalCheckpoint struct {
 }
 
 type GlobalPostRestore struct {
-	Checksum bool `toml:"checksum" json:"checksum"`
-	Analyze  bool `toml:"analyze" json:"analyze"`
+	Checksum PostOpLevel `toml:"checksum" json:"checksum"`
+	Analyze  PostOpLevel `toml:"analyze" json:"analyze"`
 }
 
 func NewGlobalConfig() *GlobalConfig {
@@ -105,8 +105,8 @@ func NewGlobalConfig() *GlobalConfig {
 			Backend: "importer",
 		},
 		PostRestore: GlobalPostRestore{
-			Checksum: true,
-			Analyze:  true,
+			Checksum: OpLevelRequired,
+			Analyze:  OpLevelOptional,
 		},
 	}
 }
@@ -156,8 +156,8 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	sortedKVDir := fs.String("sorted-kv-dir", "", "path for KV pairs when local backend enabled")
 	enableCheckpoint := fs.Bool("enable-checkpoint", true, "whether to enable checkpoints")
 	noSchema := fs.Bool("no-schema", false, "ignore schema files, get schema directly from TiDB instead")
-	checksum := fs.Bool("checksum", true, "compare checksum after importing")
-	analyze := fs.Bool("analyze", true, "analyze table after importing")
+	checksum := flagext.ChoiceVar(fs, "checksum", "", "compare checksum after importing.", "", "required", "optional", "off", "true", "false")
+	analyze := flagext.ChoiceVar(fs, "analyze", "", "analyze table after importing", "", "required", "optional", "off", "true", "false")
 	checkRequirements := fs.Bool("check-requirements", true, "check cluster version before starting")
 	tlsCAPath := fs.String("ca", "", "CA certificate path for TLS connection")
 	tlsCertPath := fs.String("cert", "", "certificate path for TLS connection")
@@ -246,11 +246,11 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	if *noSchema {
 		cfg.Mydumper.NoSchema = true
 	}
-	if !*checksum {
-		cfg.PostRestore.Checksum = false
+	if *checksum != "" {
+		_ = cfg.PostRestore.Checksum.FromStringValue(*checksum)
 	}
-	if !*analyze {
-		cfg.PostRestore.Analyze = false
+	if *analyze != "" {
+		_ = cfg.PostRestore.Analyze.FromStringValue(*analyze)
 	}
 	if cfg.App.StatusAddr == "" && cfg.App.PProfPort != 0 {
 		cfg.App.StatusAddr = fmt.Sprintf(":%d", cfg.App.PProfPort)
