@@ -1240,7 +1240,7 @@ func (local *local) isIngestRetryable(
 			}
 		}
 		return true, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
-	case strings.Contains(errPb.Message, "Raft raft: proposal dropped"):
+	case strings.Contains(errPb.Message, "raft: proposal dropped"):
 		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
 		newRegion, err = getRegion()
 		if err != nil {
