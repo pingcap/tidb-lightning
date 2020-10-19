@@ -228,16 +228,23 @@ checksum-table-concurrency = 16
 # post-restore provide some options which will be executed after all kv data has been imported into the tikv cluster.
 # the execution order are(if set true): checksum -> analyze
 [post-restore]
-# if set true, checksum will do ADMIN CHECKSUM TABLE <table> for each table.
-checksum = true
+# config whether to do `ADMIN CHECKSUM TABLE <table>` after restore finished for each table.
+# valid options:
+# - "off". do not do checksum.
+# - "optional". do execute admin checksum, but will ignore any error if checksum fails.
+# - "required". default option. do execute admin checksum, if checksum fails, lightning will exit with failure.
+# NOTE: for backward compatibility, bool values `true` and `false` is also allowed for this field. `true` is
+# equivalent to "required" and `false` is equivalent to "off".
+checksum = "required"
+# if set true, analyze will do `ANALYZE TABLE <table>` for each table.
+# the config options is the same as 'post-restore.checksum'.
+analyze = "optional"
 # if set to true, compact will do level 1 compaction to tikv data.
 # if this setting is missing, the default value is false.
 level-1-compact = false
 # if set true, compact will do full compaction to tikv data.
 # if this setting is missing, the default value is false.
 compact = false
-# if set true, analyze will do ANALYZE TABLE <table> for each table.
-analyze = true
 
 # cron performs some periodic actions in background
 [cron]
