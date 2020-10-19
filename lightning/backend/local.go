@@ -1220,7 +1220,11 @@ func (local *local) isIngestRetryable(
 			}
 			log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
 				zap.Int("retry", i))
-			time.Sleep(time.Second)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second):
+			}
 		}
 	}
 

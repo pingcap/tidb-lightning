@@ -14,9 +14,9 @@ func (s *localSuite) TestNextKey(c *C) {
 	c.Assert(nextKey([]byte{}), DeepEquals, []byte{})
 
 	cases := [][]byte{
-		[]byte{0},
-		[]byte{255},
-		[]byte{1, 255},
+		{0},
+		{255},
+		{1, 255},
 	}
 	for _, b := range cases {
 		next := nextKey(b)
