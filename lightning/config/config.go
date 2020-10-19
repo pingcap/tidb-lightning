@@ -127,12 +127,72 @@ type Lightning struct {
 	CheckRequirements bool `toml:"check-requirements" json:"check-requirements"`
 }
 
+type PostOpLevel int
+
+const (
+	OpLevelOff PostOpLevel = iota
+	OpLevelOptional
+	OpLevelRequired
+)
+
+func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
+	switch val := v.(type) {
+	case bool:
+		if val {
+			*t = OpLevelRequired
+		} else {
+			*t = OpLevelOff
+		}
+	case string:
+		return t.FromStringValue(val)
+	default:
+		return errors.Errorf("invalid op level '%v', please choose valid option between ['off', 'optional', 'required']", v)
+	}
+	return nil
+}
+
+// parser command line parameter
+func (t *PostOpLevel) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
+	case "off", "false":
+		*t = OpLevelOff
+	case "required", "true":
+		*t = OpLevelRequired
+	case "optional":
+		*t = OpLevelOptional
+	default:
+		return errors.Errorf("invalid op level '%s', please choose valid option between ['off', 'optional', 'required']", s)
+	}
+	return nil
+}
+
+func (t *PostOpLevel) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + t.String() + `"`), nil
+}
+
+func (t *PostOpLevel) UnmarshalJSON(data []byte) error {
+	return t.FromStringValue(strings.Trim(string(data), `"`))
+}
+
+func (t PostOpLevel) String() string {
+	switch t {
+	case OpLevelOff:
+		return "off"
+	case OpLevelOptional:
+		return "optional"
+	case OpLevelRequired:
+		return "required"
+	default:
+		panic(fmt.Sprintf("invalid post process type '%d'", t))
+	}
+}
+
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
-	Level1Compact bool `toml:"level-1-compact" json:"level-1-compact"`
-	Compact       bool `toml:"compact" json:"compact"`
-	Checksum      bool `toml:"checksum" json:"checksum"`
-	Analyze       bool `toml:"analyze" json:"analyze"`
+	Level1Compact bool        `toml:"level-1-compact" json:"level-1-compact"`
+	Compact       bool        `toml:"compact" json:"compact"`
+	Checksum      PostOpLevel `toml:"checksum" json:"checksum"`
+	Analyze       PostOpLevel `toml:"analyze" json:"analyze"`
 }
 
 type CSVConfig struct {
@@ -286,8 +346,8 @@ func NewConfig() *Config {
 			RegionSplitSize: SplitRegionSize,
 		},
 		PostRestore: PostRestore{
-			Checksum: true,
-			Analyze:  true,
+			Checksum: OpLevelRequired,
+			Analyze:  OpLevelOptional,
 		},
 	}
 }
