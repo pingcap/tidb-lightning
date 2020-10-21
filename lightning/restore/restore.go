@@ -683,7 +683,8 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		logTask.Info("removing PD leader&region schedulers")
 		restoreFn, e := pdController.RemoveSchedulers(ctx)
 		defer func() {
-			if restoreE := restoreFn(ctx); restoreE != nil {
+			// use context.Background to make sure this restore function can still be executed even if ctx is canceled
+			if restoreE := restoreFn(context.Background()); restoreE != nil {
 				logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
 				return
 			}
