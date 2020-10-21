@@ -698,10 +698,6 @@ func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split
 }
 
 func (local *local) readAndSplitIntoRangeNew(engineFile *LocalFile) ([]Range, error) {
-	if engineFile.Length == 0 {
-		return nil, nil
-	}
-
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
 
@@ -736,7 +732,7 @@ func (local *local) readAndSplitIntoRangeNew(engineFile *LocalFile) ([]Range, er
 	sizeProps.iter(func(p *rangeProperty) bool {
 		curSize += p.Size
 		curKeys += p.Keys
-		if int64(curSize) >= local.regionSplitSize || curKeys >= regionMaxKeyCount {
+		if int64(curSize) >= local.regionSplitSize || curKeys >= regionMaxKeyCount*2/3 {
 			ranges = append(ranges, Range{start: curKey, end: p.Key})
 			curKey = p.Key
 			curSize = 0
@@ -747,6 +743,8 @@ func (local *local) readAndSplitIntoRangeNew(engineFile *LocalFile) ([]Range, er
 
 	if curKeys > 0 {
 		ranges = append(ranges, Range{start: curKey, end: endKey})
+	} else {
+		ranges[len(ranges)-1].end = endKey
 	}
 
 	log.L().Info("split engine key ranges", zap.Stringer("engine", engineFile.Uuid),
@@ -1192,14 +1190,23 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		return nil
 	}
 
+	lf := engineFile.(*LocalFile)
+	if lf.TotalSize == 0 {
+		log.L().Info("engine contains not kv, skip import", zap.Stringer("engine", engineUUID))
+		return nil
+	}
+
 	// split sorted file into range by 96MB size per file
-	ranges, err := local.readAndSplitIntoRangeNew(engineFile.(*LocalFile))
+	ranges, err := local.readAndSplitIntoRangeNew(lf)
 	if err != nil {
 		return err
 	}
 	remains := &syncdRanges{}
 
 	for {
+		log.L().Info("start import engine", zap.Stringer("uuid", engineUUID),
+			zap.Int("ranges", len(ranges)))
+
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
@@ -1208,7 +1215,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 			}
 		}
 		if err != nil {
-			log.L().Error("split & scatter ranges failed", zap.Error(err))
+			log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), zap.Error(err))
 			return err
 		}
 
