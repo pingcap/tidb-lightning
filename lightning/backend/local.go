@@ -1018,11 +1018,11 @@ loopWrite:
 		if err != nil {
 			log.L().Warn("write and ingest region, will retry import full range", log.ShortError(err),
 				zap.Stringer("region", region.Region), zap.Binary("start", start), zap.Binary("end", end))
-			return remainRange, errors.Trace(err)
 		}
+		return remainRange, errors.Trace(err)
 	}
 
-	return remainRange, nil
+	return remainRange, err
 }
 
 func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainRanges *syncdRanges) error {
