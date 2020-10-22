@@ -1022,7 +1022,7 @@ loopWrite:
 		return remainRange, errors.Trace(err)
 	}
 
-	return remainRange, err
+	return remainRange, errors.Trace(err)
 }
 
 func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainRanges *syncdRanges) error {
@@ -1402,6 +1402,9 @@ func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sa
 		copy(valueBuf, iter.Key()[offset:])
 		value := binary.BigEndian.Uint64(valueBuf)
 		sampleValues = append(sampleValues, value)
+		log.L().Info("sample range", zap.Uint64("i", i), zap.Uint64("step", step),
+			zap.Uint64("lastValue", lastValue), zap.Uint64("value", value),
+			zap.Binary("seekKey", seekKey), zap.Binary("nextValue", iter.Value()))
 		lastValue = value
 	}
 
