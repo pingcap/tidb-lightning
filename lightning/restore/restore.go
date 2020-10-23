@@ -25,8 +25,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/br/pkg/pdutil"
 	"github.com/pingcap/br/pkg/storage"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/collate"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
@@ -270,6 +271,7 @@ func (rc *RestoreController) Close() {
 func (rc *RestoreController) Run(ctx context.Context) error {
 	opts := []func(context.Context) error{
 		rc.checkRequirements,
+		rc.setGlobalVariables,
 		rc.restoreSchema,
 		rc.restoreTables,
 		rc.fullCompact,
@@ -694,8 +696,31 @@ var gcLifeTimeKey struct{}
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 
-	var wg sync.WaitGroup
+	// for importer/local backend, we should disable some pd scheduler and change some settings, to
+	// make split region and ingest sst more stable
+	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+		// disable some pd schedulers
+		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
+			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		logTask.Info("removing PD leader&region schedulers")
+		restoreFn, e := pdController.RemoveSchedulers(ctx)
+		defer func() {
+			// use context.Background to make sure this restore function can still be executed even if ctx is canceled
+			if restoreE := restoreFn(context.Background()); restoreE != nil {
+				logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+				return
+			}
+			logTask.Info("add back PD leader&region schedulers")
+		}()
+		if e != nil {
+			return errors.Trace(err)
+		}
+	}
 
+	var wg sync.WaitGroup
 	var restoreErr common.OnceError
 
 	stopPeriodicActions := make(chan struct{})
@@ -1222,11 +1247,18 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 
 	t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 	if cp.Status < CheckpointStatusChecksummed {
-		if !rc.cfg.PostRestore.Checksum {
+		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 			t.logger.Info("skip checksum")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
 			err := t.compareChecksum(ctx, rc.tidbMgr.db, localChecksum)
+			// witch post restore level 'optional', we will skip checksum error
+			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+				if err != nil {
+					t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+					err = nil
+				}
+			}
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
 			if err != nil {
 				return errors.Trace(err)
@@ -1236,11 +1268,18 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 
 	// 5. do table analyze
 	if cp.Status < CheckpointStatusAnalyzed {
-		if !rc.cfg.PostRestore.Analyze {
+		if rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 		} else {
 			err := t.analyzeTable(ctx, rc.tidbMgr.db)
+			// witch post restore level 'optional', we will skip analyze error
+			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
+				if err != nil {
+					t.logger.Warn("analyze table failed, will skip this error and go on", log.ShortError(err))
+					err = nil
+				}
+			}
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAnalyzed)
 			if err != nil {
 				return errors.Trace(err)
@@ -1319,6 +1358,15 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 		return nil
 	}
 	return rc.backend.CheckRequirements()
+}
+
+func (rc *RestoreController) setGlobalVariables(ctx context.Context) error {
+	// set new collation flag base on tidb config
+	enabled := ObtainNewCollationEnabled(ctx, rc.tidbMgr.db)
+	// we should enable/disable new collation here since in server mode, tidb config
+	// may be different in different tasks
+	collate.SetNewCollationEnabledForTest(enabled)
+	return nil
 }
 
 func (rc *RestoreController) waitCheckpointFinish() {
