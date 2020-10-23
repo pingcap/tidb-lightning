@@ -16,6 +16,8 @@ package common
 import (
 	"fmt"
 
+	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/errors"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -57,4 +59,15 @@ func PrintInfo(app string, callback func()) {
 	if callback != nil {
 		callback()
 	}
+}
+
+// FetchPDVersion get pd version
+func FetchPDVersion(tls *TLS, pdAddr string) (*semver.Version, error) {
+	var rawVersion string
+	err := tls.WithHost(pdAddr).GetJSON("/pd/api/v1/config/cluster-version", &rawVersion)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return semver.NewVersion(rawVersion)
 }
