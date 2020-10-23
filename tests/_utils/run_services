@@ -5,7 +5,7 @@ stop_services() {
     killall -9 tikv-importer || true
     killall -9 tiflash || true
 
-    find "$TEST_DIR" -maxdepth 1 -not -path "$TEST_DIR" -not -name "cov.*" -not -name "*.log" | xargs rm -r || true
+    find "$TEST_DIR" -maxdepth 1 -not -path "$TEST_DIR" -not -name "cov.*" -not -name "*.log" | xargs rm -rf || true
 }
 
 start_services() {

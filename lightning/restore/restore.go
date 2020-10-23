@@ -24,10 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/util/collate"
-
+	"github.com/pingcap/br/pkg/pdutil"
 	"github.com/pingcap/br/pkg/storage"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -36,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/collate"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
@@ -672,8 +671,31 @@ var gcLifeTimeKey struct{}
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 
-	var wg sync.WaitGroup
+	// for importer/local backend, we should disable some pd scheduler and change some settings, to
+	// make split region and ingest sst more stable
+	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+		// disable some pd schedulers
+		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
+			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		logTask.Info("removing PD leader&region schedulers")
+		restoreFn, e := pdController.RemoveSchedulers(ctx)
+		defer func() {
+			// use context.Background to make sure this restore function can still be executed even if ctx is canceled
+			if restoreE := restoreFn(context.Background()); restoreE != nil {
+				logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+				return
+			}
+			logTask.Info("add back PD leader&region schedulers")
+		}()
+		if e != nil {
+			return errors.Trace(err)
+		}
+	}
 
+	var wg sync.WaitGroup
 	var restoreErr common.OnceError
 
 	stopPeriodicActions := make(chan struct{})
