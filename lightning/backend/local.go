@@ -520,7 +520,9 @@ func (local *local) WriteToTiKV(
 	defer iter.Close()
 
 	if !iter.First() {
-		log.L().Warn("keys within region is empty, skip ingest")
+		log.L().Info("keys within region is empty, skip ingest", zap.Binary("start", start),
+			zap.Binary("regionStart", region.Region.StartKey), zap.Binary("end", end),
+			zap.Binary("regionEnd", region.Region.EndKey))
 		return nil, nil, nil
 	}
 
@@ -889,7 +891,7 @@ WriteAndIngest:
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
 		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, 128)
 		if err != nil || len(regions) == 0 {
-			log.L().Warn("scan region failed", zap.Error(err), zap.Int("region_len", len(regions)))
+			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)))
 			continue WriteAndIngest
 		}
 
@@ -933,7 +935,7 @@ WriteAndIngest:
 				err1 := <-errChan
 				if err1 != nil {
 					err = err1
-					log.L().Warn("should retry this range", zap.Int("retry", retry), zap.Error(err))
+					log.L().Warn("should retry this range", zap.Int("retry", retry), log.ShortError(err))
 					shouldRetry = true
 				}
 			}
@@ -951,70 +953,84 @@ WriteAndIngest:
 	return err
 }
 
+type retryType int
+
+const (
+	retryNone retryType = iota
+	retryWrite
+	retryIngest
+)
+
 func (local *local) writeAndIngestPairs(
 	ctx context.Context,
 	engineFile *LocalFile,
 	region *split.RegionInfo,
 	start, end []byte,
 ) (*Range, error) {
-	metas, remainRange, err := local.WriteToTiKV(ctx, engineFile, region, start, end)
-	if err != nil {
-		log.L().Warn("write to tikv failed", zap.Error(err))
-		return remainRange, err
+	var err error
+	var remainRange *Range
+loopWrite:
+	for i := 0; i < maxRetryTimes; i++ {
+		var metas []*sst.SSTMeta
+		metas, remainRange, err = local.WriteToTiKV(ctx, engineFile, region, start, end)
+		if err != nil {
+			log.L().Warn("write to tikv failed", log.ShortError(err))
+			return remainRange, err
+		}
+
+		for _, meta := range metas {
+			errCnt := 0
+			for errCnt < maxRetryTimes {
+				log.L().Debug("ingest meta", zap.Reflect("meta", meta))
+				var resp *sst.IngestResponse
+				resp, err = local.Ingest(ctx, meta, region)
+				if err != nil {
+					log.L().Warn("ingest failed", log.ShortError(err), zap.Reflect("meta", meta),
+						zap.Reflect("region", region))
+					errCnt++
+					continue
+				}
+				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
+					switch val.(string) {
+					case "notleader":
+						resp.Error.NotLeader = &errorpb.NotLeader{
+							RegionId: region.Region.Id, Leader: region.Leader}
+					case "epochnotmatch":
+						resp.Error.EpochNotMatch = &errorpb.EpochNotMatch{
+							CurrentRegions: []*metapb.Region{region.Region}}
+					}
+				})
+				var retryTy retryType
+				var newRegion *split.RegionInfo
+				retryTy, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
+				if err == nil {
+					// ingest next meta
+					break
+				}
+				switch retryTy {
+				case retryNone:
+					log.L().Warn("ingest failed noretry", log.ShortError(err), zap.Reflect("meta", meta),
+						zap.Reflect("region", region))
+					// met non-retryable error retry whole Write procedure
+					return remainRange, err
+				case retryWrite:
+					region = newRegion
+					continue loopWrite
+				case retryIngest:
+					region = newRegion
+					continue
+				}
+			}
+		}
+
+		if err != nil {
+			log.L().Warn("write and ingest region, will retry import full range", log.ShortError(err),
+				zap.Stringer("region", region.Region), zap.Binary("start", start), zap.Binary("end", end))
+		}
+		return remainRange, errors.Trace(err)
 	}
 
-	for _, meta := range metas {
-		var err error
-		errCnt := 0
-		for errCnt < maxRetryTimes {
-			log.L().Debug("ingest meta", zap.Reflect("meta", meta))
-			var resp *sst.IngestResponse
-			resp, err = local.Ingest(ctx, meta, region)
-			if err != nil {
-				log.L().Warn("ingest failed", zap.Error(err), zap.Reflect("meta", meta),
-					zap.Reflect("region", region))
-				errCnt++
-				continue
-			}
-			failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
-				switch val.(string) {
-				case "notleader":
-					resp.Error.NotLeader = &errorpb.NotLeader{
-						RegionId: region.Region.Id, Leader: region.Leader}
-				case "epochnotmatch":
-					resp.Error.EpochNotMatch = &errorpb.EpochNotMatch{
-						CurrentRegions: []*metapb.Region{region.Region}}
-				}
-			})
-			var needRetry bool
-			var newRegion *split.RegionInfo
-			needRetry, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
-			if err == nil {
-				// ingest next meta
-				break
-			}
-			if !needRetry {
-				log.L().Warn("ingest failed noretry", zap.Error(err), zap.Reflect("meta", meta),
-					zap.Reflect("region", region))
-				// met non-retryable error retry whole Write procedure
-				return remainRange, err
-			}
-			// retry with not leader and epoch not match error
-			if newRegion != nil {
-				region = newRegion
-			} else {
-				log.L().Warn("retry ingest due to",
-					zap.Reflect("meta", meta), zap.Reflect("region", region),
-					zap.Reflect("new region", newRegion), zap.Error(err))
-				return remainRange, err
-			}
-		}
-		if err != nil {
-			log.L().Warn("all retry ingest failed", zap.Reflect("ingest meta", meta), zap.Error(err))
-			return remainRange, errors.Trace(err)
-		}
-	}
-	return remainRange, nil
+	return remainRange, errors.Trace(err)
 }
 
 func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainRanges *syncdRanges) error {
@@ -1039,7 +1055,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *Loca
 			for i := 0; i < maxRetryTimes; i++ {
 				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainRanges); err != nil {
 					log.L().Warn("write and ingest by range failed",
-						zap.Int("retry time", i+1), zap.Error(err))
+						zap.Int("retry time", i+1), log.ShortError(err))
 				} else {
 					break
 				}
@@ -1113,14 +1129,14 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 			}
 		}
 		if err != nil {
-			log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), zap.Error(err))
+			log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
 			return err
 		}
 
 		// start to write to kv and ingest
 		err = local.writeAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
 		if err != nil {
-			log.L().Error("write and ingest ranges failed", zap.Error(err))
+			log.L().Error("write and ingest engine failed", log.ShortError(err))
 			return err
 		}
 
@@ -1128,7 +1144,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		if len(unfinishedRanges) == 0 {
 			break
 		}
-		log.L().Debug("ingest ranges unfinished", zap.Int("remain ranges", len(unfinishedRanges)))
+		log.L().Info("ingest ranges unfinished", zap.Int("remain ranges", len(unfinishedRanges)))
 		ranges = unfinishedRanges
 	}
 
@@ -1224,9 +1240,9 @@ func (local *local) isIngestRetryable(
 	resp *sst.IngestResponse,
 	region *split.RegionInfo,
 	meta *sst.SSTMeta,
-) (bool, *split.RegionInfo, error) {
+) (retryType, *split.RegionInfo, error) {
 	if resp.GetError() == nil {
-		return false, nil, nil
+		return retryNone, nil, nil
 	}
 
 	getRegion := func() (*split.RegionInfo, error) {
@@ -1260,19 +1276,49 @@ func (local *local) isIngestRetryable(
 		} else {
 			newRegion, err = getRegion()
 			if err != nil {
-				return false, nil, errors.Trace(err)
+				return retryNone, nil, errors.Trace(err)
 			}
 		}
-		return true, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+		return retryIngest, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+	case errPb.EpochNotMatch != nil:
+		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
+			var currentRegion *metapb.Region
+			for _, r := range currentRegions {
+				if insideRegion(r, meta) {
+					currentRegion = r
+					break
+				}
+			}
+			if currentRegion != nil {
+				var newLeader *metapb.Peer
+				for _, p := range currentRegion.Peers {
+					if p.GetStoreId() == region.Leader.GetStoreId() {
+						newLeader = p
+						break
+					}
+				}
+				if newLeader != nil {
+					newRegion = &split.RegionInfo{
+						Leader: newLeader,
+						Region: currentRegion,
+					}
+				}
+			}
+		}
+		retryTy := retryNone
+		if newRegion != nil {
+			retryTy = retryWrite
+		}
+		return retryTy, newRegion, errors.Errorf("epoch not match: %s", errPb.GetMessage())
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
 		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
 		newRegion, err = getRegion()
 		if err != nil {
-			return false, nil, errors.Trace(err)
+			return retryNone, nil, errors.Trace(err)
 		}
-		return true, newRegion, errors.New(errPb.GetMessage())
+		return retryIngest, newRegion, errors.New(errPb.GetMessage())
 	}
-	return false, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
+	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
 
 // return the smallest []byte that is bigger than current bytes.

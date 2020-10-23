@@ -366,7 +366,7 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 			SELECT table_name, column_name
 			FROM information_schema.columns
 			WHERE table_schema = ?
-			ORDER BY table_name;
+			ORDER BY table_name, ordinal_position;
 		`, schemaName)
 		if e != nil {
 			return e

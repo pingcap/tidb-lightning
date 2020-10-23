@@ -18,16 +18,15 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/util/collate"
-
+	"github.com/pingcap/br/pkg/pdutil"
 	"github.com/pingcap/br/pkg/storage"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/collate"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
@@ -361,8 +361,8 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	rc.rowFormatVer = ObtainRowFormatVersion(ctx, tidbMgr.db)
 
 	// Estimate the number of chunks for progress reporting
-	rc.estimateChunkCountIntoMetrics()
-	return nil
+	err = rc.estimateChunkCountIntoMetrics(ctx)
+	return err
 }
 
 // verifyCheckpoint check whether previous task checkpoint is compatible with task config
@@ -421,15 +421,37 @@ func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
 	return nil
 }
 
-func (rc *RestoreController) estimateChunkCountIntoMetrics() {
-	estimatedChunkCount := 0
+func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) error {
+	estimatedChunkCount := 0.0
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
+			tableName := common.UniqueTable(dbMeta.Name, tableMeta.Name)
+			dbCp, err := rc.checkpointsDB.Get(ctx, tableName)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			fileChunks := make(map[string]float64)
+			for engineId, eCp := range dbCp.Engines {
+				if engineId == indexEngineID {
+					continue
+				}
+				for _, c := range eCp.Chunks {
+					if _, ok := fileChunks[c.Key.Path]; !ok {
+						fileChunks[c.Key.Path] = 0.0
+					}
+					remainChunkCnt := float64(c.Chunk.EndOffset-c.Chunk.Offset) / float64(c.Chunk.EndOffset-c.Key.Offset)
+					fileChunks[c.Key.Path] += remainChunkCnt
+				}
+			}
 			for _, fileMeta := range tableMeta.DataFiles {
+				if cnt, ok := fileChunks[fileMeta.FileMeta.Path]; ok {
+					estimatedChunkCount += cnt
+					continue
+				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
 					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += int(fileMeta.Size / cfg.MaxRegionSize)
+						estimatedChunkCount += math.Round(float64(fileMeta.Size) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -439,7 +461,8 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 			}
 		}
 	}
-	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(float64(estimatedChunkCount))
+	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(estimatedChunkCount)
+	return nil
 }
 
 func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int32, err error, statusIfSucceed CheckpointStatus) {
@@ -601,6 +624,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			log.L().Info("progress",
 				zap.String("files", fmt.Sprintf("%.0f/%.0f (%.1f%%)", finished, estimated, finished/estimated*100)),
 				zap.String("tables", fmt.Sprintf("%.0f/%.0f (%.1f%%)", completedTables, totalTables, completedTables/totalTables*100)),
+				zap.String("chunks", fmt.Sprintf("%.0f/%.0f", finished, estimated)),
 				zap.Float64("speed(MiB/s)", bytesRead/(1048576e-9*nanoseconds)),
 				zap.String("state", state),
 				remaining,
@@ -672,8 +696,31 @@ var gcLifeTimeKey struct{}
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 
-	var wg sync.WaitGroup
+	// for importer/local backend, we should disable some pd scheduler and change some settings, to
+	// make split region and ingest sst more stable
+	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+		// disable some pd schedulers
+		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
+			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		logTask.Info("removing PD leader&region schedulers")
+		restoreFn, e := pdController.RemoveSchedulers(ctx)
+		defer func() {
+			// use context.Background to make sure this restore function can still be executed even if ctx is canceled
+			if restoreE := restoreFn(context.Background()); restoreE != nil {
+				logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+				return
+			}
+			logTask.Info("add back PD leader&region schedulers")
+		}()
+		if e != nil {
+			return errors.Trace(err)
+		}
+	}
 
+	var wg sync.WaitGroup
 	var restoreErr common.OnceError
 
 	stopPeriodicActions := make(chan struct{})

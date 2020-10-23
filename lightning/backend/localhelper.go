@@ -69,7 +69,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 			if errSplit != nil {
 				if strings.Contains(errSplit.Error(), "no valid key") {
 					for _, key := range keys {
-						log.L().Error("no valid key",
+						log.L().Warn("no valid key",
 							zap.Binary("startKey", region.Region.StartKey),
 							zap.Binary("endKey", region.Region.EndKey),
 							zap.Binary("key", codec.EncodeBytes([]byte{}, key)))
@@ -115,7 +115,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 		log.L().Info("waiting for scattering regions done",
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
-		log.L().Warn("waiting for scattering regions timeout",
+		log.L().Info("waiting for scattering regions timeout",
 			zap.Int("scatterCount", scatterCount),
 			zap.Int("regions", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)))
@@ -180,7 +180,7 @@ func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
 	for i := 0; i < split.SplitCheckMaxRetryTimes; i++ {
 		ok, err := local.hasRegion(ctx, regionID)
 		if err != nil {
-			log.L().Warn("wait for split failed", zap.Error(err))
+			log.L().Info("wait for split failed", log.ShortError(err))
 			return
 		}
 		if ok {
