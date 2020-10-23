@@ -1966,7 +1966,14 @@ func (m *gcTTLManager) start(ctx context.Context) {
 
 	updateTick := time.NewTicker(updateGapTime)
 
-	_ = m.updateGCTTL(ctx)
+	updateGCTTL := func() {
+		if err := m.updateGCTTL(ctx); err != nil {
+			log.L().Warn("failed to update service safe point, checksum may fail if gc triggered", zap.Error(err))
+		}
+	}
+
+	// trigger a service gc ttl at start
+	updateGCTTL()
 	go func() {
 		defer updateTick.Stop()
 		for {
@@ -1975,11 +1982,7 @@ func (m *gcTTLManager) start(ctx context.Context) {
 				log.L().Info("service safe point keeper exited")
 				return
 			case <-updateTick.C:
-				if err := m.updateGCTTL(ctx); err != nil {
-					log.L().Warn("failed to update service safe point, backup may fail if gc triggered",
-						zap.Error(err),
-					)
-				}
+				updateGCTTL()
 			}
 		}
 	}()
