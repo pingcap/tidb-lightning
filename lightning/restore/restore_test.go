@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	pd "github.com/tikv/pd/client"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"
 	"github.com/pingcap/br/pkg/storage"
@@ -999,4 +1001,42 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 	})
 	c.Assert(err, IsNil)
 	c.Assert(saveCpCh, HasLen, 2)
+}
+
+type testPDClient struct {
+	pd.Client
+}
+
+func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	return 0, nil
+}
+
+type gcTTLManagerSuite struct{}
+
+var _ = Suite(&gcTTLManagerSuite{})
+
+func (s *gcTTLManagerSuite) TestGcTTLManager(c *C) {
+	manager := gcTTLManager{pdClient: &testPDClient{}}
+	ctx := context.Background()
+
+	for i := uint64(1); i <= 5; i++ {
+		err := manager.addOneJob(ctx, fmt.Sprintf("test%d", i), i)
+		c.Assert(err, IsNil)
+		c.Assert(manager.currentTs, Equals, uint64(1))
+	}
+
+	manager.removeOneJob("test2")
+	c.Assert(manager.currentTs, Equals, uint64(1))
+
+	manager.removeOneJob("test1")
+	c.Assert(manager.currentTs, Equals, uint64(3))
+
+	manager.removeOneJob("test3")
+	c.Assert(manager.currentTs, Equals, uint64(4))
+
+	manager.removeOneJob("test4")
+	c.Assert(manager.currentTs, Equals, uint64(5))
+
+	manager.removeOneJob("test5")
+	c.Assert(manager.currentTs, Equals, uint64(0))
 }
