@@ -9,18 +9,25 @@ import (
 	"time"
 
 	"github.com/pingcap/br/pkg/checksum"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	tidbcfg "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 
 	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
+)
+
+const (
+	preUpdateServiceSafePointFactor = 3
+	serviceSafePointTTL             = 10 * 60 // 10 min in seconds
 )
 
 // RemoteChecksum represents a checksum result got from tidb.
@@ -34,6 +41,47 @@ type RemoteChecksum struct {
 
 type ChecksumManager interface {
 	Checksum(ctx context.Context, tableInfo *TidbTableInfo) (*RemoteChecksum, error)
+}
+
+func newChecksumManager(rc *RestoreController) (ChecksumManager, error) {
+	// if we don't need checksum, just return nil
+	if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
+		return nil, nil
+	}
+
+	pdAddr := rc.cfg.TiDB.PdAddr
+	pdVersion, err := common.FetchPDVersion(rc.tls, pdAddr)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// for v4.0.0 or upper, we can use the gc ttl api
+	var manager ChecksumManager
+	if pdVersion.Major >= 4 {
+		tlsOpt := rc.tls.ToPDSecurityOption()
+		pdCli, err := pd.NewClient([]string{pdAddr}, tlsOpt)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if tlsOpt.CAPath != "" {
+			conf := tidbcfg.GetGlobalConfig()
+			conf.Security.ClusterSSLCA = tlsOpt.CAPath
+			conf.Security.ClusterSSLCert = tlsOpt.CertPath
+			conf.Security.ClusterSSLKey = tlsOpt.KeyPath
+			tidbcfg.StoreGlobalConfig(conf)
+		}
+		store, err := tikv.Driver{}.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		manager = newTiKVChecksumManager(store.(tikv.Storage).GetClient(), pdCli)
+	} else {
+		manager = newTiDBChecksumExecutor(rc.tidbMgr.db)
+	}
+
+	return manager, nil
 }
 
 // fetch checksum for tidb sql client

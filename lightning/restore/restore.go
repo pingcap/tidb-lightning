@@ -33,11 +33,9 @@ import (
 	"github.com/pingcap/parser/model"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/collate"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
@@ -63,9 +61,7 @@ const (
 )
 
 const (
-	indexEngineID                   = -1
-	preUpdateServiceSafePointFactor = 3
-	serviceSafePointTTL             = 10 * 60 // 10 min in seconds
+	indexEngineID = -1
 )
 
 const (
@@ -680,7 +676,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	manager, err := rc.newChecksumManager()
+	manager, err := newChecksumManager(rc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -811,47 +807,6 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	err = restoreErr.Get()
 	logTask.End(zap.ErrorLevel, err)
 	return err
-}
-
-func (rc *RestoreController) newChecksumManager() (ChecksumManager, error) {
-	// if we don't need checksum, just return nil
-	if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
-		return nil, nil
-	}
-
-	pdAddr := rc.cfg.TiDB.PdAddr
-	pdVersion, err := common.FetchPDVersion(rc.tls, pdAddr)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// for v4.0.0 or upper, we can use the gc ttl api
-	var manager ChecksumManager
-	if pdVersion.Major >= 4 {
-		tlsOpt := rc.tls.ToPDSecurityOption()
-		pdCli, err := pd.NewClient([]string{pdAddr}, tlsOpt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		if tlsOpt.CAPath != "" {
-			conf := tidbcfg.GetGlobalConfig()
-			conf.Security.ClusterSSLCA = tlsOpt.CAPath
-			conf.Security.ClusterSSLCert = tlsOpt.CertPath
-			conf.Security.ClusterSSLKey = tlsOpt.KeyPath
-			tidbcfg.StoreGlobalConfig(conf)
-		}
-		store, err := tikv.Driver{}.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		manager = newTiKVChecksumManager(store.(tikv.Storage).GetClient(), pdCli)
-	} else {
-		manager = newTiDBChecksumExecutor(rc.tidbMgr.db)
-	}
-
-	return manager, nil
 }
 
 func (t *TableRestore) restoreTable(
