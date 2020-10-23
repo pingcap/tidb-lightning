@@ -127,12 +127,72 @@ type Lightning struct {
 	CheckRequirements bool `toml:"check-requirements" json:"check-requirements"`
 }
 
+type PostOpLevel int
+
+const (
+	OpLevelOff PostOpLevel = iota
+	OpLevelOptional
+	OpLevelRequired
+)
+
+func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
+	switch val := v.(type) {
+	case bool:
+		if val {
+			*t = OpLevelRequired
+		} else {
+			*t = OpLevelOff
+		}
+	case string:
+		return t.FromStringValue(val)
+	default:
+		return errors.Errorf("invalid op level '%v', please choose valid option between ['off', 'optional', 'required']", v)
+	}
+	return nil
+}
+
+// parser command line parameter
+func (t *PostOpLevel) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
+	case "off", "false":
+		*t = OpLevelOff
+	case "required", "true":
+		*t = OpLevelRequired
+	case "optional":
+		*t = OpLevelOptional
+	default:
+		return errors.Errorf("invalid op level '%s', please choose valid option between ['off', 'optional', 'required']", s)
+	}
+	return nil
+}
+
+func (t *PostOpLevel) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + t.String() + `"`), nil
+}
+
+func (t *PostOpLevel) UnmarshalJSON(data []byte) error {
+	return t.FromStringValue(strings.Trim(string(data), `"`))
+}
+
+func (t PostOpLevel) String() string {
+	switch t {
+	case OpLevelOff:
+		return "off"
+	case OpLevelOptional:
+		return "optional"
+	case OpLevelRequired:
+		return "required"
+	default:
+		panic(fmt.Sprintf("invalid post process type '%d'", t))
+	}
+}
+
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
-	Level1Compact bool `toml:"level-1-compact" json:"level-1-compact"`
-	Compact       bool `toml:"compact" json:"compact"`
-	Checksum      bool `toml:"checksum" json:"checksum"`
-	Analyze       bool `toml:"analyze" json:"analyze"`
+	Level1Compact bool        `toml:"level-1-compact" json:"level-1-compact"`
+	Compact       bool        `toml:"compact" json:"compact"`
+	Checksum      PostOpLevel `toml:"checksum" json:"checksum"`
+	Analyze       PostOpLevel `toml:"analyze" json:"analyze"`
 }
 
 type CSVConfig struct {
@@ -286,8 +346,8 @@ func NewConfig() *Config {
 			RegionSplitSize: SplitRegionSize,
 		},
 		PostRestore: PostRestore{
-			Checksum: true,
-			Analyze:  true,
+			Checksum: OpLevelRequired,
+			Analyze:  OpLevelOptional,
 		},
 	}
 }
@@ -384,16 +444,12 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 func (cfg *Config) Adjust() error {
 	// Reject problematic CSV configurations.
 	csv := &cfg.Mydumper.CSV
-	if len(csv.Separator) != 1 {
-		return errors.New("invalid config: `mydumper.csv.separator` must be exactly one byte long")
+	if len(csv.Separator) == 0 {
+		return errors.New("invalid config: `mydumper.csv.separator` must not be empty")
 	}
 
-	if len(csv.Delimiter) > 1 {
-		return errors.New("invalid config: `mydumper.csv.delimiter` must be one byte long or empty")
-	}
-
-	if csv.Separator == csv.Delimiter {
-		return errors.New("invalid config: cannot use the same character for both CSV delimiter and separator")
+	if len(csv.Delimiter) > 0 && (strings.HasPrefix(csv.Separator, csv.Delimiter) || strings.HasPrefix(csv.Delimiter, csv.Separator)) {
+		return errors.New("invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
 	}
 
 	if csv.BackslashEscape {
@@ -569,10 +625,25 @@ func (cfg *Config) Adjust() error {
 		}
 	}
 
-	u, err := url.Parse(cfg.Mydumper.SourceDir)
-	if err != nil {
-		return errors.Trace(err)
+	var u *url.URL
+
+	// An absolute Windows path like "C:\Users\XYZ" would be interpreted as
+	// an URL with scheme "C" and opaque data "\Users\XYZ".
+	// Therefore, we only perform URL parsing if we are sure the path is not
+	// an absolute Windows path.
+	// Here we use the `filepath.VolumeName` which can identify the "C:" part
+	// out of the path. On Linux this method always return an empty string.
+	// On Windows, the drive letter can only be single letters from "A:" to "Z:",
+	// so this won't mistake "S3:" as a Windows path.
+	if len(filepath.VolumeName(cfg.Mydumper.SourceDir)) == 0 {
+		u, err = url.Parse(cfg.Mydumper.SourceDir)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		u = &url.URL{}
 	}
+
 	// convert path and relative path to a valid file url
 	if u.Scheme == "" {
 		if !common.IsDirExists(cfg.Mydumper.SourceDir) {
@@ -582,7 +653,7 @@ func (cfg *Config) Adjust() error {
 		if err != nil {
 			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
 		}
-		cfg.Mydumper.SourceDir = fmt.Sprintf("file://%s", absPath)
+		cfg.Mydumper.SourceDir = "file://" + filepath.ToSlash(absPath)
 		u.Path = absPath
 		u.Scheme = "file"
 	}

@@ -15,13 +15,16 @@ package mydump_test
 
 import (
 	"context"
+	"errors"
 	"io/ioutil"
 	"os"
 
+	"github.com/golang/mock/gomock"
 	"github.com/pingcap/br/pkg/storage"
-
 	. "github.com/pingcap/check"
+
 	. "github.com/pingcap/tidb-lightning/lightning/mydump"
+	"github.com/pingcap/tidb-lightning/mock"
 )
 
 //////////////////////////////////////////////////////////
@@ -159,6 +162,34 @@ func (s *testMydumpReaderSuite) TestExportStatementGibberishError(c *C) {
 
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
-	c.Assert(data, IsNil)
-	c.Assert(err, NotNil)
+	c.Assert(data, HasLen, 0)
+	c.Assert(err, ErrorMatches, `failed to decode \w* as auto: invalid schema encoding`)
+}
+
+type AlwaysErrorReadSeekCloser struct{}
+
+func (AlwaysErrorReadSeekCloser) Read([]byte) (int, error) {
+	return 0, errors.New("read error!")
+}
+func (AlwaysErrorReadSeekCloser) Seek(int64, int) (int64, error) {
+	return 0, errors.New("seek error!")
+}
+func (AlwaysErrorReadSeekCloser) Close() error {
+	return nil
+}
+
+func (s *testMydumpReaderSuite) TestExportStatementHandleNonEOFError(c *C) {
+	controller := gomock.NewController(c)
+	defer controller.Finish()
+
+	ctx := context.TODO()
+
+	mockStorage := mock.NewMockExternalStorage(controller)
+	mockStorage.EXPECT().
+		Open(ctx, "no-perm-file").
+		Return(AlwaysErrorReadSeekCloser{}, nil)
+
+	f := FileInfo{FileMeta: SourceFileMeta{Path: "no-perm-file"}, Size: 1}
+	_, err := ExportStatement(ctx, mockStorage, f, "auto")
+	c.Assert(err, ErrorMatches, "read error!")
 }

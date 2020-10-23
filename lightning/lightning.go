@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -35,6 +36,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/net/http/httpproxy"
 
 	"github.com/pingcap/tidb-lightning/lightning/backend"
@@ -56,6 +58,7 @@ type Lightning struct {
 	shutdown   context.CancelFunc
 	server     http.Server
 	serverAddr net.Addr
+	serverLock sync.Mutex
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -87,10 +90,37 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 }
 
 func (l *Lightning) GoServe() error {
-	if len(l.globalCfg.App.StatusAddr) == 0 {
+	handleSigUsr1(func() {
+		l.serverLock.Lock()
+		statusAddr := l.globalCfg.App.StatusAddr
+		shouldStartServer := len(statusAddr) == 0
+		if shouldStartServer {
+			l.globalCfg.App.StatusAddr = ":"
+		}
+		l.serverLock.Unlock()
+
+		if shouldStartServer {
+			// open a random port and start the server if SIGUSR1 is received.
+			if err := l.goServe(":", os.Stderr); err != nil {
+				log.L().Warn("failed to start HTTP server", log.ShortError(err))
+			}
+		} else {
+			// just prints the server address if it is already started.
+			log.L().Info("already started HTTP server", zap.Stringer("address", l.serverAddr))
+		}
+	})
+
+	l.serverLock.Lock()
+	statusAddr := l.globalCfg.App.StatusAddr
+	l.serverLock.Unlock()
+
+	if len(statusAddr) == 0 {
 		return nil
 	}
+	return l.goServe(statusAddr, ioutil.Discard)
+}
 
+func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
 	mux.Handle("/metrics", promhttp.Handler())
@@ -108,6 +138,7 @@ func (l *Lightning) GoServe() error {
 	mux.HandleFunc("/progress/table", handleProgressTable)
 	mux.HandleFunc("/pause", handlePause)
 	mux.HandleFunc("/resume", handleResume)
+	mux.HandleFunc("/loglevel", handleLogLevel)
 
 	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
 		IndexHTML: true,
@@ -120,11 +151,13 @@ func (l *Lightning) GoServe() error {
 		},
 	})))
 
-	listener, err := net.Listen("tcp", l.globalCfg.App.StatusAddr)
+	listener, err := net.Listen("tcp", statusAddr)
 	if err != nil {
 		return err
 	}
 	l.serverAddr = listener.Addr()
+	log.L().Info("starting HTTP server", zap.Stringer("address", l.serverAddr))
+	fmt.Fprintln(realAddrWriter, "started HTTP server on", l.serverAddr)
 	l.server.Handler = mux
 	listener = l.globalTLS.WrapListener(listener)
 
@@ -551,6 +584,36 @@ func handleResume(w http.ResponseWriter, req *http.Request) {
 	default:
 		w.Header().Set("Allow", http.MethodPut)
 		writeJSONError(w, http.StatusMethodNotAllowed, "only PUT is allowed", nil)
+	}
+}
+
+func handleLogLevel(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var logLevel struct {
+		Level zapcore.Level `json:"level"`
+	}
+
+	switch req.Method {
+	case http.MethodGet:
+		logLevel.Level = log.Level()
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(logLevel)
+
+	case http.MethodPut, http.MethodPost:
+		if err := json.NewDecoder(req.Body).Decode(&logLevel); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid log level", err)
+			return
+		}
+		oldLevel := log.SetLevel(zapcore.InfoLevel)
+		log.L().Info("changed log level", zap.Stringer("old", oldLevel), zap.Stringer("new", logLevel.Level))
+		log.SetLevel(logLevel.Level)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{}"))
+
+	default:
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPut+", "+http.MethodPost)
+		writeJSONError(w, http.StatusMethodNotAllowed, "only GET, PUT and POST are allowed", nil)
 	}
 }
 

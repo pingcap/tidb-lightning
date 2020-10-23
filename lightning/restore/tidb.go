@@ -265,6 +265,20 @@ func ObtainRowFormatVersion(ctx context.Context, db *sql.DB) (rowFormatVersion s
 	return
 }
 
+func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) bool {
+	var newCollationVal string
+	err := common.SQLWithRetry{DB: db, Logger: log.L()}.QueryRow(ctx, "obtain new collation enabled",
+		"SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'",
+		&newCollationVal,
+	)
+	newCollationEnabled := false
+	if err == nil && newCollationVal == "True" {
+		newCollationEnabled = true
+	}
+
+	return newCollationEnabled
+}
+
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr int64) error {
 	sql := common.SQLWithRetry{
 		DB:     db,

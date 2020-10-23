@@ -15,7 +15,6 @@ package mydump_test
 
 import (
 	"context"
-	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -47,7 +46,7 @@ func newConfigWithSourceDir(sourceDir string) *config.Config {
 	path, _ := filepath.Abs(sourceDir)
 	return &config.Config{
 		Mydumper: config.MydumperRuntime{
-			SourceDir:        fmt.Sprintf("file://%s", path),
+			SourceDir:        "file://" + filepath.ToSlash(path),
 			Filter:           []string{"*.*"},
 			DefaultFileRules: true,
 		},
@@ -409,29 +408,44 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 	c.Assert(mdl.GetDatabases(), DeepEquals, []*md.MDDatabaseMeta{
 		{
 			Name:       "d1",
-			SchemaFile: "d1/schema.sql",
+			SchemaFile: filepath.FromSlash("d1/schema.sql"),
 			Tables: []*md.MDTableMeta{
 				{
-					DB:         "d1",
-					Name:       "test",
-					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d1", Name: "test"}, FileMeta: md.SourceFileMeta{Path: "d1/test-table.sql", Type: md.SourceTypeTableSchema}},
+					DB:   "d1",
+					Name: "test",
+					SchemaFile: md.FileInfo{
+						TableName: filter.Table{Schema: "d1", Name: "test"},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/test-table.sql"), Type: md.SourceTypeTableSchema},
+					},
 					DataFiles: []md.FileInfo{
-						{TableName: filter.Table{Schema: "d1", Name: "test"}, FileMeta: md.SourceFileMeta{Path: "d1/test0.sql", Type: md.SourceTypeSQL}},
-						{TableName: filter.Table{Schema: "d1", Name: "test"}, FileMeta: md.SourceFileMeta{Path: "d1/test1.sql", Type: md.SourceTypeSQL}},
-						{TableName: filter.Table{Schema: "d1", Name: "test"}, FileMeta: md.SourceFileMeta{Path: "d1/test2.001.sql", Type: md.SourceTypeSQL}},
+						{
+							TableName: filter.Table{Schema: "d1", Name: "test"},
+							FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/test0.sql"), Type: md.SourceTypeSQL},
+						},
+						{
+							TableName: filter.Table{Schema: "d1", Name: "test"},
+							FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/test1.sql"), Type: md.SourceTypeSQL},
+						},
+						{
+							TableName: filter.Table{Schema: "d1", Name: "test"},
+							FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/test2.001.sql"), Type: md.SourceTypeSQL},
+						},
 					},
 				},
 			},
 		},
 		{
 			Name:       "d2",
-			SchemaFile: "d2/schema.sql",
+			SchemaFile: filepath.FromSlash("d2/schema.sql"),
 			Tables: []*md.MDTableMeta{
 				{
-					DB:         "d2",
-					Name:       "abc",
-					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d2", Name: "abc"}, FileMeta: md.SourceFileMeta{Path: "d2/abc-table.sql", Type: md.SourceTypeTableSchema}},
-					DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "d2", Name: "abc"}, FileMeta: md.SourceFileMeta{Path: "abc.1.sql", Type: md.SourceTypeSQL}}},
+					DB:   "d2",
+					Name: "abc",
+					SchemaFile: md.FileInfo{
+						TableName: filter.Table{Schema: "d2", Name: "abc"},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d2/abc-table.sql"), Type: md.SourceTypeTableSchema},
+					},
+					DataFiles: []md.FileInfo{{TableName: filter.Table{Schema: "d2", Name: "abc"}, FileMeta: md.SourceFileMeta{Path: "abc.1.sql", Type: md.SourceTypeSQL}}},
 				},
 			},
 		},
