@@ -1222,11 +1222,18 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 
 	t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 	if cp.Status < CheckpointStatusChecksummed {
-		if !rc.cfg.PostRestore.Checksum {
+		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 			t.logger.Info("skip checksum")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
 			err := t.compareChecksum(ctx, rc.tidbMgr.db, localChecksum)
+			// witch post restore level 'optional', we will skip checksum error
+			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+				if err != nil {
+					t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+					err = nil
+				}
+			}
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
 			if err != nil {
 				return errors.Trace(err)
@@ -1236,11 +1243,18 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 
 	// 5. do table analyze
 	if cp.Status < CheckpointStatusAnalyzed {
-		if !rc.cfg.PostRestore.Analyze {
+		if rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 		} else {
 			err := t.analyzeTable(ctx, rc.tidbMgr.db)
+			// witch post restore level 'optional', we will skip analyze error
+			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
+				if err != nil {
+					t.logger.Warn("analyze table failed, will skip this error and go on", log.ShortError(err))
+					err = nil
+				}
+			}
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAnalyzed)
 			if err != nil {
 				return errors.Trace(err)
