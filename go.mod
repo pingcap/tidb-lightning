@@ -7,7 +7,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.4.1
 	github.com/aws/aws-sdk-go v1.35.2 // indirect
 	github.com/carlmjohnson/flagext v0.0.11
-	github.com/cockroachdb/pebble v0.0.0-20201007144542-b79d619f4761
+	github.com/cockroachdb/pebble v0.0.0-20201023120638-f1224da22976
 	github.com/coreos/go-semver v0.3.0
 	github.com/dgraph-io/ristretto v0.0.2-0.20200115201040-8f368f2f2ab3 // indirect
 	github.com/fsouza/fake-gcs-server v1.19.0 // indirect
@@ -39,7 +39,7 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/net v0.0.0-20200904194848-62affa334b73
-	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
+	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
 	golang.org/x/sys v0.0.0-20200905004654-be1d3432aa8f // indirect
 	golang.org/x/text v0.3.3
 	golang.org/x/tools v0.0.0-20200904185747-39188db58858 // indirect
@@ -47,5 +47,3 @@ require (
 	gopkg.in/mgo.v2 v2.0.0-20180705113604-9856a29383ce // indirect
 	modernc.org/mathutil v1.0.0
 )
-
-replace github.com/cockroachdb/pebble => github.com/glorv/pebble v0.0.0-20201016054324-9e202fb8089f

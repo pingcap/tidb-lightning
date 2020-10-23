@@ -123,33 +123,35 @@ func (e *LocalFile) Cleanup(dataDir string) error {
 }
 
 func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
-	allProperties, err := e.db.GetPropertiesOfAllTables()
+	sstables, err := e.db.SSTables(pebble.WithProperties())
 	if err != nil {
 		log.L().Warn("get table properties failed", zap.Stringer("engine", e.Uuid), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 
 	sizeProps := newSizeProperties()
-	for fn, p := range allProperties {
-		if prop, ok := p.UserProperties[PROP_RANGE_INDEX]; ok {
-			data := hack.Slice(prop)
-			rangeProps, err := decodeRangeProperties(data)
-			if err != nil {
-				log.L().Warn("decodeRangeProperties failed", zap.Stringer("engine", e.Uuid),
-					zap.Stringer("fileNum", fn), zap.Error(err))
-				return nil, errors.Trace(err)
-			}
+	for _, level := range sstables {
+		for _, info := range level {
+			if prop, ok := info.Properties.UserProperties[PROP_RANGE_INDEX]; ok {
+				data := hack.Slice(prop)
+				rangeProps, err := decodeRangeProperties(data)
+				if err != nil {
+					log.L().Warn("decodeRangeProperties failed", zap.Stringer("engine", e.Uuid),
+						zap.Stringer("fileNum", info.FileNum), zap.Error(err))
+					return nil, errors.Trace(err)
+				}
 
-			prevRange := rangeOffsets{}
-			for _, r := range rangeProps {
-				sizeProps.add(&rangeProperty{
-					Key:          r.Key,
-					rangeOffsets: rangeOffsets{Keys: r.Keys - prevRange.Keys, Size: r.Size - prevRange.Size},
-				})
-				prevRange = r.rangeOffsets
-			}
-			if len(rangeProps) > 0 {
-				sizeProps.totalSize = rangeProps[len(rangeProps)-1].Size
+				prevRange := rangeOffsets{}
+				for _, r := range rangeProps {
+					sizeProps.add(&rangeProperty{
+						Key:          r.Key,
+						rangeOffsets: rangeOffsets{Keys: r.Keys - prevRange.Keys, Size: r.Size - prevRange.Size},
+					})
+					prevRange = r.rangeOffsets
+				}
+				if len(rangeProps) > 0 {
+					sizeProps.totalSize = rangeProps[len(rangeProps)-1].Size
+				}
 			}
 		}
 	}
