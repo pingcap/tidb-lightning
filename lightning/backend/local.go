@@ -472,11 +472,9 @@ func (local *local) WriteToTiKV(
 	defer iter.Close()
 
 	if !iter.First() {
-		_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
-		_, regionEnd, _ := codec.DecodeBytes(region.Region.EndKey, []byte{})
 		log.L().Info("keys within region is empty, skip ingest", zap.Binary("start", start),
-			zap.Binary("regionStart", regionStart), zap.Binary("end", end),
-			zap.Binary("regionEnd", regionEnd))
+			zap.Binary("regionStart", region.Region.StartKey), zap.Binary("end", end),
+			zap.Binary("regionEnd", region.Region.EndKey))
 		return nil, nil, nil
 	}
 
@@ -1379,7 +1377,7 @@ func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sa
 		return res
 	}
 
-	sampleCount := uint64(l.Length) / 100 / uint64(sampleFactor)
+	sampleCount := uint64(count) * 200 / uint64(sampleFactor)
 
 	if sampleCount == 0 || eValue-sValue < sampleCount*20 {
 		return naiveFn()
@@ -1402,9 +1400,6 @@ func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sa
 		copy(valueBuf, iter.Key()[offset:])
 		value := binary.BigEndian.Uint64(valueBuf)
 		sampleValues = append(sampleValues, value)
-		log.L().Info("sample range", zap.Uint64("i", i), zap.Uint64("step", step),
-			zap.Uint64("lastValue", lastValue), zap.Uint64("value", value),
-			zap.Binary("seekKey", seekKey), zap.Binary("nextValue", iter.Value()))
 		lastValue = value
 	}
 
