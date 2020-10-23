@@ -19,8 +19,6 @@ import (
 	"io/ioutil"
 	"path/filepath"
 	"sort"
-	"sync"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"
@@ -119,151 +117,6 @@ func (s *restoreSuite) TestErrorSummaries(c *C) {
 		`{"$lvl":"ERROR","$msg":"-","table":"first","status":"analyzed","error":"a1 error"}`,
 		`{"$lvl":"ERROR","$msg":"-","table":"second","status":"written","error":"b2 error"}`,
 	})
-}
-
-func MockDoChecksumCtx() context.Context {
-	ctx := context.Background()
-	manager := newGCLifeTimeManager()
-	return context.WithValue(ctx, &gcLifeTimeKey, manager)
-}
-
-func (s *restoreSuite) TestDoChecksum(c *C) {
-	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-
-	mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
-	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WithArgs("100h0m0s").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectQuery("\\QADMIN CHECKSUM TABLE `test`.`t`\\E").
-		WillReturnRows(
-			sqlmock.NewRows([]string{"Db_name", "Table_name", "Checksum_crc64_xor", "Total_kvs", "Total_bytes"}).
-				AddRow("test", "t", 8520875019404689597, 7296873, 357601387),
-		)
-	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WithArgs("10m").
-		WillReturnResult(sqlmock.NewResult(2, 1))
-	mock.ExpectClose()
-
-	ctx := MockDoChecksumCtx()
-	checksum, err := DoChecksum(ctx, db, "`test`.`t`")
-	c.Assert(err, IsNil)
-	c.Assert(*checksum, DeepEquals, RemoteChecksum{
-		Schema:     "test",
-		Table:      "t",
-		Checksum:   8520875019404689597,
-		TotalKVs:   7296873,
-		TotalBytes: 357601387,
-	})
-
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
-}
-
-func (s *restoreSuite) TestDoChecksumParallel(c *C) {
-	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-
-	mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
-	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WithArgs("100h0m0s").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	for i := 0; i < 5; i++ {
-		mock.ExpectQuery("\\QADMIN CHECKSUM TABLE `test`.`t`\\E").
-			WillDelayFor(100 * time.Millisecond).
-			WillReturnRows(
-				sqlmock.NewRows([]string{"Db_name", "Table_name", "Checksum_crc64_xor", "Total_kvs", "Total_bytes"}).
-					AddRow("test", "t", 8520875019404689597, 7296873, 357601387),
-			)
-	}
-	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WithArgs("10m").
-		WillReturnResult(sqlmock.NewResult(2, 1))
-	mock.ExpectClose()
-
-	ctx := MockDoChecksumCtx()
-
-	// db.Close() will close all connections from its idle pool, set it 1 to expect one close
-	db.SetMaxIdleConns(1)
-	var wg sync.WaitGroup
-	wg.Add(5)
-	for i := 0; i < 5; i++ {
-		go func() {
-			defer wg.Done()
-			checksum, err := DoChecksum(ctx, db, "`test`.`t`")
-			c.Assert(err, IsNil)
-			c.Assert(*checksum, DeepEquals, RemoteChecksum{
-				Schema:     "test",
-				Table:      "t",
-				Checksum:   8520875019404689597,
-				TotalKVs:   7296873,
-				TotalBytes: 357601387,
-			})
-		}()
-	}
-	wg.Wait()
-
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
-}
-
-func (s *restoreSuite) TestIncreaseGCLifeTimeFail(c *C) {
-	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-
-	for i := 0; i < 5; i++ {
-		mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-			WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("10m"))
-		mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-			WithArgs("100h0m0s").
-			WillReturnError(errors.Annotate(context.Canceled, "update gc error"))
-	}
-	// This recover GC Life Time SQL should not be executed in DoChecksum
-	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WithArgs("10m").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectClose()
-
-	ctx := MockDoChecksumCtx()
-	var wg sync.WaitGroup
-	wg.Add(5)
-	for i := 0; i < 5; i++ {
-		go func() {
-			_, err = DoChecksum(ctx, db, "`test`.`t`")
-			c.Assert(err, ErrorMatches, "update GC lifetime failed: update gc error: context canceled")
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-
-	_, err = db.Exec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E", "10m")
-	c.Assert(err, IsNil)
-
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
-}
-
-func (s *restoreSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
-	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-
-	mock.ExpectQuery("\\QSELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"VARIABLE_VALUE"}).AddRow("300h"))
-	mock.ExpectQuery("\\QADMIN CHECKSUM TABLE `test`.`t`\\E").
-		WillReturnError(errors.Annotate(context.Canceled, "mock syntax error"))
-	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
-		WithArgs("300h").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectClose()
-
-	ctx := MockDoChecksumCtx()
-	_, err = DoChecksum(ctx, db, "`test`.`t`")
-	c.Assert(err, ErrorMatches, "compute remote checksum failed: mock syntax error.*")
-
-	c.Assert(db.Close(), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
 
 func (s *restoreSuite) TestVerifyCheckpoint(c *C) {
@@ -383,7 +236,7 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	core.State = model.StatePublic
 
-	s.tableInfo = &TidbTableInfo{Name: "table", Core: core}
+	s.tableInfo = &TidbTableInfo{Name: "table", DB: "db", Core: core}
 	s.dbInfo = &TidbDBInfo{
 		Name:   "db",
 		Tables: map[string]*TidbTableInfo{"table": s.tableInfo},
@@ -603,7 +456,7 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx()
+	ctx := MockDoChecksumCtx(db)
 	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(1234567, 12345, 1234567890))
 	c.Assert(err, IsNil)
 
@@ -631,7 +484,7 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure(c *C) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectClose()
 
-	ctx := MockDoChecksumCtx()
+	ctx := MockDoChecksumCtx(db)
 	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(9876543, 54321, 1357924680))
 	c.Assert(err, ErrorMatches, "checksum mismatched.*")
 

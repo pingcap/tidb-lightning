@@ -292,13 +292,7 @@ func checkTiDBVersion(tls *common.TLS, requiredVersion semver.Version) error {
 }
 
 func checkPDVersion(tls *common.TLS, pdAddr string, requiredVersion semver.Version) error {
-	var rawVersion string
-	err := tls.WithHost(pdAddr).GetJSON("/pd/api/v1/config/cluster-version", &rawVersion)
-	if err != nil {
-		return err
-	}
-
-	version, err := semver.NewVersion(rawVersion)
+	version, err := common.FetchPDVersion(tls, pdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}

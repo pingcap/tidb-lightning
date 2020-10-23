@@ -153,6 +153,7 @@ type RestoreController struct {
 
 	closedEngineLimit *worker.Pool
 	store             storage.ExternalStorage
+	checksumManager   ChecksumManager
 }
 
 func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, s storage.ExternalStorage) (*RestoreController, error) {
@@ -633,65 +634,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 	}
 }
 
-type gcLifeTimeManager struct {
-	runningJobsLock sync.Mutex
-	runningJobs     int
-	oriGCLifeTime   string
-}
-
-func newGCLifeTimeManager() *gcLifeTimeManager {
-	// Default values of three member are enough to initialize this struct
-	return &gcLifeTimeManager{}
-}
-
-// Pre- and post-condition:
-// if m.runningJobs == 0, GC life time has not been increased.
-// if m.runningJobs > 0, GC life time has been increased.
-// m.runningJobs won't be negative(overflow) since index concurrency is relatively small
-func (m *gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
-	m.runningJobsLock.Lock()
-	defer m.runningJobsLock.Unlock()
-
-	if m.runningJobs == 0 {
-		oriGCLifeTime, err := ObtainGCLifeTime(ctx, db)
-		if err != nil {
-			return err
-		}
-		m.oriGCLifeTime = oriGCLifeTime
-		err = increaseGCLifeTime(ctx, db)
-		if err != nil {
-			return err
-		}
-	}
-	m.runningJobs += 1
-	return nil
-}
-
-// Pre- and post-condition:
-// if m.runningJobs == 0, GC life time has been tried to recovered. If this try fails, a warning will be printed.
-// if m.runningJobs > 0, GC life time has not been recovered.
-// m.runningJobs won't minus to negative since removeOneJob follows a successful addOneJob.
-func (m *gcLifeTimeManager) removeOneJob(ctx context.Context, db *sql.DB) {
-	m.runningJobsLock.Lock()
-	defer m.runningJobsLock.Unlock()
-
-	m.runningJobs -= 1
-	if m.runningJobs == 0 {
-		err := UpdateGCLifeTime(ctx, db, m.oriGCLifeTime)
-		if err != nil {
-			query := fmt.Sprintf(
-				"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-				m.oriGCLifeTime,
-			)
-			log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
-				zap.String("query", query),
-				log.ShortError(err),
-			)
-		}
-	}
-}
-
-var gcLifeTimeKey struct{}
+var checksumManagerKey struct{}
 
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
@@ -733,8 +676,11 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	manager := newGCLifeTimeManager()
-	ctx2 := context.WithValue(ctx, &gcLifeTimeKey, manager)
+	manager, err := newChecksumManager(rc)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx2 := context.WithValue(ctx, &checksumManagerKey, manager)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
@@ -858,7 +804,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	wg.Wait()
 	close(stopPeriodicActions)
 
-	err := restoreErr.Get()
+	err = restoreErr.Get()
 	logTask.End(zap.ErrorLevel, err)
 	return err
 }
@@ -1660,7 +1606,7 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 
 // do checksum for each table.
 func (tr *TableRestore) compareChecksum(ctx context.Context, db *sql.DB, localChecksum verify.KVChecksum) error {
-	remoteChecksum, err := DoChecksum(ctx, db, tr.tableName)
+	remoteChecksum, err := DoChecksum(ctx, db, tr.tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1685,86 +1631,6 @@ func (tr *TableRestore) analyzeTable(ctx context.Context, db *sql.DB) error {
 		Exec(ctx, "analyze table", "ANALYZE TABLE "+tr.tableName)
 	task.End(zap.ErrorLevel, err)
 	return err
-}
-
-// RemoteChecksum represents a checksum result got from tidb.
-type RemoteChecksum struct {
-	Schema     string
-	Table      string
-	Checksum   uint64
-	TotalKVs   uint64
-	TotalBytes uint64
-}
-
-// DoChecksum do checksum for tables.
-// table should be in <db>.<table>, format.  e.g. foo.bar
-func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum, error) {
-	var err error
-	manager, ok := ctx.Value(&gcLifeTimeKey).(*gcLifeTimeManager)
-	if !ok {
-		return nil, errors.New("No gcLifeTimeManager found in context, check context initialization")
-	}
-
-	if err = manager.addOneJob(ctx, db); err != nil {
-		return nil, err
-	}
-
-	// set it back finally
-	defer manager.removeOneJob(ctx, db)
-
-	task := log.With(zap.String("table", table)).Begin(zap.InfoLevel, "remote checksum")
-
-	// ADMIN CHECKSUM TABLE <table>,<table>  example.
-	// 	mysql> admin checksum table test.t;
-	// +---------+------------+---------------------+-----------+-------------+
-	// | Db_name | Table_name | Checksum_crc64_xor  | Total_kvs | Total_bytes |
-	// +---------+------------+---------------------+-----------+-------------+
-	// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
-	// +---------+------------+---------------------+-----------+-------------+
-
-	cs := RemoteChecksum{}
-	err = common.SQLWithRetry{DB: db, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
-		"ADMIN CHECKSUM TABLE "+table, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
-	)
-	dur := task.End(zap.ErrorLevel, err)
-	metric.ChecksumSecondsHistogram.Observe(dur.Seconds())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &cs, nil
-}
-
-func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
-	// checksum command usually takes a long time to execute,
-	// so here need to increase the gcLifeTime for single transaction.
-
-	// try to get gcLifeTimeManager from context first.
-	// DoChecksum has assure this getting action success.
-	manager, _ := ctx.Value(&gcLifeTimeKey).(*gcLifeTimeManager)
-
-	var increaseGCLifeTime bool
-	if manager.oriGCLifeTime != "" {
-		ori, err := time.ParseDuration(manager.oriGCLifeTime)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if ori < defaultGCLifeTime {
-			increaseGCLifeTime = true
-		}
-	} else {
-		increaseGCLifeTime = true
-	}
-
-	if increaseGCLifeTime {
-		err = UpdateGCLifeTime(ctx, db, defaultGCLifeTime.String())
-		if err != nil {
-			return err
-		}
-	}
-
-	failpoint.Inject("IncreaseGCUpdateDuration", nil)
-
-	return nil
 }
 
 ////////////////////////////////////////////////////////////////

@@ -251,11 +251,13 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 			Tables: map[string]*checkpoints.TidbTableInfo{
 				"t1": {
 					ID:   100,
+					DB:   "db",
 					Name: "t1",
 					Core: tableInfos[0],
 				},
 				"t2": {
 					ID:   101,
+					DB:   "db",
 					Name: "t2",
 					Core: tableInfos[1],
 				},

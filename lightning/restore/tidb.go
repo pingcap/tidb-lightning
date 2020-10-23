@@ -222,6 +222,7 @@ func (timgr *TiDBManager) LoadSchemaInfo(
 			}
 			tableInfo := &TidbTableInfo{
 				ID:   tbl.ID,
+				DB:   schema.Name,
 				Name: tableName,
 				Core: tbl,
 			}
