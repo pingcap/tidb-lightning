@@ -280,13 +280,36 @@ func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) bool {
 }
 
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr int64) error {
-	sql := common.SQLWithRetry{
+	sqlDB := common.SQLWithRetry{
 		DB:     db,
 		Logger: log.With(zap.String("table", tableName), zap.Int64("auto_increment", incr)),
 	}
-	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
-	task := sql.Logger.Begin(zap.InfoLevel, "alter table auto_increment")
-	err := sql.Exec(ctx, "alter table auto_increment", query)
+
+	task := sqlDB.Logger.Begin(zap.InfoLevel, "alter table auto_increment")
+	var query string
+	err := sqlDB.Transact(ctx, "alter table auto_increment", func(i context.Context, tx *sql.Tx) error {
+		fetchQuery := fmt.Sprintf("show table %s next_row_id", tableName)
+		var (
+			dbName, tblName, columnName, idType string
+			nextID                              int64
+		)
+		err := tx.QueryRowContext(ctx, fetchQuery).Scan(&dbName, &tblName, &columnName, &nextID, &idType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if incr > nextID {
+			nextID = incr
+		}
+
+		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+		_, err = tx.ExecContext(ctx, query)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return errors.Trace(tx.Commit())
+	})
+
 	task.End(zap.ErrorLevel, err)
 	if err != nil {
 		task.Error(

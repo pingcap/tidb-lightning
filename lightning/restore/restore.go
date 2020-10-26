@@ -1183,6 +1183,11 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		}
 	}
 
+	// tidb backend don't need checksum & analyze
+	if rc.cfg.TikvImporter.Backend == config.BackendTiDB {
+		return nil
+	}
+
 	// 4. do table checksum
 	var localChecksum verify.KVChecksum
 	for _, engine := range cp.Engines {

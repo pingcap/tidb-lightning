@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	uuid "github.com/satori/go.uuid"
@@ -246,6 +247,18 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 		}
 	}
 	encoded.WriteByte(')')
+
+	if common.TableHasAutoRowID(enc.tbl.Meta()) {
+		j := columnPermutation[len(cols)]
+		if j >= 0 && j < len(row) {
+			value, err := table.CastValue(enc.se, row[j], extraHandleColumnInfo, false, false)
+			if err != nil {
+				return nil, logKVConvertFailed(logger, row, j, extraHandleColumnInfo, err)
+			}
+			_ = enc.tbl.RebaseAutoID(enc.se, value.GetInt64(), false, autoid.RowIDAllocType)
+		}
+	}
+
 	return tidbRow(encoded.String()), nil
 }
 
@@ -270,7 +283,7 @@ func (be *tidbBackend) MaxChunkSize() int {
 }
 
 func (be *tidbBackend) ShouldPostProcess() bool {
-	return false
+	return true
 }
 
 func (be *tidbBackend) CheckRequirements() error {
