@@ -39,6 +39,10 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
 
+const (
+	columnIndexUnInited = -2
+)
+
 type tidbRow string
 
 type tidbRows []tidbRow
@@ -52,9 +56,11 @@ func (row tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 }
 
 type tidbEncoder struct {
-	mode mysql.SQLMode
-	tbl  table.Table
-	se   *session
+	mode        mysql.SQLMode
+	tbl         table.Table
+	se          *session
+	autoIncrIdx int
+	autoRandIdx int
 }
 
 type tidbBackend struct {
@@ -249,18 +255,57 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	}
 	encoded.WriteByte(')')
 
+	if enc.autoRandIdx == columnIndexUnInited {
+		for i, col := range cols {
+			if mysql.HasAutoIncrementFlag(col.Flag) {
+				for j, p := range columnPermutation {
+					if p == i {
+						enc.autoIncrIdx = j
+					}
+				}
+			} else if mysql.HasPriKeyFlag(col.Flag) && enc.tbl.Meta().ContainsAutoRandomBits() {
+				for j, p := range columnPermutation {
+					if p == i {
+						enc.autoRandIdx = j
+					}
+				}
+			}
+		}
+		// if no column found, init default
+		if enc.autoIncrIdx == columnIndexUnInited {
+			enc.autoIncrIdx = -1
+		}
+		if enc.autoRandIdx == columnIndexUnInited {
+			enc.autoRandIdx = -1
+		}
+		fmt.Printf("column perms: %v, auto inc idx: %d, auto rand idx: %d\n", columnPermutation, enc.autoIncrIdx, enc.autoRandIdx)
+	}
+	var err error
+	if enc.autoIncrIdx >= 0 {
+		err = enc.rebaseByValue(logger, row, enc.autoIncrIdx, autoid.RowIDAllocType)
+	} else if enc.autoRandIdx >= 0 {
+		err = enc.rebaseByValue(logger, row, enc.autoRandIdx, autoid.AutoRandomType)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if common.TableHasAutoRowID(enc.tbl.Meta()) {
 		j := columnPermutation[len(cols)]
 		if j >= 0 && j < len(row) {
-			value, err := table.CastValue(enc.se, row[j], extraHandleColumnInfo, false, false)
-			if err != nil {
-				return nil, logKVConvertFailed(logger, row, j, extraHandleColumnInfo, err)
-			}
-			_ = enc.tbl.RebaseAutoID(enc.se, value.GetInt64(), false, autoid.RowIDAllocType)
+
 		}
 	}
 
 	return tidbRow(encoded.String()), nil
+}
+
+func (enc *tidbEncoder) rebaseByValue(logger log.Logger, row []types.Datum, idx int, ty autoid.AllocatorType) error {
+	value, err := table.CastValue(enc.se, row[idx], extraHandleColumnInfo, false, false)
+	if err != nil {
+		return logKVConvertFailed(logger, row, enc.autoRandIdx, extraHandleColumnInfo, err)
+	}
+	_ = enc.tbl.RebaseAutoID(enc.se, value.GetInt64(), false, autoid.AutoRandomType)
+	return nil
 }
 
 func (be *tidbBackend) Close() {
@@ -293,14 +338,13 @@ func (be *tidbBackend) CheckRequirements() error {
 }
 
 func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
-	var se *session
+	se := newSession(options)
 	if options.SQLMode.HasStrictMode() {
-		se = newSession(options)
 		se.vars.SkipUTF8Check = false
 		se.vars.SkipASCIICheck = false
 	}
 
-	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}
+	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se, autoIncrIdx: columnIndexUnInited, autoRandIdx: columnIndexUnInited}
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID) error {
@@ -440,7 +484,9 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 						case "AUTO_INCREMENT":
 							col.Flag |= mysql.AutoIncrementFlag
 						case "AUTO_RANDOM":
-							// TODO: should set tbl.AutoRandomBits here. But we don't use it currently.
+							col.Flag |= mysql.PriKeyFlag
+							// TODO: we don't know the actual auto random bits here, so we use the default value.
+							tbl.AutoRandomBits = autoid.DefaultAutoRandomBits
 						}
 					}
 				}
