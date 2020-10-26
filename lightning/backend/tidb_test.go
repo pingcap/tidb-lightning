@@ -86,10 +86,11 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
 
 	cols := s.tbl.Cols()
-	perms := make([]int, 0, len(s.tbl.Cols()))
+	perms := make([]int, 0, len(s.tbl.Cols())+1)
 	for i := 0; i < len(cols); i++ {
 		perms = append(perms, i)
 	}
+	perms = append(perms, -1)
 	encoder := s.backend.NewEncoder(s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890, RowFormatVersion: "1"})
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewUintDatum(18446744073709551615),
@@ -133,7 +134,7 @@ func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
 	encoder := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0})
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1})
 	c.Assert(err, IsNil)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
@@ -161,7 +162,7 @@ func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
 	encoder := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0})
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1})
 	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
@@ -187,16 +188,16 @@ func (s *mysqlSuite) TestStrictMode(c *C) {
 	logger := log.L()
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("test"),
-	}, 1, []int{0})
+	}, 1, []int{0, 1, -1})
 	c.Assert(err, IsNil)
 
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("\xff\xff\xff\xff"),
-	}, 1, []int{0})
+	}, 1, []int{0, 1, -1})
 	c.Assert(err, ErrorMatches, `.*incorrect utf8 value .* for column s0`)
 
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("非 ASCII 字符串"),
-	}, 1, []int{1})
+	}, 1, []int{1, 0, -1})
 	c.Assert(err, ErrorMatches, ".*incorrect ascii value .* for column s1")
 }
