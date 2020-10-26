@@ -100,8 +100,7 @@ type AbstractBackend interface {
 	MaxChunkSize() int
 
 	// ShouldPostProcess returns whether KV-specific post-processing should be
-	// performed for this backend. Post-processing includes checksum, adjusting
-	// auto-increment ID, and analyze.
+	// performed for this backend. Post-processing includes checksum and analyze.
 	ShouldPostProcess() bool
 
 	// NewEncoder creates an encoder of a TiDB table.

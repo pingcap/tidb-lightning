@@ -284,7 +284,7 @@ func (be *tidbBackend) MaxChunkSize() int {
 }
 
 func (be *tidbBackend) ShouldPostProcess() bool {
-	return true
+	return false
 }
 
 func (be *tidbBackend) CheckRequirements() error {

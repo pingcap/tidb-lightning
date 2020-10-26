@@ -1159,12 +1159,6 @@ func (t *TableRestore) importEngine(
 }
 
 func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
-	if !rc.backend.ShouldPostProcess() {
-		t.logger.Debug("skip post-processing, not supported by backend")
-		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
-		return nil
-	}
-
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
@@ -1184,7 +1178,9 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	}
 
 	// tidb backend don't need checksum & analyze
-	if rc.cfg.TikvImporter.Backend == config.BackendTiDB {
+	if !rc.backend.ShouldPostProcess() {
+		t.logger.Debug("skip checksum & analyze, not supported by this backend")
+		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 		return nil
 	}
 
