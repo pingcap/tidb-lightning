@@ -279,42 +279,25 @@ func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) bool {
 	return newCollationEnabled
 }
 
+// AlterAutoIncrement rebase the table auto increment id
+//
+// NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
+// the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
+// See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr int64) error {
-	sqlDB := common.SQLWithRetry{
+	sql := common.SQLWithRetry{
 		DB:     db,
 		Logger: log.With(zap.String("table", tableName), zap.Int64("auto_increment", incr)),
 	}
-
-	task := sqlDB.Logger.Begin(zap.InfoLevel, "alter table auto_increment")
-	var query string
-	err := sqlDB.Transact(ctx, "alter table auto_increment", func(i context.Context, tx *sql.Tx) error {
-		fetchQuery := fmt.Sprintf("SHOW TABLE %s NEXT_ROW_ID", tableName)
-		var (
-			dbName, tblName, columnName, idType string
-			nextID                              int64
-		)
-		err := tx.QueryRowContext(ctx, fetchQuery).Scan(&dbName, &tblName, &columnName, &nextID, &idType)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if incr > nextID {
-			nextID = incr
-		}
-
-		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d;", tableName, nextID)
-		_, err = tx.ExecContext(ctx, query)
-		return errors.Trace(err)
-	})
-
+	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+	task := sql.Logger.Begin(zap.InfoLevel, "alter table auto_increment")
+	err := sql.Exec(ctx, "alter table auto_increment", query)
 	task.End(zap.ErrorLevel, err)
 	if err != nil {
 		task.Error(
 			"alter table auto_increment failed, please perform the query manually (this is needed no matter the table has an auto-increment column or not)",
 			zap.String("query", query),
 		)
-	} else {
-		task.Info("alter table auto_increment", zap.String("query", query))
 	}
 	return errors.Annotatef(err, "%s", query)
 }
