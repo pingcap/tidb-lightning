@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -414,7 +415,42 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 			})
 			curColOffset++
 		}
-		return rows.Err()
+		if rows.Err() != nil {
+			return rows.Err()
+		}
+		// init auto id column for each table
+		for _, tbl := range tables {
+			tblName := common.UniqueTable(schemaName, tbl.Name.O)
+			rows, e = tx.Query(fmt.Sprintf("SHOW TABLE %s next_row_id", tblName))
+			if e != nil {
+				return e
+			}
+			for rows.Next() {
+				var (
+					dbName, tblName, columnName, idType string
+					nextID                              int64
+				)
+				if e := rows.Scan(&dbName, &tblName, &columnName, &nextID, &idType); e != nil {
+					_ = rows.Close()
+					return e
+				}
+				for _, col := range tbl.Columns {
+					if col.Name.O == columnName {
+						switch idType {
+						case "AUTO_INCREMENT":
+							col.Flag |= mysql.AutoIncrementFlag
+						case "AUTO_RANDOM":
+							// TODO: should set tbl.AutoRandomBits here. But we don't use it currently.
+						}
+					}
+				}
+			}
+			rows.Close()
+			if rows.Err() != nil {
+				return rows.Err()
+			}
+		}
+		return nil
 	})
 	return
 }

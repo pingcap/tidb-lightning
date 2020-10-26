@@ -15,8 +15,11 @@ package restore
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
+
+	"github.com/pingcap/br/pkg/utils"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
@@ -303,17 +306,33 @@ func (s *tidbSuite) TestSetGCLifetime(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *tidbSuite) TestAlterAutoInc(c *C) {
+func (s *tidbSuite) testAlterIncrement(c *C, local, remote int) {
 	ctx := context.Background()
+	expected := utils.MaxInt(local, remote)
 
+	s.mockDB.ExpectBegin()
 	s.mockDB.
-		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_INCREMENT=12345\\E").
+		ExpectQuery("SHOW TABLE `db`.`table` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("db", "table", "id", remote, "AUTO_INCREMENT"))
+	s.mockDB.
+		ExpectExec(fmt.Sprintf("\\QALTER TABLE `db`.`table` AUTO_INCREMENT=%d\\E", expected)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	s.mockDB.
-		ExpectClose()
+	s.mockDB.ExpectCommit()
 
-	err := AlterAutoIncrement(ctx, s.timgr.db, "`db`.`table`", 12345)
+	err := AlterAutoIncrement(ctx, s.timgr.db, "`db`.`table`", int64(local))
 	c.Assert(err, IsNil)
+}
+
+func (s *tidbSuite) TestAlterAutoInc(c *C) {
+	cases := [][2]int{
+		{1000, 10000},
+		{1000, 1000},
+		{10000, 1000},
+	}
+	for _, v := range cases {
+		s.testAlterIncrement(c, v[0], v[1])
+	}
 }
 
 func (s *tidbSuite) TestAlterAutoRandom(c *C) {

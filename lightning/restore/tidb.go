@@ -288,7 +288,7 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr 
 	task := sqlDB.Logger.Begin(zap.InfoLevel, "alter table auto_increment")
 	var query string
 	err := sqlDB.Transact(ctx, "alter table auto_increment", func(i context.Context, tx *sql.Tx) error {
-		fetchQuery := fmt.Sprintf("show table %s next_row_id", tableName)
+		fetchQuery := fmt.Sprintf("SHOW TABLE %s NEXT_ROW_ID", tableName)
 		var (
 			dbName, tblName, columnName, idType string
 			nextID                              int64
@@ -302,12 +302,9 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr 
 			nextID = incr
 		}
 
-		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d;", tableName, nextID)
 		_, err = tx.ExecContext(ctx, query)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Trace(tx.Commit())
+		return errors.Trace(err)
 	})
 
 	task.End(zap.ErrorLevel, err)
@@ -316,6 +313,8 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr 
 			"alter table auto_increment failed, please perform the query manually (this is needed no matter the table has an auto-increment column or not)",
 			zap.String("query", query),
 		)
+	} else {
+		task.Info("alter table auto_increment", zap.String("query", query))
 	}
 	return errors.Annotatef(err, "%s", query)
 }
