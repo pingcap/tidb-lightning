@@ -520,14 +520,17 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 					return err
 				}
 				var shardingInfo string
-				if err = bitsRows.Scan(&shardingInfo); err != nil {
-					bitsRows.Close()
-					return err
+				if bitsRows.Next() {
+					if err = bitsRows.Scan(&shardingInfo); err != nil {
+						bitsRows.Close()
+						return err
+					}
+					if strings.HasPrefix(shardingInfo, "PK_AUTO_RANDOM_BITS=") {
+						bits, _ := strconv.Atoi(shardingInfo[20:])
+						tbl.AutoRandomBits = uint64(bits)
+					}
 				}
-				if strings.HasPrefix(shardingInfo, "PK_AUTO_RANDOM_BITS=") {
-					bits, _ := strconv.Atoi(shardingInfo[20:])
-					tbl.AutoRandomBits = uint64(bits)
-				}
+
 				bitsRows.Close()
 			}
 		}
