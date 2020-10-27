@@ -247,7 +247,6 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 		}
 	}
 	encoded.WriteByte(')')
-
 	return tidbRow(encoded.String()), nil
 }
 

@@ -100,18 +100,18 @@ func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1 interface{}) *gomock.C
 }
 
 // FetchRemoteTableModels mocks base method
-func (m *MockBackend) FetchRemoteTableModels(ctx context.Context, arg0 string) ([]*model.TableInfo, error) {
+func (m *MockBackend) FetchRemoteTableModels(arg0 context.Context, arg1 string) ([]*model.TableInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchRemoteTableModels", arg0)
+	ret := m.ctrl.Call(m, "FetchRemoteTableModels", arg0, arg1)
 	ret0, _ := ret[0].([]*model.TableInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FetchRemoteTableModels indicates an expected call of FetchRemoteTableModels
-func (mr *MockBackendMockRecorder) FetchRemoteTableModels(arg0 interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) FetchRemoteTableModels(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockBackend)(nil).FetchRemoteTableModels), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockBackend)(nil).FetchRemoteTableModels), arg0, arg1)
 }
 
 // ImportEngine mocks base method
