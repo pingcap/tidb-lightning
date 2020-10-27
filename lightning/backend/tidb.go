@@ -56,11 +56,12 @@ func (row tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 }
 
 type tidbEncoder struct {
-	mode        mysql.SQLMode
-	tbl         table.Table
-	se          *session
-	autoIncrIdx int
-	autoRandIdx int
+	mode         mysql.SQLMode
+	tbl          table.Table
+	se           *session
+	autoIncrIdx  int
+	autoRandIdx  int
+	autoRandMask int64
 }
 
 type tidbBackend struct {
@@ -267,6 +268,12 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 				for j, p := range columnPermutation {
 					if p == i {
 						enc.autoRandIdx = j
+						// calculate auto-random bits
+						incrementalBits := 64 - enc.tbl.Meta().AutoRandomBits
+						if !mysql.HasUnsignedFlag(col.Flag) {
+							incrementalBits -= 1
+						}
+						enc.autoRandMask = (1 << incrementalBits) - 1
 					}
 				}
 			}
@@ -278,7 +285,6 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 		if enc.autoRandIdx == columnIndexUnInited {
 			enc.autoRandIdx = -1
 		}
-		fmt.Printf("column perms: %v, auto inc idx: %d, auto rand idx: %d\n", columnPermutation, enc.autoIncrIdx, enc.autoRandIdx)
 	}
 	var err error
 	if enc.autoIncrIdx >= 0 {
@@ -304,7 +310,11 @@ func (enc *tidbEncoder) rebaseByValue(logger log.Logger, row []types.Datum, idx 
 	if err != nil {
 		return logKVConvertFailed(logger, row, enc.autoRandIdx, extraHandleColumnInfo, err)
 	}
-	_ = enc.tbl.RebaseAutoID(enc.se, value.GetInt64(), false, autoid.AutoRandomType)
+	rebaseValue := value.GetInt64()
+	if ty == autoid.AutoRandomType {
+		rebaseValue &= enc.autoRandMask
+	}
+	_ = enc.tbl.RebaseAutoID(enc.se, rebaseValue, false, ty)
 	return nil
 }
 
@@ -421,7 +431,7 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 	}
 	err = s.Transact(context.Background(), "fetch table columns", func(c context.Context, tx *sql.Tx) error {
 		rows, e := tx.Query(`
-			SELECT table_name, column_name
+			SELECT table_name, column_name, column_type
 			FROM information_schema.columns
 			WHERE table_schema = ?
 			ORDER BY table_name, ordinal_position;
@@ -437,8 +447,8 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 			curTable     *model.TableInfo
 		)
 		for rows.Next() {
-			var tableName, columnName string
-			if e := rows.Scan(&tableName, &columnName); e != nil {
+			var tableName, columnName, columnType string
+			if e := rows.Scan(&tableName, &columnName, &columnType); e != nil {
 				return e
 			}
 			if tableName != curTableName {
@@ -452,10 +462,18 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 				curColOffset = 0
 			}
 
+			// see: https://github.com/pingcap/parser/blob/3b2fb4b41d73710bc6c4e1f4e8679d8be6a4863e/types/field_type.go#L185-L191
+			var flag uint
+			if strings.HasSuffix(columnType, "unsigned") {
+				flag |= mysql.UnsignedFlag
+			}
 			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
 				Name:   model.NewCIStr(columnName),
 				Offset: curColOffset,
 				State:  model.StatePublic,
+				FieldType: types.FieldType{
+					Flag: flag,
+				},
 			})
 			curColOffset++
 		}
@@ -485,8 +503,19 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 							col.Flag |= mysql.AutoIncrementFlag
 						case "AUTO_RANDOM":
 							col.Flag |= mysql.PriKeyFlag
-							// TODO: we don't know the actual auto random bits here, so we use the default value.
-							tbl.AutoRandomBits = autoid.DefaultAutoRandomBits
+							autoBitsQuery := fmt.Sprintf("SELECT tidb_row_id_sharding_info FROM information_schema.tables WHERE TABLE_NAME = '%s';", tblName)
+							bitsRows, err := tx.Query(autoBitsQuery)
+							if err != nil {
+								return err
+							}
+							var shardingInfo string
+							if err = bitsRows.Scan(&shardingInfo); err != nil {
+								return err
+							}
+							if strings.HasPrefix(shardingInfo, "PK_AUTO_RANDOM_BITS=") {
+								bits, _ := strconv.Atoi(shardingInfo[20:])
+								tbl.AutoRandomBits = uint64(bits)
+							}
 						}
 					}
 				}
