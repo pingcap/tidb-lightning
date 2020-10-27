@@ -503,19 +503,7 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 							col.Flag |= mysql.AutoIncrementFlag
 						case "AUTO_RANDOM":
 							col.Flag |= mysql.PriKeyFlag
-							autoBitsQuery := fmt.Sprintf("SELECT tidb_row_id_sharding_info FROM information_schema.tables WHERE TABLE_NAME = '%s';", tblName)
-							bitsRows, err := tx.Query(autoBitsQuery)
-							if err != nil {
-								return err
-							}
-							var shardingInfo string
-							if err = bitsRows.Scan(&shardingInfo); err != nil {
-								return err
-							}
-							if strings.HasPrefix(shardingInfo, "PK_AUTO_RANDOM_BITS=") {
-								bits, _ := strconv.Atoi(shardingInfo[20:])
-								tbl.AutoRandomBits = uint64(bits)
-							}
+							tbl.PKIsHandle = true
 						}
 					}
 				}
@@ -523,6 +511,24 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 			rows.Close()
 			if rows.Err() != nil {
 				return rows.Err()
+			}
+
+			if tbl.PKIsHandle {
+				autoBitsQuery := fmt.Sprintf("SELECT tidb_row_id_sharding_info FROM information_schema.tables WHERE TABLE_NAME = '%s';", tblName)
+				bitsRows, err := tx.Query(autoBitsQuery)
+				if err != nil {
+					return err
+				}
+				var shardingInfo string
+				if err = bitsRows.Scan(&shardingInfo); err != nil {
+					bitsRows.Close()
+					return err
+				}
+				if strings.HasPrefix(shardingInfo, "PK_AUTO_RANDOM_BITS=") {
+					bits, _ := strconv.Atoi(shardingInfo[20:])
+					tbl.AutoRandomBits = uint64(bits)
+				}
+				bitsRows.Close()
 			}
 		}
 		return nil
