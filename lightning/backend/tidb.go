@@ -432,7 +432,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		// init auto id column for each table
 		for _, tbl := range tables {
 			tblName := common.UniqueTable(schemaName, tbl.Name.O)
-			rows, e = tx.Query(fmt.Sprintf("SHOW TABLE %s next_row_id", tblName))
+			rows, e = tx.Query(fmt.Sprintf("SHOW TABLE %s NEXT_ROW_ID", tblName))
 			if e != nil {
 				return e
 			}
@@ -441,10 +441,29 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 					dbName, tblName, columnName, idType string
 					nextID                              int64
 				)
-				if e := rows.Scan(&dbName, &tblName, &columnName, &nextID, &idType); e != nil {
-					_ = rows.Close()
-					return e
+				columns, err := rows.Columns()
+				if err != nil {
+					return err
 				}
+
+				//+--------------+------------+-------------+--------------------+----------------+
+				//| DB_NAME      | TABLE_NAME | COLUMN_NAME | NEXT_GLOBAL_ROW_ID | ID_TYPE        |
+				//+--------------+------------+-------------+--------------------+----------------+
+				//| testsysbench | t          | _tidb_rowid |                  1 | AUTO_INCREMENT |
+				//+--------------+------------+-------------+--------------------+----------------+
+
+				// if columns length is 4, it doesn't contains the last column `ID_TYPE`, and it will always be 'AUTO_INCREMENT'
+				// for v4.0.0~v4.0.2 show table t next_row_id only returns 4 columns.
+				if len(columns) == 4 {
+					err = rows.Scan(&dbName, &tblName, &columnName, &nextID)
+					idType = "AUTO_INCREMENT"
+				} else {
+					err = rows.Scan(&dbName, &tblName, &columnName, &nextID, &idType)
+				}
+				if err != nil {
+					return err
+				}
+
 				for _, col := range tbl.Columns {
 					if col.Name.O == columnName {
 						switch idType {
