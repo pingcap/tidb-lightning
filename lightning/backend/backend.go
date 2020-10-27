@@ -139,7 +139,7 @@ type AbstractBackend interface {
 	//     * State (must be model.StatePublic)
 	//     * Offset (must be 0, 1, 2, ...)
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
-	FetchRemoteTableModels(schemaName string) ([]*model.TableInfo, error)
+	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
 }
 
 func fetchRemoteTableModelsFromTLS(tls *common.TLS, schema string) ([]*model.TableInfo, error) {
@@ -208,8 +208,8 @@ func (be Backend) CheckRequirements() error {
 	return be.abstract.CheckRequirements()
 }
 
-func (be Backend) FetchRemoteTableModels(schemaName string) ([]*model.TableInfo, error) {
-	return be.abstract.FetchRemoteTableModels(schemaName)
+func (be Backend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+	return be.abstract.FetchRemoteTableModels(ctx, schemaName)
 }
 
 // OpenEngine opens an engine with the given table name and engine ID.

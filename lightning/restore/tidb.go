@@ -195,11 +195,11 @@ func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error
 func (timgr *TiDBManager) LoadSchemaInfo(
 	ctx context.Context,
 	schemas []*mydump.MDDatabaseMeta,
-	getTables func(string) ([]*model.TableInfo, error),
+	getTables func(context.Context, string) ([]*model.TableInfo, error),
 ) (map[string]*TidbDBInfo, error) {
 	result := make(map[string]*TidbDBInfo, len(schemas))
 	for _, schema := range schemas {
-		tables, err := getTables(schema.Name)
+		tables, err := getTables(ctx, schema.Name)
 		if err != nil {
 			return nil, err
 		}

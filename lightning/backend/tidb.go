@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	uuid "github.com/satori/go.uuid"
@@ -37,10 +36,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/verification"
-)
-
-const (
-	columnIndexUnInited = -2
 )
 
 type tidbRow string
@@ -56,12 +51,9 @@ func (row tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 }
 
 type tidbEncoder struct {
-	mode         mysql.SQLMode
-	tbl          table.Table
-	se           *session
-	autoIncrIdx  int
-	autoRandIdx  int
-	autoRandMask int64
+	mode mysql.SQLMode
+	tbl  table.Table
+	se   *session
 }
 
 type tidbBackend struct {
@@ -256,66 +248,7 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	}
 	encoded.WriteByte(')')
 
-	if enc.autoRandIdx == columnIndexUnInited {
-		for i, col := range cols {
-			if mysql.HasAutoIncrementFlag(col.Flag) {
-				for j, p := range columnPermutation {
-					if p == i {
-						enc.autoIncrIdx = j
-					}
-				}
-			} else if mysql.HasPriKeyFlag(col.Flag) && enc.tbl.Meta().ContainsAutoRandomBits() {
-				for j, p := range columnPermutation {
-					if p == i {
-						enc.autoRandIdx = j
-						// calculate auto-random bits
-						incrementalBits := 64 - enc.tbl.Meta().AutoRandomBits
-						if !mysql.HasUnsignedFlag(col.Flag) {
-							incrementalBits -= 1
-						}
-						enc.autoRandMask = (1 << incrementalBits) - 1
-					}
-				}
-			}
-		}
-		// if no column found, init default
-		if enc.autoIncrIdx == columnIndexUnInited {
-			enc.autoIncrIdx = -1
-		}
-		if enc.autoRandIdx == columnIndexUnInited {
-			enc.autoRandIdx = -1
-		}
-	}
-	var err error
-	if enc.autoIncrIdx >= 0 {
-		err = enc.rebaseByValue(logger, row, enc.autoIncrIdx, autoid.RowIDAllocType)
-	} else if enc.autoRandIdx >= 0 {
-		err = enc.rebaseByValue(logger, row, enc.autoRandIdx, autoid.AutoRandomType)
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if common.TableHasAutoRowID(enc.tbl.Meta()) {
-		j := columnPermutation[len(cols)]
-		if j >= 0 && j < len(row) {
-
-		}
-	}
-
 	return tidbRow(encoded.String()), nil
-}
-
-func (enc *tidbEncoder) rebaseByValue(logger log.Logger, row []types.Datum, idx int, ty autoid.AllocatorType) error {
-	value, err := table.CastValue(enc.se, row[idx], extraHandleColumnInfo, false, false)
-	if err != nil {
-		return logKVConvertFailed(logger, row, enc.autoRandIdx, extraHandleColumnInfo, err)
-	}
-	rebaseValue := value.GetInt64()
-	if ty == autoid.AutoRandomType {
-		rebaseValue &= enc.autoRandMask
-	}
-	_ = enc.tbl.RebaseAutoID(enc.se, rebaseValue, false, ty)
-	return nil
 }
 
 func (be *tidbBackend) Close() {
@@ -354,7 +287,7 @@ func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) Enco
 		se.vars.SkipASCIICheck = false
 	}
 
-	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se, autoIncrIdx: columnIndexUnInited, autoRandIdx: columnIndexUnInited}
+	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID) error {
@@ -424,14 +357,24 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	return errors.Trace(err)
 }
 
-func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*model.TableInfo, err error) {
+func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) (tables []*model.TableInfo, err error) {
 	s := common.SQLWithRetry{
 		DB:     be.db,
 		Logger: log.L(),
 	}
-	err = s.Transact(context.Background(), "fetch table columns", func(c context.Context, tx *sql.Tx) error {
+
+	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
+		var versionStr string
+		if err = tx.QueryRowContext(ctx, "SELECT version()").Scan(&versionStr); err != nil {
+			return err
+		}
+		tidbVersion, err := common.ExtractTiDBVersion(versionStr)
+		if err != nil {
+			return err
+		}
+
 		rows, e := tx.Query(`
-			SELECT table_name, column_name, column_type
+			SELECT table_name, column_name, column_type, extra
 			FROM information_schema.columns
 			WHERE table_schema = ?
 			ORDER BY table_name, ordinal_position;
@@ -447,8 +390,8 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 			curTable     *model.TableInfo
 		)
 		for rows.Next() {
-			var tableName, columnName, columnType string
-			if e := rows.Scan(&tableName, &columnName, &columnType); e != nil {
+			var tableName, columnName, columnType, columnExtra string
+			if e := rows.Scan(&tableName, &columnName, &columnType, &columnExtra); e != nil {
 				return e
 			}
 			if tableName != curTableName {
@@ -467,6 +410,9 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 			if strings.HasSuffix(columnType, "unsigned") {
 				flag |= mysql.UnsignedFlag
 			}
+			if strings.Contains(columnExtra, "auto_increment") {
+				flag |= mysql.AutoIncrementFlag
+			}
 			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
 				Name:   model.NewCIStr(columnName),
 				Offset: curColOffset,
@@ -479,6 +425,10 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 		}
 		if rows.Err() != nil {
 			return rows.Err()
+		}
+		// for version < v4.0.0 we can use `show table next_row_id` to fetch auto id info, so about should be enough
+		if tidbVersion.Major < 4 {
+			return nil
 		}
 		// init auto id column for each table
 		for _, tbl := range tables {
@@ -504,6 +454,8 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 						case "AUTO_RANDOM":
 							col.Flag |= mysql.PriKeyFlag
 							tbl.PKIsHandle = true
+							// set a stub here, since we don't really need the real value
+							tbl.AutoRandomBits = 1
 						}
 					}
 				}
@@ -511,27 +463,6 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 			rows.Close()
 			if rows.Err() != nil {
 				return rows.Err()
-			}
-
-			if tbl.PKIsHandle {
-				autoBitsQuery := fmt.Sprintf("SELECT tidb_row_id_sharding_info FROM information_schema.tables WHERE TABLE_NAME = '%s';", tblName)
-				bitsRows, err := tx.Query(autoBitsQuery)
-				if err != nil {
-					return err
-				}
-				var shardingInfo string
-				if bitsRows.Next() {
-					if err = bitsRows.Scan(&shardingInfo); err != nil {
-						bitsRows.Close()
-						return err
-					}
-					if strings.HasPrefix(shardingInfo, "PK_AUTO_RANDOM_BITS=") {
-						bits, _ := strconv.Atoi(shardingInfo[20:])
-						tbl.AutoRandomBits = uint64(bits)
-					}
-				}
-
-				bitsRows.Close()
 			}
 		}
 		return nil
