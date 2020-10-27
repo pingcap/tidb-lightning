@@ -45,7 +45,7 @@ type ChecksumManager interface {
 
 func newChecksumManager(rc *RestoreController) (ChecksumManager, error) {
 	// if we don't need checksum, just return nil
-	if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
+	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 		return nil, nil
 	}
 
