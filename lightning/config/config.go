@@ -240,6 +240,8 @@ type TikvImporter struct {
 	RegionSplitSize  int64  `toml:"region-split-size" json:"region-split-size"`
 	SortedKVDir      string `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
 	RangeConcurrency int    `toml:"range-concurrency" json:"range-concurrency"`
+	Online           bool   `toml:"online" json:"online"`
+	RateLimit        int64  `toml:"rate-limit" json:"rate-limit"`
 }
 
 type Checkpoint struct {

@@ -29,6 +29,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/juju/ratelimit"
+
 	"github.com/google/btree"
 
 	"github.com/pingcap/tidb/util/hack"
@@ -173,6 +175,22 @@ func (conns *gRPCConns) Close() {
 	}
 }
 
+type rateLimiterPool struct {
+	sync.Mutex
+	pool       map[uint64]RateLimiter
+	newLimiter func() RateLimiter
+}
+
+func (p *rateLimiterPool) GetRateLimiter(storeID uint64) RateLimiter {
+	p.Lock()
+	limiter, ok := p.pool[storeID]
+	if !ok {
+		limiter := p.newLimiter()
+		p.pool[storeID] = limiter
+	}
+	return limiter
+}
+
 type local struct {
 	engines  sync.Map
 	conns    gRPCConns
@@ -189,6 +207,8 @@ type local struct {
 	checkpointEnabled bool
 
 	tcpConcurrency int
+
+	limiterPool rateLimiterPool
 }
 
 // connPool is a lazy pool of gRPC channels.
@@ -260,6 +280,7 @@ func NewLocalBackend(
 	rangeConcurrency int,
 	sendKVPairs int,
 	enableCheckpoint bool,
+	rateLimitation int64,
 ) (Backend, error) {
 	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
@@ -299,6 +320,11 @@ func NewLocalBackend(
 		tcpConcurrency:    rangeConcurrency,
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
+		limiterPool: rateLimiterPool{
+			newLimiter: func() RateLimiter {
+				return newRateLimiter(rateLimitation, rangeConcurrency)
+			},
+		},
 	}
 	local.conns.conns = make(map[uint64]*connPool)
 	return MakeBackend(local), nil
@@ -1473,4 +1499,34 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 		prop := i.(*rangeProperty)
 		return f(prop)
 	})
+}
+
+func newRateLimiter(rate int64, concurrency int) RateLimiter {
+	if rate == 0 {
+		return &unlimitedLimiter{}
+	}
+	return &bucketRateLimiter{
+		bucket: ratelimit.NewBucketWithRate(float64(rate), int64(concurrency)),
+	}
+}
+
+// RateLimit limit the read/write limit
+type RateLimiter interface {
+	// Consumes several bytes from the speed limiter. if write rate reaches the limit,
+	// call `Consume` will sleep until available
+	Consume(context.Context, int64)
+}
+
+type unlimitedLimiter struct{}
+
+func (l *unlimitedLimiter) Consume(ctx context.Context, bytes int64) {
+	return
+}
+
+type bucketRateLimiter struct {
+	bucket *ratelimit.Bucket
+}
+
+func (l *bucketRateLimiter) Consume(ctx context.Context, bytes int64) {
+	l.bucket.Wait(bytes)
 }

@@ -18,6 +18,7 @@ require (
 	github.com/google/go-cmp v0.5.0 // indirect
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
 	github.com/juju/loggo v0.0.0-20180524022052-584905176618 // indirect
+	github.com/juju/ratelimit v1.0.1
 	github.com/onsi/ginkgo v1.13.0 // indirect
 	github.com/pingcap/br v4.0.0-beta.2.0.20201022162224-a1d616ce0744+incompatible
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
@@ -34,8 +35,8 @@ require (
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tikv/pd v1.1.0-beta.0.20200910042021-254d1345be09
-	github.com/xitongsys/parquet-go v1.5.4-0.20201010004835-f51647f24120
-	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
+	github.com/xitongsys/parquet-go v1.5.4
+	github.com/xitongsys/parquet-go-source v0.0.0-20201014235637-c24a23d9ef1e
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/net v0.0.0-20200904194848-62affa334b73

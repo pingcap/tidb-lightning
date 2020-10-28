@@ -206,7 +206,7 @@ func NewRestoreControllerWithPauser(
 	case config.BackendLocal:
 		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, cfg.TikvImporter.RegionSplitSize,
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
-			cfg.Checkpoint.Enable)
+			cfg.Checkpoint.Enable, cfg.TikvImporter.RateLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -573,7 +573,8 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 
 	var switchModeChan <-chan time.Time
 	// tide backend don't need to switch tikv to import mode
-	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+	if rc.cfg.TikvImporter.Backend == config.BackendImporter ||
+		(rc.cfg.TikvImporter.Backend == config.BackendLocal && !rc.cfg.TikvImporter.Online) {
 		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 		defer switchModeTicker.Stop()
 		switchModeChan = switchModeTicker.C

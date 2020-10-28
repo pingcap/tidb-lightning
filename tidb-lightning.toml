@@ -92,6 +92,10 @@ addr = "127.0.0.1:8287"
 # this default config can make full use of a 10Gib bandwidth network, if the network bandwidth is higher, you can increase
 # this to gain better performance. Larger value will also increase the memory usage slightly.
 #range-concurrency = 16
+# whether to run lightning in online mode
+# online = false
+# Write rate limit in MB for each tikv store. The default value 0 means no limit
+# rate-limit = 0
 
 [mydumper]
 # block size of file reading
