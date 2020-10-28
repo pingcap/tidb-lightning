@@ -1213,7 +1213,7 @@ func (local *local) CheckRequirements() error {
 	return nil
 }
 
-func (local *local) FetchRemoteTableModels(schemaName string) ([]*model.TableInfo, error) {
+func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return fetchRemoteTableModelsFromTLS(local.tls, schemaName)
 }
 
