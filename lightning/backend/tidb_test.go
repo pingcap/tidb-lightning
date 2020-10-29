@@ -201,3 +201,141 @@ func (s *mysqlSuite) TestStrictMode(c *C) {
 	}, 1, []int{1, 0, -1})
 	c.Assert(err, ErrorMatches, ".*incorrect ascii value .* for column s1")
 }
+
+func (s *mysqlSuite) TestFetchRemoteTableModels_3_x(c *C) {
+	s.mockDB.ExpectBegin()
+	s.mockDB.ExpectQuery("SELECT version()").
+		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v3.0.18"))
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test").
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
+			AddRow("t", "id", "int(10)", "auto_increment"))
+	s.mockDB.ExpectCommit()
+
+	bk := kv.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
+	c.Assert(err, IsNil)
+	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
+		{
+			Name:       model.NewCIStr("t"),
+			State:      model.StatePublic,
+			PKIsHandle: true,
+			Columns: []*model.ColumnInfo{
+				{
+					Name:   model.NewCIStr("id"),
+					Offset: 0,
+					State:  model.StatePublic,
+					FieldType: types.FieldType{
+						Flag: mysql.AutoIncrementFlag,
+					},
+				},
+			},
+		},
+	})
+}
+
+func (s *mysqlSuite) TestFetchRemoteTableModels_4_0(c *C) {
+	s.mockDB.ExpectBegin()
+	s.mockDB.ExpectQuery("SELECT version()").
+		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.0"))
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test").
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
+			AddRow("t", "id", "bigint(20) unsigned", "auto_increment"))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID"}).
+			AddRow("test", "t", "id", int64(1)))
+	s.mockDB.ExpectCommit()
+
+	bk := kv.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
+	c.Assert(err, IsNil)
+	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
+		{
+			Name:       model.NewCIStr("t"),
+			State:      model.StatePublic,
+			PKIsHandle: true,
+			Columns: []*model.ColumnInfo{
+				{
+					Name:   model.NewCIStr("id"),
+					Offset: 0,
+					State:  model.StatePublic,
+					FieldType: types.FieldType{
+						Flag: mysql.AutoIncrementFlag | mysql.UnsignedFlag,
+					},
+				},
+			},
+		},
+	})
+}
+
+func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_increment(c *C) {
+	s.mockDB.ExpectBegin()
+	s.mockDB.ExpectQuery("SELECT version()").
+		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.7"))
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test").
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
+			AddRow("t", "id", "bigint(20)", ""))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "t", "id", int64(1), "AUTO_INCREMENT"))
+	s.mockDB.ExpectCommit()
+
+	bk := kv.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
+	c.Assert(err, IsNil)
+	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
+		{
+			Name:       model.NewCIStr("t"),
+			State:      model.StatePublic,
+			PKIsHandle: true,
+			Columns: []*model.ColumnInfo{
+				{
+					Name:   model.NewCIStr("id"),
+					Offset: 0,
+					State:  model.StatePublic,
+					FieldType: types.FieldType{
+						Flag: mysql.AutoIncrementFlag,
+					},
+				},
+			},
+		},
+	})
+}
+
+func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_random(c *C) {
+	s.mockDB.ExpectBegin()
+	s.mockDB.ExpectQuery("SELECT version()").
+		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.7"))
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+		WithArgs("test").
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
+			AddRow("t", "id", "bigint(20)", ""))
+	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "t", "id", int64(1), "AUTO_RANDOM"))
+	s.mockDB.ExpectCommit()
+
+	bk := kv.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
+	c.Assert(err, IsNil)
+	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
+		{
+			Name:           model.NewCIStr("t"),
+			State:          model.StatePublic,
+			PKIsHandle:     true,
+			AutoRandomBits: 1,
+			Columns: []*model.ColumnInfo{
+				{
+					Name:   model.NewCIStr("id"),
+					Offset: 0,
+					State:  model.StatePublic,
+					FieldType: types.FieldType{
+						Flag: mysql.PriKeyFlag,
+					},
+				},
+			},
+		},
+	})
+}
