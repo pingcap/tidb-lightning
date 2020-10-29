@@ -45,4 +45,8 @@ for BACKEND in local importer tidb; do
 
     run_sql 'select w_name from test.warehouse;'
     check_contains "w_name: eLNEDIW"
+
+    run_sql 'select c_since, c_discount from test.customer where c_id = 20;'
+    check_contains "c_since: 2020-09-10 20:17:16"
+    check_container "c_discount: 0.0585"
 done
