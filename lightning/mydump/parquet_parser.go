@@ -7,19 +7,15 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/pingcap/parser/mysql"
-
-	"github.com/xitongsys/parquet-go/parquet"
-
-	"go.uber.org/zap"
-
 	"github.com/pingcap/br/pkg/storage"
-
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb/types"
+	"github.com/xitongsys/parquet-go/parquet"
 	preader "github.com/xitongsys/parquet-go/reader"
 	"github.com/xitongsys/parquet-go/source"
+	"go.uber.org/zap"
 )
 
 const (
