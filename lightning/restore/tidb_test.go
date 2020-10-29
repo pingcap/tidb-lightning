@@ -240,7 +240,7 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 		tableInfos = append(tableInfos, info)
 	}
 
-	loaded, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "db"}}, func(schema string) ([]*model.TableInfo, error) {
+	loaded, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "db"}}, func(ctx context.Context, schema string) ([]*model.TableInfo, error) {
 		c.Assert(schema, Equals, "db")
 		return tableInfos, nil
 	})
@@ -269,7 +269,7 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 func (s *tidbSuite) TestLoadSchemaInfoMissing(c *C) {
 	ctx := context.Background()
 
-	_, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "asdjalsjdlas"}}, func(schema string) ([]*model.TableInfo, error) {
+	_, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "asdjalsjdlas"}}, func(ctx context.Context, schema string) ([]*model.TableInfo, error) {
 		return nil, errors.Errorf("[schema:1049]Unknown database '%s'", schema)
 	})
 	c.Assert(err, ErrorMatches, ".*Unknown database.*")

@@ -639,9 +639,11 @@ var checksumManagerKey struct{}
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 
-	// for importer/local backend, we should disable some pd scheduler and change some settings, to
+	// for local backend, we should disable some pd scheduler and change some settings, to
 	// make split region and ingest sst more stable
-	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+	// because importer backend is mostly use for v3.x cluster which doesn't support these api,
+	// so we also don't do this for import backend
+	if rc.cfg.TikvImporter.Backend == config.BackendLocal {
 		// disable some pd schedulers
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
@@ -1159,12 +1161,6 @@ func (t *TableRestore) importEngine(
 }
 
 func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
-	if !rc.backend.ShouldPostProcess() {
-		t.logger.Debug("skip post-processing, not supported by backend")
-		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
-		return nil
-	}
-
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
@@ -1181,6 +1177,13 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		if err != nil {
 			return err
 		}
+	}
+
+	// tidb backend don't need checksum & analyze
+	if !rc.backend.ShouldPostProcess() {
+		t.logger.Debug("skip checksum & analyze, not supported by this backend")
+		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
+		return nil
 	}
 
 	// 4. do table checksum
