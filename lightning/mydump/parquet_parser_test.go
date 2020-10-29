@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/pingcap/parser/mysql"
+
 	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/types"
@@ -55,7 +57,7 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	verifyRow := func(i int) {
 		c.Assert(reader.lastRow.RowID, Equals, int64(i+1))
 		c.Assert(len(reader.lastRow.Row), Equals, 2)
-		c.Assert(reader.lastRow.Row[0], DeepEquals, types.NewCollationStringDatum(strconv.Itoa(i), "", 0))
+		c.Assert(reader.lastRow.Row[0], DeepEquals, types.NewCollationStringDatum(strconv.Itoa(i), mysql.DefaultCollationName, 0))
 		c.Assert(reader.lastRow.Row[1], DeepEquals, types.NewIntDatum(int64(i)))
 	}
 
