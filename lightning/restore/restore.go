@@ -644,7 +644,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	// make split region and ingest sst more stable
 	// because importer backend is mostly use for v3.x cluster which doesn't support these api,
 	// so we also don't do this for import backend
-	if rc.cfg.TikvImporter.Backend == config.BackendLocal {
+	if !rc.cfg.TikvImporter.Online && rc.cfg.TikvImporter.Backend == config.BackendLocal {
 		// disable some pd schedulers
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
