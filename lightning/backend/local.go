@@ -29,12 +29,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/btree"
-
-	"github.com/pingcap/tidb/util/hack"
-
 	"github.com/cockroachdb/pebble"
 	"github.com/coreos/go-semver/semver"
+	"github.com/google/btree"
 	split "github.com/pingcap/br/pkg/restore"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -45,6 +42,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	uuid "github.com/satori/go.uuid"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -125,7 +123,7 @@ func (e *LocalFile) Cleanup(dataDir string) error {
 func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 	sstables, err := e.db.SSTables(pebble.WithProperties())
 	if err != nil {
-		log.L().Warn("get table properties failed", zap.Stringer("engine", e.Uuid), zap.Error(err))
+		log.L().Warn("get table properties failed", zap.Stringer("engine", e.Uuid), log.ShortError(err))
 		return nil, errors.Trace(err)
 	}
 
@@ -137,21 +135,11 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 				rangeProps, err := decodeRangeProperties(data)
 				if err != nil {
 					log.L().Warn("decodeRangeProperties failed", zap.Stringer("engine", e.Uuid),
-						zap.Stringer("fileNum", info.FileNum), zap.Error(err))
+						zap.Stringer("fileNum", info.FileNum), log.ShortError(err))
 					return nil, errors.Trace(err)
 				}
 
-				prevRange := rangeOffsets{}
-				for _, r := range rangeProps {
-					sizeProps.add(&rangeProperty{
-						Key:          r.Key,
-						rangeOffsets: rangeOffsets{Keys: r.Keys - prevRange.Keys, Size: r.Size - prevRange.Size},
-					})
-					prevRange = r.rangeOffsets
-				}
-				if len(rangeProps) > 0 {
-					sizeProps.totalSize = rangeProps[len(rangeProps)-1].Size
-				}
+				sizeProps.addAll(rangeProps)
 			}
 		}
 	}
@@ -695,6 +683,31 @@ func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split
 	return resp, nil
 }
 
+func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []Range {
+	ranges := make([]Range, 0, sizeProps.totalSize/uint64(sizeLimit))
+	curSize := uint64(0)
+	curKeys := uint64(0)
+	curKey := fullRange.start
+	sizeProps.iter(func(p *rangeProperty) bool {
+		curSize += p.Size
+		curKeys += p.Keys
+		if int64(curSize) >= sizeLimit || int64(curKeys) >= keysLimit {
+			ranges = append(ranges, Range{start: curKey, end: p.Key})
+			curKey = p.Key
+			curSize = 0
+			curKeys = 0
+		}
+		return true
+	})
+
+	if curKeys > 0 {
+		ranges = append(ranges, Range{start: curKey, end: fullRange.end})
+	} else {
+		ranges[len(ranges)-1].end = fullRange.end
+	}
+	return ranges
+}
+
 func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error) {
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
@@ -723,27 +736,8 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 		return nil, errors.Trace(err)
 	}
 
-	ranges := make([]Range, 0, engineFile.TotalSize/local.regionSplitSize)
-	curSize := uint64(0)
-	curKeys := uint64(0)
-	curKey := firstKey
-	sizeProps.iter(func(p *rangeProperty) bool {
-		curSize += p.Size
-		curKeys += p.Keys
-		if int64(curSize) >= local.regionSplitSize || curKeys >= regionMaxKeyCount*2/3 {
-			ranges = append(ranges, Range{start: curKey, end: p.Key})
-			curKey = p.Key
-			curSize = 0
-			curKeys = 0
-		}
-		return true
-	})
-
-	if curKeys > 0 {
-		ranges = append(ranges, Range{start: curKey, end: endKey})
-	} else {
-		ranges[len(ranges)-1].end = endKey
-	}
+	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
+		local.regionSplitSize, regionMaxKeyCount*2/3)
 
 	log.L().Info("split engine key ranges", zap.Stringer("engine", engineFile.Uuid),
 		zap.Int64("totalSize", engineFile.TotalSize), zap.Int64("totalCount", engineFile.Length),
@@ -1108,7 +1102,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 	lf := engineFile.(*LocalFile)
 	if lf.TotalSize == 0 {
-		log.L().Info("engine contains not kv, skip import", zap.Stringer("engine", engineUUID))
+		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
 
@@ -1397,6 +1391,13 @@ func (r rangeProperties) Encode() []byte {
 	return b
 }
 
+func (r rangeProperties) get(key []byte) rangeOffsets {
+	idx := sort.Search(len(r), func(i int) bool {
+		return bytes.Compare(r[i].Key, key) >= 0
+	})
+	return r[idx].rangeOffsets
+}
+
 type RangePropertiesCollector struct {
 	props               rangeProperties
 	lastOffsets         rangeOffsets
@@ -1445,7 +1446,7 @@ func (c *RangePropertiesCollector) Finish(userProps map[string]string) error {
 		c.insertNewPoint(c.lastKey)
 	}
 
-	userProps[PROP_RANGE_INDEX] = string(hack.String(c.props.Encode()))
+	userProps[PROP_RANGE_INDEX] = string(c.props.Encode())
 	return nil
 }
 
@@ -1464,10 +1465,28 @@ func newSizeProperties() *sizeProperties {
 }
 
 func (s *sizeProperties) add(item *rangeProperty) {
-	s.indexHandles.ReplaceOrInsert(item)
+	if old := s.indexHandles.ReplaceOrInsert(item); old != nil {
+		o := old.(*rangeProperty)
+		item.Keys += o.Keys
+		item.Size += o.Size
+	}
 }
 
-// iter the tree unit f return false
+func (s *sizeProperties) addAll(props rangeProperties) {
+	prevRange := rangeOffsets{}
+	for _, r := range props {
+		s.add(&rangeProperty{
+			Key:          r.Key,
+			rangeOffsets: rangeOffsets{Keys: r.Keys - prevRange.Keys, Size: r.Size - prevRange.Size},
+		})
+		prevRange = r.rangeOffsets
+	}
+	if len(props) > 0 {
+		s.totalSize = props[len(props)-1].Size
+	}
+}
+
+// iter the tree until f return false
 func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 	s.indexHandles.Ascend(func(i btree.Item) bool {
 		prop := i.(*rangeProperty)
