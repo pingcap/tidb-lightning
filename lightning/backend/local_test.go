@@ -34,6 +34,8 @@ func (s *localSuite) TestNextKey(c *C) {
 	c.Assert(bytes.Compare(next, []byte{1, 255, 0, 1, 2}), Equals, -1)
 }
 
+// The first half of this test is same as the test in tikv:
+// https://github.com/tikv/tikv/blob/dbfe7730dd0fddb34cb8c3a7f8a079a1349d2d41/components/engine_rocks/src/properties.rs#L572
 func (s *localSuite) TestRangeProperties(c *C) {
 	type testCase struct {
 		key   []byte
