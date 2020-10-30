@@ -51,9 +51,10 @@ func (row tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 }
 
 type tidbEncoder struct {
-	mode mysql.SQLMode
-	tbl  table.Table
-	se   *session
+	mode      mysql.SQLMode
+	tbl       table.Table
+	se        *session
+	columnIdx []int
 }
 
 type tidbBackend struct {
@@ -230,6 +231,16 @@ func (*tidbEncoder) Close() {}
 func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, columnPermutation []int) (Row, error) {
 	cols := enc.tbl.Cols()
 
+	if len(enc.columnIdx) == 0 {
+		columnIdx := make([]int, len(columnPermutation))
+		for i, idx := range columnPermutation {
+			if idx >= 0 {
+				columnIdx[idx] = i
+			}
+		}
+		enc.columnIdx = columnIdx
+	}
+
 	var encoded strings.Builder
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
@@ -237,7 +248,7 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 		if i != 0 {
 			encoded.WriteByte(',')
 		}
-		if err := enc.appendSQL(&encoded, &field, cols[columnPermutation[i]]); err != nil {
+		if err := enc.appendSQL(&encoded, &field, cols[enc.columnIdx[i]]); err != nil {
 			logger.Error("tidb encode failed",
 				zap.Array("original", rowArrayMarshaler(row)),
 				zap.Int("originalCol", i),
