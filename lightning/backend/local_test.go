@@ -81,7 +81,9 @@ func (s *localSuite) TestRangeProperties(c *C) {
 	props, err := decodeRangeProperties(hack.Slice(userProperties[PROP_RANGE_INDEX]))
 	c.Assert(err, IsNil)
 
+	// Smallest key in props.
 	c.Assert(props[0].Key, DeepEquals, cases[0].key)
+	// Largest key in props.
 	c.Assert(props[len(props)-1].Key, DeepEquals, cases[len(cases)-1].key)
 	c.Assert(len(props), Equals, 7)
 
