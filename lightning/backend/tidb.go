@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -279,9 +280,8 @@ func (be *tidbBackend) CheckRequirements() error {
 }
 
 func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
-	var se *session
+	se := newSession(options)
 	if options.SQLMode.HasStrictMode() {
-		se = newSession(options)
 		se.vars.SkipUTF8Check = false
 		se.vars.SkipASCIICheck = false
 	}
@@ -356,17 +356,27 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	return errors.Trace(err)
 }
 
-func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*model.TableInfo, err error) {
+func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) (tables []*model.TableInfo, err error) {
 	s := common.SQLWithRetry{
 		DB:     be.db,
 		Logger: log.L(),
 	}
-	err = s.Transact(context.Background(), "fetch table columns", func(c context.Context, tx *sql.Tx) error {
+
+	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
+		var versionStr string
+		if err = tx.QueryRowContext(ctx, "SELECT version()").Scan(&versionStr); err != nil {
+			return err
+		}
+		tidbVersion, err := common.ExtractTiDBVersion(versionStr)
+		if err != nil {
+			return err
+		}
+
 		rows, e := tx.Query(`
-			SELECT table_name, column_name
+			SELECT table_name, column_name, column_type, extra
 			FROM information_schema.columns
 			WHERE table_schema = ?
-			ORDER BY table_name;
+			ORDER BY table_name, ordinal_position;
 		`, schemaName)
 		if e != nil {
 			return e
@@ -379,8 +389,8 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 			curTable     *model.TableInfo
 		)
 		for rows.Next() {
-			var tableName, columnName string
-			if e := rows.Scan(&tableName, &columnName); e != nil {
+			var tableName, columnName, columnType, columnExtra string
+			if e := rows.Scan(&tableName, &columnName, &columnType, &columnExtra); e != nil {
 				return e
 			}
 			if tableName != curTableName {
@@ -394,14 +404,86 @@ func (be *tidbBackend) FetchRemoteTableModels(schemaName string) (tables []*mode
 				curColOffset = 0
 			}
 
+			// see: https://github.com/pingcap/parser/blob/3b2fb4b41d73710bc6c4e1f4e8679d8be6a4863e/types/field_type.go#L185-L191
+			var flag uint
+			if strings.HasSuffix(columnType, "unsigned") {
+				flag |= mysql.UnsignedFlag
+			}
+			if strings.Contains(columnExtra, "auto_increment") {
+				flag |= mysql.AutoIncrementFlag
+			}
 			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
 				Name:   model.NewCIStr(columnName),
 				Offset: curColOffset,
 				State:  model.StatePublic,
+				FieldType: types.FieldType{
+					Flag: flag,
+				},
 			})
 			curColOffset++
 		}
-		return rows.Err()
+		if rows.Err() != nil {
+			return rows.Err()
+		}
+		// for version < v4.0.0 we can use `show table next_row_id` to fetch auto id info, so about should be enough
+		if tidbVersion.Major < 4 {
+			return nil
+		}
+		// init auto id column for each table
+		for _, tbl := range tables {
+			tblName := common.UniqueTable(schemaName, tbl.Name.O)
+			rows, e = tx.Query(fmt.Sprintf("SHOW TABLE %s NEXT_ROW_ID", tblName))
+			if e != nil {
+				return e
+			}
+			for rows.Next() {
+				var (
+					dbName, tblName, columnName, idType string
+					nextID                              int64
+				)
+				columns, err := rows.Columns()
+				if err != nil {
+					return err
+				}
+
+				//+--------------+------------+-------------+--------------------+----------------+
+				//| DB_NAME      | TABLE_NAME | COLUMN_NAME | NEXT_GLOBAL_ROW_ID | ID_TYPE        |
+				//+--------------+------------+-------------+--------------------+----------------+
+				//| testsysbench | t          | _tidb_rowid |                  1 | AUTO_INCREMENT |
+				//+--------------+------------+-------------+--------------------+----------------+
+
+				// if columns length is 4, it doesn't contains the last column `ID_TYPE`, and it will always be 'AUTO_INCREMENT'
+				// for v4.0.0~v4.0.2 show table t next_row_id only returns 4 columns.
+				if len(columns) == 4 {
+					err = rows.Scan(&dbName, &tblName, &columnName, &nextID)
+					idType = "AUTO_INCREMENT"
+				} else {
+					err = rows.Scan(&dbName, &tblName, &columnName, &nextID, &idType)
+				}
+				if err != nil {
+					return err
+				}
+
+				for _, col := range tbl.Columns {
+					if col.Name.O == columnName {
+						switch idType {
+						case "AUTO_INCREMENT":
+							col.Flag |= mysql.AutoIncrementFlag
+						case "AUTO_RANDOM":
+							col.Flag |= mysql.PriKeyFlag
+							tbl.PKIsHandle = true
+							// set a stub here, since we don't really need the real value
+							tbl.AutoRandomBits = 1
+						}
+					}
+				}
+			}
+			rows.Close()
+			if rows.Err() != nil {
+				return rows.Err()
+			}
+		}
+		return nil
 	})
 	return
 }

@@ -18,16 +18,15 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/util/collate"
-
+	"github.com/pingcap/br/pkg/pdutil"
 	"github.com/pingcap/br/pkg/storage"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/collate"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
@@ -153,6 +153,7 @@ type RestoreController struct {
 
 	closedEngineLimit *worker.Pool
 	store             storage.ExternalStorage
+	checksumManager   ChecksumManager
 }
 
 func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, s storage.ExternalStorage) (*RestoreController, error) {
@@ -379,8 +380,8 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	rc.rowFormatVer = ObtainRowFormatVersion(ctx, tidbMgr.db)
 
 	// Estimate the number of chunks for progress reporting
-	rc.estimateChunkCountIntoMetrics()
-	return nil
+	err = rc.estimateChunkCountIntoMetrics(ctx)
+	return err
 }
 
 // verifyCheckpoint check whether previous task checkpoint is compatible with task config
@@ -439,15 +440,37 @@ func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
 	return nil
 }
 
-func (rc *RestoreController) estimateChunkCountIntoMetrics() {
-	estimatedChunkCount := 0
+func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) error {
+	estimatedChunkCount := 0.0
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
+			tableName := common.UniqueTable(dbMeta.Name, tableMeta.Name)
+			dbCp, err := rc.checkpointsDB.Get(ctx, tableName)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			fileChunks := make(map[string]float64)
+			for engineId, eCp := range dbCp.Engines {
+				if engineId == indexEngineID {
+					continue
+				}
+				for _, c := range eCp.Chunks {
+					if _, ok := fileChunks[c.Key.Path]; !ok {
+						fileChunks[c.Key.Path] = 0.0
+					}
+					remainChunkCnt := float64(c.Chunk.EndOffset-c.Chunk.Offset) / float64(c.Chunk.EndOffset-c.Key.Offset)
+					fileChunks[c.Key.Path] += remainChunkCnt
+				}
+			}
 			for _, fileMeta := range tableMeta.DataFiles {
+				if cnt, ok := fileChunks[fileMeta.FileMeta.Path]; ok {
+					estimatedChunkCount += cnt
+					continue
+				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
 					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += int(fileMeta.Size / cfg.MaxRegionSize)
+						estimatedChunkCount += math.Round(float64(fileMeta.Size) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -457,7 +480,8 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics() {
 			}
 		}
 	}
-	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(float64(estimatedChunkCount))
+	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(estimatedChunkCount)
+	return nil
 }
 
 func (rc *RestoreController) saveStatusCheckpoint(tableName string, engineID int32, err error, statusIfSucceed CheckpointStatus) {
@@ -619,6 +643,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			log.L().Info("progress",
 				zap.String("files", fmt.Sprintf("%.0f/%.0f (%.1f%%)", finished, estimated, finished/estimated*100)),
 				zap.String("tables", fmt.Sprintf("%.0f/%.0f (%.1f%%)", completedTables, totalTables, completedTables/totalTables*100)),
+				zap.String("chunks", fmt.Sprintf("%.0f/%.0f", finished, estimated)),
 				zap.Float64("speed(MiB/s)", bytesRead/(1048576e-9*nanoseconds)),
 				zap.String("state", state),
 				remaining,
@@ -627,71 +652,38 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 	}
 }
 
-type gcLifeTimeManager struct {
-	runningJobsLock sync.Mutex
-	runningJobs     int
-	oriGCLifeTime   string
-}
-
-func newGCLifeTimeManager() *gcLifeTimeManager {
-	// Default values of three member are enough to initialize this struct
-	return &gcLifeTimeManager{}
-}
-
-// Pre- and post-condition:
-// if m.runningJobs == 0, GC life time has not been increased.
-// if m.runningJobs > 0, GC life time has been increased.
-// m.runningJobs won't be negative(overflow) since index concurrency is relatively small
-func (m *gcLifeTimeManager) addOneJob(ctx context.Context, db *sql.DB) error {
-	m.runningJobsLock.Lock()
-	defer m.runningJobsLock.Unlock()
-
-	if m.runningJobs == 0 {
-		oriGCLifeTime, err := ObtainGCLifeTime(ctx, db)
-		if err != nil {
-			return err
-		}
-		m.oriGCLifeTime = oriGCLifeTime
-		err = increaseGCLifeTime(ctx, db)
-		if err != nil {
-			return err
-		}
-	}
-	m.runningJobs += 1
-	return nil
-}
-
-// Pre- and post-condition:
-// if m.runningJobs == 0, GC life time has been tried to recovered. If this try fails, a warning will be printed.
-// if m.runningJobs > 0, GC life time has not been recovered.
-// m.runningJobs won't minus to negative since removeOneJob follows a successful addOneJob.
-func (m *gcLifeTimeManager) removeOneJob(ctx context.Context, db *sql.DB) {
-	m.runningJobsLock.Lock()
-	defer m.runningJobsLock.Unlock()
-
-	m.runningJobs -= 1
-	if m.runningJobs == 0 {
-		err := UpdateGCLifeTime(ctx, db, m.oriGCLifeTime)
-		if err != nil {
-			query := fmt.Sprintf(
-				"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-				m.oriGCLifeTime,
-			)
-			log.L().Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
-				zap.String("query", query),
-				log.ShortError(err),
-			)
-		}
-	}
-}
-
-var gcLifeTimeKey struct{}
+var checksumManagerKey struct{}
 
 func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 
-	var wg sync.WaitGroup
+	// for local backend, we should disable some pd scheduler and change some settings, to
+	// make split region and ingest sst more stable
+	// because importer backend is mostly use for v3.x cluster which doesn't support these api,
+	// so we also don't do this for import backend
+	if rc.cfg.TikvImporter.Backend == config.BackendLocal {
+		// disable some pd schedulers
+		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
+			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		logTask.Info("removing PD leader&region schedulers")
+		restoreFn, e := pdController.RemoveSchedulers(ctx)
+		defer func() {
+			// use context.Background to make sure this restore function can still be executed even if ctx is canceled
+			if restoreE := restoreFn(context.Background()); restoreE != nil {
+				logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+				return
+			}
+			logTask.Info("add back PD leader&region schedulers")
+		}()
+		if e != nil {
+			return errors.Trace(err)
+		}
+	}
 
+	var wg sync.WaitGroup
 	var restoreErr common.OnceError
 
 	stopPeriodicActions := make(chan struct{})
@@ -704,8 +696,11 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	manager := newGCLifeTimeManager()
-	ctx2 := context.WithValue(ctx, &gcLifeTimeKey, manager)
+	manager, err := newChecksumManager(rc)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx2 := context.WithValue(ctx, &checksumManagerKey, manager)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
@@ -829,7 +824,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	wg.Wait()
 	close(stopPeriodicActions)
 
-	err := restoreErr.Get()
+	err = restoreErr.Get()
 	logTask.End(zap.ErrorLevel, err)
 	return err
 }
@@ -1184,10 +1179,10 @@ func (t *TableRestore) importEngine(
 }
 
 func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
-	// if post-process is disabled or the table is empty, just skip
-	if !rc.backend.ShouldPostProcess() || len(cp.Engines) == 1 {
-		t.logger.Debug("skip post-processing, not supported by backend or table is empty")
-		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
+	// there are no data in this table, no need to do post process
+	// this is important for tables that are just the dump table of views
+	// because at this stage, the table was already deleted and replaced by the related view
+	if len(cp.Engines) == 1 {
 		return nil
 	}
 
@@ -1209,6 +1204,13 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		}
 	}
 
+	// tidb backend don't need checksum & analyze
+	if !rc.backend.ShouldPostProcess() {
+		t.logger.Debug("skip checksum & analyze, not supported by this backend")
+		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
+		return nil
+	}
+
 	// 4. do table checksum
 	var localChecksum verify.KVChecksum
 	for _, engine := range cp.Engines {
@@ -1219,11 +1221,18 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 
 	t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 	if cp.Status < CheckpointStatusChecksummed {
-		if !rc.cfg.PostRestore.Checksum {
+		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 			t.logger.Info("skip checksum")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
 			err := t.compareChecksum(ctx, rc.tidbMgr.db, localChecksum)
+			// witch post restore level 'optional', we will skip checksum error
+			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+				if err != nil {
+					t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+					err = nil
+				}
+			}
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
 			if err != nil {
 				return errors.Trace(err)
@@ -1233,11 +1242,18 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 
 	// 5. do table analyze
 	if cp.Status < CheckpointStatusAnalyzed {
-		if !rc.cfg.PostRestore.Analyze {
+		if rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 		} else {
 			err := t.analyzeTable(ctx, rc.tidbMgr.db)
+			// witch post restore level 'optional', we will skip analyze error
+			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
+				if err != nil {
+					t.logger.Warn("analyze table failed, will skip this error and go on", log.ShortError(err))
+					err = nil
+				}
+			}
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAnalyzed)
 			if err != nil {
 				return errors.Trace(err)
@@ -1618,7 +1634,7 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 
 // do checksum for each table.
 func (tr *TableRestore) compareChecksum(ctx context.Context, db *sql.DB, localChecksum verify.KVChecksum) error {
-	remoteChecksum, err := DoChecksum(ctx, db, tr.tableName)
+	remoteChecksum, err := DoChecksum(ctx, db, tr.tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1643,86 +1659,6 @@ func (tr *TableRestore) analyzeTable(ctx context.Context, db *sql.DB) error {
 		Exec(ctx, "analyze table", "ANALYZE TABLE "+tr.tableName)
 	task.End(zap.ErrorLevel, err)
 	return err
-}
-
-// RemoteChecksum represents a checksum result got from tidb.
-type RemoteChecksum struct {
-	Schema     string
-	Table      string
-	Checksum   uint64
-	TotalKVs   uint64
-	TotalBytes uint64
-}
-
-// DoChecksum do checksum for tables.
-// table should be in <db>.<table>, format.  e.g. foo.bar
-func DoChecksum(ctx context.Context, db *sql.DB, table string) (*RemoteChecksum, error) {
-	var err error
-	manager, ok := ctx.Value(&gcLifeTimeKey).(*gcLifeTimeManager)
-	if !ok {
-		return nil, errors.New("No gcLifeTimeManager found in context, check context initialization")
-	}
-
-	if err = manager.addOneJob(ctx, db); err != nil {
-		return nil, err
-	}
-
-	// set it back finally
-	defer manager.removeOneJob(ctx, db)
-
-	task := log.With(zap.String("table", table)).Begin(zap.InfoLevel, "remote checksum")
-
-	// ADMIN CHECKSUM TABLE <table>,<table>  example.
-	// 	mysql> admin checksum table test.t;
-	// +---------+------------+---------------------+-----------+-------------+
-	// | Db_name | Table_name | Checksum_crc64_xor  | Total_kvs | Total_bytes |
-	// +---------+------------+---------------------+-----------+-------------+
-	// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
-	// +---------+------------+---------------------+-----------+-------------+
-
-	cs := RemoteChecksum{}
-	err = common.SQLWithRetry{DB: db, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
-		"ADMIN CHECKSUM TABLE "+table, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
-	)
-	dur := task.End(zap.ErrorLevel, err)
-	metric.ChecksumSecondsHistogram.Observe(dur.Seconds())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &cs, nil
-}
-
-func increaseGCLifeTime(ctx context.Context, db *sql.DB) (err error) {
-	// checksum command usually takes a long time to execute,
-	// so here need to increase the gcLifeTime for single transaction.
-
-	// try to get gcLifeTimeManager from context first.
-	// DoChecksum has assure this getting action success.
-	manager, _ := ctx.Value(&gcLifeTimeKey).(*gcLifeTimeManager)
-
-	var increaseGCLifeTime bool
-	if manager.oriGCLifeTime != "" {
-		ori, err := time.ParseDuration(manager.oriGCLifeTime)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if ori < defaultGCLifeTime {
-			increaseGCLifeTime = true
-		}
-	} else {
-		increaseGCLifeTime = true
-	}
-
-	if increaseGCLifeTime {
-		err = UpdateGCLifeTime(ctx, db, defaultGCLifeTime.String())
-		if err != nil {
-			return err
-		}
-	}
-
-	failpoint.Inject("IncreaseGCUpdateDuration", nil)
-
-	return nil
 }
 
 ////////////////////////////////////////////////////////////////

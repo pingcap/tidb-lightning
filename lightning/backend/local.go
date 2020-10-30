@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -112,14 +113,23 @@ func (e *LocalFile) Cleanup(dataDir string) error {
 	return os.RemoveAll(dbPath)
 }
 
-type grpcClis struct {
-	mu   sync.Mutex
-	clis map[uint64]*grpc.ClientConn
+type gRPCConns struct {
+	mu    sync.Mutex
+	conns map[uint64]*connPool
+}
+
+func (conns *gRPCConns) Close() {
+	conns.mu.Lock()
+	defer conns.mu.Unlock()
+
+	for _, cp := range conns.conns {
+		cp.Close()
+	}
 }
 
 type local struct {
 	engines  sync.Map
-	grpcClis grpcClis
+	conns    gRPCConns
 	splitCli split.SplitClient
 	tls      *common.TLS
 	pdAddr   string
@@ -131,6 +141,67 @@ type local struct {
 	ingestConcurrency *worker.Pool
 	batchWriteKVPairs int
 	checkpointEnabled bool
+
+	tcpConcurrency int
+}
+
+// connPool is a lazy pool of gRPC channels.
+// When `Get` called, it lazily allocates new connection if connection not full.
+// If it's full, then it will return allocated channels round-robin.
+type connPool struct {
+	mu sync.Mutex
+
+	conns   []*grpc.ClientConn
+	name    string
+	next    int
+	cap     int
+	newConn func(ctx context.Context) (*grpc.ClientConn, error)
+}
+
+func (p *connPool) takeConns() (conns []*grpc.ClientConn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.conns, conns = nil, p.conns
+	p.next = 0
+	return conns
+}
+
+// Close closes the conn pool.
+func (p *connPool) Close() {
+	for _, c := range p.takeConns() {
+		if err := c.Close(); err != nil {
+			log.L().Warn("failed to close clientConn", zap.String("target", c.Target()), log.ShortError(err))
+		}
+	}
+}
+
+// get tries to get an existing connection from the pool, or make a new one if the pool not full.
+func (p *connPool) get(ctx context.Context) (*grpc.ClientConn, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.conns) < p.cap {
+		c, err := p.newConn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		p.conns = append(p.conns, c)
+		return c, nil
+	}
+
+	conn := p.conns[p.next]
+	p.next = (p.next + 1) % p.cap
+	return conn, nil
+}
+
+// newConnPool creates a new connPool by the specified conn factory function and capacity.
+func newConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *connPool {
+	return &connPool{
+		cap:     cap,
+		conns:   make([]*grpc.ClientConn, 0, cap),
+		newConn: newConn,
+
+		mu: sync.Mutex{},
+	}
 }
 
 // NewLocalBackend creates new connections to tikv.
@@ -179,15 +250,15 @@ func NewLocalBackend(
 
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
 		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
+		tcpConcurrency:    rangeConcurrency,
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
 	}
-	local.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
+	local.conns.conns = make(map[uint64]*connPool)
 	return MakeBackend(local), nil
 }
 
-func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-
+func (local *local) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
 	store, err := local.splitCli.GetStore(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -218,11 +289,18 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 	)
 	cancel()
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, errors.Trace(err)
 	}
-	// Cache the conn.
-	local.grpcClis.clis[storeID] = conn
 	return conn, nil
+}
+
+func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
+	if _, ok := local.conns.conns[storeID]; !ok {
+		local.conns.conns[storeID] = newConnPool(local.tcpConcurrency, func(ctx context.Context) (*grpc.ClientConn, error) {
+			return local.makeConn(ctx, storeID)
+		})
+	}
+	return local.conns.conns[storeID].get(ctx)
 }
 
 // Close the importer connection.
@@ -231,6 +309,8 @@ func (local *local) Close() {
 		v.(*LocalFile).Close()
 		return true
 	})
+
+	local.conns.Close()
 
 	// if checkpoint is disable or we finish load all data successfully, then files in this
 	// dir will be useless, so we clean up this dir and all files in it.
@@ -354,17 +434,12 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 }
 
 func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
-	local.grpcClis.mu.Lock()
-	defer local.grpcClis.mu.Unlock()
-	var err error
+	local.conns.mu.Lock()
+	defer local.conns.mu.Unlock()
 
-	conn, ok := local.grpcClis.clis[peer.GetStoreId()]
-	if !ok {
-		conn, err = local.getGrpcConnLocked(ctx, peer.GetStoreId())
-		if err != nil {
-			log.L().Error("could not get grpc connect ", zap.Uint64("storeId", peer.GetStoreId()))
-			return nil, err
-		}
+	conn, err := local.getGrpcConnLocked(ctx, peer.GetStoreId())
+	if err != nil {
+		return nil, err
 	}
 	return sst.NewImportSSTClient(conn), nil
 }
@@ -378,6 +453,7 @@ func (local *local) WriteToTiKV(
 	region *split.RegionInfo,
 	start, end []byte,
 ) ([]*sst.SSTMeta, *Range, error) {
+	begin := time.Now()
 	var startKey, endKey []byte
 	if len(region.Region.StartKey) > 0 {
 		_, startKey, _ = codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -396,7 +472,9 @@ func (local *local) WriteToTiKV(
 	defer iter.Close()
 
 	if !iter.First() {
-		log.L().Warn("keys within region is empty, skip ingest")
+		log.L().Info("keys within region is empty, skip ingest", zap.Binary("start", start),
+			zap.Binary("regionStart", region.Region.StartKey), zap.Binary("end", end),
+			zap.Binary("regionEnd", region.Region.EndKey))
 		return nil, nil, nil
 	}
 
@@ -425,7 +503,7 @@ func (local *local) WriteToTiKV(
 
 		wstream, err := cli.Write(ctx)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, errors.Trace(err)
 		}
 
 		// Bind uuid for this write request
@@ -435,7 +513,7 @@ func (local *local) WriteToTiKV(
 			},
 		}
 		if err = wstream.Send(req); err != nil {
-			return nil, nil, err
+			return nil, nil, errors.Trace(err)
 		}
 		req.Chunk = &sst.WriteRequest_Batch{
 			Batch: &sst.WriteBatch{
@@ -514,7 +592,7 @@ func (local *local) WriteToTiKV(
 
 	// if there is not leader currently, we should directly return an error
 	if leaderPeerMetas == nil {
-		log.L().Error("write to tikv no leader", zap.Reflect("region", region),
+		log.L().Warn("write to tikv no leader", zap.Reflect("region", region),
 			zap.Uint64("leader_id", leaderID), zap.Reflect("meta", meta),
 			zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size))
 		return nil, nil, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
@@ -524,7 +602,8 @@ func (local *local) WriteToTiKV(
 	log.L().Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size),
-		zap.Int64("buf_size", bytesBuf.totalSize()))
+		zap.Int64("buf_size", bytesBuf.totalSize()),
+		zap.Stringer("takeTime", time.Since(begin)))
 
 	var remainRange *Range
 	if iter.Valid() && iter.Next() {
@@ -802,7 +881,7 @@ WriteAndIngest:
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
 		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, 128)
 		if err != nil || len(regions) == 0 {
-			log.L().Warn("scan region failed", zap.Error(err), zap.Int("region_len", len(regions)))
+			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)))
 			continue WriteAndIngest
 		}
 
@@ -846,7 +925,7 @@ WriteAndIngest:
 				err1 := <-errChan
 				if err1 != nil {
 					err = err1
-					log.L().Warn("should retry this range", zap.Int("retry", retry), zap.Error(err))
+					log.L().Warn("should retry this range", zap.Int("retry", retry), log.ShortError(err))
 					shouldRetry = true
 				}
 			}
@@ -864,70 +943,84 @@ WriteAndIngest:
 	return err
 }
 
+type retryType int
+
+const (
+	retryNone retryType = iota
+	retryWrite
+	retryIngest
+)
+
 func (local *local) WriteAndIngestPairs(
 	ctx context.Context,
 	engineFile *LocalFile,
 	region *split.RegionInfo,
 	start, end []byte,
 ) (*Range, error) {
-	metas, remainRange, err := local.WriteToTiKV(ctx, engineFile, region, start, end)
-	if err != nil {
-		log.L().Warn("write to tikv failed", zap.Error(err))
-		return remainRange, err
+	var err error
+	var remainRange *Range
+loopWrite:
+	for i := 0; i < maxRetryTimes; i++ {
+		var metas []*sst.SSTMeta
+		metas, remainRange, err = local.WriteToTiKV(ctx, engineFile, region, start, end)
+		if err != nil {
+			log.L().Warn("write to tikv failed", log.ShortError(err))
+			return remainRange, err
+		}
+
+		for _, meta := range metas {
+			errCnt := 0
+			for errCnt < maxRetryTimes {
+				log.L().Debug("ingest meta", zap.Reflect("meta", meta))
+				var resp *sst.IngestResponse
+				resp, err = local.Ingest(ctx, meta, region)
+				if err != nil {
+					log.L().Warn("ingest failed", log.ShortError(err), zap.Reflect("meta", meta),
+						zap.Reflect("region", region))
+					errCnt++
+					continue
+				}
+				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
+					switch val.(string) {
+					case "notleader":
+						resp.Error.NotLeader = &errorpb.NotLeader{
+							RegionId: region.Region.Id, Leader: region.Leader}
+					case "epochnotmatch":
+						resp.Error.EpochNotMatch = &errorpb.EpochNotMatch{
+							CurrentRegions: []*metapb.Region{region.Region}}
+					}
+				})
+				var retryTy retryType
+				var newRegion *split.RegionInfo
+				retryTy, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
+				if err == nil {
+					// ingest next meta
+					break
+				}
+				switch retryTy {
+				case retryNone:
+					log.L().Warn("ingest failed noretry", log.ShortError(err), zap.Reflect("meta", meta),
+						zap.Reflect("region", region))
+					// met non-retryable error retry whole Write procedure
+					return remainRange, err
+				case retryWrite:
+					region = newRegion
+					continue loopWrite
+				case retryIngest:
+					region = newRegion
+					continue
+				}
+			}
+		}
+
+		if err != nil {
+			log.L().Warn("write and ingest region, will retry import full range", log.ShortError(err),
+				zap.Stringer("region", region.Region), zap.Binary("start", start), zap.Binary("end", end))
+		}
+		return remainRange, errors.Trace(err)
 	}
 
-	for _, meta := range metas {
-		var err error
-		errCnt := 0
-		for errCnt < maxRetryTimes {
-			log.L().Debug("ingest meta", zap.Reflect("meta", meta))
-			var resp *sst.IngestResponse
-			resp, err = local.Ingest(ctx, meta, region)
-			if err != nil {
-				log.L().Warn("ingest failed", zap.Error(err), zap.Reflect("meta", meta),
-					zap.Reflect("region", region))
-				errCnt++
-				continue
-			}
-			failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
-				switch val.(string) {
-				case "notleader":
-					resp.Error.NotLeader = &errorpb.NotLeader{
-						RegionId: region.Region.Id, Leader: region.Leader}
-				case "epochnotmatch":
-					resp.Error.EpochNotMatch = &errorpb.EpochNotMatch{
-						CurrentRegions: []*metapb.Region{region.Region}}
-				}
-			})
-			var needRetry bool
-			var newRegion *split.RegionInfo
-			needRetry, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
-			if err == nil {
-				// ingest next meta
-				break
-			}
-			if !needRetry {
-				log.L().Warn("ingest failed noretry", zap.Error(err), zap.Reflect("meta", meta),
-					zap.Reflect("region", region))
-				// met non-retryable error retry whole Write procedure
-				return remainRange, err
-			}
-			// retry with not leader and epoch not match error
-			if newRegion != nil {
-				region = newRegion
-			} else {
-				log.L().Warn("retry ingest due to",
-					zap.Reflect("meta", meta), zap.Reflect("region", region),
-					zap.Reflect("new region", newRegion), zap.Error(err))
-				return remainRange, err
-			}
-		}
-		if err != nil {
-			log.L().Warn("all retry ingest failed", zap.Reflect("ingest meta", meta), zap.Error(err))
-			return remainRange, errors.Trace(err)
-		}
-	}
-	return remainRange, nil
+	return remainRange, errors.Trace(err)
 }
 
 func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainRanges *syncdRanges) error {
@@ -952,7 +1045,7 @@ func (local *local) WriteAndIngestByRanges(ctx context.Context, engineFile *Loca
 			for i := 0; i < maxRetryTimes; i++ {
 				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainRanges); err != nil {
 					log.L().Warn("write and ingest by range failed",
-						zap.Int("retry time", i+1), zap.Error(err))
+						zap.Int("retry time", i+1), log.ShortError(err))
 				} else {
 					break
 				}
@@ -1009,15 +1102,21 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 	for {
 		// split region by given ranges
-		err = local.SplitAndScatterRegionByRanges(ctx, ranges)
+		for i := 0; i < maxRetryTimes; i++ {
+			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
+			if err == nil {
+				break
+			}
+		}
 		if err != nil {
-			log.L().Error("split & scatter ranges failed", zap.Error(err))
+			log.L().Error("split & scatter ranges failed", log.ShortError(err))
 			return err
 		}
+
 		// start to write to kv and ingest
 		err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
 		if err != nil {
-			log.L().Error("write and ingest ranges failed", zap.Error(err))
+			log.L().Error("write and ingest engine failed", log.ShortError(err))
 			return err
 		}
 
@@ -1025,7 +1124,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		if len(unfinishedRanges) == 0 {
 			break
 		}
-		log.L().Debug("ingest ranges unfinished", zap.Int("remain ranges", len(unfinishedRanges)))
+		log.L().Info("ingest ranges unfinished", zap.Int("remain ranges", len(unfinishedRanges)))
 		ranges = unfinishedRanges
 	}
 
@@ -1048,7 +1147,7 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 		}
 		local.engines.Delete(engineUUID)
 	} else {
-		log.L().Error("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 	}
 	return nil
 }
@@ -1066,7 +1165,7 @@ func (local *local) CheckRequirements() error {
 	return nil
 }
 
-func (local *local) FetchRemoteTableModels(schemaName string) ([]*model.TableInfo, error) {
+func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return fetchRemoteTableModelsFromTLS(local.tls, schemaName)
 }
 
@@ -1121,12 +1220,32 @@ func (local *local) isIngestRetryable(
 	resp *sst.IngestResponse,
 	region *split.RegionInfo,
 	meta *sst.SSTMeta,
-) (bool, *split.RegionInfo, error) {
+) (retryType, *split.RegionInfo, error) {
 	if resp.GetError() == nil {
-		return false, nil, nil
+		return retryNone, nil, nil
+	}
+
+	getRegion := func() (*split.RegionInfo, error) {
+		for i := 0; ; i++ {
+			newRegion, err := local.splitCli.GetRegion(ctx, region.Region.GetStartKey())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if newRegion != nil {
+				return newRegion, nil
+			}
+			log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
+				zap.Int("retry", i))
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second):
+			}
+		}
 	}
 
 	var newRegion *split.RegionInfo
+	var err error
 	switch errPb := resp.GetError(); {
 	case errPb.NotLeader != nil:
 		if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
@@ -1135,21 +1254,12 @@ func (local *local) isIngestRetryable(
 				Region: region.Region,
 			}
 		} else {
-			var err error
-			for i := 0; ; i++ {
-				newRegion, err = local.splitCli.GetRegion(ctx, region.Region.GetStartKey())
-				if err != nil {
-					return false, nil, errors.Trace(err)
-				}
-				if newRegion != nil {
-					break
-				}
-				log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
-					zap.Int("retry", i))
-				time.Sleep(time.Second)
+			newRegion, err = getRegion()
+			if err != nil {
+				return retryNone, nil, errors.Trace(err)
 			}
 		}
-		return true, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+		return retryIngest, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
@@ -1175,25 +1285,31 @@ func (local *local) isIngestRetryable(
 				}
 			}
 		}
-		return true, newRegion, errors.Errorf("epoch not match: %s", errPb.GetMessage())
+		retryTy := retryNone
+		if newRegion != nil {
+			retryTy = retryWrite
+		}
+		return retryTy, newRegion, errors.Errorf("epoch not match: %s", errPb.GetMessage())
+	case strings.Contains(errPb.Message, "raft: proposal dropped"):
+		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
+		newRegion, err = getRegion()
+		if err != nil {
+			return retryNone, nil, errors.Trace(err)
+		}
+		return retryIngest, newRegion, errors.New(errPb.GetMessage())
 	}
-	return false, nil, errors.Errorf("non retryable error: %s", resp.GetError().GetMessage())
+	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
 
+// return the smallest []byte that is bigger than current bytes.
+// special case when key is empty, empty bytes means infinity in our context, so directly return itself.
 func nextKey(key []byte) []byte {
 	if len(key) == 0 {
 		return []byte{}
 	}
 	res := make([]byte, 0, len(key)+1)
-	pos := 0
-	for i := len(key) - 1; i >= 0; i-- {
-		if key[i] != '\xff' {
-			pos = i
-			break
-		}
-	}
-	s, e := key[:pos], key[pos]+1
-	res = append(append(res, s...), e)
+	res = append(res, key...)
+	res = append(res, 0)
 	return res
 }
 
@@ -1261,7 +1377,7 @@ func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sa
 		return res
 	}
 
-	sampleCount := uint64(l.Length) / 100 / uint64(sampleFactor)
+	sampleCount := uint64(count) * 200 / uint64(sampleFactor)
 
 	if sampleCount == 0 || eValue-sValue < sampleCount*20 {
 		return naiveFn()

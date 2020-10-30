@@ -13,30 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eu
-
-# FIXME: auto-random is only stable on master currently.
-check_cluster_version 4 0 0 AUTO_RANDOM || exit 0
+set -eux
 
 for backend in tidb importer local; do
     if [ "$backend" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi
 
-    run_sql 'DROP DATABASE IF EXISTS alter_random;'
+    run_sql 'DROP DATABASE IF EXISTS too_many_columns;'
     run_lightning --backend $backend
 
-    run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM alter_random.t"
-    check_contains 'inc: 1'
-    check_contains 'inc: 2'
-    check_contains 'inc: 3'
-
-    # auto random base is 4
-    run_sql "INSERT INTO alter_random.t VALUES ();"
-    run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM alter_random.t"
-    if [ "$backend" = 'tidb' ]; then
-      check_contains 'inc: 30002'
-    else
-      check_contains 'inc: 4'
-    fi
+    run_sql "SELECT * FROM too_many_columns.t"
+    check_contains 'COL001: 1001'
+    check_contains 'COL256: 1256'
+    check_contains 'COL100: 1100'
 done

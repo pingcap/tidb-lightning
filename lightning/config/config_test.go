@@ -484,14 +484,14 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	c.Assert(cfg.TiDB.PdAddr, Equals, "172.16.30.11:2379,172.16.30.12:2379")
 	c.Assert(cfg.Mydumper.SourceDir, Equals, path)
 	c.Assert(cfg.TikvImporter.Addr, Equals, "172.16.30.11:23008")
-	c.Assert(cfg.PostRestore.Checksum, IsFalse)
-	c.Assert(cfg.PostRestore.Analyze, IsTrue)
+	c.Assert(cfg.PostRestore.Checksum, Equals, config.OpLevelOff)
+	c.Assert(cfg.PostRestore.Analyze, Equals, config.OpLevelOptional)
 
 	taskCfg := config.NewConfig()
 	err = taskCfg.LoadFromGlobal(cfg)
 	c.Assert(err, IsNil)
-	c.Assert(taskCfg.PostRestore.Checksum, IsFalse)
-	c.Assert(taskCfg.PostRestore.Analyze, IsTrue)
+	c.Assert(taskCfg.PostRestore.Checksum, Equals, config.OpLevelOff)
+	c.Assert(taskCfg.PostRestore.Analyze, Equals, config.OpLevelOptional)
 
 	taskCfg.Checkpoint.DSN = ""
 	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
@@ -542,4 +542,43 @@ func (s *configTestSuite) TestLoadFromInvalidConfig(c *C) {
 		ConfigFileContent: []byte("invalid toml"),
 	})
 	c.Assert(err, ErrorMatches, "Near line 1.*")
+}
+
+func (s *configTestSuite) TestTomlPostRestore(c *C) {
+	cfg := &config.Config{}
+	err := cfg.LoadFromTOML([]byte(`
+		[post-restore]
+		checksum = "req"
+	`))
+	c.Assert(err, ErrorMatches, regexp.QuoteMeta("invalid op level 'req', please choose valid option between ['off', 'optional', 'required']"))
+
+	err = cfg.LoadFromTOML([]byte(`
+		[post-restore]
+		analyze = 123
+	`))
+	c.Assert(err, ErrorMatches, regexp.QuoteMeta("invalid op level '123', please choose valid option between ['off', 'optional', 'required']"))
+
+	kvMap := map[string]config.PostOpLevel{
+		`"off"`:      config.OpLevelOff,
+		`"required"`: config.OpLevelRequired,
+		`"optional"`: config.OpLevelOptional,
+		"true":       config.OpLevelRequired,
+		"false":      config.OpLevelOff,
+	}
+
+	for k, v := range kvMap {
+		cfg := &config.Config{}
+		confStr := fmt.Sprintf("[post-restore]\r\nchecksum= %s\r\n", k)
+		err := cfg.LoadFromTOML([]byte(confStr))
+		c.Assert(err, IsNil)
+		c.Assert(cfg.PostRestore.Checksum, Equals, v)
+	}
+
+	for k, v := range kvMap {
+		cfg := &config.Config{}
+		confStr := fmt.Sprintf("[post-restore]\r\nanalyze= %s\r\n", k)
+		err := cfg.LoadFromTOML([]byte(confStr))
+		c.Assert(err, IsNil)
+		c.Assert(cfg.PostRestore.Analyze, Equals, v)
+	}
 }

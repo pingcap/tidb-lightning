@@ -195,11 +195,11 @@ func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error
 func (timgr *TiDBManager) LoadSchemaInfo(
 	ctx context.Context,
 	schemas []*mydump.MDDatabaseMeta,
-	getTables func(string) ([]*model.TableInfo, error),
+	getTables func(context.Context, string) ([]*model.TableInfo, error),
 ) (map[string]*TidbDBInfo, error) {
 	result := make(map[string]*TidbDBInfo, len(schemas))
 	for _, schema := range schemas {
-		tables, err := getTables(schema.Name)
+		tables, err := getTables(ctx, schema.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -222,6 +222,7 @@ func (timgr *TiDBManager) LoadSchemaInfo(
 			}
 			tableInfo := &TidbTableInfo{
 				ID:   tbl.ID,
+				DB:   schema.Name,
 				Name: tableName,
 				Core: tbl,
 			}
@@ -278,6 +279,11 @@ func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) bool {
 	return newCollationEnabled
 }
 
+// AlterAutoIncrement rebase the table auto increment id
+//
+// NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
+// the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
+// See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
 func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr int64) error {
 	sql := common.SQLWithRetry{
 		DB:     db,
