@@ -20,7 +20,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1588,10 +1587,6 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 			colCnt++
 		}
 	}
-
-	sort.Slice(colIndexes, func(i, j int) bool {
-		return colIndexes[i] < colIndexes[j]
-	})
 
 	names := make([]string, 0, colCnt)
 	for _, idx := range colIndexes {
