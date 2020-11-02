@@ -9,7 +9,6 @@ import (
 
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb/types"
 	"github.com/xitongsys/parquet-go/parquet"
@@ -189,7 +188,7 @@ func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement)
 	case reflect.Int32, reflect.Int64:
 		setDatumByInt(d, v.Int(), meta)
 	case reflect.String:
-		d.SetString(v.String(), mysql.DefaultCollationName)
+		d.SetString(v.String(), "")
 	case reflect.Float32, reflect.Float64:
 		d.SetFloat64(v.Float())
 	case reflect.Ptr:
@@ -226,17 +225,17 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) {
 		}
 		fmtStr := fmt.Sprintf("%%d.%%0%dd", *meta.Scale)
 		val := fmt.Sprintf(fmtStr, v/scale, abs(v%scale))
-		d.SetString(val, mysql.DefaultCollationName)
+		d.SetString(val, "")
 	case parquet.ConvertedType_DATE:
 		dateStr := time.Unix(v*86400, 0).Format("2006-01-02")
-		d.SetString(dateStr, mysql.DefaultCollationName)
+		d.SetString(dateStr, "")
 	// convert all timestamp types (datetime/timestamp) to string
 	case parquet.ConvertedType_TIMESTAMP_MICROS:
 		dateStr := time.Unix(v/1e6, (v%1e6)*1e3).Format("2006-01-02 15:04:05.999")
-		d.SetString(dateStr, mysql.DefaultCollationName)
+		d.SetString(dateStr, "")
 	case parquet.ConvertedType_TIMESTAMP_MILLIS:
 		dateStr := time.Unix(v/1e3, (v%1e3)*1e6).Format("2006-01-02 15:04:05.999")
-		d.SetString(dateStr, mysql.DefaultCollationName)
+		d.SetString(dateStr, "")
 	// covert time types to string
 	case parquet.ConvertedType_TIME_MILLIS, parquet.ConvertedType_TIME_MICROS:
 		if *meta.ConvertedType == parquet.ConvertedType_TIME_MICROS {
@@ -248,7 +247,7 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) {
 		v /= 60
 		min := v % 60
 		v /= 60
-		d.SetString(fmt.Sprintf("%d:%d:%d.%3d", v, min, sec, millis), mysql.DefaultCollationName)
+		d.SetString(fmt.Sprintf("%d:%d:%d.%3d", v, min, sec, millis), "")
 	default:
 		d.SetInt64(v)
 	}

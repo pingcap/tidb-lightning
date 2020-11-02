@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/pingcap/parser/mysql"
-
 	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/types"
@@ -57,7 +55,7 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	verifyRow := func(i int) {
 		c.Assert(reader.lastRow.RowID, Equals, int64(i+1))
 		c.Assert(len(reader.lastRow.Row), Equals, 2)
-		c.Assert(reader.lastRow.Row[0], DeepEquals, types.NewCollationStringDatum(strconv.Itoa(i), mysql.DefaultCollationName, 0))
+		c.Assert(reader.lastRow.Row[0], DeepEquals, types.NewCollationStringDatum(strconv.Itoa(i), "", 0))
 		c.Assert(reader.lastRow.Row[1], DeepEquals, types.NewIntDatum(int64(i)))
 	}
 
@@ -135,15 +133,15 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 
 	c.Assert(reader.ReadRow(), IsNil)
 	c.Assert(reader.lastRow.Row, DeepEquals, []types.Datum{
-		types.NewStringDatum("2020-10-29"),
-		types.NewStringDatum("17:26:15.123"),
-		types.NewStringDatum("17:26:15.123"),
-		types.NewStringDatum("2020-10-29 17:27:52.356"),
-		types.NewStringDatum("2020-10-29 17:27:52.356"),
-		types.NewStringDatum("-123456.78"),
-		types.NewStringDatum("0.0456"),
-		types.NewStringDatum("1234567890123456.78"),
-		types.NewStringDatum("-12345678.09"),
-		types.NewStringDatum("-1234567890123456.78"),
+		types.NewCollationStringDatum("2020-10-29", "", 0),
+		types.NewCollationStringDatum("17:26:15.123", "", 0),
+		types.NewCollationStringDatum("17:26:15.123", "", 0),
+		types.NewCollationStringDatum("2020-10-29 17:27:52.356", "", 0),
+		types.NewCollationStringDatum("2020-10-29 17:27:52.356", "", 0),
+		types.NewCollationStringDatum("-123456.78", "", 0),
+		types.NewCollationStringDatum("0.0456", "", 0),
+		types.NewCollationStringDatum("1234567890123456.78", "", 0),
+		types.NewCollationStringDatum("-12345678.09", "", 0),
+		types.NewCollationStringDatum("-1234567890123456.78", "", 0),
 	})
 }
