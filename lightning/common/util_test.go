@@ -190,3 +190,16 @@ func (s *utilSuite) TestSQLWithRetry(c *C) {
 
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
+
+func (s *utilSuite) TestStringSliceEqual(c *C) {
+	c.Assert(common.StringSliceEqual(nil, nil), IsTrue)
+	c.Assert(common.StringSliceEqual(nil, []string{}), IsTrue)
+	c.Assert(common.StringSliceEqual(nil, []string{"a"}), IsFalse)
+	c.Assert(common.StringSliceEqual([]string{"a"}, nil), IsFalse)
+	c.Assert(common.StringSliceEqual([]string{"a"}, []string{"a"}), IsTrue)
+	c.Assert(common.StringSliceEqual([]string{"a"}, []string{"b"}), IsFalse)
+	c.Assert(common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b", "c"}), IsTrue)
+	c.Assert(common.StringSliceEqual([]string{"a"}, []string{"a", "b", "c"}), IsFalse)
+	c.Assert(common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b"}), IsFalse)
+	c.Assert(common.StringSliceEqual([]string{"a", "x", "y"}, []string{"a", "y", "x"}), IsFalse)
+}

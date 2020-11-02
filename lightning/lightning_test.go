@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
-
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 
 	. "github.com/pingcap/check"
@@ -55,16 +55,22 @@ func (s *lightningSuite) TestInitEnv(c *C) {
 }
 
 func (s *lightningSuite) TestRun(c *C) {
-	cfg := config.NewGlobalConfig()
-	cfg.TiDB.Host = "test.invalid"
-	cfg.TiDB.Port = 4000
-	cfg.TiDB.PdAddr = "test.invalid:2379"
-	cfg.Mydumper.SourceDir = "not-exists"
-	lightning := New(cfg)
-	err := lightning.RunOnce()
+	globalConfig := config.NewGlobalConfig()
+	globalConfig.TiDB.Host = "test.invalid"
+	globalConfig.TiDB.Port = 4000
+	globalConfig.TiDB.PdAddr = "test.invalid:2379"
+	globalConfig.Mydumper.SourceDir = "not-exists"
+	lightning := New(globalConfig)
+	cfg := config.NewConfig()
+	err := cfg.LoadFromGlobal(globalConfig)
+	c.Assert(err, IsNil)
+	err = lightning.RunOnce(context.Background(), cfg, nil, nil)
 	c.Assert(err, ErrorMatches, ".*mydumper dir does not exist")
+
 	path, _ := filepath.Abs(".")
-	err = lightning.run(&config.Config{
+	ctx := context.Background()
+	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
+	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
 			Filter:           []string{"*.*"},
@@ -74,10 +80,10 @@ func (s *lightningSuite) TestRun(c *C) {
 			Enable: true,
 			Driver: "invalid",
 		},
-	})
+	}, invalidGlue)
 	c.Assert(err, ErrorMatches, "Unknown checkpoint driver invalid")
 
-	err = lightning.run(&config.Config{
+	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir: ".",
 			Filter:    []string{"*.*"},
@@ -87,7 +93,7 @@ func (s *lightningSuite) TestRun(c *C) {
 			Driver: "file",
 			DSN:    "any-file",
 		},
-	})
+	}, invalidGlue)
 	c.Assert(err, NotNil)
 }
 
@@ -240,6 +246,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 
 	// Check `GET /tasks` returns all tasks currently running
 
+	time.Sleep(100 * time.Millisecond)
 	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
 		Current: first,
 		Queue:   []int64{second, third},
@@ -333,6 +340,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	resp.Body.Close()
 
+	time.Sleep(100 * time.Millisecond)
 	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
 		Current: third,
 		Queue:   []int64{},
@@ -345,8 +353,11 @@ func (s *lightningServerSuite) TestHTTPAPIOutsideServerMode(c *C) {
 	url := "http://" + s.lightning.serverAddr.String() + "/tasks"
 
 	errCh := make(chan error)
+	cfg := config.NewConfig()
+	err := cfg.LoadFromGlobal(s.lightning.globalCfg)
+	c.Assert(err, IsNil)
 	go func() {
-		errCh <- s.lightning.RunOnce()
+		errCh <- s.lightning.RunOnce(s.lightning.ctx, cfg, nil, nil)
 	}()
 	time.Sleep(100 * time.Millisecond)
 
@@ -362,7 +373,7 @@ func (s *lightningServerSuite) TestHTTPAPIOutsideServerMode(c *C) {
 	err = json.NewDecoder(resp.Body).Decode(&curTask)
 	resp.Body.Close()
 	c.Assert(err, IsNil)
-	c.Assert(curTask.Current, Not(Equals), 0)
+	c.Assert(curTask.Current, Not(Equals), int64(0))
 	c.Assert(curTask.Queue, HasLen, 0)
 
 	// `POST /tasks` should return 501

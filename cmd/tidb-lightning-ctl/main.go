@@ -22,11 +22,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	uuid "github.com/satori/go.uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
@@ -49,6 +50,13 @@ func run() error {
 	)
 
 	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], func(fs *flag.FlagSet) {
+		// change the default of `-d` from empty to 'noop://'.
+		// there is a check if `-d` points to a valid storage, and '' is not.
+		// since tidb-lightning-ctl does not need `-d` we change the default to a valid but harmless value.
+		dFlag := fs.Lookup("d")
+		dFlag.Value.Set("noop://")
+		dFlag.DefValue = "noop://"
+
 		compact = fs.Bool("compact", false, "do manual compaction on the target cluster")
 		mode = fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
 		flagFetchMode = fs.Bool("fetch-mode", false, "obtain the current mode of every tikv in the cluster")
@@ -165,7 +173,7 @@ func fetchMode(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
 }
 
 func checkpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -175,7 +183,7 @@ func checkpointRemove(ctx context.Context, cfg *config.Config, tableName string)
 }
 
 func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -185,7 +193,7 @@ func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName st
 }
 
 func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common.TLS, tableName string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -257,7 +265,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 }
 
 func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -311,7 +319,7 @@ func unsafeCloseEngine(ctx context.Context, importer kv.Backend, engine string) 
 		return ce, errors.Trace(err)
 	}
 
-	engineUUID, err := uuid.FromString(engine)
+	engineUUID, err := uuid.Parse(engine)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

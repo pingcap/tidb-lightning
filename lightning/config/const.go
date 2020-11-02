@@ -13,18 +13,20 @@
 
 package config
 
-const (
-	_K = int64(1 << 10)
-	_M = _K << 10
-	_G = _M << 10
+import (
+	"github.com/docker/go-units"
+)
 
+const (
 	// mydumper
-	ReadBlockSize   int64 = 64 * _K
-	MinRegionSize   int64 = 256 * _M
-	MaxRegionSize   int64 = 256 * _M
-	SplitRegionSize int64 = 96 * _M
+	ReadBlockSize   ByteSize = 64 * units.KiB
+	MinRegionSize   ByteSize = 256 * units.MiB
+	MaxRegionSize   ByteSize = 256 * units.MiB
+	SplitRegionSize ByteSize = 96 * units.MiB
 
 	BufferSizeScale = 5
 
-	defaultMaxAllowedPacket = 64 * 1024 * 1024
+	defaultMaxAllowedPacket = 64 * units.MiB
+
+	defaultBatchSize ByteSize = 100 * units.GiB
 )
