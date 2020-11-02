@@ -84,12 +84,13 @@ lightning-ctl: prepare
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_CTL_BIN) cmd/tidb-lightning-ctl/main.go
 	$(FINISH_MOD)
 
-test: ensure_failpoint_ctl
+test: ensure_failpoint_ctl prepare
 	mkdir -p "$(TEST_DIR)"
 	$(FAILPOINT_ENABLE)
 	@export log_level=error;\
 	$(GOTEST) -cover -covermode=count -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES) || ( $(FAILPOINT_DISABLE) && exit 1 )
 	$(FAILPOINT_DISABLE)
+	$(FINISH_MOD)
 
 lightning_for_integration_test: ensure_failpoint_ctl
 	$(FAILPOINT_ENABLE)
@@ -132,7 +133,7 @@ $(FAILPOINT_CTL_BIN):
 	cd tools && $(GOBUILD) -o ../$(FAILPOINT_CTL_BIN) github.com/pingcap/failpoint/failpoint-ctl
 
 ensure_failpoint_ctl: $(FAILPOINT_CTL_BIN)
-	@[ "$$(grep -h failpoint go.mod tools/go.mod | uniq | wc -l)" -eq 1 ] || \
+	@[ "$$(grep -h failpoint go.mod1 tools/go.mod | uniq | wc -l)" -eq 1 ] || \
 	( echo 'failpoint version of go.mod and tools/go.mod differ' && false )
 
 failpoint_enable: ensure_failpoint_ctl
