@@ -49,7 +49,7 @@ prepare:
 	$(PREPARE_MOD)
 
 clean:
-	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN) $(FAILPOINT_CTL_BIN) $(REVIVE_BIN) $(VFSGENDEV_BIN)
+	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN) $(FAILPOINT_CTL_BIN) $(REVIVE_BIN) $(VFSGENDEV_BIN) go.mod go.sum
 
 checksuccess:
 	@if [ -f $(LIGHTNING_BIN) ] && [ -f $(LIGHTNING_CTRL_BIN) ]; \
@@ -72,27 +72,30 @@ data_parsers: $(VFSGENDEV_BIN) lightning/mydump/parser_generated.go
 web:
 	cd web && npm install && npm run build
 
-lightning_for_web: prepare
+lightning_for_web:
+	$(PREPARE_MOD)
 	$(GOBUILD) $(RACE_FLAG) -tags dev -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/tidb-lightning/main.go
-	$(FINISH_MOD)
 
-lightning: prepare
+lightning:
+	$(PREPARE_MOD)
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/tidb-lightning/main.go
-	$(FINISH_MOD)
 
-lightning-ctl: prepare
+lightning-ctl:
+	$(PREPARE_MOD)
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_CTL_BIN) cmd/tidb-lightning-ctl/main.go
-	$(FINISH_MOD)
 
-test: ensure_failpoint_ctl prepare
+test:
+	$(PREPARE_MOD)
+	@make ensure_failpoint_ctl
 	mkdir -p "$(TEST_DIR)"
 	$(FAILPOINT_ENABLE)
 	@export log_level=error;\
 	$(GOTEST) -cover -covermode=count -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES) || ( $(FAILPOINT_DISABLE) && exit 1 )
 	$(FAILPOINT_DISABLE)
-	$(FINISH_MOD)
 
-lightning_for_integration_test: ensure_failpoint_ctl prepare
+lightning_for_integration_test:
+	$(PREPARE_MOD)
+	@make ensure_failpoint_ctl
 	$(FAILPOINT_ENABLE)
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
@@ -104,7 +107,6 @@ lightning_for_integration_test: ensure_failpoint_ctl prepare
 		github.com/pingcap/tidb-lightning/cmd/tidb-lightning-ctl || ( $(FAILPOINT_DISABLE) && exit 1 )
 	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen tests/checkpoint_parquet/*.go
 	$(FAILPOINT_DISABLE)
-	$(FINISH_MOD)
 
 integration_test: lightning_for_integration_test
 	@which bin/tidb-server
@@ -124,7 +126,8 @@ else
 	grep -F '<option' "$(TEST_DIR)/all_cov.html"
 endif
 
-update: prepare
+update:
+	$(PREPARE_MOD)
 	GO111MODULE=on go mod verify
 	GO111MODULE=on go mod tidy
 	$(FINISH_MOD)
@@ -143,7 +146,11 @@ failpoint_disable: ensure_failpoint_ctl
 	$(FAILPOINT_DISABLE)
 
 
-check: fmt revive vet lint
+check:
+	@make prepare
+	GO111MODULE=on go mod tidy
+	git diff --quiet go.mod go.sum || ("$(FINISH_MOD)" && exit 1)
+	@make fmt revive vet lint
 
 fmt:
 	gofmt -s -l -w $(FILES)
