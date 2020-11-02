@@ -107,6 +107,11 @@ type SQLWithRetry struct {
 }
 
 func (t SQLWithRetry) perform(ctx context.Context, parentLogger log.Logger, purpose string, action func() error) error {
+	return Retry(purpose, parentLogger, action)
+}
+
+// Retry is shared by SQLWithRetry.perform, implementation of GlueCheckpointsDB and TiDB's glue implementation
+func Retry(purpose string, parentLogger log.Logger, action func() error) error {
 	var err error
 outside:
 	for i := 0; i < defaultMaxRetry; i++ {
@@ -264,6 +269,20 @@ func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
 	builder.WriteByte('`')
 }
 
+func EscapeMySQLSingleQuote(builder *strings.Builder, s string) {
+	builder.Grow(len(s) + 2)
+	builder.WriteByte('\'')
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b == '\'' {
+			builder.WriteString("''")
+		} else {
+			builder.WriteByte(b)
+		}
+	}
+	builder.WriteByte('\'')
+}
+
 // GetJSON fetches a page and parses it as JSON. The parsed result will be
 // stored into the `v`. The variable `v` must be a pointer to a type that can be
 // unmarshalled from JSON.
@@ -316,4 +335,17 @@ type KvPair struct {
 // TableHasAutoRowID return whether table has auto generated row id
 func TableHasAutoRowID(info *model.TableInfo) bool {
 	return !info.PKIsHandle && !info.IsCommonHandle
+}
+
+// StringSliceEqual checks if two string slices are equal.
+func StringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
 }

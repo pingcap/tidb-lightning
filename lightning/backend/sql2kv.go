@@ -14,6 +14,8 @@
 package backend
 
 import (
+	"math/rand"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -37,6 +39,8 @@ type tableKVEncoder struct {
 	tbl         table.Table
 	se          *session
 	recordCache []types.Datum
+	// auto random bits value for this chunk
+	autoRandomHeaderBits int64
 }
 
 func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
@@ -45,10 +49,33 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
 	recordCtx := tables.NewCommonAddRecordCtx(len(tbl.Cols()))
 	tables.SetAddRecordCtx(se, recordCtx)
-	return &tableKVEncoder{
-		tbl: tbl,
-		se:  se,
+
+	var autoRandomBits int64
+	if tbl.Meta().PKIsHandle && tbl.Meta().ContainsAutoRandomBits() {
+		for _, col := range tbl.Cols() {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				incrementalBits := autoRandomIncrementBits(col, int(tbl.Meta().AutoRandomBits))
+				autoRandomBits = rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<tbl.Meta().AutoRandomBits) << incrementalBits
+				break
+			}
+		}
 	}
+
+	return &tableKVEncoder{
+		tbl:                  tbl,
+		se:                   se,
+		autoRandomHeaderBits: autoRandomBits,
+	}
+}
+
+func autoRandomIncrementBits(col *table.Column, randomBits int) int {
+	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[col.Tp] * 8
+	incrementalBits := typeBitsLength - randomBits
+	hasSignBit := !mysql.HasUnsignedFlag(col.Flag)
+	if hasSignBit {
+		incrementalBits -= 1
+	}
+	return incrementalBits
 }
 
 func (kvcodec *tableKVEncoder) Close() {
@@ -167,11 +194,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = make([]types.Datum, 0, len(cols)+1)
 	}
 
-	isAutoRandom := false
-	if kvcodec.tbl.Meta().PKIsHandle && kvcodec.tbl.Meta().ContainsAutoRandomBits() {
-		isAutoRandom = true
-	}
-
+	isAutoRandom := kvcodec.tbl.Meta().PKIsHandle && kvcodec.tbl.Meta().ContainsAutoRandomBits()
 	for i, col := range cols {
 		j := columnPermutation[i]
 		isAutoIncCol := mysql.HasAutoIncrementFlag(col.Flag)
@@ -184,6 +207,14 @@ func (kvcodec *tableKVEncoder) Encode(
 		} else if isAutoIncCol {
 			// we still need a conversion, e.g. to catch overflow with a TINYINT column.
 			value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo(), false, false)
+		} else if isAutoRandom && isPk {
+			var val types.Datum
+			if mysql.HasUnsignedFlag(col.Flag) {
+				val = types.NewUintDatum(uint64(kvcodec.autoRandomHeaderBits | rowID))
+			} else {
+				val = types.NewIntDatum(kvcodec.autoRandomHeaderBits | rowID)
+			}
+			value, err = table.CastValue(kvcodec.se, val, col.ToInfo(), false, false)
 		} else {
 			value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 		}
@@ -194,12 +225,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = append(record, value)
 
 		if isAutoRandom && isPk {
-			typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[col.Tp] * 8)
-			incrementalBits := typeBitsLength - kvcodec.tbl.Meta().AutoRandomBits
-			hasSignBit := !mysql.HasUnsignedFlag(col.Flag)
-			if hasSignBit {
-				incrementalBits -= 1
-			}
+			incrementalBits := autoRandomIncrementBits(col, int(kvcodec.tbl.Meta().AutoRandomBits))
 			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64()&((1<<incrementalBits)-1), false, autoid.AutoRandomType)
 		}
 		if isAutoIncCol {

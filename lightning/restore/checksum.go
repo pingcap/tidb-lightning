@@ -6,7 +6,10 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/pingcap/br/pkg/checksum"
 	"github.com/pingcap/errors"
@@ -27,7 +30,10 @@ import (
 
 const (
 	preUpdateServiceSafePointFactor = 3
-	serviceSafePointTTL             = 10 * 60 // 10 min in seconds
+)
+
+var (
+	serviceSafePointTTL int64 = 10 * 60 // 10 min in seconds
 )
 
 // RemoteChecksum represents a checksum result got from tidb.
@@ -78,7 +84,11 @@ func newChecksumManager(rc *RestoreController) (ChecksumManager, error) {
 
 		manager = newTiKVChecksumManager(store.(tikv.Storage).GetClient(), pdCli)
 	} else {
-		manager = newTiDBChecksumExecutor(rc.tidbMgr.db)
+		db, err := rc.tidbGlue.GetDB()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		manager = newTiDBChecksumExecutor(db)
 	}
 
 	return manager, nil
@@ -132,7 +142,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *TidbTabl
 
 // DoChecksum do checksum for tables.
 // table should be in <db>.<table>, format.  e.g. foo.bar
-func DoChecksum(ctx context.Context, db *sql.DB, table *TidbTableInfo) (*RemoteChecksum, error) {
+func DoChecksum(ctx context.Context, table *TidbTableInfo) (*RemoteChecksum, error) {
 	var err error
 	manager, ok := ctx.Value(&checksumManagerKey).(ChecksumManager)
 	if !ok {
@@ -242,10 +252,8 @@ type tikvChecksumManager struct {
 // newTiKVChecksumManager return a new tikv checksum manager
 func newTiKVChecksumManager(client kv.Client, pdClient pd.Client) *tikvChecksumManager {
 	return &tikvChecksumManager{
-		client: client,
-		manager: gcTTLManager{
-			pdClient: pdClient,
-		},
+		client:  client,
+		manager: newGCTTLManager(pdClient),
 	}
 }
 
@@ -316,9 +324,22 @@ type gcTTLManager struct {
 	tableGCSafeTS []*tableChecksumTS
 	currentTs     uint64
 	serviceID     string
+	// 0 for not start, otherwise started
+	started uint32
+}
+
+func newGCTTLManager(pdClient pd.Client) gcTTLManager {
+	return gcTTLManager{
+		pdClient:  pdClient,
+		serviceID: fmt.Sprintf("lightning-%s", uuid.New()),
+	}
 }
 
 func (m *gcTTLManager) addOneJob(ctx context.Context, table string, ts uint64) error {
+	// start gc ttl loop if not started yet.
+	if atomic.CompareAndSwapUint32(&m.started, 0, 1) {
+		m.start(ctx)
+	}
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	var curTs uint64

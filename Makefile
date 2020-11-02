@@ -48,6 +48,9 @@ default: clean lightning lightning-ctl checksuccess
 prepare:
 	$(PREPARE_MOD)
 
+finish-prepare:
+	$(FINISH_MOD)
+
 clean:
 	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN) $(FAILPOINT_CTL_BIN) $(REVIVE_BIN) $(VFSGENDEV_BIN) go.mod go.sum
 
@@ -128,6 +131,11 @@ endif
 
 update:
 	$(PREPARE_MOD)
+	GO111MODULE=on go mod verify
+	GO111MODULE=on go mod tidy
+	$(FINISH_MOD)
+
+manual_update:
 	GO111MODULE=on go mod verify
 	GO111MODULE=on go mod tidy
 	$(FINISH_MOD)
