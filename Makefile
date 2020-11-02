@@ -92,7 +92,7 @@ test: ensure_failpoint_ctl prepare
 	$(FAILPOINT_DISABLE)
 	$(FINISH_MOD)
 
-lightning_for_integration_test: ensure_failpoint_ctl
+lightning_for_integration_test: ensure_failpoint_ctl prepare
 	$(FAILPOINT_ENABLE)
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
@@ -104,6 +104,7 @@ lightning_for_integration_test: ensure_failpoint_ctl
 		github.com/pingcap/tidb-lightning/cmd/tidb-lightning-ctl || ( $(FAILPOINT_DISABLE) && exit 1 )
 	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen tests/checkpoint_parquet/*.go
 	$(FAILPOINT_DISABLE)
+	$(FINISH_MOD)
 
 integration_test: lightning_for_integration_test
 	@which bin/tidb-server
