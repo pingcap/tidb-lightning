@@ -140,7 +140,7 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateTable, err = timgr.createTableIfNotExistsStmt(sqlCreateTable, tbl)
+		sqlCreateStmts, err := timgr.createTableIfNotExistsStmt(sqlCreateTable, tbl)
 		if err != nil {
 			break
 		}
@@ -149,9 +149,11 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 			Logger:       sql.Logger.With(zap.String("table", common.UniqueTable(database, tbl))),
 			HideQueryLog: true,
 		}
-		err = sql2.Exec(ctx, "create table", sqlCreateTable)
-		if err != nil {
-			break
+		for _, s := range sqlCreateStmts {
+			err = sql2.Exec(ctx, "create table", s)
+			if err != nil {
+				break
+			}
 		}
 	}
 	task.End(zap.ErrorLevel, err)
@@ -159,29 +161,40 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 	return errors.Trace(err)
 }
 
-func (timgr *TiDBManager) createTableIfNotExistsStmt(createTable, tblName string) (string, error) {
+func (timgr *TiDBManager) createTableIfNotExistsStmt(createTable, tblName string) ([]string, error) {
 	stmts, _, err := timgr.parser.Parse(createTable, "", "")
 	if err != nil {
-		return "", err
+		return []string{}, err
 	}
 
 	var res strings.Builder
-	res.Grow(len(createTable))
 	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
 
+	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {
-		if createTableNode, ok := stmt.(*ast.CreateTableStmt); ok {
+		switch stmt.(type) {
+		case *ast.CreateTableStmt:
+			createTableNode := stmt.(*ast.CreateTableStmt)
 			createTableNode.Table.Schema = model.NewCIStr("")
 			createTableNode.Table.Name = model.NewCIStr(tblName)
 			createTableNode.IfNotExists = true
+		case *ast.CreateViewStmt:
+			createViewNode := stmt.(*ast.CreateViewStmt)
+			createViewNode.ViewName.Name = model.NewCIStr(tblName)
+		case *ast.DropTableStmt:
+			dropStmt := stmt.(*ast.DropTableStmt)
+			dropStmt.Tables[0].Name = model.NewCIStr(tblName)
+			dropStmt.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {
-			return "", err
+			return []string{}, err
 		}
 		ctx.WritePlain(";")
+		retStmts = append(retStmts, res.String())
+		res.Reset()
 	}
 
-	return res.String(), nil
+	return retStmts, nil
 }
 
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
