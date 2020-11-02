@@ -137,10 +137,11 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 	}
 
 	task := sql.Logger.Begin(zap.InfoLevel, "create tables")
+	var sqlCreateStmts []string
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateStmts, err := timgr.createTableIfNotExistsStmt(sqlCreateTable, tbl)
+		sqlCreateStmts, err = timgr.createTableIfNotExistsStmt(sqlCreateTable, tbl)
 		if err != nil {
 			break
 		}

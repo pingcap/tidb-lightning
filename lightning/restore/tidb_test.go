@@ -191,7 +191,10 @@ func (s *tidbSuite) TestInitSchema(c *C) {
 		ExpectExec("\\QCREATE TABLE IF NOT EXISTS `t1` (`a` INT PRIMARY KEY,`b` VARCHAR(200));\\E").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	s.mockDB.
-		ExpectExec("\\QSET @@SESSION.`FOREIGN_KEY_CHECKS`=0;CREATE TABLE IF NOT EXISTS `t2` (`xx` TEXT) AUTO_INCREMENT = 11203;\\E").
+		ExpectExec("\\QSET @@SESSION.`FOREIGN_KEY_CHECKS`=0;\\E").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mockDB.
+		ExpectExec("\\QCREATE TABLE IF NOT EXISTS `t2` (`xx` TEXT) AUTO_INCREMENT = 11203;\\E").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	s.mockDB.
 		ExpectClose()
