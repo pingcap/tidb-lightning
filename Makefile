@@ -18,9 +18,11 @@ TEST_DIR := /tmp/lightning_test_result
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
-GO        := go
-GOBUILD   := GO111MODULE=on CGO_ENABLED=1 $(GO) build
-GOTEST    := GO111MODULE=on CGO_ENABLED=1 $(GO) test -p 3
+GO          := go
+GOBUILD     := GO111MODULE=on CGO_ENABLED=1 $(GO) build
+GOTEST      := GO111MODULE=on CGO_ENABLED=1 $(GO) test -p 3
+PREPARE_MOD := cp go.mod1 go.mod && cp go.sum1 go.sum
+FINISH_MOD  := cp go.mod go.mod1 && cp go.sum go.sum1
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -42,6 +44,9 @@ endif
 	check vet fmt revive web
 
 default: clean lightning lightning-ctl checksuccess
+
+prepare:
+	$(PREPARE_MOD)
 
 clean:
 	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN) $(FAILPOINT_CTL_BIN) $(REVIVE_BIN) $(VFSGENDEV_BIN)
@@ -67,14 +72,17 @@ data_parsers: $(VFSGENDEV_BIN) lightning/mydump/parser_generated.go
 web:
 	cd web && npm install && npm run build
 
-lightning_for_web:
+lightning_for_web: prepare
 	$(GOBUILD) $(RACE_FLAG) -tags dev -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/tidb-lightning/main.go
+	$(FINISH_MOD)
 
-lightning:
+lightning: prepare
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/tidb-lightning/main.go
+	$(FINISH_MOD)
 
-lightning-ctl:
+lightning-ctl: prepare
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_CTL_BIN) cmd/tidb-lightning-ctl/main.go
+	$(FINISH_MOD)
 
 test: ensure_failpoint_ctl
 	mkdir -p "$(TEST_DIR)"
@@ -103,7 +111,7 @@ integration_test: lightning_for_integration_test
 	@which bin/tikv-importer
 	tests/run.sh
 
-coverage:
+coverage: prepare
 	GO111MODULE=off go get github.com/wadey/gocovmerge
 	gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go|.*__failpoint_binding__.go" > "$(TEST_DIR)/all_cov.out"
 ifeq ("$(JenkinsCI)", "1")
@@ -113,10 +121,12 @@ else
 	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
 	grep -F '<option' "$(TEST_DIR)/all_cov.html"
 endif
+	$(FINISH_MOD)
 
-update:
+update: prepare
 	GO111MODULE=on go mod verify
 	GO111MODULE=on go mod tidy
+	$(FINISH_MOD)
 
 $(FAILPOINT_CTL_BIN):
 	cd tools && $(GOBUILD) -o ../$(FAILPOINT_CTL_BIN) github.com/pingcap/failpoint/failpoint-ctl
