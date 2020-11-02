@@ -113,7 +113,7 @@ integration_test: lightning_for_integration_test
 	@which bin/tikv-importer
 	tests/run.sh
 
-coverage: prepare
+coverage:
 	GO111MODULE=off go get github.com/wadey/gocovmerge
 	gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go|.*__failpoint_binding__.go" > "$(TEST_DIR)/all_cov.out"
 ifeq ("$(JenkinsCI)", "1")
@@ -123,7 +123,6 @@ else
 	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
 	grep -F '<option' "$(TEST_DIR)/all_cov.html"
 endif
-	$(FINISH_MOD)
 
 update: prepare
 	GO111MODULE=on go mod verify
