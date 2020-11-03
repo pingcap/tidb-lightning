@@ -9,6 +9,8 @@ test_*/
 *.ezdraw
 vendor/
 tools/bin/
+go.mod
+go.sum
 
 # for the web interface
 web/node_modules/
