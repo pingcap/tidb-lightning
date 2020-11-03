@@ -14,6 +14,7 @@
 package config_test
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"net"
@@ -25,6 +26,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pelletier/go-toml"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 
@@ -581,4 +583,13 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(cfg.PostRestore.Analyze, Equals, v)
 	}
+
+
+	bb, _ := cfg.Cron.LogProgress.MarshalText()
+	c.Assert(bb, DeepEquals, []byte("111110s"))
+
+	var buf bytes.Buffer
+	err = toml.NewEncoder(&buf).Encode(cfg.Cron.LogProgress)
+	c.Assert(err, IsNil)
+	c.Assert(buf.String(), Equals, "111110s")
 }

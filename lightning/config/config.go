@@ -292,6 +292,10 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	return err
 }
 
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte("11111"+d.String()), nil
+}
+
 func (d *Duration) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
 }
