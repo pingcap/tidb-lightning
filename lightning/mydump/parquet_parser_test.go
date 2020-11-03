@@ -149,7 +149,8 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 	})
 
 	type TestDecimal struct {
-		Decimal1 int32 `parquet:"name=decimal1, type=DECIMAL, scale=3, precision=5, basetype=INT32"`
+		Decimal1   int32  `parquet:"name=decimal1, type=DECIMAL, scale=3, precision=5, basetype=INT32"`
+		DecimalRef *int32 `parquet:"name=decimal2, type=DECIMAL, scale=3, precision=5, basetype=INT32"`
 	}
 
 	cases := [][]interface{}{
@@ -169,8 +170,14 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 	c.Assert(err, IsNil)
 	writer, err = writer2.NewParquetWriter(pf, td, 2)
 	c.Assert(err, IsNil)
-	for _, testCase := range cases {
-		td.Decimal1 = testCase[0].(int32)
+	for i, testCase := range cases {
+		val := testCase[0].(int32)
+		td.Decimal1 = val
+		if i%2 == 0 {
+			td.DecimalRef = &val
+		} else {
+			td.DecimalRef = nil
+		}
 		c.Assert(writer.Write(td), IsNil)
 	}
 	c.Assert(writer.WriteStop(), IsNil)
@@ -182,10 +189,18 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 	c.Assert(err, IsNil)
 	defer reader.Close()
 
-	for _, testCase := range cases {
+	for i, testCase := range cases {
 		c.Assert(reader.ReadRow(), IsNil)
-		c.Assert(reader.lastRow.Row, DeepEquals, []types.Datum{
-			types.NewCollationStringDatum(testCase[1].(string), "", 0),
-		})
+		vals := []types.Datum{types.NewCollationStringDatum(testCase[1].(string), "", 0)}
+		if i%2 == 0 {
+			vals = append(vals, vals[0])
+		} else {
+			vals = append(vals, types.Datum{})
+		}
+		// because we will reuses the datums in reader.lastRow.Row, so we can't directly
+		// compare will `DeepEqual` here
+		eq, err := types.EqualDatums(nil, reader.lastRow.Row, vals)
+		c.Assert(err, IsNil)
+		c.Assert(eq, Equals, true)
 	}
 }
