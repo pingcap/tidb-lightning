@@ -572,12 +572,22 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		err := cfg.LoadFromTOML([]byte(confStr))
 		c.Assert(err, IsNil)
 		c.Assert(cfg.PostRestore.Checksum, Equals, v)
+
+		confStr = fmt.Sprintf("[post-restore]\r\nchecksum= %v\r\n", int(v))
+		err = cfg.LoadFromTOML([]byte(confStr))
+		c.Assert(err, IsNil)
+		c.Assert(cfg.PostRestore.Checksum, Equals, v)
 	}
 
 	for k, v := range kvMap {
 		cfg := &config.Config{}
 		confStr := fmt.Sprintf("[post-restore]\r\nanalyze= %s\r\n", k)
 		err := cfg.LoadFromTOML([]byte(confStr))
+		c.Assert(err, IsNil)
+		c.Assert(cfg.PostRestore.Analyze, Equals, v)
+
+		confStr = fmt.Sprintf("[post-restore]\r\nanalyze= %v\r\n", int(v))
+		err = cfg.LoadFromTOML([]byte(confStr))
 		c.Assert(err, IsNil)
 		c.Assert(cfg.PostRestore.Analyze, Equals, v)
 	}

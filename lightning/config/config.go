@@ -145,6 +145,12 @@ func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
 		}
 	case string:
 		return t.FromStringValue(val)
+	case int64:
+		if int64(OpLevelOff) <= val && val <= int64(OpLevelRequired) {
+			*t = PostOpLevel(val)
+		} else {
+			return errors.Errorf("invalid op level '%v', please choose valid option between ['off', 'optional', 'required']", v)
+		}
 	default:
 		return errors.Errorf("invalid op level '%v', please choose valid option between ['off', 'optional', 'required']", v)
 	}
