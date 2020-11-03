@@ -14,6 +14,7 @@
 package config_test
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"net"
@@ -23,8 +24,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 
@@ -566,6 +570,9 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		"false":      config.OpLevelOff,
 	}
 
+	var b bytes.Buffer
+	enc := toml.NewEncoder(&b)
+
 	for k, v := range kvMap {
 		cfg := &config.Config{}
 		confStr := fmt.Sprintf("[post-restore]\r\nchecksum= %s\r\n", k)
@@ -573,10 +580,9 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(cfg.PostRestore.Checksum, Equals, v)
 
-		confStr = fmt.Sprintf("[post-restore]\r\nchecksum= %v\r\n", int(v))
-		err = cfg.LoadFromTOML([]byte(confStr))
-		c.Assert(err, IsNil)
-		c.Assert(cfg.PostRestore.Checksum, Equals, v)
+		b.Reset()
+		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
+		c.Assert(strings.Contains(b.String(), fmt.Sprintf(`checksum = "%s"`, v.String())), IsTrue)
 	}
 
 	for k, v := range kvMap {
@@ -586,9 +592,24 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(cfg.PostRestore.Analyze, Equals, v)
 
-		confStr = fmt.Sprintf("[post-restore]\r\nanalyze= %v\r\n", int(v))
-		err = cfg.LoadFromTOML([]byte(confStr))
-		c.Assert(err, IsNil)
-		c.Assert(cfg.PostRestore.Analyze, Equals, v)
+		b.Reset()
+		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
+		c.Assert(strings.Contains(b.String(), fmt.Sprintf(`analyze = "%s"`, v.String())), IsTrue)
 	}
+}
+
+func (s *configTestSuite) TestCronEncodeDecode(c *C) {
+	cfg := &config.Config{}
+	d, _ := time.ParseDuration("1m")
+	cfg.Cron.SwitchMode.Duration = d
+	d, _ = time.ParseDuration("2m")
+	cfg.Cron.LogProgress.Duration = d
+	var b bytes.Buffer
+	c.Assert(toml.NewEncoder(&b).Encode(cfg.Cron), IsNil)
+	c.Assert(b.String(), Equals, "switch-mode = \"1m0s\"\nlog-progress = \"2m0s\"\n")
+
+	confStr := "[cron]\r\n" + b.String()
+	cfg2 := &config.Config{}
+	c.Assert(cfg2.LoadFromTOML([]byte(confStr)), IsNil)
+	c.Assert(cfg2.Cron, DeepEquals, cfg.Cron)
 }

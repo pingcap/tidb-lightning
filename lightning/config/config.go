@@ -145,16 +145,14 @@ func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
 		}
 	case string:
 		return t.FromStringValue(val)
-	case int64:
-		if int64(OpLevelOff) <= val && val <= int64(OpLevelRequired) {
-			*t = PostOpLevel(val)
-		} else {
-			return errors.Errorf("invalid op level '%v', please choose valid option between ['off', 'optional', 'required']", v)
-		}
 	default:
 		return errors.Errorf("invalid op level '%v', please choose valid option between ['off', 'optional', 'required']", v)
 	}
 	return nil
+}
+
+func (t PostOpLevel) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
 }
 
 // parser command line parameter
@@ -296,6 +294,10 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	var err error
 	d.Duration, err = time.ParseDuration(string(text))
 	return err
+}
+
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(d.String()), nil
 }
 
 func (d *Duration) MarshalJSON() ([]byte, error) {
