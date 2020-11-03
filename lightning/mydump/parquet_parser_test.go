@@ -93,6 +93,7 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 		Decimal3 int64  `parquet:"name=decimal3, type=DECIMAL, scale=2, precision=18, basetype=INT64"`
 		Decimal4 string `parquet:"name=decimal4, type=DECIMAL, scale=2, precision=10, basetype=FIXED_LEN_BYTE_ARRAY, length=12"`
 		Decimal5 string `parquet:"name=decimal5, type=DECIMAL, scale=2, precision=20, basetype=BYTE_ARRAY"`
+		Decimal6 int32  `parquet:"name=decimal6, type=DECIMAL, scale=4, precision=4, basetype=INT32"`
 	}
 
 	dir := c.MkDir()
@@ -116,6 +117,7 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 		Decimal3:        123456789012345678, //1234567890123456.78
 		Decimal4:        "-12345678.09",
 		Decimal5:        "-1234567890123456.78",
+		Decimal6:        -1, // -0.0001
 	}
 	c.Assert(writer.Write(v), IsNil)
 	c.Assert(writer.WriteStop(), IsNil)
@@ -129,7 +131,7 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 	c.Assert(err, IsNil)
 	defer reader.Close()
 
-	c.Assert(len(reader.columns), Equals, 10)
+	c.Assert(len(reader.columns), Equals, 11)
 
 	c.Assert(reader.ReadRow(), IsNil)
 	c.Assert(reader.lastRow.Row, DeepEquals, []types.Datum{
@@ -143,5 +145,47 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 		types.NewCollationStringDatum("1234567890123456.78", "", 0),
 		types.NewCollationStringDatum("-12345678.09", "", 0),
 		types.NewCollationStringDatum("-1234567890123456.78", "", 0),
+		types.NewCollationStringDatum("-0.0001", "", 0),
 	})
+
+	type TestDecimal struct {
+		Decimal1 int32 `parquet:"name=decimal1, type=DECIMAL, scale=3, precision=5, basetype=INT32"`
+	}
+
+	cases := [][]interface{}{
+		{int32(0), "0.000"},
+		{int32(1000), "1.000"},
+		{int32(-1000), "-1.000"},
+		{int32(999), "0.999"},
+		{int32(-999), "-0.999"},
+		{int32(1), "0.001"},
+		{int32(-1), "-0.001"},
+	}
+
+	fileName := "test.02.parquet"
+	testPath = filepath.Join(dir, fileName)
+	pf, err = local.NewLocalFileWriter(testPath)
+	td := &TestDecimal{}
+	c.Assert(err, IsNil)
+	writer, err = writer2.NewParquetWriter(pf, td, 2)
+	c.Assert(err, IsNil)
+	for _, testCase := range cases {
+		td.Decimal1 = testCase[0].(int32)
+		c.Assert(writer.Write(td), IsNil)
+	}
+	c.Assert(writer.WriteStop(), IsNil)
+	c.Assert(pf.Close(), IsNil)
+
+	r, err = store.Open(context.TODO(), fileName)
+	c.Assert(err, IsNil)
+	reader, err = NewParquetParser(context.TODO(), store, r, fileName)
+	c.Assert(err, IsNil)
+	defer reader.Close()
+
+	for _, testCase := range cases {
+		c.Assert(reader.ReadRow(), IsNil)
+		c.Assert(reader.lastRow.Row, DeepEquals, []types.Datum{
+			types.NewCollationStringDatum(testCase[1].(string), "", 0),
+		})
+	}
 }

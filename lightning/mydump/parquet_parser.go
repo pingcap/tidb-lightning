@@ -223,8 +223,12 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) {
 		for i := 0; i < int(*meta.Scale); i++ {
 			scale *= 10
 		}
-		fmtStr := fmt.Sprintf("%%d.%%0%dd", *meta.Scale)
-		val := fmt.Sprintf(fmtStr, v/scale, abs(v%scale))
+		var prefix string
+		if v < 0 && abs(v) < scale {
+			prefix = "-"
+		}
+
+		val := fmt.Sprintf("%s%d.%0*d", prefix, v/scale, *meta.Scale, abs(v%scale))
 		d.SetString(val, "")
 	case parquet.ConvertedType_DATE:
 		dateStr := time.Unix(v*86400, 0).Format("2006-01-02")
