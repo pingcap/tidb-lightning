@@ -151,6 +151,10 @@ func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
 	return nil
 }
 
+func (t PostOpLevel) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
 // parser command line parameter
 func (t *PostOpLevel) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
@@ -290,6 +294,10 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	var err error
 	d.Duration, err = time.ParseDuration(string(text))
 	return err
+}
+
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(d.String()), nil
 }
 
 func (d *Duration) MarshalJSON() ([]byte, error) {
