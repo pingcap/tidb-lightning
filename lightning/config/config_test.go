@@ -24,7 +24,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -582,7 +581,7 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 
 		b.Reset()
 		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
-		c.Assert(b, Matches, fmt.Sprintf(`.*checksum = "\Q%s\E".*`, v))
+		c.Assert(&b, Matches, fmt.Sprintf(`(?s).*checksum = "\Q%s\E".*`, v))
 	}
 
 	for k, v := range kvMap {
@@ -594,7 +593,7 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 
 		b.Reset()
 		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
-		c.Assert(strings.Contains(b.String(), fmt.Sprintf(`analyze = "%s"`, v.String())), IsTrue)
+		c.Assert(&b, Matches, fmt.Sprintf(`(?s).*analyze = "\Q%s\E".*`, v))
 	}
 }
 
