@@ -28,6 +28,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/btree"
+
 	"github.com/cockroachdb/pebble"
 	"github.com/coreos/go-semver/semver"
 	split "github.com/pingcap/br/pkg/restore"
@@ -82,6 +84,12 @@ type Range struct {
 	start  []byte
 	end    []byte
 	length int
+}
+
+// Contains check if the range contains the given key, [start, end).
+func (rg *Range) Contains(key []byte) bool {
+	return bytes.Compare(key, rg.start) >= 0 &&
+		(len(rg.end) == 0 || bytes.Compare(key, rg.end) < 0)
 }
 
 // localFileMeta contains some field that is necessary to continue the engine restore/import process.
@@ -143,6 +151,9 @@ type local struct {
 	checkpointEnabled bool
 
 	tcpConcurrency int
+
+	splitRegionLock sync.Mutex
+	runningRanges   *rangeLockTree
 }
 
 // connPool is a lazy pool of gRPC channels.
@@ -253,6 +264,7 @@ func NewLocalBackend(
 		tcpConcurrency:    rangeConcurrency,
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
+		runningRanges:     newRangeLockTree(),
 	}
 	local.conns.conns = make(map[uint64]*connPool)
 	return MakeBackend(local), nil
@@ -1101,6 +1113,10 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 	remains := &syncdRanges{}
 
 	for {
+		// local the range to avoid race condition
+		rg := Range{start: ranges[0].start, end: ranges[len(ranges)-1].end}
+		local.runningRanges.put(rg)
+
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
@@ -1110,6 +1126,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		}
 		if err != nil {
 			log.L().Error("split & scatter ranges failed", log.ShortError(err))
+			local.runningRanges.remove(rg)
 			return err
 		}
 
@@ -1117,6 +1134,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
 		if err != nil {
 			log.L().Error("write and ingest engine failed", log.ShortError(err))
+			local.runningRanges.remove(rg)
 			return err
 		}
 
@@ -1432,4 +1450,76 @@ func (l *LocalFile) splitValuesToRange(start []byte, end []byte, count int64, sa
 		zap.Int("ranges", len(res)), zap.Int("samples", len(sampleValues)),
 		zap.Int64("engine_kv", l.Length))
 	return res
+}
+
+type LockedRange struct {
+	sync.Mutex
+	Range
+}
+
+func (l *LockedRange) Less(than btree.Item) bool {
+	other := than.(*LockedRange)
+	return bytes.Compare(l.start, other.start) < 0
+}
+
+var _ btree.Item = &LockedRange{}
+
+type rangeLockTree struct {
+	sync.Mutex
+	*btree.BTree
+}
+
+func newRangeLockTree() *rangeLockTree {
+	return &rangeLockTree{BTree: btree.New(2)}
+}
+
+func (t *rangeLockTree) firstOverlap(rg *LockedRange) *LockedRange {
+	var ret *LockedRange
+	t.DescendLessOrEqual(rg, func(i btree.Item) bool {
+		ret = i.(*LockedRange)
+		return false
+	})
+
+	if ret != nil && ret.Contains(rg.start) {
+		return ret
+	}
+
+	t.AscendGreaterOrEqual(rg, func(i btree.Item) bool {
+		ret = i.(*LockedRange)
+		return false
+	})
+
+	if ret == nil || !rg.Contains(ret.start) {
+		return nil
+	}
+	return ret
+}
+
+func (t *rangeLockTree) put(rg Range) {
+	lr := &LockedRange{Range: rg}
+	lr.Lock()
+	for {
+		t.Lock()
+		node := t.firstOverlap(lr)
+		if node != nil {
+			t.Unlock()
+			// wait the first overlapped node to be finish and try again
+			node.Lock()
+			node.Unlock()
+			continue
+		}
+		// here there should be no overlap nodes in the tree, put self there
+		t.ReplaceOrInsert(lr)
+		t.Unlock()
+		return
+	}
+}
+
+// remove the range from tree and unlock it
+func (t *rangeLockTree) remove(rg Range) {
+	lr := &LockedRange{Range: rg}
+	t.Lock()
+	node := t.Delete(lr).(*LockedRange)
+	node.Unlock()
+	t.Unlock()
 }
