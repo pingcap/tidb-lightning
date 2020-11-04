@@ -2,6 +2,10 @@ package backend
 
 import (
 	"bytes"
+	"encoding/binary"
+	"math"
+	"math/rand"
+	"path/filepath"
 
 	"github.com/cockroachdb/pebble"
 	. "github.com/pingcap/check"
@@ -160,4 +164,71 @@ func (s *localSuite) TestRangeProperties(c *C) {
 		{start: []byte("n"), end: []byte("q")},
 		{start: []byte("q"), end: []byte("z")},
 	})
+}
+
+func (s *localSuite) TestRangePropertiesWithPebble(c *C) {
+	dir := c.MkDir()
+
+	sizeDistance := uint64(500)
+	keysDistance := uint64(20)
+	opt := &pebble.Options{
+		MemTableSize:             LocalMemoryTableSize,
+		MaxConcurrentCompactions: 16,
+		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
+		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
+		MaxOpenFiles:             10000,
+		DisableWAL:               true,
+		ReadOnly:                 false,
+		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+			func() pebble.TablePropertyCollector {
+				return &RangePropertiesCollector{
+					props:               make([]rangeProperty, 0, 1024),
+					propSizeIdxDistance: sizeDistance,
+					propKeysIdxDistance: keysDistance,
+				}
+			},
+		},
+	}
+	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
+	c.Assert(err, IsNil)
+	defer db.Close()
+
+	// local collector
+	collector := &RangePropertiesCollector{
+		props:               make([]rangeProperty, 0, 1024),
+		propSizeIdxDistance: sizeDistance,
+		propKeysIdxDistance: keysDistance,
+	}
+	writeOpt := &pebble.WriteOptions{Sync: false}
+	value := make([]byte, 100)
+	for i := 0; i < 10; i++ {
+		wb := db.NewBatch()
+		for j := 0; j < 100; j++ {
+			key := make([]byte, 8)
+			valueLen := rand.Intn(50)
+			binary.BigEndian.PutUint64(key, uint64(i*100+j))
+			err = wb.Set(key, value[:valueLen], writeOpt)
+			c.Assert(err, IsNil)
+			err = collector.Add(pebble.InternalKey{UserKey: key}, value[:valueLen])
+			c.Assert(err, IsNil)
+		}
+		c.Assert(wb.Commit(writeOpt), IsNil)
+	}
+	// flush one sst
+	c.Assert(db.Flush(), IsNil)
+
+	props := make(map[string]string, 1)
+	c.Assert(collector.Finish(props), IsNil)
+
+	sstMetas, err := db.SSTables(pebble.WithProperties())
+	c.Assert(err, IsNil)
+	for i, level := range sstMetas {
+		if i == 0 {
+			c.Assert(len(level), Equals, 1)
+		} else {
+			c.Assert(len(level), Equals, 0)
+		}
+	}
+
+	c.Assert(sstMetas[0][0].Properties.UserProperties, DeepEquals, props)
 }
