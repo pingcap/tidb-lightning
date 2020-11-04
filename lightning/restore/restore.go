@@ -1194,6 +1194,8 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		}
 	}
 
+	// TODO(lance6716): return localChecksum.SumSize() as filesize
+
 	t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 	if cp.Status < CheckpointStatusChecksummed {
 		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
