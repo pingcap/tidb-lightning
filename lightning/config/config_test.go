@@ -582,7 +582,7 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 
 		b.Reset()
 		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
-		c.Assert(strings.Contains(b.String(), fmt.Sprintf(`checksum = "%s"`, v.String())), IsTrue)
+		c.Assert(b, Matches, fmt.Sprintf(`.*checksum = "\Q%s\E".*`, v))
 	}
 
 	for k, v := range kvMap {
