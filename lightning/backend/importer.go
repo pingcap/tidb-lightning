@@ -25,7 +25,7 @@ import (
 	kv "github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/table"
-	uuid "github.com/google/uuid"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 

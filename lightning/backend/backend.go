@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	uuid "github.com/google/uuid"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"

@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	uuid "github.com/google/uuid"
+	"github.com/google/uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -311,10 +311,8 @@ func unsafeCloseEngine(ctx context.Context, importer kv.Backend, engine string) 
 		return ce, errors.Trace(err)
 	}
 
-	engineUUID, err := uuid.FromString(engine)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	engineUUID := uuid.UUID{}
+	_ = engineUUID.UnmarshalText([]byte(engine))
 
 	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, "<tidb-lightning-ctl>", engineUUID)
 	return ce, errors.Trace(err)
