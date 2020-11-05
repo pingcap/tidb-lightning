@@ -1441,7 +1441,7 @@ func (cpdb *FileCheckpointsDB) DumpChunks(context.Context, io.Writer) error {
 }
 
 func intSlice2Int32Slice(s []int) []int32 {
-	res := make([]int32, len(s))
+	res := make([]int32, 0, len(s))
 	for _, i := range s {
 		res = append(res, int32(i))
 	}

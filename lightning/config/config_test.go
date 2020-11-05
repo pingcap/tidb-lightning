@@ -14,6 +14,7 @@
 package config_test
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"net"
@@ -24,7 +25,9 @@ import (
 	"regexp"
 	"strconv"
 	"testing"
+	"time"
 
+	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 
@@ -566,12 +569,19 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		"false":      config.OpLevelOff,
 	}
 
+	var b bytes.Buffer
+	enc := toml.NewEncoder(&b)
+
 	for k, v := range kvMap {
 		cfg := &config.Config{}
 		confStr := fmt.Sprintf("[post-restore]\r\nchecksum= %s\r\n", k)
 		err := cfg.LoadFromTOML([]byte(confStr))
 		c.Assert(err, IsNil)
 		c.Assert(cfg.PostRestore.Checksum, Equals, v)
+
+		b.Reset()
+		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
+		c.Assert(&b, Matches, fmt.Sprintf(`(?s).*checksum = "\Q%s\E".*`, v))
 	}
 
 	for k, v := range kvMap {
@@ -580,5 +590,25 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		err := cfg.LoadFromTOML([]byte(confStr))
 		c.Assert(err, IsNil)
 		c.Assert(cfg.PostRestore.Analyze, Equals, v)
+
+		b.Reset()
+		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
+		c.Assert(&b, Matches, fmt.Sprintf(`(?s).*analyze = "\Q%s\E".*`, v))
 	}
+}
+
+func (s *configTestSuite) TestCronEncodeDecode(c *C) {
+	cfg := &config.Config{}
+	d, _ := time.ParseDuration("1m")
+	cfg.Cron.SwitchMode.Duration = d
+	d, _ = time.ParseDuration("2m")
+	cfg.Cron.LogProgress.Duration = d
+	var b bytes.Buffer
+	c.Assert(toml.NewEncoder(&b).Encode(cfg.Cron), IsNil)
+	c.Assert(b.String(), Equals, "switch-mode = \"1m0s\"\nlog-progress = \"2m0s\"\n")
+
+	confStr := "[cron]\r\n" + b.String()
+	cfg2 := &config.Config{}
+	c.Assert(cfg2.LoadFromTOML([]byte(confStr)), IsNil)
+	c.Assert(cfg2.Cron, DeepEquals, cfg.Cron)
 }
