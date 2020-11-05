@@ -8,7 +8,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	uuid "github.com/satori/go.uuid"
+	uuid "github.com/google/uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/mock"

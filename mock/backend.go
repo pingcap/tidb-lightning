@@ -15,7 +15,7 @@ import (
 	model "github.com/pingcap/parser/model"
 	table "github.com/pingcap/tidb/table"
 	types "github.com/pingcap/tidb/types"
-	uuid "github.com/satori/go.uuid"
+	uuid "github.com/google/uuid"
 
 	backend "github.com/pingcap/tidb-lightning/lightning/backend"
 	log "github.com/pingcap/tidb-lightning/lightning/log"

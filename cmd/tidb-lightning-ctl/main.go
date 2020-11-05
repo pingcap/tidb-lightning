@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	uuid "github.com/satori/go.uuid"
+	uuid "github.com/google/uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/common"

@@ -9,7 +9,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
-	uuid "github.com/satori/go.uuid"
+	uuid "github.com/google/uuid"
 
 	kvpb "github.com/pingcap/kvproto/pkg/import_kvpb"
 
