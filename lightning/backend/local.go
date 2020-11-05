@@ -1102,8 +1102,15 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
 		return nil
 	}
+
+	lf := engineFile.(*LocalFile)
+	if lf.TotalSize == 0 {
+		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
+		return nil
+	}
+
 	// split sorted file into range by 96MB size per file
-	ranges, err := local.readAndSplitIntoRange(engineFile.(*LocalFile), engineUUID)
+	ranges, err := local.readAndSplitIntoRange(lf, engineUUID)
 	if err != nil {
 		return err
 	}
