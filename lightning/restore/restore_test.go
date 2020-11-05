@@ -718,7 +718,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	importer := kv.MakeBackend(mockBackend)
 
 	ctx := context.Background()
-	engineUUID, err := uuid.NewV4()
+	engineUUID, err := uuid.NewRandom()
 	c.Assert(err, IsNil)
 
 	mockBackend.EXPECT().
@@ -744,7 +744,7 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	importer := kv.MakeBackend(mockBackend)
 
 	ctx := context.Background()
-	engineUUID, err := uuid.NewV4()
+	engineUUID, err := uuid.NewRandom()
 	c.Assert(err, IsNil)
 
 	mockBackend.EXPECT().

@@ -42,7 +42,11 @@ func (s *importerSuite) setUpTest(c *C) {
 	importer := kv.NewMockImporter(s.mockClient, testPDAddr)
 
 	s.ctx = context.Background()
-	s.engineUUID = uuid.FromStringOrNil("7e3f3a3c-67ce-506d-af34-417ec138fbcb").Bytes()
+	engineUUID := uuid.UUID{}
+	c.Assert(engineUUID.UnmarshalText([]byte("7e3f3a3c-67ce-506d-af34-417ec138fbcb")), IsNil)
+	var err error
+	s.engineUUID, err = engineUUID.MarshalBinary()
+	c.Assert(err, IsNil)
 	s.kvPairs = kv.MakeRowsFromKvPairs([]common.KvPair{
 		{
 			Key: []byte("k1"),
@@ -58,7 +62,6 @@ func (s *importerSuite) setUpTest(c *C) {
 		OpenEngine(s.ctx, &import_kvpb.OpenEngineRequest{Uuid: s.engineUUID}).
 		Return(nil, nil)
 
-	var err error
 	s.engine, err = importer.OpenEngine(s.ctx, "`db`.`table`", -1)
 	c.Assert(err, IsNil)
 }
