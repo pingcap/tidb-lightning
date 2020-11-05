@@ -197,10 +197,10 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 		} else {
 			vals = append(vals, types.Datum{})
 		}
-		// because we will reuses the datums in reader.lastRow.Row, so we can't directly
+		// because we always reuse the datums in reader.lastRow.Row, so we can't directly
 		// compare will `DeepEqual` here
 		eq, err := types.EqualDatums(nil, reader.lastRow.Row, vals)
 		c.Assert(err, IsNil)
-		c.Assert(eq, Equals, true)
+		c.Assert(eq, IsTrue)
 	}
 }

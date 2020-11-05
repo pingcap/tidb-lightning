@@ -203,13 +203,6 @@ func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement)
 	}
 }
 
-func abs(v int64) int64 {
-	if v >= 0 {
-		return v
-	}
-	return -v
-}
-
 // when the value type is int32/int64, convert to value to target logical type in tidb
 func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) {
 	if meta.ConvertedType == nil {
@@ -219,17 +212,13 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) {
 	switch *meta.ConvertedType {
 	// decimal
 	case parquet.ConvertedType_DECIMAL:
-		scale := int64(1)
-		for i := 0; i < int(*meta.Scale); i++ {
-			scale *= 10
+		minLen := *meta.Scale + 1
+		if v < 0 {
+			minLen++
 		}
-		var prefix string
-		if v < 0 && abs(v) < scale {
-			prefix = "-"
-		}
-
-		val := fmt.Sprintf("%s%d.%0*d", prefix, v/scale, *meta.Scale, abs(v%scale))
-		d.SetString(val, "")
+		val := fmt.Sprintf("%0*d", minLen, v)
+		dotIndex := len(val) - int(*meta.Scale)
+		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "")
 	case parquet.ConvertedType_DATE:
 		dateStr := time.Unix(v*86400, 0).Format("2006-01-02")
 		d.SetString(dateStr, "")
