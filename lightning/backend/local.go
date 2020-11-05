@@ -482,8 +482,12 @@ func (local *local) WriteToTiKV(
 	iter.Last()
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
 
+	u, err := uuid.NewV4()
+	if err != nil {
+		return nil, nil, err
+	}
 	meta := &sst.SSTMeta{
-		Uuid:        uuid.NewV4().Bytes(),
+		Uuid:        u.Bytes(),
 		RegionId:    region.Region.GetId(),
 		RegionEpoch: region.Region.GetRegionEpoch(),
 		Range: &sst.Range{

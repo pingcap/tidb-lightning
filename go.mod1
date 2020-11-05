@@ -29,7 +29,7 @@ require (
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
-	github.com/satori/go.uuid v1.2.0
+	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tikv/pd v1.1.0-beta.0.20200910042021-254d1345be09
