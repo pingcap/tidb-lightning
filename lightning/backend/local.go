@@ -28,10 +28,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/btree"
-
 	"github.com/cockroachdb/pebble"
 	"github.com/coreos/go-semver/semver"
+	"github.com/google/btree"
 	split "github.com/pingcap/br/pkg/restore"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -142,18 +141,16 @@ type local struct {
 	tls      *common.TLS
 	pdAddr   string
 
-	localStoreDir   string
-	regionSplitSize int64
-
-	rangeConcurrency  *worker.Pool
-	ingestConcurrency *worker.Pool
+	localStoreDir     string
+	regionSplitSize   int64
+	tcpConcurrency    int
 	batchWriteKVPairs int
 	checkpointEnabled bool
 
-	tcpConcurrency int
+	rangeConcurrency  *worker.Pool
+	ingestConcurrency *worker.Pool
 
-	splitRegionLock sync.Mutex
-	runningRanges   *rangeLockTree
+	runningRanges *rangeLockTree
 }
 
 // connPool is a lazy pool of gRPC channels.

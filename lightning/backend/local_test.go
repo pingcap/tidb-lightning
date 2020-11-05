@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/google/btree"
-
 	. "github.com/pingcap/check"
 )
 
