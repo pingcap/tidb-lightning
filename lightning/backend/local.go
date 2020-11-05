@@ -1132,9 +1132,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 		// start to write to kv and ingest
 		err = local.WriteAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
+		local.runningRanges.remove(rg)
 		if err != nil {
 			log.L().Error("write and ingest engine failed", log.ShortError(err))
-			local.runningRanges.remove(rg)
 			return err
 		}
 
