@@ -8,7 +8,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/mock"
@@ -40,7 +40,7 @@ func (s *backendSuite) TestOpenCloseImportCleanUpEngine(c *C) {
 	defer s.tearDownTest()
 
 	ctx := context.Background()
-	engineUUID := uuid.FromStringOrNil("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
+	engineUUID := uuid.MustParse("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
 
 	openCall := s.mockBackend.EXPECT().
 		OpenEngine(ctx, engineUUID).
@@ -73,7 +73,7 @@ func (s *backendSuite) TestUnsafeCloseEngine(c *C) {
 	defer s.tearDownTest()
 
 	ctx := context.Background()
-	engineUUID := uuid.FromStringOrNil("7e3f3a3c-67ce-506d-af34-417ec138fbcb")
+	engineUUID := uuid.MustParse("7e3f3a3c-67ce-506d-af34-417ec138fbcb")
 
 	closeCall := s.mockBackend.EXPECT().
 		CloseEngine(ctx, engineUUID).
@@ -94,7 +94,7 @@ func (s *backendSuite) TestUnsafeCloseEngineWithUUID(c *C) {
 	defer s.tearDownTest()
 
 	ctx := context.Background()
-	engineUUID := uuid.FromStringOrNil("f1240229-79e0-4d8d-bda0-a211bf493796")
+	engineUUID := uuid.MustParse("f1240229-79e0-4d8d-bda0-a211bf493796")
 
 	closeCall := s.mockBackend.EXPECT().
 		CloseEngine(ctx, engineUUID).
@@ -115,7 +115,7 @@ func (s *backendSuite) TestWriteEngine(c *C) {
 	defer s.tearDownTest()
 
 	ctx := context.Background()
-	engineUUID := uuid.FromStringOrNil("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
+	engineUUID := uuid.MustParse("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
 
 	rows0 := mock.NewMockRows(s.controller)
 	rows1 := mock.NewMockRows(s.controller)

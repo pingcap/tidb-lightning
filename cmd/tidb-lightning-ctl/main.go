@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -311,7 +311,7 @@ func unsafeCloseEngine(ctx context.Context, importer kv.Backend, engine string) 
 		return ce, errors.Trace(err)
 	}
 
-	engineUUID, err := uuid.FromString(engine)
+	engineUUID, err := uuid.Parse(engine)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
