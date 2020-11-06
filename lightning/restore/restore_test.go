@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/ddl"
 	tmock "github.com/pingcap/tidb/util/mock"
@@ -704,7 +705,10 @@ func (s *tableRestoreSuite) TestAnalyzeTable(c *C) {
 	mock.ExpectClose()
 
 	ctx := context.Background()
-	err = s.tr.analyzeTable(ctx, db)
+	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	c.Assert(err, IsNil)
+	g := glue.NewExternalTiDBGlue(db, defaultSQLMode)
+	err = s.tr.analyzeTable(ctx, g)
 	c.Assert(err, IsNil)
 
 	c.Assert(db.Close(), IsNil)
