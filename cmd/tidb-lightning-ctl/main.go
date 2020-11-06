@@ -49,6 +49,13 @@ func run() error {
 	)
 
 	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], func(fs *flag.FlagSet) {
+		// change the default of `-d` from empty to 'noop://'.
+		// there is a check if `-d` points to a valid storage, and '' is not.
+		// since tidb-lightning-ctl does not need `-d` we change the default to a valid but harmless value.
+		dFlag := fs.Lookup("d")
+		dFlag.Value.Set("noop://")
+		dFlag.DefValue = "noop://"
+
 		compact = fs.Bool("compact", false, "do manual compaction on the target cluster")
 		mode = fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
 		flagFetchMode = fs.Bool("fetch-mode", false, "obtain the current mode of every tikv in the cluster")

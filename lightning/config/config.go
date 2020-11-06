@@ -66,7 +66,7 @@ const (
 
 var (
 	defaultConfigPaths    = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
-	supportedStorageTypes = []string{"file", "local", "s3"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop"}
 )
 
 type DBStore struct {
