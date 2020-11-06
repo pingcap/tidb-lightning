@@ -46,7 +46,7 @@ func (s *checksumSuite) TestDoChecksum(c *C) {
 	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
-	checksum, err := DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
+	checksum, err := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 	c.Assert(err, IsNil)
 	c.Assert(*checksum, DeepEquals, RemoteChecksum{
 		Schema:     "test",
@@ -91,7 +91,7 @@ func (s *checksumSuite) TestDoChecksumParallel(c *C) {
 	for i := 0; i < 5; i++ {
 		go func() {
 			defer wg.Done()
-			checksum, err := DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
+			checksum, err := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 			c.Assert(err, IsNil)
 			c.Assert(*checksum, DeepEquals, RemoteChecksum{
 				Schema:     "test",
@@ -130,7 +130,7 @@ func (s *checksumSuite) TestIncreaseGCLifeTimeFail(c *C) {
 	wg.Add(5)
 	for i := 0; i < 5; i++ {
 		go func() {
-			_, err = DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
+			_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 			c.Assert(err, ErrorMatches, "update GC lifetime failed: update gc error: context canceled")
 			wg.Done()
 		}()
@@ -158,7 +158,7 @@ func (s *checksumSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
 	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
-	_, err = DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
+	_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 	c.Assert(err, ErrorMatches, "compute remote checksum failed: mock syntax error.*")
 
 	c.Assert(db.Close(), IsNil)

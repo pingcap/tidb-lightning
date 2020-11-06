@@ -195,6 +195,7 @@ func NewRestoreControllerWithPauser(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tidbGlue := glue.NewExternalTiDBGlue(tidbMgr.db, cfg.TiDB.SQLMode)
 
 	var backend kv.Backend
 	switch cfg.TikvImporter.Backend {
@@ -207,7 +208,7 @@ func NewRestoreControllerWithPauser(
 	case config.BackendTiDB:
 		backend = kv.NewTiDBBackend(tidbMgr.db, cfg.TikvImporter.OnDuplicate)
 	case config.BackendLocal:
-		// TODO(lance6717): PdAddr could be found?
+		// TODO(lance6717): PdAddr could be found? tls contains host:port and
 		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, cfg.TikvImporter.RegionSplitSize,
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
 			cfg.Checkpoint.Enable)
@@ -229,7 +230,7 @@ func NewRestoreControllerWithPauser(
 		backend:       backend,
 		// TODO(lance6717): glue
 		tidbMgr:       tidbMgr,
-		tidbGlue: glue.NewExternalTiDBGlue(tidbMgr.db),
+		tidbGlue:      tidbGlue,
 		rowFormatVer:  "1",
 		tls:           tls,
 
@@ -331,8 +332,9 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	defer tidbMgr.Close()
 
 	if !rc.cfg.Mydumper.NoSchema {
-		// TODO(lance6716): glue no need
-		tidbMgr.db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
+		if rc.tidbGlue.OwnsSQLExecutor() {
+			tidbMgr.db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
+		}
 
 		for _, dbMeta := range rc.dbMetas {
 			task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
@@ -341,7 +343,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			for _, tblMeta := range dbMeta.Tables {
 				tablesSchema[tblMeta.Name] = tblMeta.GetSchema(ctx, rc.store)
 			}
-			err = tidbMgr.InitSchema(ctx, dbMeta.Name, tablesSchema)
+			err = tidbMgr.InitSchema(ctx, rc.tidbGlue, dbMeta.Name, tablesSchema)
 
 			task.End(zap.ErrorLevel, err)
 			if err != nil {
@@ -349,7 +351,11 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			}
 		}
 	}
-	dbInfos, err := tidbMgr.LoadSchemaInfo(ctx, rc.dbMetas, rc.backend.FetchRemoteTableModels)
+	getTableFunc := rc.backend.FetchRemoteTableModels
+	if !rc.tidbGlue.OwnsSQLExecutor() {
+		getTableFunc = rc.tidbGlue.GetTables
+	}
+	dbInfos, err := tidbMgr.LoadSchemaInfo(ctx, rc.dbMetas, getTableFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1210,7 +1216,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			t.logger.Info("skip checksum")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
-			err := t.compareChecksum(ctx, rc.tidbMgr.db, localChecksum)
+			err := t.compareChecksum(ctx, localChecksum)
 			// witch post restore level 'optional', we will skip checksum error
 			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
 				if err != nil {
@@ -1231,7 +1237,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 		} else {
-			err := t.analyzeTable(ctx, rc.tidbMgr.db)
+			err := t.analyzeTable(ctx, rc.tidbGlue)
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
 				if err != nil {
@@ -1630,8 +1636,8 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 }
 
 // do checksum for each table.
-func (tr *TableRestore) compareChecksum(ctx context.Context, db *sql.DB, localChecksum verify.KVChecksum) error {
-	remoteChecksum, err := DoChecksum(ctx, db, tr.tableInfo)
+func (tr *TableRestore) compareChecksum(ctx context.Context, localChecksum verify.KVChecksum) error {
+	remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1650,10 +1656,10 @@ func (tr *TableRestore) compareChecksum(ctx context.Context, db *sql.DB, localCh
 	return nil
 }
 
-func (tr *TableRestore) analyzeTable(ctx context.Context, db *sql.DB) error {
+func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.Glue) error {
+	// TODO: Please check the change of logger is acceptable
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
-	err := common.SQLWithRetry{DB: db, Logger: tr.logger}.
-		Exec(ctx, "analyze table", "ANALYZE TABLE "+tr.tableName)
+	err := g.ExecuteWithLogArgs(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table")
 	task.End(zap.ErrorLevel, err)
 	return err
 }

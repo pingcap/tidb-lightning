@@ -116,41 +116,38 @@ func (timgr *TiDBManager) Close() {
 	timgr.db.Close()
 }
 
-func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, tablesSchema map[string]string) error {
-	sql := common.SQLWithRetry{
-		DB:     timgr.db,
-		Logger: log.With(zap.String("db", database)),
-	}
+func (timgr *TiDBManager) InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema map[string]string) error {
+	fields := []zap.Field{zap.String("db", database)}
+	logger := log.With(fields...)
 
 	var createDatabase strings.Builder
 	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
 	common.WriteMySQLIdentifier(&createDatabase, database)
-	err := sql.Exec(ctx, "create database", createDatabase.String())
+	err := g.ExecuteWithLogArgs(ctx, createDatabase.String(), "create database", fields...)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	var useDB strings.Builder
 	useDB.WriteString("USE ")
 	common.WriteMySQLIdentifier(&useDB, database)
-	err = sql.Exec(ctx, "use database", useDB.String())
+	err = g.ExecuteWithLogArgs(ctx, useDB.String(), "use database", fields...)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	task := sql.Logger.Begin(zap.InfoLevel, "create tables")
+	task := logger.Begin(zap.InfoLevel, "create tables")
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateTable, err = timgr.createTableIfNotExistsStmt(sqlCreateTable, tbl)
+		sqlCreateTable, err = timgr.createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, tbl)
 		if err != nil {
 			break
 		}
-		sql2 := common.SQLWithRetry{
-			DB:           timgr.db,
-			Logger:       sql.Logger.With(zap.String("table", common.UniqueTable(database, tbl))),
-			HideQueryLog: true,
-		}
-		err = sql2.Exec(ctx, "create table", sqlCreateTable)
+		fields2 := make([]zap.Field, 0, 2)
+		fields2 = append(fields2, fields[0])
+		fields2 = append(fields2, zap.String("table", common.UniqueTable(database, tbl)))
+
+		err = g.ExecuteWithLogArgs(ctx, sqlCreateTable, "create table", fields2...)
 		if err != nil {
 			break
 		}
@@ -160,8 +157,8 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, database string, table
 	return errors.Trace(err)
 }
 
-func (timgr *TiDBManager) createTableIfNotExistsStmt(createTable, tblName string) (string, error) {
-	stmts, _, err := timgr.parser.Parse(createTable, "", "")
+func (timgr *TiDBManager) createTableIfNotExistsStmt(p *parser.Parser, createTable, tblName string) (string, error) {
+	stmts, _, err := p.Parse(createTable, "", "")
 	if err != nil {
 		return "", err
 	}
@@ -185,6 +182,7 @@ func (timgr *TiDBManager) createTableIfNotExistsStmt(createTable, tblName string
 	return res.String(), nil
 }
 
+// TODO(lance6716): used in lightning-ctl
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
 	sql := common.SQLWithRetry{
 		DB:     timgr.db,
@@ -235,19 +233,24 @@ func (timgr *TiDBManager) LoadSchemaInfo(
 	return result, nil
 }
 
-func ObtainGCLifeTime(ctx context.Context, g glue.Glue) (string, error) {
-	return g.ObtainStringLogArgs(
-		ctx,
+func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
+	var gcLifeTime string
+	err := common.SQLWithRetry{DB: db, Logger: log.L()}.QueryRow(ctx, "obtain GC lifetime",
 		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-		"obtain GC lifetime",
+		&gcLifeTime,
 	)
+	return gcLifeTime, err
 }
 
-func UpdateGCLifeTime(ctx context.Context, g glue.Glue, gcLifeTime string) error {
-	fields := []zap.Field{zap.String("gcLifeTime", gcLifeTime)}
-	query := fmt.Sprintf("UPDATE mysql.tidb SET VARIABLE_VALUE = %s WHERE VARIABLE_NAME = 'tikv_gc_life_time'", gcLifeTime)
-
-	return g.ExecuteWithLogArgs(ctx, query,"update GC lifetime", fields...)
+func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
+	sql := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.With(zap.String("gcLifeTime", gcLifeTime)),
+	}
+	return sql.Exec(ctx, "update GC lifetime",
+		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
+		gcLifeTime,
+	)
 }
 
 func ObtainRowFormatVersion(ctx context.Context, g glue.Glue) string {
