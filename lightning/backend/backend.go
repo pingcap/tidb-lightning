@@ -235,7 +235,6 @@ func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int
 		}
 	})
 
-	// TODO(lance6716): here commitTS
 	return &OpenedEngine{
 		engine: engine{
 			backend: be.abstract,

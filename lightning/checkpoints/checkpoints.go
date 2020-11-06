@@ -513,7 +513,6 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 	// We can have at most 65535 placeholders https://stackoverflow.com/q/4922345/
 	// Since this step is not performance critical, we just insert the rows one-by-one.
 	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.L()}
-	// TODO(lance6717): how to glue?
 	err := s.Transact(ctx, "insert checkpoints", func(c context.Context, tx *sql.Tx) error {
 		taskStmt, err := tx.PrepareContext(c, fmt.Sprintf(`
 			REPLACE INTO %s.%s (id, task_id, source_dir, backend, importer_addr, tidb_host, tidb_port, pd_addr, sorted_kv_dir, lightning_ver)
@@ -578,7 +577,6 @@ func (cpdb *MySQLCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckp
 		cpdb.schema, CheckpointTableNameTask,
 	)
 	taskCp := &TaskCheckpoint{}
-	// TODO(lance6716)
 	err := s.QueryRow(ctx, "fetch task checkpoint", taskQuery, &taskCp.TaskId, &taskCp.SourceDir, &taskCp.Backend,
 		&taskCp.ImporterAddr, &taskCp.TiDBHost, &taskCp.TiDBPort, &taskCp.PdAddr, &taskCp.SortedKVDir, &taskCp.LightningVer)
 
@@ -606,7 +604,6 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		DB:     cpdb.db,
 		Logger: log.With(zap.String("table", tableName)),
 	}
-	// TODO(lance6716): very hard
 	err := s.Transact(ctx, "read checkpoint", func(c context.Context, tx *sql.Tx) error {
 		// 1. Populate the engines.
 
@@ -703,7 +700,6 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 		DB:     cpdb.db,
 		Logger: log.With(zap.String("table", tableName)),
 	}
-	// TODO(lance6717): very hard
 	err := s.Transact(ctx, "update engine checkpoints", func(c context.Context, tx *sql.Tx) error {
 		engineStmt, err := tx.PrepareContext(c, fmt.Sprintf(`
 			REPLACE INTO %s.%s (table_name, engine_id, status) VALUES (?, ?, ?);
@@ -778,7 +774,6 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 	`, cpdb.schema, CheckpointTableNameEngine)
 
 	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.L()}
-	// TODO(lance6717): very hard
 	err := s.Transact(context.Background(), "update checkpoints", func(c context.Context, tx *sql.Tx) error {
 		chunkStmt, e := tx.PrepareContext(c, chunkQuery)
 		if e != nil {
