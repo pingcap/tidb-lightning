@@ -1655,7 +1655,7 @@ func (tr *TableRestore) compareChecksum(ctx context.Context, localChecksum verif
 func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) error {
 	// TODO: Please check the change of logger is acceptable
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
-	err := g.ExecuteWithLogArgs(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table")
+	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger.Logger)
 	task.End(zap.ErrorLevel, err)
 	return err
 }

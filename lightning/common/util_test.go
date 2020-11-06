@@ -155,7 +155,7 @@ func (s *utilSuite) TestSQLWithRetry(c *C) {
 
 	sqlWithRetry := &common.SQLWithRetry{
 		DB:     db,
-		Logger: log.L(),
+		Logger: log.L().Logger,
 	}
 	aValue := new(int)
 

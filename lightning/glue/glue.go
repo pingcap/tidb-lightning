@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
-	"github.com/pingcap/tidb-lightning/lightning/log"
 	"go.uber.org/zap"
 )
 
@@ -33,8 +32,8 @@ type Glue interface {
 }
 
 type SQLExecutor interface {
-	ExecuteWithLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) error
-	ObtainStringLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) (string, error)
+	ExecuteWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) error
+	ObtainStringLog(ctx context.Context, query string, purpose string, logger *zap.Logger) (string, error)
 	Close()
 }
 
@@ -54,19 +53,19 @@ func (e ExternalTiDBGlue) GetSQLExecutor() SQLExecutor {
 	return e
 }
 
-func (e ExternalTiDBGlue) ExecuteWithLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) error {
+func (e ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) error {
 	sql := common.SQLWithRetry{
 		DB:     e.db,
-		Logger: log.With(fields...),
+		Logger: logger,
 	}
 	return sql.Exec(ctx, purpose, query)
 }
 
-func (e ExternalTiDBGlue) ObtainStringLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) (string, error) {
+func (e ExternalTiDBGlue) ObtainStringLog(ctx context.Context, query string, purpose string, logger *zap.Logger) (string, error) {
 	var s string
 	err := common.SQLWithRetry{
 		DB:     e.db,
-		Logger: log.With(fields...),
+		Logger: logger,
 	}.QueryRow(ctx, purpose, query, &s)
 	return s, err
 }

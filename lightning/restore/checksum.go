@@ -124,7 +124,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *TidbTabl
 	// +---------+------------+---------------------+-----------+-------------+
 
 	cs := RemoteChecksum{}
-	err = common.SQLWithRetry{DB: e.db, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
+	err = common.SQLWithRetry{DB: e.db, Logger: task.Logger.Logger}.QueryRow(ctx, "compute remote checksum",
 		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
 	)
 	dur := task.End(zap.ErrorLevel, err)
