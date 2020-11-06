@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
@@ -139,6 +140,7 @@ type RestoreController struct {
 	pauser          *common.Pauser
 	backend         kv.Backend
 	tidbMgr         *TiDBManager
+	tidbGlue         glue.Glue
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 	alterTableLock  sync.Mutex
 	compactState    int32
@@ -188,6 +190,7 @@ func NewRestoreControllerWithPauser(
 		return nil, errors.Trace(err)
 	}
 
+	// TODO(lance6717): glue
 	tidbMgr, err := NewTiDBManager(cfg.TiDB, tls)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -204,6 +207,7 @@ func NewRestoreControllerWithPauser(
 	case config.BackendTiDB:
 		backend = kv.NewTiDBBackend(tidbMgr.db, cfg.TikvImporter.OnDuplicate)
 	case config.BackendLocal:
+		// TODO(lance6717): PdAddr could be found?
 		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, cfg.TikvImporter.RegionSplitSize,
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
 			cfg.Checkpoint.Enable)
@@ -223,7 +227,9 @@ func NewRestoreControllerWithPauser(
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
 		pauser:        pauser,
 		backend:       backend,
+		// TODO(lance6717): glue
 		tidbMgr:       tidbMgr,
+		tidbGlue: glue.NewExternalTiDBGlue(tidbMgr.db),
 		rowFormatVer:  "1",
 		tls:           tls,
 
@@ -245,6 +251,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 
 	switch cfg.Checkpoint.Driver {
 	case config.CheckpointDriverMySQL:
+		// TODO(lance6716): glue
 		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -324,6 +331,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	defer tidbMgr.Close()
 
 	if !rc.cfg.Mydumper.NoSchema {
+		// TODO(lance6716): glue no need
 		tidbMgr.db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
 
 		for _, dbMeta := range rc.dbMetas {
@@ -359,7 +367,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 
 	go rc.listenCheckpointUpdates()
 
-	rc.rowFormatVer = ObtainRowFormatVersion(ctx, tidbMgr.db)
+	rc.rowFormatVer = ObtainRowFormatVersion(ctx, rc.tidbGlue)
 
 	// Estimate the number of chunks for progress reporting
 	err = rc.estimateChunkCountIntoMetrics(ctx)
@@ -1167,10 +1175,10 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		tblInfo := t.tableInfo.Core
 		var err error
 		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
-			err = AlterAutoRandom(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Get(autoid.AutoRandomType).Base()+1)
+			err = AlterAutoRandom(ctx, rc.tidbGlue, t.tableName, t.alloc.Get(autoid.AutoRandomType).Base()+1)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle
-			err = AlterAutoIncrement(ctx, rc.tidbMgr.db, t.tableName, t.alloc.Get(autoid.RowIDAllocType).Base()+1)
+			err = AlterAutoIncrement(ctx, rc.tidbGlue, t.tableName, t.alloc.Get(autoid.RowIDAllocType).Base()+1)
 		}
 		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
@@ -1313,7 +1321,7 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 
 func (rc *RestoreController) setGlobalVariables(ctx context.Context) error {
 	// set new collation flag base on tidb config
-	enabled := ObtainNewCollationEnabled(ctx, rc.tidbMgr.db)
+	enabled := ObtainNewCollationEnabled(ctx, rc.tidbGlue)
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)

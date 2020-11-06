@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/util/mock"
 
@@ -38,6 +39,7 @@ type tidbSuite struct {
 	mockDB  sqlmock.Sqlmock
 	handler http.Handler
 	timgr   *TiDBManager
+	tiGlue  glue.Glue
 }
 
 func TestTiDB(t *testing.T) {
@@ -53,6 +55,7 @@ func (s *tidbSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 
 	s.timgr = NewTiDBManagerWithDB(db, defaultSQLMode)
+	s.tiGlue = glue.NewExternalTiDBGlue(db)
 }
 
 func (s *tidbSuite) TearDownTest(c *C) {
@@ -284,7 +287,7 @@ func (s *tidbSuite) TestGetGCLifetime(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	res, err := ObtainGCLifeTime(ctx, s.timgr.db)
+	res, err := ObtainGCLifeTime(ctx, s.tiGlue)
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, "10m")
 }
@@ -299,7 +302,7 @@ func (s *tidbSuite) TestSetGCLifetime(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := UpdateGCLifeTime(ctx, s.timgr.db, "12m")
+	err := UpdateGCLifeTime(ctx, s.tiGlue, "12m")
 	c.Assert(err, IsNil)
 }
 
@@ -312,7 +315,7 @@ func (s *tidbSuite) TestAlterAutoInc(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoIncrement(ctx, s.timgr.db, "`db`.`table`", 12345)
+	err := AlterAutoIncrement(ctx, s.tiGlue, "`db`.`table`", 12345)
 	c.Assert(err, IsNil)
 }
 
@@ -325,7 +328,7 @@ func (s *tidbSuite) TestAlterAutoRandom(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoRandom(ctx, s.timgr.db, "`db`.`table`", 12345)
+	err := AlterAutoRandom(ctx, s.tiGlue, "`db`.`table`", 12345)
 	c.Assert(err, IsNil)
 }
 
@@ -338,7 +341,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	version := ObtainRowFormatVersion(ctx, s.timgr.db)
+	version := ObtainRowFormatVersion(ctx, s.tiGlue)
 	c.Assert(version, Equals, "2")
 }
 
@@ -351,7 +354,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	version := ObtainRowFormatVersion(ctx, s.timgr.db)
+	version := ObtainRowFormatVersion(ctx, s.tiGlue)
 	c.Assert(version, Equals, "1")
 }
 
@@ -360,7 +363,7 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E")
-	version := ObtainNewCollationEnabled(ctx, s.timgr.db)
+	version := ObtainNewCollationEnabled(ctx, s.tiGlue)
 	c.Assert(version, Equals, false)
 
 	kvMap := map[string]bool{
@@ -372,7 +375,7 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 			ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).AddRow(k))
 
-		version := ObtainNewCollationEnabled(ctx, s.timgr.db)
+		version := ObtainNewCollationEnabled(ctx, s.tiGlue)
 		c.Assert(version, Equals, v)
 	}
 	s.mockDB.
