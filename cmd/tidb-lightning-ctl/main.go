@@ -311,8 +311,7 @@ func unsafeCloseEngine(ctx context.Context, importer kv.Backend, engine string) 
 		return ce, errors.Trace(err)
 	}
 
-	engineUUID := uuid.UUID{}
-	err := engineUUID.UnmarshalText([]byte(engine))
+	engineUUID, err := uuid.Parse(engine)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
