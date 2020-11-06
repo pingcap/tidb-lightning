@@ -76,11 +76,11 @@ func makeLogger(tag string, engineUUID uuid.UUID) log.Logger {
 
 func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
 	tag := makeTag(tableName, engineID)
-	engineNamespace := uuid.UUID{}
-	_ = engineNamespace.UnmarshalText([]byte("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf"))
 	engineUUID := uuid.NewSHA1(engineNamespace, []byte(tag))
 	return tag, engineUUID
 }
+
+var engineNamespace = uuid.MustParse("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf")
 
 // AbstractBackend is the abstract interface behind Backend.
 // Implementations of this interface must be goroutine safe: you can share an

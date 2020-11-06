@@ -482,10 +482,9 @@ func (local *local) WriteToTiKV(
 	iter.Last()
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
 
-	// will not return error in fact
-	u, _ := uuid.New().MarshalBinary()
+	u := uuid.New()
 	meta := &sst.SSTMeta{
-		Uuid:        u,
+		Uuid:        u[:],
 		RegionId:    region.Region.GetId(),
 		RegionEpoch: region.Region.GetRegionEpoch(),
 		Range: &sst.Range{

@@ -312,7 +312,10 @@ func unsafeCloseEngine(ctx context.Context, importer kv.Backend, engine string) 
 	}
 
 	engineUUID := uuid.UUID{}
-	_ = engineUUID.UnmarshalText([]byte(engine))
+	err := engineUUID.UnmarshalText([]byte(engine))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, "<tidb-lightning-ctl>", engineUUID)
 	return ce, errors.Trace(err)

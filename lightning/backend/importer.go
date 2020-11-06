@@ -118,9 +118,8 @@ func isIgnorableOpenCloseEngineError(err error) bool {
 }
 
 func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	u, _ := engineUUID.MarshalBinary()
 	req := &kv.OpenEngineRequest{
-		Uuid: u,
+		Uuid: engineUUID[:],
 	}
 
 	_, err := importer.cli.OpenEngine(ctx, req)
@@ -131,9 +130,8 @@ func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID) 
 }
 
 func (importer *importer) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	u, _ := engineUUID.MarshalBinary()
 	req := &kv.CloseEngineRequest{
-		Uuid: u,
+		Uuid: engineUUID[:],
 	}
 
 	_, err := importer.cli.CloseEngine(ctx, req)
@@ -144,9 +142,8 @@ func (importer *importer) CloseEngine(ctx context.Context, engineUUID uuid.UUID)
 }
 
 func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	u, _ := engineUUID.MarshalBinary()
 	req := &kv.ImportEngineRequest{
-		Uuid:   u,
+		Uuid:   engineUUID[:],
 		PdAddr: importer.pdAddr,
 	}
 
@@ -155,9 +152,8 @@ func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID
 }
 
 func (importer *importer) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	u, _ := engineUUID.MarshalBinary()
 	req := &kv.CleanupEngineRequest{
-		Uuid: u,
+		Uuid: engineUUID[:],
 	}
 
 	_, err := importer.cli.CleanupEngine(ctx, req)
@@ -195,12 +191,11 @@ func (importer *importer) WriteRows(
 		}
 	}()
 
-	u, _ := engineUUID.MarshalBinary()
 	// Bind uuid for this write request
 	req := &kv.WriteEngineRequest{
 		Chunk: &kv.WriteEngineRequest_Head{
 			Head: &kv.WriteHead{
-				Uuid: u,
+				Uuid: engineUUID[:],
 			},
 		},
 	}
