@@ -183,7 +183,6 @@ func (timgr *TiDBManager) createTableIfNotExistsStmt(p *parser.Parser, createTab
 	return res.String(), nil
 }
 
-// TODO(lance6716): used in lightning-ctl
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
 	sql := common.SQLWithRetry{
 		DB:     timgr.db,

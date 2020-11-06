@@ -189,7 +189,6 @@ func NewRestoreControllerWithPauser(
 		return nil, errors.Trace(err)
 	}
 
-	// TODO(lance6717): glue
 	tidbMgr, err := NewTiDBManager(cfg.TiDB, tls)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -207,7 +206,7 @@ func NewRestoreControllerWithPauser(
 	case config.BackendTiDB:
 		backend = kv.NewTiDBBackend(tidbMgr.db, cfg.TikvImporter.OnDuplicate)
 	case config.BackendLocal:
-		// TODO(lance6717): PdAddr could be found? tls contains host:port and
+		// TODO(lance6717): check that glue could substitute PdAddr and tls (HTTP API)
 		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, cfg.TikvImporter.RegionSplitSize,
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
 			cfg.Checkpoint.Enable)
@@ -249,7 +248,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 
 	switch cfg.Checkpoint.Driver {
 	case config.CheckpointDriverMySQL:
-		// TODO(lance6716): glue
+		// TODO(lance6716): introduce glue or add "glue" checkpoint
 		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1206,8 +1205,6 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			localChecksum.Add(&chunk.Checksum)
 		}
 	}
-
-	// TODO(lance6716): return localChecksum.SumSize() as filesize
 
 	t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 	if cp.Status < CheckpointStatusChecksummed {
