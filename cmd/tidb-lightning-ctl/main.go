@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -49,6 +49,13 @@ func run() error {
 	)
 
 	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], func(fs *flag.FlagSet) {
+		// change the default of `-d` from empty to 'noop://'.
+		// there is a check if `-d` points to a valid storage, and '' is not.
+		// since tidb-lightning-ctl does not need `-d` we change the default to a valid but harmless value.
+		dFlag := fs.Lookup("d")
+		dFlag.Value.Set("noop://")
+		dFlag.DefValue = "noop://"
+
 		compact = fs.Bool("compact", false, "do manual compaction on the target cluster")
 		mode = fs.String("switch-mode", "", "switch tikv into import mode or normal mode, values can be ['import', 'normal']")
 		flagFetchMode = fs.Bool("fetch-mode", false, "obtain the current mode of every tikv in the cluster")
@@ -311,7 +318,7 @@ func unsafeCloseEngine(ctx context.Context, importer kv.Backend, engine string) 
 		return ce, errors.Trace(err)
 	}
 
-	engineUUID, err := uuid.FromString(engine)
+	engineUUID, err := uuid.Parse(engine)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
