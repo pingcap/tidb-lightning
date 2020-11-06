@@ -28,7 +28,10 @@ import (
 
 const (
 	preUpdateServiceSafePointFactor = 3
-	serviceSafePointTTL             = 10 * 60 // 10 min in seconds
+)
+
+var (
+	serviceSafePointTTL int64 = 10 * 60 // 10 min in seconds
 )
 
 // RemoteChecksum represents a checksum result got from tidb.
@@ -338,7 +341,6 @@ func (m *gcTTLManager) addOneJob(ctx context.Context, table string, ts uint64) e
 	if curTs == 0 || m.currentTs < curTs {
 		return m.doUpdateGCTTL(ctx, m.currentTs)
 	}
-
 	return nil
 }
 
