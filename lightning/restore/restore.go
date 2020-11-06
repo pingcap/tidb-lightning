@@ -139,8 +139,7 @@ type RestoreController struct {
 	ioWorkers       *worker.Pool
 	pauser          *common.Pauser
 	backend         kv.Backend
-	tidbMgr         *TiDBManager
-	tidbGlue         glue.Glue
+	tidbGlue        glue.Glue
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 	alterTableLock  sync.Mutex
 	compactState    int32
@@ -228,11 +227,9 @@ func NewRestoreControllerWithPauser(
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
 		pauser:        pauser,
 		backend:       backend,
-		// TODO(lance6717): glue
-		tidbMgr:       tidbMgr,
-		tidbGlue:      tidbGlue,
-		rowFormatVer:  "1",
-		tls:           tls,
+		tidbGlue:     tidbGlue,
+		rowFormatVer: "1",
+		tls:          tls,
 
 		errorSummaries:    makeErrorSummaries(log.L()),
 		checkpointsDB:     cpdb,
@@ -274,7 +271,9 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 
 func (rc *RestoreController) Close() {
 	rc.backend.Close()
-	rc.tidbMgr.Close()
+	if rc.tidbGlue.OwnsSQLExecutor() {
+		rc.tidbGlue.GetSQLExecutor().Close()
+	}
 }
 
 func (rc *RestoreController) Run(ctx context.Context) error {
@@ -373,7 +372,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 
 	go rc.listenCheckpointUpdates()
 
-	rc.rowFormatVer = ObtainRowFormatVersion(ctx, rc.tidbGlue)
+	rc.rowFormatVer = ObtainRowFormatVersion(ctx, rc.tidbGlue.GetSQLExecutor())
 
 	// Estimate the number of chunks for progress reporting
 	err = rc.estimateChunkCountIntoMetrics(ctx)
@@ -1181,10 +1180,10 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		tblInfo := t.tableInfo.Core
 		var err error
 		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
-			err = AlterAutoRandom(ctx, rc.tidbGlue, t.tableName, t.alloc.Get(autoid.AutoRandomType).Base()+1)
+			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), t.tableName, t.alloc.Get(autoid.AutoRandomType).Base()+1)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle
-			err = AlterAutoIncrement(ctx, rc.tidbGlue, t.tableName, t.alloc.Get(autoid.RowIDAllocType).Base()+1)
+			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), t.tableName, t.alloc.Get(autoid.RowIDAllocType).Base()+1)
 		}
 		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
@@ -1237,7 +1236,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 		} else {
-			err := t.analyzeTable(ctx, rc.tidbGlue)
+			err := t.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
 				if err != nil {
@@ -1327,7 +1326,7 @@ func (rc *RestoreController) checkRequirements(_ context.Context) error {
 
 func (rc *RestoreController) setGlobalVariables(ctx context.Context) error {
 	// set new collation flag base on tidb config
-	enabled := ObtainNewCollationEnabled(ctx, rc.tidbGlue)
+	enabled := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
@@ -1656,7 +1655,7 @@ func (tr *TableRestore) compareChecksum(ctx context.Context, localChecksum verif
 	return nil
 }
 
-func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.Glue) error {
+func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) error {
 	// TODO: Please check the change of logger is acceptable
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
 	err := g.ExecuteWithLogArgs(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table")

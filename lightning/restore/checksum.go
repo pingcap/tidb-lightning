@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/br/pkg/checksum"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -78,7 +79,11 @@ func newChecksumManager(rc *RestoreController) (ChecksumManager, error) {
 
 		manager = newTiKVChecksumManager(store.(tikv.Storage).GetClient(), pdCli)
 	} else {
-		manager = newTiDBChecksumExecutor(rc.tidbMgr.db)
+		e, ok := rc.tidbGlue.GetSQLExecutor().(glue.ExternalTiDBGlue)
+		if !ok {
+			return nil, errors.New("can't use lightning via SQL with PD version less than v4.0.0")
+		}
+		manager = newTiDBChecksumExecutor(e.GetDB())
 	}
 
 	return manager, nil

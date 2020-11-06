@@ -119,18 +119,19 @@ func (timgr *TiDBManager) Close() {
 func (timgr *TiDBManager) InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema map[string]string) error {
 	fields := []zap.Field{zap.String("db", database)}
 	logger := log.With(fields...)
+	sqlExecutor := g.GetSQLExecutor()
 
 	var createDatabase strings.Builder
 	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
 	common.WriteMySQLIdentifier(&createDatabase, database)
-	err := g.ExecuteWithLogArgs(ctx, createDatabase.String(), "create database", fields...)
+	err := sqlExecutor.ExecuteWithLogArgs(ctx, createDatabase.String(), "create database", fields...)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	var useDB strings.Builder
 	useDB.WriteString("USE ")
 	common.WriteMySQLIdentifier(&useDB, database)
-	err = g.ExecuteWithLogArgs(ctx, useDB.String(), "use database", fields...)
+	err = sqlExecutor.ExecuteWithLogArgs(ctx, useDB.String(), "use database", fields...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -147,7 +148,7 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, g glue.Glue, database 
 		fields2 = append(fields2, fields[0])
 		fields2 = append(fields2, zap.String("table", common.UniqueTable(database, tbl)))
 
-		err = g.ExecuteWithLogArgs(ctx, sqlCreateTable, "create table", fields2...)
+		err = sqlExecutor.ExecuteWithLogArgs(ctx, sqlCreateTable, "create table", fields2...)
 		if err != nil {
 			break
 		}
@@ -253,7 +254,7 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 	)
 }
 
-func ObtainRowFormatVersion(ctx context.Context, g glue.Glue) string {
+func ObtainRowFormatVersion(ctx context.Context, g glue.SQLExecutor) string {
 	rowFormatVersion, err := g.ObtainStringLogArgs(
 		ctx,
 		"SELECT @@tidb_row_format_version",
@@ -265,7 +266,7 @@ func ObtainRowFormatVersion(ctx context.Context, g glue.Glue) string {
 	return rowFormatVersion
 }
 
-func ObtainNewCollationEnabled(ctx context.Context, g glue.Glue) bool {
+func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
 	newCollationEnabled := false
 	newCollationVal, err := g.ObtainStringLogArgs(
 		ctx,
@@ -284,7 +285,7 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.Glue) bool {
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
 // the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
-func AlterAutoIncrement(ctx context.Context, g glue.Glue, tableName string, incr int64) error {
+func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr int64) error {
 	fields := []zap.Field{zap.String("table", tableName), zap.Int64("auto_increment", incr)}
 	logger := log.With(fields...)
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
@@ -300,7 +301,7 @@ func AlterAutoIncrement(ctx context.Context, g glue.Glue, tableName string, incr
 	return errors.Annotatef(err, "%s", query)
 }
 
-func AlterAutoRandom(ctx context.Context, g glue.Glue, tableName string, randomBase int64) error {
+func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase int64) error {
 	fields := []zap.Field{zap.String("table", tableName), zap.Int64("auto_random", randomBase)}
 	logger := log.With(fields...)
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)

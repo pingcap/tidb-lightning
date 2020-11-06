@@ -25,35 +25,36 @@ import (
 	"go.uber.org/zap"
 )
 
-// TODO: rename it to SQLExecutor, and add a glue to get SQLExecutor, Owns? createTableIfNotExistsStmt
 type Glue interface {
-	Execute(ctx context.Context, query string) error
-	ExecuteWithLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) error
-	ObtainString(ctx context.Context, query string) (string, error)
-	ObtainStringLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) (string, error)
-
+	GetSQLExecutor() SQLExecutor
 	GetParser() *parser.Parser
 	GetTables(context.Context, string) ([]*model.TableInfo, error)
 	OwnsSQLExecutor() bool
 }
 
-type externalTiDBGlue struct {
+type SQLExecutor interface {
+	ExecuteWithLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) error
+	ObtainStringLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) (string, error)
+	Close()
+}
+
+type ExternalTiDBGlue struct {
 	db 	   *sql.DB
 	parser *parser.Parser
 }
 
-func NewExternalTiDBGlue(db *sql.DB, sqlMode mysql.SQLMode) *externalTiDBGlue {
+func NewExternalTiDBGlue(db *sql.DB, sqlMode mysql.SQLMode) *ExternalTiDBGlue {
 	p := parser.New()
 	p.SetSQLMode(sqlMode)
 
-	return &externalTiDBGlue{db: db, parser: p}
+	return &ExternalTiDBGlue{db: db, parser: p}
 }
 
-func (e externalTiDBGlue) Execute(ctx context.Context, sql string) error {
-	panic("implement me")
+func (e ExternalTiDBGlue) GetSQLExecutor() SQLExecutor {
+	return e
 }
 
-func (e externalTiDBGlue) ExecuteWithLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) error {
+func (e ExternalTiDBGlue) ExecuteWithLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) error {
 	sql := common.SQLWithRetry{
 		DB:     e.db,
 		Logger: log.With(fields...),
@@ -61,11 +62,7 @@ func (e externalTiDBGlue) ExecuteWithLogArgs(ctx context.Context, query string, 
 	return sql.Exec(ctx, purpose, query)
 }
 
-func (e externalTiDBGlue) ObtainString(ctx context.Context, sql string) (string, error) {
-	panic("implement me")
-}
-
-func (e externalTiDBGlue) ObtainStringLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) (string, error) {
+func (e ExternalTiDBGlue) ObtainStringLogArgs(ctx context.Context, query string, purpose string, fields ...zap.Field) (string, error) {
 	var s string
 	err := common.SQLWithRetry{
 		DB:     e.db,
@@ -74,14 +71,22 @@ func (e externalTiDBGlue) ObtainStringLogArgs(ctx context.Context, query string,
 	return s, err
 }
 
-func (e externalTiDBGlue) GetParser() *parser.Parser {
+func (e ExternalTiDBGlue) GetParser() *parser.Parser {
 	return e.parser
 }
 
-func (e externalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
+func (e ExternalTiDBGlue) GetDB() *sql.DB {
+	return e.db
+}
+
+func (e ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
 	return nil, nil
 }
 
-func (e externalTiDBGlue) OwnsSQLExecutor() bool {
+func (e ExternalTiDBGlue) OwnsSQLExecutor() bool {
 	return true
+}
+
+func (e ExternalTiDBGlue) Close() {
+	e.db.Close()
 }

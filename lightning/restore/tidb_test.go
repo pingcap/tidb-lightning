@@ -315,7 +315,7 @@ func (s *tidbSuite) TestAlterAutoInc(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoIncrement(ctx, s.tiGlue, "`db`.`table`", 12345)
+	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
 	c.Assert(err, IsNil)
 }
 
@@ -328,7 +328,7 @@ func (s *tidbSuite) TestAlterAutoRandom(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoRandom(ctx, s.tiGlue, "`db`.`table`", 12345)
+	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
 	c.Assert(err, IsNil)
 }
 
@@ -341,7 +341,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	version := ObtainRowFormatVersion(ctx, s.tiGlue)
+	version := ObtainRowFormatVersion(ctx, s.tiGlue.GetSQLExecutor())
 	c.Assert(version, Equals, "2")
 }
 
@@ -354,7 +354,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	version := ObtainRowFormatVersion(ctx, s.tiGlue)
+	version := ObtainRowFormatVersion(ctx, s.tiGlue.GetSQLExecutor())
 	c.Assert(version, Equals, "1")
 }
 
@@ -363,7 +363,7 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E")
-	version := ObtainNewCollationEnabled(ctx, s.tiGlue)
+	version := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
 	c.Assert(version, Equals, false)
 
 	kvMap := map[string]bool{
@@ -375,7 +375,7 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 			ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).AddRow(k))
 
-		version := ObtainNewCollationEnabled(ctx, s.tiGlue)
+		version := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
 		c.Assert(version, Equals, v)
 	}
 	s.mockDB.
