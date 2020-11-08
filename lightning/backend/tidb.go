@@ -370,7 +370,7 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) (tables []*model.TableInfo, err error) {
 	s := common.SQLWithRetry{
 		DB:     be.db,
-		Logger: log.L().Logger,
+		Logger: log.L(),
 	}
 
 	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {

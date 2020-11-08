@@ -102,11 +102,11 @@ func IsEmptyDir(name string) bool {
 // SQLWithRetry constructs a retryable transaction.
 type SQLWithRetry struct {
 	DB           *sql.DB
-	Logger       *zap.Logger
+	Logger       log.Logger
 	HideQueryLog bool
 }
 
-func (t SQLWithRetry) perform(ctx context.Context, parentLogger *zap.Logger, purpose string, action func() error) error {
+func (t SQLWithRetry) perform(ctx context.Context, parentLogger log.Logger, purpose string, action func() error) error {
 	var err error
 outside:
 	for i := 0; i < defaultMaxRetry; i++ {

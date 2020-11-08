@@ -187,7 +187,7 @@ func (timgr *TiDBManager) createTableIfNotExistsStmt(p *parser.Parser, createTab
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
 	sql := common.SQLWithRetry{
 		DB:     timgr.db,
-		Logger: log.With(zap.String("table", tableName)).Logger,
+		Logger: log.With(zap.String("table", tableName)),
 	}
 	return sql.Exec(ctx, "drop table", "DROP TABLE "+tableName)
 }
@@ -236,7 +236,7 @@ func (timgr *TiDBManager) LoadSchemaInfo(
 
 func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
 	var gcLifeTime string
-	err := common.SQLWithRetry{DB: db, Logger: log.L().Logger}.QueryRow(
+	err := common.SQLWithRetry{DB: db, Logger: log.L()}.QueryRow(
 		ctx,
 		"obtain GC lifetime",
 		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
@@ -248,7 +248,7 @@ func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
 func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
 	sql := common.SQLWithRetry{
 		DB:     db,
-		Logger: log.With(zap.String("gcLifeTime", gcLifeTime)).Logger,
+		Logger: log.With(zap.String("gcLifeTime", gcLifeTime)),
 	}
 	return sql.Exec(ctx, "update GC lifetime",
 		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",

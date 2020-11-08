@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/log"
 	"go.uber.org/zap"
 )
 
@@ -56,7 +57,7 @@ func (e ExternalTiDBGlue) GetSQLExecutor() SQLExecutor {
 func (e ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) error {
 	sql := common.SQLWithRetry{
 		DB:     e.db,
-		Logger: logger,
+		Logger: log.Logger{Logger: logger},
 	}
 	return sql.Exec(ctx, purpose, query)
 }
@@ -65,7 +66,7 @@ func (e ExternalTiDBGlue) ObtainStringLog(ctx context.Context, query string, pur
 	var s string
 	err := common.SQLWithRetry{
 		DB:     e.db,
-		Logger: logger,
+		Logger: log.Logger{Logger: logger},
 	}.QueryRow(ctx, purpose, query, &s)
 	return s, err
 }
