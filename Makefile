@@ -132,6 +132,11 @@ update:
 	GO111MODULE=on go mod tidy
 	$(FINISH_MOD)
 
+manual_update:
+	GO111MODULE=on go mod verify
+	GO111MODULE=on go mod tidy
+	$(FINISH_MOD)
+
 $(FAILPOINT_CTL_BIN):
 	cd tools && $(GOBUILD) -o ../$(FAILPOINT_CTL_BIN) github.com/pingcap/failpoint/failpoint-ctl
 

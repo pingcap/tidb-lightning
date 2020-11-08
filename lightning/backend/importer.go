@@ -25,7 +25,7 @@ import (
 	kv "github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/table"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
@@ -119,7 +119,7 @@ func isIgnorableOpenCloseEngineError(err error) bool {
 
 func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	req := &kv.OpenEngineRequest{
-		Uuid: engineUUID.Bytes(),
+		Uuid: engineUUID[:],
 	}
 
 	_, err := importer.cli.OpenEngine(ctx, req)
@@ -131,7 +131,7 @@ func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID) 
 
 func (importer *importer) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	req := &kv.CloseEngineRequest{
-		Uuid: engineUUID.Bytes(),
+		Uuid: engineUUID[:],
 	}
 
 	_, err := importer.cli.CloseEngine(ctx, req)
@@ -143,7 +143,7 @@ func (importer *importer) CloseEngine(ctx context.Context, engineUUID uuid.UUID)
 
 func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	req := &kv.ImportEngineRequest{
-		Uuid:   engineUUID.Bytes(),
+		Uuid:   engineUUID[:],
 		PdAddr: importer.pdAddr,
 	}
 
@@ -153,7 +153,7 @@ func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID
 
 func (importer *importer) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	req := &kv.CleanupEngineRequest{
-		Uuid: engineUUID.Bytes(),
+		Uuid: engineUUID[:],
 	}
 
 	_, err := importer.cli.CleanupEngine(ctx, req)
@@ -195,7 +195,7 @@ func (importer *importer) WriteRows(
 	req := &kv.WriteEngineRequest{
 		Chunk: &kv.WriteEngineRequest_Head{
 			Head: &kv.WriteHead{
-				Uuid: engineUUID.Bytes(),
+				Uuid: engineUUID[:],
 			},
 		},
 	}
