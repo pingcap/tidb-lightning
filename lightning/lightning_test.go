@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 
@@ -63,8 +64,10 @@ func (s *lightningSuite) TestRun(c *C) {
 	lightning := New(cfg)
 	err := lightning.RunOnce()
 	c.Assert(err, ErrorMatches, ".*mydumper dir does not exist")
+
+	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
 	path, _ := filepath.Abs(".")
-	err = lightning.run(&config.Config{
+	err = lightning.runWithGlue(&config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
 			Filter:           []string{"*.*"},
@@ -74,10 +77,10 @@ func (s *lightningSuite) TestRun(c *C) {
 			Enable: true,
 			Driver: "invalid",
 		},
-	})
+	}, invalidGlue)
 	c.Assert(err, ErrorMatches, "Unknown checkpoint driver invalid")
 
-	err = lightning.run(&config.Config{
+	err = lightning.runWithGlue(&config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir: ".",
 			Filter:    []string{"*.*"},
@@ -87,7 +90,7 @@ func (s *lightningSuite) TestRun(c *C) {
 			Driver: "file",
 			DSN:    "any-file",
 		},
-	})
+	}, invalidGlue)
 	c.Assert(err, NotNil)
 }
 
@@ -240,6 +243,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 
 	// Check `GET /tasks` returns all tasks currently running
 
+	time.Sleep(100 * time.Millisecond)
 	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
 		Current: first,
 		Queue:   []int64{second, third},
@@ -333,6 +337,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	resp.Body.Close()
 
+	time.Sleep(100 * time.Millisecond)
 	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
 		Current: third,
 		Queue:   []int64{},
