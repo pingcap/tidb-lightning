@@ -39,7 +39,7 @@ type SQLExecutor interface {
 }
 
 type ExternalTiDBGlue struct {
-	db 	   *sql.DB
+	db     *sql.DB
 	parser *parser.Parser
 }
 
