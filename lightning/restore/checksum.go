@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/br/pkg/checksum"
@@ -28,7 +29,10 @@ import (
 
 const (
 	preUpdateServiceSafePointFactor = 3
-	serviceSafePointTTL             = 10 * 60 // 10 min in seconds
+)
+
+var (
+	serviceSafePointTTL int64 = 10 * 60 // 10 min in seconds
 )
 
 // RemoteChecksum represents a checksum result got from tidb.
@@ -321,9 +325,15 @@ type gcTTLManager struct {
 	tableGCSafeTS []*tableChecksumTS
 	currentTs     uint64
 	serviceID     string
+	// 0 for not start, otherwise started
+	started uint32
 }
 
 func (m *gcTTLManager) addOneJob(ctx context.Context, table string, ts uint64) error {
+	// start gc ttl loop if not started yet.
+	if atomic.CompareAndSwapUint32(&m.started, 0, 1) {
+		m.start(ctx)
+	}
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	var curTs uint64
