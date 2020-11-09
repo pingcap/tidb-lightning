@@ -9,7 +9,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 
 	kvpb "github.com/pingcap/kvproto/pkg/import_kvpb"
 
@@ -42,7 +42,8 @@ func (s *importerSuite) setUpTest(c *C) {
 	importer := kv.NewMockImporter(s.mockClient, testPDAddr)
 
 	s.ctx = context.Background()
-	s.engineUUID = uuid.FromStringOrNil("7e3f3a3c-67ce-506d-af34-417ec138fbcb").Bytes()
+	engineUUID := uuid.MustParse("7e3f3a3c-67ce-506d-af34-417ec138fbcb")
+	s.engineUUID = engineUUID[:]
 	s.kvPairs = kv.MakeRowsFromKvPairs([]common.KvPair{
 		{
 			Key: []byte("k1"),
