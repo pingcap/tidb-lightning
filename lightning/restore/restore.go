@@ -226,9 +226,9 @@ func NewRestoreControllerWithPauser(
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
 		pauser:        pauser,
 		backend:       backend,
-		tidbGlue:     tidbGlue,
-		rowFormatVer: "1",
-		tls:          tls,
+		tidbGlue:      tidbGlue,
+		rowFormatVer:  "1",
+		tls:           tls,
 
 		errorSummaries:    makeErrorSummaries(log.L()),
 		checkpointsDB:     cpdb,
@@ -1653,7 +1653,6 @@ func (tr *TableRestore) compareChecksum(ctx context.Context, localChecksum verif
 }
 
 func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) error {
-	// TODO: Please check the change of logger is acceptable
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
 	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger.Logger)
 	task.End(zap.ErrorLevel, err)
