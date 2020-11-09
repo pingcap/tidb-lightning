@@ -63,7 +63,7 @@ func isUnknownSystemVariableErr(err error) bool {
 	return code == mysql.ErrUnknownSystemVariable
 }
 
-func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
+func DBFromConfig(dsn config.DBStore) (*sql.DB, error) {
 	param := common.MySQLConnectParam{
 		Host:             dsn.Host,
 		Port:             dsn.Port,
@@ -95,6 +95,14 @@ func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
 		} else {
 			return nil, errors.Trace(err)
 		}
+	}
+	return db, nil
+}
+
+func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
+	db, err := DBFromConfig(dsn)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	return NewTiDBManagerWithDB(db, dsn.SQLMode), nil

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
@@ -185,6 +186,19 @@ func (l *Lightning) RunOnce() error {
 	return l.run(cfg)
 }
 
+func (l *Lightning) RunEmbeddedOnce(ctx context.Context, taskCfg *config.Config, logger *zap.Logger, g glue.Glue) error {
+	if err := taskCfg.Adjust(); err != nil {
+		return err
+	}
+	taskCfg.TaskID = time.Now().UnixNano()
+
+	l.shutdown()
+	l.ctx = ctx
+
+	log.SetAppLogger(logger)
+	return l.runWithGlue(taskCfg, g)
+}
+
 func (l *Lightning) RunServer() error {
 	l.taskCfgs = config.NewConfigList()
 	log.L().Info(
@@ -208,6 +222,17 @@ func (l *Lightning) RunServer() error {
 var taskCfgRecorderKey struct{}
 
 func (l *Lightning) run(taskCfg *config.Config) (err error) {
+	db, err := restore.DBFromConfig(taskCfg.TiDB)
+	failpoint.Inject("SkipRunTask", func() {
+		err = nil
+	})
+	if err != nil {
+		return err
+	}
+	return l.runWithGlue(taskCfg, glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode))
+}
+
+func (l *Lightning) runWithGlue(taskCfg *config.Config, g glue.Glue) (err error) {
 	common.PrintInfo("lightning", func() {
 		log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 	})
@@ -272,7 +297,7 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	web.BroadcastInitProgress(dbMetas)
 
 	var procedure *restore.RestoreController
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s)
+	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s, g)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)

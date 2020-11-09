@@ -20,7 +20,9 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"go.uber.org/zap"
 )
@@ -29,6 +31,7 @@ type Glue interface {
 	GetSQLExecutor() SQLExecutor
 	GetParser() *parser.Parser
 	GetTables(context.Context, string) ([]*model.TableInfo, error)
+	OpenCheckpointsDB(context.Context, *config.Config) (checkpoints.CheckpointsDB, error)
 	OwnsSQLExecutor() bool
 }
 
@@ -81,6 +84,10 @@ func (e ExternalTiDBGlue) GetDB() *sql.DB {
 
 func (e ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
 	return nil, nil
+}
+
+func (e ExternalTiDBGlue) OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (checkpoints.CheckpointsDB, error) {
+	return checkpoints.OpenCheckpointsDB(ctx, cfg)
 }
 
 func (e ExternalTiDBGlue) OwnsSQLExecutor() bool {

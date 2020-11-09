@@ -15,7 +15,6 @@ package restore
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
 	"math"
@@ -157,8 +156,14 @@ type RestoreController struct {
 	checksumManager   ChecksumManager
 }
 
-func NewRestoreController(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta, cfg *config.Config, s storage.ExternalStorage) (*RestoreController, error) {
-	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, s, DeliverPauser)
+func NewRestoreController(
+	ctx context.Context,
+	dbMetas []*mydump.MDDatabaseMeta,
+	cfg *config.Config,
+	s storage.ExternalStorage,
+	g glue.Glue,
+) (*RestoreController, error) {
+	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, s, DeliverPauser, g)
 }
 
 func NewRestoreControllerWithPauser(
@@ -167,6 +172,7 @@ func NewRestoreControllerWithPauser(
 	cfg *config.Config,
 	s storage.ExternalStorage,
 	pauser *common.Pauser,
+	g glue.Glue,
 ) (*RestoreController, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
@@ -176,7 +182,7 @@ func NewRestoreControllerWithPauser(
 		return nil, err
 	}
 
-	cpdb, err := OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := g.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -189,12 +195,6 @@ func NewRestoreControllerWithPauser(
 		return nil, errors.Trace(err)
 	}
 
-	tidbMgr, err := NewTiDBManager(cfg.TiDB, tls)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tidbGlue := glue.NewExternalTiDBGlue(tidbMgr.db, cfg.TiDB.SQLMode)
-
 	var backend kv.Backend
 	switch cfg.TikvImporter.Backend {
 	case config.BackendImporter:
@@ -204,9 +204,12 @@ func NewRestoreControllerWithPauser(
 			return nil, err
 		}
 	case config.BackendTiDB:
-		backend = kv.NewTiDBBackend(tidbMgr.db, cfg.TikvImporter.OnDuplicate)
+		db, err := DBFromConfig(cfg.TiDB)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		backend = kv.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate)
 	case config.BackendLocal:
-		// TODO(lance6717): check that glue could substitute PdAddr and tls (HTTP API)
 		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, cfg.TikvImporter.RegionSplitSize,
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
 			cfg.Checkpoint.Enable)
@@ -226,7 +229,7 @@ func NewRestoreControllerWithPauser(
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
 		pauser:        pauser,
 		backend:       backend,
-		tidbGlue:      tidbGlue,
+		tidbGlue:      g,
 		rowFormatVer:  "1",
 		tls:           tls,
 
@@ -239,33 +242,6 @@ func NewRestoreControllerWithPauser(
 	}
 
 	return rc, nil
-}
-
-func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, error) {
-	if !cfg.Checkpoint.Enable {
-		return NewNullCheckpointsDB(), nil
-	}
-
-	switch cfg.Checkpoint.Driver {
-	case config.CheckpointDriverMySQL:
-		// TODO(lance6716): introduce glue or add "glue" checkpoint
-		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema, cfg.TaskID)
-		if err != nil {
-			db.Close()
-			return nil, errors.Trace(err)
-		}
-		return cpdb, nil
-
-	case config.CheckpointDriverFile:
-		return NewFileCheckpointsDB(cfg.Checkpoint.DSN), nil
-
-	default:
-		return nil, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
-	}
 }
 
 func (rc *RestoreController) Close() {
