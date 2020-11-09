@@ -612,3 +612,21 @@ func (s *configTestSuite) TestCronEncodeDecode(c *C) {
 	c.Assert(cfg2.LoadFromTOML([]byte(confStr)), IsNil)
 	c.Assert(cfg2.Cron, DeepEquals, cfg.Cron)
 }
+
+func (s *configTestSuite) TestAdjustWithLegacyBlackWhiteList(c *C) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	c.Assert(cfg.Mydumper.Filter, DeepEquals, config.DefaultFilter)
+	c.Assert(cfg.HasLegacyBlackWhiteList(), IsFalse)
+
+	cfg.Mydumper.Filter = []string{"test.*"}
+	c.Assert(cfg.Adjust(), IsNil)
+	c.Assert(cfg.HasLegacyBlackWhiteList(), IsFalse)
+
+	cfg.BWList.DoDBs = []string{"test"}
+	c.Assert(cfg.Adjust(), ErrorMatches, "invalid config: `mydumper\\.filter` and `black-white-list` cannot be simultaneously defined")
+
+	cfg.Mydumper.Filter = config.DefaultFilter
+	c.Assert(cfg.Adjust(), IsNil)
+	c.Assert(cfg.HasLegacyBlackWhiteList(), IsTrue)
+}

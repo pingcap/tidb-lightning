@@ -32,6 +32,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/coreos/go-semver/semver"
 	"github.com/google/btree"
+	"github.com/google/uuid"
 	split "github.com/pingcap/br/pkg/restore"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
-	uuid "github.com/satori/go.uuid"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -520,8 +520,9 @@ func (local *local) WriteToTiKV(
 	iter.Last()
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
 
+	u := uuid.New()
 	meta := &sst.SSTMeta{
-		Uuid:        uuid.NewV4().Bytes(),
+		Uuid:        u[:],
 		RegionId:    region.Region.GetId(),
 		RegionEpoch: region.Region.GetRegionEpoch(),
 		Range: &sst.Range{
