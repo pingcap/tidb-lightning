@@ -71,7 +71,7 @@ const (
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
 	regionMaxKeyCount = 1_440_000
 
-	PROP_RANGE_INDEX = "tikv.range_index"
+	propRangeIndex = "tikv.range_index"
 
 	defaultPropSizeIndexDistance = 4 * 1024 * 1024 // 4MB
 	defaultPropKeysIndexDistance = 40 * 1024
@@ -130,7 +130,7 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 	sizeProps := newSizeProperties()
 	for _, level := range sstables {
 		for _, info := range level {
-			if prop, ok := info.Properties.UserProperties[PROP_RANGE_INDEX]; ok {
+			if prop, ok := info.Properties.UserProperties[propRangeIndex]; ok {
 				data := hack.Slice(prop)
 				rangeProps, err := decodeRangeProperties(data)
 				if err != nil {
@@ -1446,13 +1446,13 @@ func (c *RangePropertiesCollector) Finish(userProps map[string]string) error {
 		c.insertNewPoint(c.lastKey)
 	}
 
-	userProps[PROP_RANGE_INDEX] = string(c.props.Encode())
+	userProps[propRangeIndex] = string(c.props.Encode())
 	return nil
 }
 
 // The name of the property collector.
 func (c *RangePropertiesCollector) Name() string {
-	return PROP_RANGE_INDEX
+	return propRangeIndex
 }
 
 type sizeProperties struct {

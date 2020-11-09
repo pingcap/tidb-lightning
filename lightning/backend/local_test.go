@@ -82,7 +82,7 @@ func (s *localSuite) TestRangeProperties(c *C) {
 	userProperties := make(map[string]string, 1)
 	_ = collector.Finish(userProperties)
 
-	props, err := decodeRangeProperties(hack.Slice(userProperties[PROP_RANGE_INDEX]))
+	props, err := decodeRangeProperties(hack.Slice(userProperties[propRangeIndex]))
 	c.Assert(err, IsNil)
 
 	// Smallest key in props.
