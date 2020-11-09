@@ -178,9 +178,6 @@ func NewRestoreControllerWithPauser(
 	if err != nil {
 		return nil, err
 	}
-	if err = cfg.TiDB.Security.RegisterMySQL(); err != nil {
-		return nil, err
-	}
 
 	cpdb, err := g.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {

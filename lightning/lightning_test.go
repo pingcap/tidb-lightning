@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/glue"
-
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 
 	. "github.com/pingcap/check"
@@ -65,9 +64,10 @@ func (s *lightningSuite) TestRun(c *C) {
 	err := lightning.RunOnce()
 	c.Assert(err, ErrorMatches, ".*mydumper dir does not exist")
 
+	// to bypass error from db.Ping()
 	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
 	path, _ := filepath.Abs(".")
-	err = lightning.runWithGlue(&config.Config{
+	err = lightning.run(&config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
 			Filter:           []string{"*.*"},
@@ -80,7 +80,7 @@ func (s *lightningSuite) TestRun(c *C) {
 	}, invalidGlue)
 	c.Assert(err, ErrorMatches, "Unknown checkpoint driver invalid")
 
-	err = lightning.runWithGlue(&config.Config{
+	err = lightning.run(&config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir: ".",
 			Filter:    []string{"*.*"},
@@ -90,7 +90,7 @@ func (s *lightningSuite) TestRun(c *C) {
 			Driver: "file",
 			DSN:    "any-file",
 		},
-	}, invalidGlue)
+	})
 	c.Assert(err, NotNil)
 }
 

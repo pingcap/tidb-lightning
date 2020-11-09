@@ -196,7 +196,7 @@ func (l *Lightning) RunEmbeddedOnce(ctx context.Context, taskCfg *config.Config,
 	l.ctx = ctx
 
 	log.SetAppLogger(logger)
-	return l.runWithGlue(taskCfg, g)
+	return l.run(taskCfg, g)
 }
 
 func (l *Lightning) RunServer() error {
@@ -221,18 +221,7 @@ func (l *Lightning) RunServer() error {
 
 var taskCfgRecorderKey struct{}
 
-func (l *Lightning) run(taskCfg *config.Config) (err error) {
-	db, err := restore.DBFromConfig(taskCfg.TiDB)
-	failpoint.Inject("SkipRunTask", func() {
-		err = nil
-	})
-	if err != nil {
-		return err
-	}
-	return l.runWithGlue(taskCfg, glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode))
-}
-
-func (l *Lightning) runWithGlue(taskCfg *config.Config, g glue.Glue) (err error) {
+func (l *Lightning) run(taskCfg *config.Config, glues ...glue.Glue) (err error) {
 	common.PrintInfo("lightning", func() {
 		log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 	})
@@ -296,8 +285,20 @@ func (l *Lightning) runWithGlue(taskCfg *config.Config, g glue.Glue) (err error)
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
+	if err = taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(glues) == 0 {
+		db, err := restore.DBFromConfig(taskCfg.TiDB)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		glues = append(glues, glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode))
+	}
+
 	var procedure *restore.RestoreController
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s, g)
+	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s, glues[0])
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)

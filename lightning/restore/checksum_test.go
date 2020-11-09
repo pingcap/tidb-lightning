@@ -172,7 +172,7 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 
 	startTs := oracle.ComposeTS(time.Now().Unix()*1000, 0)
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, checksumExec)
-	_, err = DoChecksum(ctx, nil, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
+	_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 	c.Assert(err, IsNil)
 
 	// after checksum, safepint should be small than start ts
