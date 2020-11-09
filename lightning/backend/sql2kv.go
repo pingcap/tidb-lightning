@@ -62,7 +62,7 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions, chunk *checkpoi
 				if hasSignBit {
 					incrementalBits -= 1
 				}
-				autoRandomBits = rand.New(rand.NewSource(chunk.Chunk.Offset)).Int63n(1<<tbl.Meta().AutoRandomBits) << incrementalBits
+				autoRandomBits = rand.New(rand.NewSource(chunk.Chunk.PrevRowIDMax)).Int63n(1<<tbl.Meta().AutoRandomBits) << incrementalBits
 				break
 			}
 		}

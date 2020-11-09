@@ -238,7 +238,7 @@ func (s *kvSuite) TestDefaultAutoRandoms(c *C) {
 		SQLMode:          mysql.ModeStrictAllTables,
 		Timestamp:        1234567893,
 		RowFormatVersion: "2",
-	}, &checkpoints.ChunkCheckpoint{Chunk: mydump.Chunk{Offset: 456}})
+	}, &checkpoints.ChunkCheckpoint{Chunk: mydump.Chunk{PrevRowIDMax: 456}})
 	logger := log.Logger{Logger: zap.NewNop()}
 	pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 70, []int{-1, 0})
 	c.Assert(err, IsNil)
