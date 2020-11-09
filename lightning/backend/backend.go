@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -104,7 +106,7 @@ type AbstractBackend interface {
 	ShouldPostProcess() bool
 
 	// NewEncoder creates an encoder of a TiDB table.
-	NewEncoder(tbl table.Table, options *SessionOptions) Encoder
+	NewEncoder(tbl table.Table, options *SessionOptions, chunk *checkpoints.ChunkCheckpoint) Encoder
 
 	OpenEngine(ctx context.Context, engineUUID uuid.UUID) error
 
@@ -196,8 +198,8 @@ func (be Backend) MakeEmptyRows() Rows {
 	return be.abstract.MakeEmptyRows()
 }
 
-func (be Backend) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
-	return be.abstract.NewEncoder(tbl, options)
+func (be Backend) NewEncoder(tbl table.Table, options *SessionOptions, chunk *checkpoints.ChunkCheckpoint) Encoder {
+	return be.abstract.NewEncoder(tbl, options, chunk)
 }
 
 func (be Backend) ShouldPostProcess() bool {

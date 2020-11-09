@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -290,7 +292,7 @@ func (be *tidbBackend) CheckRequirements() error {
 	return nil
 }
 
-func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
+func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions, chunk *checkpoints.ChunkCheckpoint) Encoder {
 	se := newSession(options)
 	if options.SQLMode.HasStrictMode() {
 		se.vars.SkipUTF8Check = false

@@ -16,6 +16,12 @@ package backend
 import (
 	"errors"
 
+	"github.com/pingcap/tidb-lightning/lightning/mydump"
+
+	"github.com/pingcap/tidb/meta/autoid"
+
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -86,7 +92,7 @@ func (s *kvSuite) TestEncode(c *C) {
 		SQLMode:          mysql.ModeStrictAllTables,
 		Timestamp:        1234567890,
 		RowFormatVersion: "1",
-	})
+	}, &checkpoints.ChunkCheckpoint{})
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1})
 	c.Assert(err, ErrorMatches, "failed to cast `10000000` as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint")
 	c.Assert(pairs, IsNil)
@@ -117,7 +123,7 @@ func (s *kvSuite) TestEncode(c *C) {
 		SQLMode:          mysql.ModeStrictAllTables,
 		Timestamp:        1234567891,
 		RowFormatVersion: "1",
-	})
+	}, &checkpoints.ChunkCheckpoint{})
 	pairs, err = mockMode.Encode(logger, rowsWithPk2, 2, []int{0, 1})
 	c.Assert(err, ErrorMatches, "mock error")
 
@@ -126,7 +132,7 @@ func (s *kvSuite) TestEncode(c *C) {
 		SQLMode:          mysql.ModeNone,
 		Timestamp:        1234567892,
 		RowFormatVersion: "1",
-	})
+	}, &checkpoints.ChunkCheckpoint{})
 	pairs, err = noneMode.Encode(logger, rows, 1, []int{0, 1})
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
@@ -155,7 +161,7 @@ func (s *kvSuite) TestEncodeRowFormatV2(c *C) {
 		SQLMode:          mysql.ModeNone,
 		Timestamp:        1234567892,
 		RowFormatVersion: "2",
-	})
+	}, &checkpoints.ChunkCheckpoint{})
 	pairs, err := noneMode.Encode(logger, rows, 1, []int{0, 1})
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
@@ -199,7 +205,8 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 		SQLMode:          mysql.ModeStrictAllTables,
 		Timestamp:        1234567893,
 		RowFormatVersion: "1",
-	})
+	}, &checkpoints.ChunkCheckpoint{})
+
 	pairs, err := encoder.Encode(logger, nil, 70, []int{-1, 1})
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
@@ -208,6 +215,50 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 			Val: []uint8{0x8, 0x2, 0x9, 0x80, 0x80, 0x80, 0xf0, 0xfd, 0x8e, 0xf7, 0xc0, 0x19},
 		},
 	}))
+}
+
+func mockTableInfo(c *C, createSql string) *model.TableInfo {
+	parser := parser.New()
+	node, err := parser.ParseOneStmt(createSql, "", "")
+	c.Assert(err, IsNil)
+	sctx := mock.NewContext()
+	info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
+	c.Assert(err, IsNil)
+	info.State = model.StatePublic
+	return info
+}
+
+func (s *kvSuite) TestDefaultAutoRandoms(c *C) {
+	tblInfo := mockTableInfo(c, "create table t (id bigint unsigned NOT NULL auto_random primary key, a varchar(100));")
+	// seems parser can't parse auto_random properly.
+	tblInfo.AutoRandomBits = 5
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	c.Assert(err, IsNil)
+	encoder := NewTableKVEncoder(tbl, &SessionOptions{
+		SQLMode:          mysql.ModeStrictAllTables,
+		Timestamp:        1234567893,
+		RowFormatVersion: "2",
+	}, &checkpoints.ChunkCheckpoint{Chunk: mydump.Chunk{Offset: 456}})
+	logger := log.Logger{Logger: zap.NewNop()}
+	pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 70, []int{-1, 0})
+	c.Assert(err, IsNil)
+	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
+		{
+			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
+			Val: []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0},
+		},
+	}))
+	c.Assert(tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), Equals, int64(70))
+
+	pairs, err = encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 71, []int{-1, 0})
+	c.Assert(err, IsNil)
+	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
+		{
+			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x47},
+			Val: []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0},
+		},
+	}))
+	c.Assert(tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), Equals, int64(71))
 }
 
 func (s *kvSuite) TestSplitIntoChunks(c *C) {
@@ -347,7 +398,7 @@ func (s *benchSQL2KVSuite) SetUpTest(c *C) {
 	// Construct the corresponding KV encoder.
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tableInfo)
 	c.Assert(err, IsNil)
-	s.encoder = NewTableKVEncoder(tbl, &SessionOptions{RowFormatVersion: "2"})
+	s.encoder = NewTableKVEncoder(tbl, &SessionOptions{RowFormatVersion: "2"}, &checkpoints.ChunkCheckpoint{})
 	s.logger = log.Logger{Logger: zap.NewNop()}
 
 	// Prepare the row to insert.

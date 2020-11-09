@@ -26,6 +26,9 @@ for backend in tidb importer local; do
     run_sql 'DROP DATABASE IF EXISTS alter_random;'
     run_lightning --backend $backend
 
+    run_sql "SELECT count(*) from alter_random.t"
+    check_contains "count(*): 6"
+
     run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM alter_random.t"
     check_contains 'inc: 1'
     check_contains 'inc: 2'
@@ -37,6 +40,6 @@ for backend in tidb importer local; do
     if [ "$backend" = 'tidb' ]; then
       check_contains 'inc: 30002'
     else
-      check_contains 'inc: 4'
+      check_contains 'inc: 7'
     fi
 done

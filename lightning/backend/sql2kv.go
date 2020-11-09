@@ -16,6 +16,8 @@ package backend
 import (
 	"math/rand"
 
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -43,7 +45,7 @@ type tableKVEncoder struct {
 	autoRandomHeaderBits int64
 }
 
-func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
+func NewTableKVEncoder(tbl table.Table, options *SessionOptions, chunk *checkpoints.ChunkCheckpoint) Encoder {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
 	se := newSession(options)
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
@@ -60,7 +62,7 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
 				if hasSignBit {
 					incrementalBits -= 1
 				}
-				autoRandomBits = rand.Int63n(1<<tbl.Meta().AutoRandomBits) << incrementalBits
+				autoRandomBits = rand.New(rand.NewSource(chunk.Chunk.Offset)).Int63n(1<<tbl.Meta().AutoRandomBits) << incrementalBits
 				break
 			}
 		}
@@ -207,7 +209,19 @@ func (kvcodec *tableKVEncoder) Encode(
 			// we still need a conversion, e.g. to catch overflow with a TINYINT column.
 			value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo(), false, false)
 		} else if isAutoRandom && isPk {
-			value, err = table.CastValue(kvcodec.se, types.NewIntDatum(kvcodec.autoRandomHeaderBits|rowID), col.ToInfo(), false, false)
+			var val types.Datum
+			if mysql.HasUnsignedFlag(col.Flag) {
+				val = types.NewUintDatum(uint64(kvcodec.autoRandomHeaderBits | rowID))
+			} else {
+				val = types.NewIntDatum(kvcodec.autoRandomHeaderBits | rowID)
+			}
+			value, err = table.CastValue(kvcodec.se, val, col.ToInfo(), false, false)
+			typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[col.Tp] * 8)
+			incrementalBits := typeBitsLength - kvcodec.tbl.Meta().AutoRandomBits
+			hasSignBit := !mysql.HasUnsignedFlag(col.Flag)
+			if hasSignBit {
+				incrementalBits -= 1
+			}
 		} else {
 			value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 		}

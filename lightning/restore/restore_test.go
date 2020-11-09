@@ -927,7 +927,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 		SQLMode:          s.cfg.TiDB.SQLMode,
 		Timestamp:        1234567895,
 		RowFormatVersion: "1",
-	})
+	}, &checkpoints.ChunkCheckpoint{})
 	cfg := config.NewConfig()
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
 	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
@@ -952,7 +952,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 		SQLMode:          s.cfg.TiDB.SQLMode,
 		Timestamp:        1234567896,
 		RowFormatVersion: "1",
-	})
+	}, &checkpoints.ChunkCheckpoint{})
 
 	go cancel()
 	cfg := config.NewConfig()
@@ -970,7 +970,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 		SQLMode:          s.cfg.TiDB.SQLMode,
 		Timestamp:        1234567897,
 		RowFormatVersion: "1",
-	})
+	}, &checkpoints.ChunkCheckpoint{})
 
 	// close the chunk so reading it will result in the "file already closed" error.
 	s.cr.parser.Close()
@@ -990,7 +990,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 		SQLMode:          s.cfg.TiDB.SQLMode,
 		Timestamp:        1234567898,
 		RowFormatVersion: "1",
-	})
+	}, &checkpoints.ChunkCheckpoint{})
 
 	go func() {
 		deliverCompleteCh <- deliverResult{

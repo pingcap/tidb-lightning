@@ -28,6 +28,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+
 	"github.com/cockroachdb/pebble"
 	"github.com/coreos/go-semver/semver"
 	split "github.com/pingcap/br/pkg/restore"
@@ -1211,8 +1213,8 @@ func (local *local) MakeEmptyRows() Rows {
 	return kvPairs(nil)
 }
 
-func (local *local) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
-	return NewTableKVEncoder(tbl, options)
+func (local *local) NewEncoder(tbl table.Table, options *SessionOptions, chunk *checkpoints.ChunkCheckpoint) Encoder {
+	return NewTableKVEncoder(tbl, options, chunk)
 }
 
 func (local *local) isIngestRetryable(
