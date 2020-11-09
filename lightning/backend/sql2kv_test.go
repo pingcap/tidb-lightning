@@ -16,8 +16,6 @@ package backend
 import (
 	"errors"
 
-	"github.com/pingcap/tidb/meta/autoid"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -25,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -202,7 +201,6 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 		Timestamp:        1234567893,
 		RowFormatVersion: "1",
 	})
-
 	pairs, err := encoder.Encode(logger, nil, 70, []int{-1, 1})
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
