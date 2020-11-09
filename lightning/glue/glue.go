@@ -28,11 +28,12 @@ import (
 )
 
 type Glue interface {
+	OwnsSQLExecutor() bool
 	GetSQLExecutor() SQLExecutor
 	GetParser() *parser.Parser
 	GetTables(context.Context, string) ([]*model.TableInfo, error)
 	OpenCheckpointsDB(context.Context, *config.Config) (checkpoints.CheckpointsDB, error)
-	OwnsSQLExecutor() bool
+	Record(string, uint64)
 }
 
 type SQLExecutor interface {
@@ -96,4 +97,24 @@ func (e ExternalTiDBGlue) OwnsSQLExecutor() bool {
 
 func (e ExternalTiDBGlue) Close() {
 	e.db.Close()
+}
+
+func (e ExternalTiDBGlue) Record(string, uint64) {
+}
+
+type ImportStage uint64
+
+const (
+	StageWriting ImportStage = iota
+	StagePostProcessing
+)
+
+func (s ImportStage) String() string {
+	switch s {
+	case StageWriting:
+		return "Writing"
+	case StagePostProcessing:
+		return "PostProcessing"
+	}
+	return ""
 }

@@ -556,6 +556,9 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
 	defer logProgressTicker.Stop()
 
+	glueProgressTicker := time.NewTicker(3 * time.Second)
+	defer glueProgressTicker.Stop()
+
 	var switchModeChan <-chan time.Time
 	// tide backend don't need to switch tikv to import mode
 	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
@@ -615,6 +618,16 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 				zap.String("state", state),
 				remaining,
 			)
+		case <-glueProgressTicker.C:
+			stage := glue.StageWriting
+			estimated := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
+			finished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
+			if finished >= estimated {
+				finished = estimated
+				stage = glue.StagePostProcessing
+			}
+			rc.tidbGlue.Record("ProgressPermillage", uint64(estimated/finished*1000))
+			rc.tidbGlue.Record("Stage", uint64(stage))
 		}
 	}
 }
