@@ -8,19 +8,16 @@ package mock
 
 import (
 	context "context"
-	reflect "reflect"
-	time "time"
-
 	gomock "github.com/golang/mock/gomock"
 	uuid "github.com/google/uuid"
 	model "github.com/pingcap/parser/model"
-	table "github.com/pingcap/tidb/table"
-	types "github.com/pingcap/tidb/types"
-
 	backend "github.com/pingcap/tidb-lightning/lightning/backend"
-	checkpoints "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	log "github.com/pingcap/tidb-lightning/lightning/log"
 	verification "github.com/pingcap/tidb-lightning/lightning/verification"
+	table "github.com/pingcap/tidb/table"
+	types "github.com/pingcap/tidb/types"
+	reflect "reflect"
+	time "time"
 )
 
 // MockBackend is a mock of AbstractBackend interface
@@ -158,17 +155,17 @@ func (mr *MockBackendMockRecorder) MaxChunkSize() *gomock.Call {
 }
 
 // NewEncoder mocks base method
-func (m *MockBackend) NewEncoder(arg0 table.Table, arg1 *backend.SessionOptions, arg2 *checkpoints.ChunkCheckpoint) backend.Encoder {
+func (m *MockBackend) NewEncoder(arg0 table.Table, arg1 *backend.SessionOptions) backend.Encoder {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "NewEncoder", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "NewEncoder", arg0, arg1)
 	ret0, _ := ret[0].(backend.Encoder)
 	return ret0
 }
 
 // NewEncoder indicates an expected call of NewEncoder
-func (mr *MockBackendMockRecorder) NewEncoder(arg0, arg1, arg2 interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) NewEncoder(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewEncoder", reflect.TypeOf((*MockBackend)(nil).NewEncoder), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewEncoder", reflect.TypeOf((*MockBackend)(nil).NewEncoder), arg0, arg1)
 }
 
 // OpenEngine mocks base method

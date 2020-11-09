@@ -4,13 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
-
 	"github.com/golang/mock/gomock"
+	"github.com/google/uuid"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/google/uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/mock"
@@ -324,7 +322,7 @@ func (s *backendSuite) TestNewEncoder(c *C) {
 
 	encoder := mock.NewMockEncoder(s.controller)
 	options := &kv.SessionOptions{SQLMode: mysql.ModeANSIQuotes, Timestamp: 1234567890, RowFormatVersion: "1"}
-	s.mockBackend.EXPECT().NewEncoder(nil, options, &checkpoints.ChunkCheckpoint{}).Return(encoder)
+	s.mockBackend.EXPECT().NewEncoder(nil, options).Return(encoder)
 
-	c.Assert(s.mockBackend.NewEncoder(nil, options, &checkpoints.ChunkCheckpoint{}), Equals, encoder)
+	c.Assert(s.mockBackend.NewEncoder(nil, options), Equals, encoder)
 }

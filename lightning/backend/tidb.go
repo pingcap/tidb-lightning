@@ -22,15 +22,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
-
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -292,7 +290,7 @@ func (be *tidbBackend) CheckRequirements() error {
 	return nil
 }
 
-func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions, chunk *checkpoints.ChunkCheckpoint) Encoder {
+func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
 	se := newSession(options)
 	if options.SQLMode.HasStrictMode() {
 		se.vars.SkipUTF8Check = false

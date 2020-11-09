@@ -176,6 +176,8 @@ type SessionOptions struct {
 	SQLMode          mysql.SQLMode
 	Timestamp        int64
 	RowFormatVersion string
+	// a seed used for tableKvEncoder's auto random bits value
+	AutoRandomSeed int64
 }
 
 func newSession(options *SessionOptions) *session {

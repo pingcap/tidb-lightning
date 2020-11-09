@@ -20,14 +20,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
-
 	"github.com/coreos/go-semver/semver"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	kv "github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
@@ -238,8 +236,8 @@ func (*importer) MakeEmptyRows() Rows {
 	return kvPairs(nil)
 }
 
-func (*importer) NewEncoder(tbl table.Table, options *SessionOptions, chunk *checkpoints.ChunkCheckpoint) Encoder {
-	return NewTableKVEncoder(tbl, options, chunk)
+func (*importer) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
+	return NewTableKVEncoder(tbl, options)
 }
 
 func (importer *importer) CheckRequirements() error {

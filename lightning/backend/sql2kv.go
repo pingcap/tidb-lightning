@@ -16,8 +16,6 @@ package backend
 import (
 	"math/rand"
 
-	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -45,7 +43,7 @@ type tableKVEncoder struct {
 	autoRandomHeaderBits int64
 }
 
-func NewTableKVEncoder(tbl table.Table, options *SessionOptions, chunk *checkpoints.ChunkCheckpoint) Encoder {
+func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
 	se := newSession(options)
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
@@ -62,7 +60,7 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions, chunk *checkpoi
 				if hasSignBit {
 					incrementalBits -= 1
 				}
-				autoRandomBits = rand.New(rand.NewSource(chunk.Chunk.PrevRowIDMax)).Int63n(1<<tbl.Meta().AutoRandomBits) << incrementalBits
+				autoRandomBits = rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<tbl.Meta().AutoRandomBits) << incrementalBits
 				break
 			}
 		}
