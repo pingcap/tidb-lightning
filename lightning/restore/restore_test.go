@@ -34,7 +34,7 @@ import (
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/ddl"
 	tmock "github.com/pingcap/tidb/util/mock"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
@@ -718,7 +718,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	importer := kv.MakeBackend(mockBackend)
 
 	ctx := context.Background()
-	engineUUID := uuid.NewV4()
+	engineUUID := uuid.New()
 
 	mockBackend.EXPECT().
 		CloseEngine(ctx, engineUUID).
@@ -743,7 +743,7 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	importer := kv.MakeBackend(mockBackend)
 
 	ctx := context.Background()
-	engineUUID := uuid.NewV4()
+	engineUUID := uuid.New()
 
 	mockBackend.EXPECT().
 		CloseEngine(ctx, engineUUID).

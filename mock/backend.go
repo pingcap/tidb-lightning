@@ -12,14 +12,15 @@ import (
 	time "time"
 
 	gomock "github.com/golang/mock/gomock"
+	uuid "github.com/google/uuid"
 	model "github.com/pingcap/parser/model"
+	table "github.com/pingcap/tidb/table"
+	types "github.com/pingcap/tidb/types"
+
 	backend "github.com/pingcap/tidb-lightning/lightning/backend"
 	checkpoints "github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	log "github.com/pingcap/tidb-lightning/lightning/log"
 	verification "github.com/pingcap/tidb-lightning/lightning/verification"
-	table "github.com/pingcap/tidb/table"
-	types "github.com/pingcap/tidb/types"
-	uuid "github.com/satori/go.uuid"
 )
 
 // MockBackend is a mock of AbstractBackend interface
