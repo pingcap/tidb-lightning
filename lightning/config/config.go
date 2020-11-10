@@ -217,6 +217,7 @@ type CSVConfig struct {
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	Null            string `toml:"null" json:"null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
+	CharacterSet    string `toml:"character-set" json:"character-set"`
 }
 
 type MydumperRuntime struct {

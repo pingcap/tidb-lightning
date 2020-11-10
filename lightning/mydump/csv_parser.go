@@ -313,7 +313,11 @@ outside:
 	dst = dst[:len(parser.fieldIndexes)]
 	var preIdx int
 	for i, idx := range parser.fieldIndexes {
-		dst[i] = str[preIdx:idx]
+		dstBytes, err := decodeCharacterSet([]byte(str[preIdx:idx]), parser.cfg.CharacterSet)
+		if err != nil {
+			return nil, err
+		}
+		dst[i] = string(dstBytes)
 		preIdx = idx
 	}
 
