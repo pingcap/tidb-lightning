@@ -248,10 +248,8 @@ type tikvChecksumManager struct {
 // newTiKVChecksumManager return a new tikv checksum manager
 func newTiKVChecksumManager(client kv.Client, pdClient pd.Client) *tikvChecksumManager {
 	return &tikvChecksumManager{
-		client: client,
-		manager: gcTTLManager{
-			pdClient: pdClient,
-		},
+		client:  client,
+		manager: newGCTTLManager(pdClient),
 	}
 }
 
