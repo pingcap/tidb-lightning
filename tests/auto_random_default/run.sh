@@ -23,23 +23,36 @@ for backend in tidb importer local; do
         check_cluster_version 4 0 0 'local backend' || continue
     fi
 
-    run_sql 'DROP DATABASE IF EXISTS alter_random;'
+    run_sql 'DROP DATABASE IF EXISTS auto_random;'
     run_lightning --backend $backend
 
-    run_sql "SELECT count(*) from alter_random.t"
-    check_contains "count(*): 3"
+    run_sql "SELECT count(*) from auto_random.t"
+    check_contains "count(*): 6"
 
-    run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM alter_random.t"
+    run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM auto_random.t"
     check_contains 'inc: 1'
     check_contains 'inc: 2'
     check_contains 'inc: 3'
+    if [ "$backend" = 'tidb' ]; then
+      check_contains 'inc: 4'
+      check_contains 'inc: 5'
+      check_contains 'inc: 6'
+    else
+      check_contains 'inc: 25'
+      check_contains 'inc: 26'
+      check_contains 'inc: 27'
+    fi
+
+
+    run_sql "select count(distinct id >> 58) as count from auto_random.t"
+    check_contains "count: 2"
 
     # auto random base is 4
-    run_sql "INSERT INTO alter_random.t VALUES ();"
-    run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM alter_random.t"
+    run_sql "INSERT INTO auto_random.t VALUES ();"
+    run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM auto_random.t"
     if [ "$backend" = 'tidb' ]; then
-      check_contains 'inc: 30002'
+      check_contains 'inc: 2000001'
     else
-      check_contains 'inc: 4'
+      check_contains 'inc: 28'
     fi
 done
