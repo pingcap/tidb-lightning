@@ -25,9 +25,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/restore"

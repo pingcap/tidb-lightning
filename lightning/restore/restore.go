@@ -1901,6 +1901,8 @@ func (cr *chunkRestore) restore(
 		SQLMode:          rc.cfg.TiDB.SQLMode,
 		Timestamp:        cr.chunk.Timestamp,
 		RowFormatVersion: rc.rowFormatVer,
+		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
+		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 	})
 	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)

@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
+	"github.com/google/uuid"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
-	"github.com/google/uuid"
 
 	kvpb "github.com/pingcap/kvproto/pkg/import_kvpb"
 
