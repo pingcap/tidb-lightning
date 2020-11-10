@@ -33,6 +33,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/google/btree"
 	"github.com/google/uuid"
+	"github.com/juju/ratelimit"
 	split "github.com/pingcap/br/pkg/restore"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -161,6 +162,59 @@ func (conns *gRPCConns) Close() {
 	}
 }
 
+// RateLimit limit the read/write limit
+type RateLimiter interface {
+	// Consumes several bytes from the speed limiter. if write rate reaches the limit,
+	// call `Consume` will sleep until available
+	Consume(context.Context, int64)
+}
+
+type unlimitedLimiter struct{}
+
+func (l *unlimitedLimiter) Consume(ctx context.Context, bytes int64) {
+	return
+}
+
+type bucketRateLimiter struct {
+	bucket *ratelimit.Bucket
+}
+
+func (l *bucketRateLimiter) Consume(ctx context.Context, bytes int64) {
+	dur := l.bucket.Take(bytes)
+	if dur == 0 {
+		return
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(dur):
+	}
+}
+
+func newRateLimiter(rate int64, concurrency int) RateLimiter {
+	if rate == 0 {
+		return &unlimitedLimiter{}
+	} else {
+		return &bucketRateLimiter{bucket: ratelimit.NewBucketWithRate(float64(rate), int64(concurrency))}
+	}
+}
+
+type rateLimiterPool struct {
+	sync.Mutex
+	pool       map[uint64]RateLimiter
+	newLimiter func() RateLimiter
+}
+
+func (p *rateLimiterPool) GetRateLimiter(storeID uint64) RateLimiter {
+	p.Lock()
+	defer p.Unlock()
+	limiter, ok := p.pool[storeID]
+	if !ok {
+		limiter := p.newLimiter()
+		p.pool[storeID] = limiter
+	}
+	return limiter
+}
+
 type local struct {
 	engines  sync.Map
 	conns    gRPCConns
@@ -175,8 +229,9 @@ type local struct {
 	ingestConcurrency *worker.Pool
 	batchWriteKVPairs int
 	checkpointEnabled bool
+	tcpConcurrency    int
 
-	tcpConcurrency int
+	limiterPool rateLimiterPool
 }
 
 // connPool is a lazy pool of gRPC channels.
@@ -248,6 +303,7 @@ func NewLocalBackend(
 	rangeConcurrency int,
 	sendKVPairs int,
 	enableCheckpoint bool,
+	rateLimitation int64,
 ) (Backend, error) {
 	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
@@ -287,6 +343,11 @@ func NewLocalBackend(
 		tcpConcurrency:    rangeConcurrency,
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
+		limiterPool: rateLimiterPool{
+			newLimiter: func() RateLimiter {
+				return newRateLimiter(rateLimitation, rangeConcurrency)
+			},
+		},
 	}
 	local.conns.conns = make(map[uint64]*connPool)
 	return MakeBackend(local), nil
@@ -534,6 +595,7 @@ func (local *local) WriteToTiKV(
 	leaderID := region.Leader.GetId()
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
 	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
+	limiters := make([]RateLimiter, 0, len(region.Region.GetPeers()))
 	for _, peer := range region.Region.GetPeers() {
 		cli, err := local.getImportClient(ctx, peer)
 		if err != nil {
@@ -561,6 +623,7 @@ func (local *local) WriteToTiKV(
 		}
 		clients = append(clients, wstream)
 		requests = append(requests, req)
+		limiters = append(limiters, local.limiterPool.GetRateLimiter(peer.StoreId))
 	}
 
 	bytesBuf := newBytesBuffer()
@@ -590,6 +653,7 @@ func (local *local) WriteToTiKV(
 
 		if count >= local.batchWriteKVPairs {
 			for i := range clients {
+				limiters[i].Consume(ctx, int64(count))
 				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 				if err := clients[i].Send(requests[i]); err != nil {
 					return nil, nil, err
@@ -606,6 +670,7 @@ func (local *local) WriteToTiKV(
 
 	if count > 0 {
 		for i := range clients {
+			limiters[i].Consume(ctx, int64(count))
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
 				return nil, nil, err
