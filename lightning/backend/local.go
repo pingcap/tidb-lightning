@@ -209,7 +209,7 @@ func (p *rateLimiterPool) GetRateLimiter(storeID uint64) RateLimiter {
 	defer p.Unlock()
 	limiter, ok := p.pool[storeID]
 	if !ok {
-		limiter := p.newLimiter()
+		limiter = p.newLimiter()
 		p.pool[storeID] = limiter
 	}
 	return limiter
@@ -344,6 +344,7 @@ func NewLocalBackend(
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
 		limiterPool: rateLimiterPool{
+			pool: make(map[uint64]RateLimiter, 3),
 			newLimiter: func() RateLimiter {
 				return newRateLimiter(rateLimitation, rangeConcurrency)
 			},
