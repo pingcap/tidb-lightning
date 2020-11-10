@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/pingcap/br/pkg/checksum"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -322,6 +324,13 @@ type gcTTLManager struct {
 	serviceID     string
 	// 0 for not start, otherwise started
 	started uint32
+}
+
+func newGCTTLManager(pdClient pd.Client) gcTTLManager {
+	return gcTTLManager{
+		pdClient:  pdClient,
+		serviceID: fmt.Sprintf("lightning-%s", uuid.New()),
+	}
 }
 
 func (m *gcTTLManager) addOneJob(ctx context.Context, table string, ts uint64) error {
