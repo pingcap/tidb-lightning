@@ -66,7 +66,17 @@ const (
 
 var (
 	defaultConfigPaths    = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
-	supportedStorageTypes = []string{"file", "local", "s3"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop"}
+
+	DefaultFilter = []string{
+		"*.*",
+		"!mysql.*",
+		"!sys.*",
+		"!INFORMATION_SCHEMA.*",
+		"!PERFORMANCE_SCHEMA.*",
+		"!METRICS_SCHEMA.*",
+		"!INSPECTION_SCHEMA.*",
+	}
 )
 
 type DBStore struct {
@@ -149,6 +159,10 @@ func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
 		return errors.Errorf("invalid op level '%v', please choose valid option between ['off', 'optional', 'required']", v)
 	}
 	return nil
+}
+
+func (t PostOpLevel) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
 }
 
 // parser command line parameter
@@ -294,6 +308,10 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	return err
 }
 
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(d.String()), nil
+}
+
 func (d *Duration) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
 }
@@ -338,7 +356,7 @@ func NewConfig() *Config {
 			},
 			StrictFormat:  false,
 			MaxRegionSize: MaxRegionSize,
-			Filter:        []string{"*.*"},
+			Filter:        DefaultFilter,
 		},
 		TikvImporter: TikvImporter{
 			Backend:         BackendImporter,
@@ -541,7 +559,7 @@ func (cfg *Config) Adjust() error {
 	// mydumper.filter and black-white-list cannot co-exist.
 	if cfg.HasLegacyBlackWhiteList() {
 		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
-		if !(len(cfg.Mydumper.Filter) == 1 && cfg.Mydumper.Filter[0] == "*.*") {
+		if !common.StringSliceEqual(cfg.Mydumper.Filter, DefaultFilter) {
 			return errors.New("invalid config: `mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 		}
 	}

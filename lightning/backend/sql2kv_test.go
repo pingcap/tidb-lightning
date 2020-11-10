@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -208,6 +209,51 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 			Val: []uint8{0x8, 0x2, 0x9, 0x80, 0x80, 0x80, 0xf0, 0xfd, 0x8e, 0xf7, 0xc0, 0x19},
 		},
 	}))
+}
+
+func mockTableInfo(c *C, createSql string) *model.TableInfo {
+	parser := parser.New()
+	node, err := parser.ParseOneStmt(createSql, "", "")
+	c.Assert(err, IsNil)
+	sctx := mock.NewContext()
+	info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
+	c.Assert(err, IsNil)
+	info.State = model.StatePublic
+	return info
+}
+
+func (s *kvSuite) TestDefaultAutoRandoms(c *C) {
+	tblInfo := mockTableInfo(c, "create table t (id bigint unsigned NOT NULL auto_random primary key, a varchar(100));")
+	// seems parser can't parse auto_random properly.
+	tblInfo.AutoRandomBits = 5
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	c.Assert(err, IsNil)
+	encoder := NewTableKVEncoder(tbl, &SessionOptions{
+		SQLMode:          mysql.ModeStrictAllTables,
+		Timestamp:        1234567893,
+		RowFormatVersion: "2",
+		AutoRandomSeed:   456,
+	})
+	logger := log.Logger{Logger: zap.NewNop()}
+	pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 70, []int{-1, 0})
+	c.Assert(err, IsNil)
+	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
+		{
+			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x46},
+			Val: []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0},
+		},
+	}))
+	c.Assert(tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), Equals, int64(70))
+
+	pairs, err = encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 71, []int{-1, 0})
+	c.Assert(err, IsNil)
+	c.Assert(pairs, DeepEquals, kvPairs([]common.KvPair{
+		{
+			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x47},
+			Val: []uint8{0x80, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0},
+		},
+	}))
+	c.Assert(tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), Equals, int64(71))
 }
 
 func (s *kvSuite) TestSplitIntoChunks(c *C) {

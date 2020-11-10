@@ -148,7 +148,7 @@ strict-format = false
 #default-file-rules = false
 
 # only import tables if the wildcard rules are matched. See documention for details.
-filter = ['*.*']
+filter = ['*.*', '!mysql.*', '!sys.*', '!INFORMATION_SCHEMA.*', '!PERFORMANCE_SCHEMA.*', '!METRICS_SCHEMA.*', '!INSPECTION_SCHEMA.*']
 
 # CSV files are imported according to MySQL's LOAD DATA INFILE rules.
 [mydumper.csv]

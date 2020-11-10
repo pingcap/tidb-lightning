@@ -29,14 +29,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/ratelimit"
-
-	"github.com/google/btree"
-
-	"github.com/pingcap/tidb/util/hack"
-
 	"github.com/cockroachdb/pebble"
 	"github.com/coreos/go-semver/semver"
+	"github.com/google/btree"
+	"github.com/google/uuid"
 	split "github.com/pingcap/br/pkg/restore"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -47,7 +43,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
-	uuid "github.com/satori/go.uuid"
+	"github.com/pingcap/tidb/util/hack"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -75,7 +71,7 @@ const (
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
 	regionMaxKeyCount = 1_440_000
 
-	PROP_RANGE_INDEX = "tikv.range_index"
+	propRangeIndex = "tikv.range_index"
 
 	defaultPropSizeIndexDistance = 4 * 1024 * 1024 // 4MB
 	defaultPropKeysIndexDistance = 40 * 1024
@@ -127,33 +123,23 @@ func (e *LocalFile) Cleanup(dataDir string) error {
 func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 	sstables, err := e.db.SSTables(pebble.WithProperties())
 	if err != nil {
-		log.L().Warn("get table properties failed", zap.Stringer("engine", e.Uuid), zap.Error(err))
+		log.L().Warn("get table properties failed", zap.Stringer("engine", e.Uuid), log.ShortError(err))
 		return nil, errors.Trace(err)
 	}
 
 	sizeProps := newSizeProperties()
 	for _, level := range sstables {
 		for _, info := range level {
-			if prop, ok := info.Properties.UserProperties[PROP_RANGE_INDEX]; ok {
+			if prop, ok := info.Properties.UserProperties[propRangeIndex]; ok {
 				data := hack.Slice(prop)
 				rangeProps, err := decodeRangeProperties(data)
 				if err != nil {
 					log.L().Warn("decodeRangeProperties failed", zap.Stringer("engine", e.Uuid),
-						zap.Stringer("fileNum", info.FileNum), zap.Error(err))
+						zap.Stringer("fileNum", info.FileNum), log.ShortError(err))
 					return nil, errors.Trace(err)
 				}
 
-				prevRange := rangeOffsets{}
-				for _, r := range rangeProps {
-					sizeProps.add(&rangeProperty{
-						Key:          r.Key,
-						rangeOffsets: rangeOffsets{Keys: r.Keys - prevRange.Keys, Size: r.Size - prevRange.Size},
-					})
-					prevRange = r.rangeOffsets
-				}
-				if len(rangeProps) > 0 {
-					sizeProps.totalSize = rangeProps[len(rangeProps)-1].Size
-				}
+				sizeProps.addAll(rangeProps)
 			}
 		}
 	}
@@ -175,22 +161,6 @@ func (conns *gRPCConns) Close() {
 	}
 }
 
-type rateLimiterPool struct {
-	sync.Mutex
-	pool       map[uint64]RateLimiter
-	newLimiter func() RateLimiter
-}
-
-func (p *rateLimiterPool) GetRateLimiter(storeID uint64) RateLimiter {
-	p.Lock()
-	limiter, ok := p.pool[storeID]
-	if !ok {
-		limiter := p.newLimiter()
-		p.pool[storeID] = limiter
-	}
-	return limiter
-}
-
 type local struct {
 	engines  sync.Map
 	conns    gRPCConns
@@ -207,8 +177,6 @@ type local struct {
 	checkpointEnabled bool
 
 	tcpConcurrency int
-
-	limiterPool rateLimiterPool
 }
 
 // connPool is a lazy pool of gRPC channels.
@@ -280,7 +248,6 @@ func NewLocalBackend(
 	rangeConcurrency int,
 	sendKVPairs int,
 	enableCheckpoint bool,
-	rateLimitation int64,
 ) (Backend, error) {
 	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
@@ -320,11 +287,6 @@ func NewLocalBackend(
 		tcpConcurrency:    rangeConcurrency,
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
-		limiterPool: rateLimiterPool{
-			newLimiter: func() RateLimiter {
-				return newRateLimiter(rateLimitation, rangeConcurrency)
-			},
-		},
 	}
 	local.conns.conns = make(map[uint64]*connPool)
 	return MakeBackend(local), nil
@@ -558,8 +520,9 @@ func (local *local) WriteToTiKV(
 	iter.Last()
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
 
+	u := uuid.New()
 	meta := &sst.SSTMeta{
-		Uuid:        uuid.NewV4().Bytes(),
+		Uuid:        u[:],
 		RegionId:    region.Region.GetId(),
 		RegionEpoch: region.Region.GetRegionEpoch(),
 		Range: &sst.Range{
@@ -721,6 +684,31 @@ func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split
 	return resp, nil
 }
 
+func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []Range {
+	ranges := make([]Range, 0, sizeProps.totalSize/uint64(sizeLimit))
+	curSize := uint64(0)
+	curKeys := uint64(0)
+	curKey := fullRange.start
+	sizeProps.iter(func(p *rangeProperty) bool {
+		curSize += p.Size
+		curKeys += p.Keys
+		if int64(curSize) >= sizeLimit || int64(curKeys) >= keysLimit {
+			ranges = append(ranges, Range{start: curKey, end: p.Key})
+			curKey = p.Key
+			curSize = 0
+			curKeys = 0
+		}
+		return true
+	})
+
+	if curKeys > 0 {
+		ranges = append(ranges, Range{start: curKey, end: fullRange.end})
+	} else {
+		ranges[len(ranges)-1].end = fullRange.end
+	}
+	return ranges
+}
+
 func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error) {
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
@@ -749,27 +737,8 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 		return nil, errors.Trace(err)
 	}
 
-	ranges := make([]Range, 0, engineFile.TotalSize/local.regionSplitSize)
-	curSize := uint64(0)
-	curKeys := uint64(0)
-	curKey := firstKey
-	sizeProps.iter(func(p *rangeProperty) bool {
-		curSize += p.Size
-		curKeys += p.Keys
-		if int64(curSize) >= local.regionSplitSize || curKeys >= regionMaxKeyCount*2/3 {
-			ranges = append(ranges, Range{start: curKey, end: p.Key})
-			curKey = p.Key
-			curSize = 0
-			curKeys = 0
-		}
-		return true
-	})
-
-	if curKeys > 0 {
-		ranges = append(ranges, Range{start: curKey, end: endKey})
-	} else {
-		ranges[len(ranges)-1].end = endKey
-	}
+	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
+		local.regionSplitSize, regionMaxKeyCount*2/3)
 
 	log.L().Info("split engine key ranges", zap.Stringer("engine", engineFile.Uuid),
 		zap.Int64("totalSize", engineFile.TotalSize), zap.Int64("totalCount", engineFile.Length),
@@ -1134,7 +1103,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 	lf := engineFile.(*LocalFile)
 	if lf.TotalSize == 0 {
-		log.L().Info("engine contains not kv, skip import", zap.Stringer("engine", engineUUID))
+		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
 
@@ -1423,6 +1392,13 @@ func (r rangeProperties) Encode() []byte {
 	return b
 }
 
+func (r rangeProperties) get(key []byte) rangeOffsets {
+	idx := sort.Search(len(r), func(i int) bool {
+		return bytes.Compare(r[i].Key, key) >= 0
+	})
+	return r[idx].rangeOffsets
+}
+
 type RangePropertiesCollector struct {
 	props               rangeProperties
 	lastOffsets         rangeOffsets
@@ -1471,13 +1447,13 @@ func (c *RangePropertiesCollector) Finish(userProps map[string]string) error {
 		c.insertNewPoint(c.lastKey)
 	}
 
-	userProps[PROP_RANGE_INDEX] = string(hack.String(c.props.Encode()))
+	userProps[propRangeIndex] = string(c.props.Encode())
 	return nil
 }
 
 // The name of the property collector.
 func (c *RangePropertiesCollector) Name() string {
-	return PROP_RANGE_INDEX
+	return propRangeIndex
 }
 
 type sizeProperties struct {
@@ -1490,43 +1466,31 @@ func newSizeProperties() *sizeProperties {
 }
 
 func (s *sizeProperties) add(item *rangeProperty) {
-	s.indexHandles.ReplaceOrInsert(item)
+	if old := s.indexHandles.ReplaceOrInsert(item); old != nil {
+		o := old.(*rangeProperty)
+		item.Keys += o.Keys
+		item.Size += o.Size
+	}
 }
 
-// iter the tree unit f return false
+func (s *sizeProperties) addAll(props rangeProperties) {
+	prevRange := rangeOffsets{}
+	for _, r := range props {
+		s.add(&rangeProperty{
+			Key:          r.Key,
+			rangeOffsets: rangeOffsets{Keys: r.Keys - prevRange.Keys, Size: r.Size - prevRange.Size},
+		})
+		prevRange = r.rangeOffsets
+	}
+	if len(props) > 0 {
+		s.totalSize = props[len(props)-1].Size
+	}
+}
+
+// iter the tree until f return false
 func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 	s.indexHandles.Ascend(func(i btree.Item) bool {
 		prop := i.(*rangeProperty)
 		return f(prop)
 	})
-}
-
-func newRateLimiter(rate int64, concurrency int) RateLimiter {
-	if rate == 0 {
-		return &unlimitedLimiter{}
-	}
-	return &bucketRateLimiter{
-		bucket: ratelimit.NewBucketWithRate(float64(rate), int64(concurrency)),
-	}
-}
-
-// RateLimit limit the read/write limit
-type RateLimiter interface {
-	// Consumes several bytes from the speed limiter. if write rate reaches the limit,
-	// call `Consume` will sleep until available
-	Consume(context.Context, int64)
-}
-
-type unlimitedLimiter struct{}
-
-func (l *unlimitedLimiter) Consume(ctx context.Context, bytes int64) {
-	return
-}
-
-type bucketRateLimiter struct {
-	bucket *ratelimit.Bucket
-}
-
-func (l *bucketRateLimiter) Consume(ctx context.Context, bytes int64) {
-	l.bucket.Wait(bytes)
 }
