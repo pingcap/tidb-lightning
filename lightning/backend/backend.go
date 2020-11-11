@@ -125,7 +125,7 @@ type AbstractBackend interface {
 
 	// CheckRequirements performs the check whether the backend satisfies the
 	// version requirements
-	CheckRequirements() error
+	CheckRequirements(ctx context.Context) error
 
 	// FetchRemoteTableModels obtains the models of all tables given the schema
 	// name. The returned table info does not need to be precise if the encoder,
@@ -142,9 +142,9 @@ type AbstractBackend interface {
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
 }
 
-func fetchRemoteTableModelsFromTLS(tls *common.TLS, schema string) ([]*model.TableInfo, error) {
+func fetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {
 	var tables []*model.TableInfo
-	err := tls.GetJSON("/schema/"+schema, &tables)
+	err := tls.GetJSONWithContext(ctx, "/schema/"+schema, &tables)
 	if err != nil {
 		return nil, errors.Annotatef(err, "cannot read schema '%s' from remote", schema)
 	}
@@ -204,8 +204,8 @@ func (be Backend) ShouldPostProcess() bool {
 	return be.abstract.ShouldPostProcess()
 }
 
-func (be Backend) CheckRequirements() error {
-	return be.abstract.CheckRequirements()
+func (be Backend) CheckRequirements(ctx context.Context) error {
+	return be.abstract.CheckRequirements(ctx)
 }
 
 func (be Backend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {

@@ -49,14 +49,14 @@ type ChecksumManager interface {
 	Checksum(ctx context.Context, tableInfo *TidbTableInfo) (*RemoteChecksum, error)
 }
 
-func newChecksumManager(rc *RestoreController) (ChecksumManager, error) {
+func newChecksumManager(ctx context.Context, rc *RestoreController) (ChecksumManager, error) {
 	// if we don't need checksum, just return nil
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 		return nil, nil
 	}
 
 	pdAddr := rc.cfg.TiDB.PdAddr
-	pdVersion, err := common.FetchPDVersion(rc.tls, pdAddr)
+	pdVersion, err := common.FetchPDVersion(ctx, rc.tls, pdAddr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -14,6 +14,7 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -40,6 +41,7 @@ func (s *checkReqSuite) TestCheckVersion(c *C) {
 
 func (s *checkReqSuite) TestCheckTiDBVersion(c *C) {
 	var version string
+	ctx := context.Background()
 
 	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		c.Assert(req.URL.Path, Equals, "/status")
@@ -53,14 +55,15 @@ func (s *checkReqSuite) TestCheckTiDBVersion(c *C) {
 	tls := common.NewTLSFromMockServer(mockServer)
 
 	version = "5.7.25-TiDB-v9999.0.0"
-	c.Assert(checkTiDBVersion(tls, requiredTiDBVersion), IsNil)
+	c.Assert(checkTiDBVersion(ctx, tls, requiredTiDBVersion), IsNil)
 
 	version = "5.7.25-TiDB-v1.0.0"
-	c.Assert(checkTiDBVersion(tls, requiredTiDBVersion), ErrorMatches, "TiDB version too old.*")
+	c.Assert(checkTiDBVersion(ctx, tls, requiredTiDBVersion), ErrorMatches, "TiDB version too old.*")
 }
 
 func (s *checkReqSuite) TestCheckPDVersion(c *C) {
 	var version string
+	ctx := context.Background()
 
 	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		c.Assert(req.URL.Path, Equals, "/pd/api/v1/config/cluster-version")
@@ -74,14 +77,15 @@ func (s *checkReqSuite) TestCheckPDVersion(c *C) {
 	tls := common.NewTLSFromMockServer(mockServer)
 
 	version = "9999.0.0"
-	c.Assert(checkPDVersion(tls, mockURL.Host, requiredPDVersion), IsNil)
+	c.Assert(checkPDVersion(ctx, tls, mockURL.Host, requiredPDVersion), IsNil)
 
 	version = "1.0.0"
-	c.Assert(checkPDVersion(tls, mockURL.Host, requiredPDVersion), ErrorMatches, "PD version too old.*")
+	c.Assert(checkPDVersion(ctx, tls, mockURL.Host, requiredPDVersion), ErrorMatches, "PD version too old.*")
 }
 
 func (s *checkReqSuite) TestCheckTiKVVersion(c *C) {
 	var versions []string
+	ctx := context.Background()
 
 	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		c.Assert(req.URL.Path, Equals, "/pd/api/v1/stores")
@@ -108,11 +112,11 @@ func (s *checkReqSuite) TestCheckTiKVVersion(c *C) {
 	tls := common.NewTLSFromMockServer(mockServer)
 
 	versions = []string{"9999.0.0", "9999.0.0"}
-	c.Assert(checkTiKVVersion(tls, mockURL.Host, requiredTiKVVersion), IsNil)
+	c.Assert(checkTiKVVersion(ctx, tls, mockURL.Host, requiredTiKVVersion), IsNil)
 
 	versions = []string{"4.1.0", "v4.1.0-alpha-9-ga27a7dd"}
-	c.Assert(checkTiKVVersion(tls, mockURL.Host, requiredTiKVVersion), IsNil)
+	c.Assert(checkTiKVVersion(ctx, tls, mockURL.Host, requiredTiKVVersion), IsNil)
 
 	versions = []string{"9999.0.0", "1.0.0"}
-	c.Assert(checkTiKVVersion(tls, mockURL.Host, requiredTiKVVersion), ErrorMatches, `TiKV \(at tikv1\.test:20160\) version too old.*`)
+	c.Assert(checkTiKVVersion(ctx, tls, mockURL.Host, requiredTiKVVersion), ErrorMatches, `TiKV \(at tikv1\.test:20160\) version too old.*`)
 }

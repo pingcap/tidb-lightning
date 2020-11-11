@@ -14,6 +14,7 @@
 package common
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"io/ioutil"
@@ -146,7 +147,11 @@ func (tc *TLS) WrapListener(l net.Listener) net.Listener {
 
 // GetJSON obtains JSON result with the HTTP GET method.
 func (tc *TLS) GetJSON(path string, v interface{}) error {
-	return GetJSON(tc.client, tc.url+path, v)
+	return tc.GetJSONWithContext(context.TODO(), path, v)
+}
+
+func (tc *TLS) GetJSONWithContext(ctx context.Context, path string, v interface{}) error {
+	return GetJSON(ctx, tc.client, tc.url+path, v)
 }
 
 func (tc *TLS) ToPDSecurityOption() pd.SecurityOption {

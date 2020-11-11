@@ -113,7 +113,7 @@ func ForAllStores(
 			Store Store
 		}
 	}
-	err := tls.GetJSON("/pd/api/v1/stores", &stores)
+	err := tls.GetJSONWithContext(ctx, "/pd/api/v1/stores", &stores)
 	if err != nil {
 		return err
 	}

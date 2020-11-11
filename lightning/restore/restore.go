@@ -678,7 +678,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	manager, err := newChecksumManager(rc)
+	manager, err := newChecksumManager(ctx, rc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1301,12 +1301,12 @@ func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.Swit
 	)
 }
 
-func (rc *RestoreController) checkRequirements(_ context.Context) error {
+func (rc *RestoreController) checkRequirements(ctx context.Context) error {
 	// skip requirement check if explicitly turned off
 	if !rc.cfg.App.CheckRequirements {
 		return nil
 	}
-	return rc.backend.CheckRequirements()
+	return rc.backend.CheckRequirements(ctx)
 }
 
 func (rc *RestoreController) setGlobalVariables(ctx context.Context) error {

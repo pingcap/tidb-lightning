@@ -240,22 +240,22 @@ func (*importer) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
 	return NewTableKVEncoder(tbl, options)
 }
 
-func (importer *importer) CheckRequirements() error {
-	if err := checkTiDBVersion(importer.tls, requiredTiDBVersion); err != nil {
+func (importer *importer) CheckRequirements(ctx context.Context) error {
+	if err := checkTiDBVersion(ctx, importer.tls, requiredTiDBVersion); err != nil {
 		return err
 	}
-	if err := checkPDVersion(importer.tls, importer.pdAddr, requiredPDVersion); err != nil {
+	if err := checkPDVersion(ctx, importer.tls, importer.pdAddr, requiredPDVersion); err != nil {
 		return err
 	}
-	if err := checkTiKVVersion(importer.tls, importer.pdAddr, requiredTiKVVersion); err != nil {
+	if err := checkTiKVVersion(ctx, importer.tls, importer.pdAddr, requiredTiKVVersion); err != nil {
 		return err
 	}
 	return nil
 }
 
-func checkTiDBVersion(tls *common.TLS, requiredVersion semver.Version) error {
+func checkTiDBVersion(ctx context.Context, tls *common.TLS, requiredVersion semver.Version) error {
 	var status struct{ Version string }
-	err := tls.GetJSON("/status", &status)
+	err := tls.GetJSONWithContext(ctx, "/status", &status)
 	if err != nil {
 		return err
 	}
@@ -267,8 +267,8 @@ func checkTiDBVersion(tls *common.TLS, requiredVersion semver.Version) error {
 	return checkVersion("TiDB", requiredVersion, *version)
 }
 
-func checkPDVersion(tls *common.TLS, pdAddr string, requiredVersion semver.Version) error {
-	version, err := common.FetchPDVersion(tls, pdAddr)
+func checkPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredVersion semver.Version) error {
+	version, err := common.FetchPDVersion(ctx, tls, pdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -276,9 +276,9 @@ func checkPDVersion(tls *common.TLS, pdAddr string, requiredVersion semver.Versi
 	return checkVersion("PD", requiredVersion, *version)
 }
 
-func checkTiKVVersion(tls *common.TLS, pdAddr string, requiredVersion semver.Version) error {
+func checkTiKVVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredVersion semver.Version) error {
 	return ForAllStores(
-		context.Background(),
+		ctx,
 		tls.WithHost(pdAddr),
 		StoreStateDown,
 		func(c context.Context, store *Store) error {
@@ -305,5 +305,5 @@ func checkVersion(component string, expected, actual semver.Version) error {
 }
 
 func (importer *importer) FetchRemoteTableModels(ctx context.Context, schema string) ([]*model.TableInfo, error) {
-	return fetchRemoteTableModelsFromTLS(importer.tls, schema)
+	return fetchRemoteTableModelsFromTLS(ctx, importer.tls, schema)
 }

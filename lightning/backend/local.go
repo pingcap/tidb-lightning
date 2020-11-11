@@ -249,7 +249,7 @@ func NewLocalBackend(
 	sendKVPairs int,
 	enableCheckpoint bool,
 ) (Backend, error) {
-	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
+	pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
 	}
@@ -1169,21 +1169,21 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	return nil
 }
 
-func (local *local) CheckRequirements() error {
-	if err := checkTiDBVersion(local.tls, localMinTiDBVersion); err != nil {
+func (local *local) CheckRequirements(ctx context.Context) error {
+	if err := checkTiDBVersion(ctx, local.tls, localMinTiDBVersion); err != nil {
 		return err
 	}
-	if err := checkPDVersion(local.tls, local.pdAddr, localMinPDVersion); err != nil {
+	if err := checkPDVersion(ctx, local.tls, local.pdAddr, localMinPDVersion); err != nil {
 		return err
 	}
-	if err := checkTiKVVersion(local.tls, local.pdAddr, localMinTiKVVersion); err != nil {
+	if err := checkTiKVVersion(ctx, local.tls, local.pdAddr, localMinTiKVVersion); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return fetchRemoteTableModelsFromTLS(local.tls, schemaName)
+	return fetchRemoteTableModelsFromTLS(ctx, local.tls, schemaName)
 }
 
 func (local *local) WriteRows(
