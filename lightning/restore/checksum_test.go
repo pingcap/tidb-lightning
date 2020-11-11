@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -160,7 +161,7 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 	pdClient := &testPDClient{}
 	resp := tipb.ChecksumResponse{Checksum: 123, TotalKvs: 10, TotalBytes: 1000}
 	kvClient := &mockChecksumKVClient{checksum: resp, respDur: time.Second * 5}
-	checksumExec := &tikvChecksumManager{manager: gcTTLManager{pdClient: pdClient}, client: kvClient}
+	checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
 
 	// mock a table info
 	p := parser.New()
@@ -229,6 +230,9 @@ func (c *testPDClient) currentSafePoint() uint64 {
 }
 
 func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	if !strings.HasPrefix(serviceID, "lightning") {
+		panic("service ID must start with 'lightning'")
+	}
 	atomic.AddInt32(&c.count, 1)
 	c.Lock()
 	idx := sort.Search(len(c.gcSafePoint), func(i int) bool {
@@ -253,7 +257,8 @@ func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 
 func (s *checksumSuite) TestGcTTLManagerSingle(c *C) {
 	pdClient := &testPDClient{}
-	manager := gcTTLManager{pdClient: pdClient}
+	manager := newGCTTLManager(pdClient)
+	c.Assert(manager.serviceID != "", IsTrue)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	oldTTL := serviceSafePointTTL
@@ -280,7 +285,7 @@ func (s *checksumSuite) TestGcTTLManagerSingle(c *C) {
 }
 
 func (s *checksumSuite) TestGcTTLManagerMulti(c *C) {
-	manager := gcTTLManager{pdClient: &testPDClient{}}
+	manager := newGCTTLManager(&testPDClient{})
 	ctx := context.Background()
 
 	for i := uint64(1); i <= 5; i++ {
@@ -303,6 +308,16 @@ func (s *checksumSuite) TestGcTTLManagerMulti(c *C) {
 
 	manager.removeOneJob("test5")
 	c.Assert(manager.currentTs, Equals, uint64(0))
+}
+
+func (s *checksumSuite) TestPdServiceID(c *C) {
+	pdCli := &testPDClient{}
+	gcTTLManager1 := newGCTTLManager(pdCli)
+	c.Assert(gcTTLManager1.serviceID, Matches, "lightning-.*")
+	gcTTLManager2 := newGCTTLManager(pdCli)
+	c.Assert(gcTTLManager2.serviceID, Matches, "lightning-.*")
+
+	c.Assert(gcTTLManager1.serviceID != gcTTLManager2.serviceID, IsTrue)
 }
 
 type mockResponse struct {

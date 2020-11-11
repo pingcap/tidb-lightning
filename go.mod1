@@ -35,8 +35,8 @@ require (
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tikv/pd v1.1.0-beta.0.20200910042021-254d1345be09
-	github.com/xitongsys/parquet-go v1.5.4
-	github.com/xitongsys/parquet-go-source v0.0.0-20201014235637-c24a23d9ef1e
+	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457
+	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/net v0.0.0-20200904194848-62affa334b73
