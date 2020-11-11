@@ -2,10 +2,14 @@ package backend
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"math/rand"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	. "github.com/pingcap/check"
@@ -231,4 +235,24 @@ func (s *localSuite) TestRangePropertiesWithPebble(c *C) {
 	}
 
 	c.Assert(sstMetas[0][0].Properties.UserProperties, DeepEquals, props)
+}
+
+func (s *localSuite) TestRateLimiter(c *C) {
+	limiter := newRateLimiter(20, 5)
+	start := time.Now()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(i int) {
+			for j := 0; j < 10; j++ {
+				limiter.Consume(ctx, 1)
+			}
+			fmt.Printf("runner: %d, cost time: %v\n", i, time.Since(start))
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
 }

@@ -654,7 +654,7 @@ func (local *local) WriteToTiKV(
 
 		if count >= local.batchWriteKVPairs {
 			for i := range clients {
-				limiters[i].Consume(ctx, int64(count))
+				limiters[i].Consume(ctx, size)
 				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 				if err := clients[i].Send(requests[i]); err != nil {
 					return nil, nil, err
