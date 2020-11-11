@@ -40,6 +40,44 @@ func (t *testFileRouterSuite) TestRouteParser(c *C) {
 	}
 }
 
+func (t *testFileRouterSuite) TestInvalidRouteRule(c *C) {
+	rule := &config.FileRouteRule{
+		Schema:      "$1",
+		Table:       "$table",
+		Type:        "$type",
+		Key:         "$key",
+		Compression: "$cp",
+	}
+	rule = &config.FileRouteRule{}
+	rules := []*config.FileRouteRule{rule}
+	_, err := NewFileRouter(rules)
+	c.Assert(err, ErrorMatches, "`path` and `pattern` must not be both empty in \\[\\[mydumper.files\\]\\]")
+
+	rule.Pattern = `^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`
+	_, err = NewFileRouter(rules)
+	c.Assert(err, ErrorMatches, "field 'type' match pattern can't be empty")
+
+	rule.Type = "$type"
+	_, err = NewFileRouter(rules)
+	c.Assert(err, ErrorMatches, "field 'schema' match pattern can't be empty")
+
+	rule.Schema = "$schema"
+	_, err = NewFileRouter(rules)
+	c.Assert(err, ErrorMatches, "invalid named capture '\\$schema'")
+
+	rule.Schema = "$1"
+	_, err = NewFileRouter(rules)
+	c.Assert(err, ErrorMatches, "field 'table' match pattern can't be empty")
+
+	rule.Table = "$table"
+	_, err = NewFileRouter(rules)
+	c.Assert(err, IsNil)
+
+	rule.Path = "/tmp/1.sql"
+	_, err = NewFileRouter(rules)
+	c.Assert(err, ErrorMatches, "can't set both `path` and `pattern` field in \\[\\[mydumper.files\\]\\]")
+}
+
 func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 	rules := []*config.FileRouteRule{
 		{Pattern: `^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "$1", Table: "$table", Type: "$type", Key: "$key", Compression: "$cp"},

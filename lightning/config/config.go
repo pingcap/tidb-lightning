@@ -479,6 +479,23 @@ func (cfg *Config) Adjust() error {
 		}
 	}
 
+	// adjust file routing
+	for _, rule := range cfg.Mydumper.FileRouters {
+		if rule.Path != "" {
+			if filepath.IsAbs(rule.Path) {
+				relPath, err := filepath.Rel(cfg.Mydumper.SourceDir, rule.Path)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				// ".." means that this path is not in source dir, so we should return an error
+				if strings.HasPrefix(relPath, "..") {
+					return errors.Errorf("file route path '%s' is not in source dir '%s'", rule.Path, cfg.Mydumper.SourceDir)
+				}
+				rule.Path = relPath
+			}
+		}
+	}
+
 	// enable default file route rule if no rules are set
 	if len(cfg.Mydumper.FileRouters) == 0 {
 		cfg.Mydumper.DefaultFileRules = true
