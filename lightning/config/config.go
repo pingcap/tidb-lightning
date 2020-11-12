@@ -601,12 +601,9 @@ func (cfg *Config) Adjust() error {
 
 	// handle mydumper
 	if cfg.Mydumper.BatchSize <= 0 {
-		// a smaller batch size can improve performance by about 5% in local mode.
-		if cfg.TikvImporter.Backend == BackendLocal {
-			cfg.Mydumper.BatchSize = 10 * _G
-		} else {
-			cfg.Mydumper.BatchSize = 100 * _G
-		}
+		// if rows in source files are not sorted by primary key(if primary is number or cluster index enabled),
+		// the key range in each data engine may have overlap, thus a bigger engine size can somewhat alleviate it.
+		cfg.Mydumper.BatchSize = 100 * _G
 
 	}
 	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
