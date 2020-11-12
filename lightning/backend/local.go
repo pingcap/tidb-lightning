@@ -631,13 +631,16 @@ func (local *local) WriteToTiKV(
 	defer bytesBuf.destroy()
 	pairs := make([]*sst.Pair, 0, local.batchWriteKVPairs)
 	count := 0
+	totalSize := int64(0)
 	size := int64(0)
 	totalCount := 0
 	firstLoop := true
 	regionMaxSize := local.regionSplitSize * 4 / 3
 
 	for iter.First(); iter.Valid(); iter.Next() {
-		size += int64(len(iter.Key()) + len(iter.Value()))
+		kvLen := int64(len(iter.Key()) + len(iter.Value()))
+		size += kvLen
+		totalSize += kvLen
 		// here we reuse the `*sst.Pair`s to optimize object allocation
 		if firstLoop {
 			pair := &sst.Pair{
@@ -660,18 +663,19 @@ func (local *local) WriteToTiKV(
 					return nil, nil, err
 				}
 			}
+			size = 0
 			count = 0
 			bytesBuf.reset()
 			firstLoop = false
 		}
-		if size >= regionMaxSize || totalCount >= regionMaxKeyCount {
+		if totalSize >= regionMaxSize || totalCount >= regionMaxKeyCount {
 			break
 		}
 	}
 
 	if count > 0 {
 		for i := range clients {
-			limiters[i].Consume(ctx, int64(count))
+			limiters[i].Consume(ctx, size)
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
 				return nil, nil, err
@@ -699,14 +703,14 @@ func (local *local) WriteToTiKV(
 	if leaderPeerMetas == nil {
 		log.L().Warn("write to tikv no leader", zap.Reflect("region", region),
 			zap.Uint64("leader_id", leaderID), zap.Reflect("meta", meta),
-			zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size))
+			zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
 		return nil, nil, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
 			region.Region.Id, leaderID)
 	}
 
 	log.L().Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
-		zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size),
+		zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
 		zap.Int64("buf_size", bytesBuf.totalSize()),
 		zap.Stringer("takeTime", time.Since(begin)))
 
@@ -715,7 +719,7 @@ func (local *local) WriteToTiKV(
 		firstKey := append([]byte{}, iter.Key()...)
 		remainRange = &Range{start: firstKey, end: endKey}
 		log.L().Info("write to tikv partial finish", zap.Int("count", totalCount),
-			zap.Int64("size", size), zap.Binary("startKey", startKey), zap.Binary("endKey", endKey),
+			zap.Int64("totalSize", totalSize), zap.Binary("startKey", startKey), zap.Binary("endKey", endKey),
 			zap.Binary("remainStart", remainRange.start), zap.Binary("remainEnd", remainRange.end),
 			zap.Reflect("region", region))
 	}

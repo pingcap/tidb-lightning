@@ -238,7 +238,7 @@ func (s *localSuite) TestRangePropertiesWithPebble(c *C) {
 }
 
 func (s *localSuite) TestRateLimiter(c *C) {
-	limiter := newRateLimiter(20, 5)
+	limiter := newRateLimiter(100, 5)
 	start := time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -247,8 +247,8 @@ func (s *localSuite) TestRateLimiter(c *C) {
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(i int) {
-			for j := 0; j < 10; j++ {
-				limiter.Consume(ctx, 1)
+			for j := 0; j < 100; j++ {
+				limiter.Consume(ctx, 5)
 			}
 			fmt.Printf("runner: %d, cost time: %v\n", i, time.Since(start))
 			wg.Done()
