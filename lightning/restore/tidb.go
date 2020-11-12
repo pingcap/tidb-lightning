@@ -265,7 +265,7 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 }
 
 func ObtainRowFormatVersion(ctx context.Context, g glue.SQLExecutor) string {
-	rowFormatVersion, err := g.ObtainStringLog(
+	rowFormatVersion, err := g.ObtainStringWithLog(
 		ctx,
 		"SELECT @@tidb_row_format_version",
 		"obtain row format version",
@@ -279,7 +279,7 @@ func ObtainRowFormatVersion(ctx context.Context, g glue.SQLExecutor) string {
 
 func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
 	newCollationEnabled := false
-	newCollationVal, err := g.ObtainStringLog(
+	newCollationVal, err := g.ObtainStringWithLog(
 		ctx,
 		"SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'",
 		"obtain new collation enabled",

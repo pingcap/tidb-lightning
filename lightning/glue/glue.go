@@ -38,7 +38,7 @@ type Glue interface {
 
 type SQLExecutor interface {
 	ExecuteWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) error
-	ObtainStringLog(ctx context.Context, query string, purpose string, logger *zap.Logger) (string, error)
+	ObtainStringWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) (string, error)
 	Close()
 }
 
@@ -66,7 +66,7 @@ func (e ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, purp
 	return sql.Exec(ctx, purpose, query)
 }
 
-func (e ExternalTiDBGlue) ObtainStringLog(ctx context.Context, query string, purpose string, logger *zap.Logger) (string, error) {
+func (e ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) (string, error) {
 	var s string
 	err := common.SQLWithRetry{
 		DB:     e.db,
