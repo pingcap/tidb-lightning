@@ -132,6 +132,25 @@ func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend` \\(no_such_backend\\)")
 }
 
+func (s *configTestSuite) TestAdjustFileRoutePath(c *C) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+
+	tmpDir := c.MkDir()
+	cfg.Mydumper.SourceDir = tmpDir
+	invalidPath := filepath.Join(tmpDir, "../test123/1.sql")
+	rule := &config.FileRouteRule{Path: invalidPath, Type: "sql", Schema: "test", Table: "tbl"}
+	cfg.Mydumper.FileRouters = []*config.FileRouteRule{rule}
+	err := cfg.Adjust()
+	c.Assert(err, ErrorMatches, fmt.Sprintf("file route path '%s' is not in source dir '%s'", invalidPath, tmpDir))
+
+	relPath := "test_dir/1.sql"
+	rule.Path = filepath.Join(tmpDir, relPath)
+	err = cfg.Adjust()
+	c.Assert(err, IsNil)
+	c.Assert(cfg.Mydumper.FileRouters[0].Path, Equals, relPath)
+}
+
 func (s *configTestSuite) TestDecodeError(c *C) {
 	ts, host, port := startMockServer(c, http.StatusOK, "invalid-string")
 	defer ts.Close()
