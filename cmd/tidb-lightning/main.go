@@ -14,12 +14,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"runtime/debug"
 	"syscall"
 
+	"github.com/pingcap/tidb-lightning/lightning/glue"
+	"github.com/pingcap/tidb-lightning/lightning/restore"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning"
@@ -28,10 +31,10 @@ import (
 )
 
 func main() {
-	cfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
-	fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s\n\n", cfg.App.Config.File)
+	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
+	fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s\n\n", globalCfg.App.Config.File)
 
-	app := lightning.New(cfg)
+	app := lightning.New(globalCfg)
 
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc,
@@ -59,7 +62,7 @@ func main() {
 	//
 	// Local mode need much more memory than importer/tidb mode, if the gc percentage is too high,
 	// lightning memory usage will also be high.
-	if cfg.TikvImporter.Backend != config.BackendLocal {
+	if globalCfg.TikvImporter.Backend != config.BackendLocal {
 		gogc := os.Getenv("GOGC")
 		if gogc == "" {
 			old := debug.SetGCPercent(500)
@@ -74,11 +77,26 @@ func main() {
 		return
 	}
 
-	if cfg.App.ServerMode {
-		err = app.RunServer()
-	} else {
-		err = app.RunOnce()
-	}
+	err = func() error {
+		if globalCfg.App.ServerMode {
+			return app.RunServer()
+		} else {
+			cfg := config.NewConfig()
+			if err := cfg.LoadFromGlobal(globalCfg); err != nil {
+				return err
+			}
+			if err := cfg.TiDB.Security.RegisterMySQL(); err != nil {
+				return err
+			}
+			db, err := restore.DBFromConfig(cfg.TiDB)
+			if err != nil {
+				return err
+			}
+			g := glue.NewExternalTiDBGlue(db, cfg.TiDB.SQLMode)
+			return app.RunOnce(context.Background(), cfg, g, nil)
+		}
+	}()
+
 	if err != nil {
 		logger.Error("tidb lightning encountered error stack info", zap.Error(err))
 		logger.Error("tidb lightning encountered error", log.ShortError(err))
@@ -89,7 +107,7 @@ func main() {
 	}
 
 	// call Sync() with log to stdout may return error in some case, so just skip it
-	if cfg.App.File != "" {
+	if globalCfg.App.File != "" {
 		syncErr := logger.Sync()
 		if syncErr != nil {
 			fmt.Fprintln(os.Stderr, "sync log failed", syncErr)

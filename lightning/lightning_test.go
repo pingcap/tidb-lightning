@@ -55,18 +55,21 @@ func (s *lightningSuite) TestInitEnv(c *C) {
 }
 
 func (s *lightningSuite) TestRun(c *C) {
-	cfg := config.NewGlobalConfig()
-	cfg.TiDB.Host = "test.invalid"
-	cfg.TiDB.Port = 4000
-	cfg.TiDB.PdAddr = "test.invalid:2379"
-	cfg.Mydumper.SourceDir = "not-exists"
-	lightning := New(cfg)
-	err := lightning.RunOnce()
+	globalConfig := config.NewGlobalConfig()
+	globalConfig.TiDB.Host = "test.invalid"
+	globalConfig.TiDB.Port = 4000
+	globalConfig.TiDB.PdAddr = "test.invalid:2379"
+	globalConfig.Mydumper.SourceDir = "not-exists"
+	lightning := New(globalConfig)
+	cfg := config.NewConfig()
+	err := cfg.LoadFromGlobal(globalConfig)
+	c.Assert(err, IsNil)
+	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
+	err = lightning.RunOnce(context.Background(), cfg, invalidGlue, nil)
 	c.Assert(err, ErrorMatches, ".*mydumper dir does not exist")
 
-	// to bypass error from db.Ping()
-	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
 	path, _ := filepath.Abs(".")
+	lightning.ctx = context.Background()
 	err = lightning.run(&config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
@@ -90,7 +93,7 @@ func (s *lightningSuite) TestRun(c *C) {
 			Driver: "file",
 			DSN:    "any-file",
 		},
-	})
+	}, invalidGlue)
 	c.Assert(err, NotNil)
 }
 
@@ -112,6 +115,7 @@ func (s *lightningServerSuite) SetUpTest(c *C) {
 
 	s.lightning = New(cfg)
 	s.taskCfgCh = make(chan *config.Config)
+	s.lightning.ctx, s.lightning.shutdown = context.WithCancel(context.Background())
 	s.lightning.ctx = context.WithValue(s.lightning.ctx, &taskCfgRecorderKey, s.taskCfgCh)
 	s.lightning.GoServe()
 
@@ -350,8 +354,11 @@ func (s *lightningServerSuite) TestHTTPAPIOutsideServerMode(c *C) {
 	url := "http://" + s.lightning.serverAddr.String() + "/tasks"
 
 	errCh := make(chan error)
+	cfg := config.NewConfig()
+	err := cfg.LoadFromGlobal(s.lightning.globalCfg)
+	c.Assert(err, IsNil)
 	go func() {
-		errCh <- s.lightning.RunOnce()
+		errCh <- s.lightning.RunOnce(s.lightning.ctx, cfg, nil, nil)
 	}()
 	time.Sleep(100 * time.Millisecond)
 
@@ -367,7 +374,7 @@ func (s *lightningServerSuite) TestHTTPAPIOutsideServerMode(c *C) {
 	err = json.NewDecoder(resp.Body).Decode(&curTask)
 	resp.Body.Close()
 	c.Assert(err, IsNil)
-	c.Assert(curTask.Current, Not(Equals), 0)
+	c.Assert(curTask.Current, Not(Equals), int64(0))
 	c.Assert(curTask.Queue, HasLen, 0)
 
 	// `POST /tasks` should return 501

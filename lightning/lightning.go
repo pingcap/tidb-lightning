@@ -81,12 +81,9 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		log.L().Fatal("failed to load TLS certificates", zap.Error(err))
 	}
 
-	ctx, shutdown := context.WithCancel(context.Background())
 	return &Lightning{
 		globalCfg: globalCfg,
 		globalTLS: tls,
-		ctx:       ctx,
-		shutdown:  shutdown,
 	}
 }
 
@@ -169,37 +166,25 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	return nil
 }
 
-// Run Lightning using the global config as the same as the task config.
-func (l *Lightning) RunOnce() error {
-	cfg := config.NewConfig()
-	if err := cfg.LoadFromGlobal(l.globalCfg); err != nil {
-		return err
-	}
-	if err := cfg.Adjust(); err != nil {
-		return err
-	}
-
-	cfg.TaskID = time.Now().UnixNano()
-	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
-		cfg.TaskID = int64(val.(int))
-	})
-	return l.run(cfg)
-}
-
-func (l *Lightning) RunEmbeddedOnce(ctx context.Context, taskCfg *config.Config, logger *zap.Logger, g glue.Glue) error {
+func (l *Lightning) RunOnce(ctx context.Context, taskCfg *config.Config, g glue.Glue, replaceLogger *zap.Logger) error {
 	if err := taskCfg.Adjust(); err != nil {
 		return err
 	}
+	l.ctx, l.shutdown = context.WithCancel(ctx)
+
 	taskCfg.TaskID = time.Now().UnixNano()
 
-	l.shutdown()
-	l.ctx = ctx
-
-	log.SetAppLogger(logger)
+	if replaceLogger != nil {
+		log.SetAppLogger(replaceLogger)
+	}
 	return l.run(taskCfg, g)
 }
 
 func (l *Lightning) RunServer() error {
+	// lightningServerSuite will use a preset context to handle SkipRunTask, so we skip here
+	if l.ctx == nil {
+		l.ctx, l.shutdown = context.WithCancel(context.Background())
+	}
 	l.taskCfgs = config.NewConfigList()
 	log.L().Info(
 		"Lightning server is running, post to /tasks to start an import task",
@@ -211,17 +196,35 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
-		err = l.run(task)
+		// prepare and run a task
+		err = func() error {
+			failpoint.Inject("SkipRunTask", func() {
+				failpoint.Return(l.run(task, nil))
+			})
+
+			if err = task.TiDB.Security.RegisterMySQL(); err != nil {
+				return errors.Trace(err)
+			}
+			db, err := restore.DBFromConfig(task.TiDB)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			g := glue.NewExternalTiDBGlue(db, task.TiDB.SQLMode)
+			return l.run(task, g)
+		}()
 		if err != nil {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
 		}
+		// deregister TLS config with name "cluster"
+		task.TiDB.Security.CAPath = ""
+		task.TiDB.Security.RegisterMySQL()
 	}
 }
 
 var taskCfgRecorderKey struct{}
 
-func (l *Lightning) run(taskCfg *config.Config, glues ...glue.Glue) (err error) {
+func (l *Lightning) run(taskCfg *config.Config, g glue.Glue) (err error) {
 	common.PrintInfo("lightning", func() {
 		log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 	})
@@ -285,20 +288,8 @@ func (l *Lightning) run(taskCfg *config.Config, glues ...glue.Glue) (err error) 
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
-	if err = taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
-		return errors.Trace(err)
-	}
-
-	if len(glues) == 0 {
-		db, err := restore.DBFromConfig(taskCfg.TiDB)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		glues = append(glues, glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode))
-	}
-
 	var procedure *restore.RestoreController
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s, glues[0])
+	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s, g)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
