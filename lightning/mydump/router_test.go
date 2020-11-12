@@ -41,14 +41,7 @@ func (t *testFileRouterSuite) TestRouteParser(c *C) {
 }
 
 func (t *testFileRouterSuite) TestInvalidRouteRule(c *C) {
-	rule := &config.FileRouteRule{
-		Schema:      "$1",
-		Table:       "$table",
-		Type:        "$type",
-		Key:         "$key",
-		Compression: "$cp",
-	}
-	rule = &config.FileRouteRule{}
+	rule := &config.FileRouteRule{}
 	rules := []*config.FileRouteRule{rule}
 	_, err := NewFileRouter(rules)
 	c.Assert(err, ErrorMatches, "`path` and `pattern` must not be both empty in \\[\\[mydumper.files\\]\\]")
