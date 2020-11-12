@@ -81,9 +81,13 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		log.L().Fatal("failed to load TLS certificates", zap.Error(err))
 	}
 
+	ctx, shutdown := context.WithCancel(context.Background())
+
 	return &Lightning{
 		globalCfg: globalCfg,
 		globalTLS: tls,
+		ctx:       ctx,
+		shutdown:  shutdown,
 	}
 }
 
@@ -166,25 +170,20 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	return nil
 }
 
-func (l *Lightning) RunOnce(ctx context.Context, taskCfg *config.Config, g glue.Glue, replaceLogger *zap.Logger) error {
+func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, g glue.Glue, replaceLogger *zap.Logger) error {
 	if err := taskCfg.Adjust(); err != nil {
 		return err
 	}
-	l.ctx, l.shutdown = context.WithCancel(ctx)
 
 	taskCfg.TaskID = time.Now().UnixNano()
 
 	if replaceLogger != nil {
 		log.SetAppLogger(replaceLogger)
 	}
-	return l.run(taskCfg, g)
+	return l.run(taskCtx, taskCfg, g)
 }
 
 func (l *Lightning) RunServer() error {
-	// lightningServerSuite will use a preset context to handle SkipRunTask, so we skip here
-	if l.ctx == nil {
-		l.ctx, l.shutdown = context.WithCancel(context.Background())
-	}
 	l.taskCfgs = config.NewConfigList()
 	log.L().Info(
 		"Lightning server is running, post to /tasks to start an import task",
@@ -196,10 +195,11 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
+
 		// prepare and run a task
 		err = func() error {
 			failpoint.Inject("SkipRunTask", func() {
-				failpoint.Return(l.run(task, nil))
+				failpoint.Return(l.run(l.ctx, task, nil))
 			})
 
 			if err = task.TiDB.Security.RegisterMySQL(); err != nil {
@@ -210,7 +210,7 @@ func (l *Lightning) RunServer() error {
 				return errors.Trace(err)
 			}
 			g := glue.NewExternalTiDBGlue(db, task.TiDB.SQLMode)
-			return l.run(task, g)
+			return l.run(l.ctx, task, g)
 		}()
 		if err != nil {
 			restore.DeliverPauser.Pause() // force pause the progress on error
@@ -224,14 +224,14 @@ func (l *Lightning) RunServer() error {
 
 var taskCfgRecorderKey struct{}
 
-func (l *Lightning) run(taskCfg *config.Config, g glue.Glue) (err error) {
+func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.Glue) (err error) {
 	common.PrintInfo("lightning", func() {
 		log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 	})
 
 	logEnvVariables()
 
-	ctx, cancel := context.WithCancel(l.ctx)
+	ctx, cancel := context.WithCancel(taskCtx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
 	l.curTask = taskCfg
@@ -246,15 +246,15 @@ func (l *Lightning) run(taskCfg *config.Config, g glue.Glue) (err error) {
 		web.BroadcastEndTask(err)
 	}()
 
-	failpoint.Inject("SkipRunTask", func() error {
+	failpoint.Inject("SkipRunTask", func() {
 		if recorder, ok := l.ctx.Value(&taskCfgRecorderKey).(chan *config.Config); ok {
 			select {
 			case recorder <- taskCfg:
 			case <-ctx.Done():
-				return ctx.Err()
+				failpoint.Return(ctx.Err())
 			}
 		}
-		return nil
+		failpoint.Return(nil)
 	})
 
 	if g == nil {

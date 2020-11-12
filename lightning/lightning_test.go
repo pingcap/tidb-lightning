@@ -70,7 +70,7 @@ func (s *lightningSuite) TestRun(c *C) {
 
 	path, _ := filepath.Abs(".")
 	lightning.ctx = context.Background()
-	err = lightning.run(&config.Config{
+	err = lightning.run(lightning.ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
 			Filter:           []string{"*.*"},
@@ -83,7 +83,7 @@ func (s *lightningSuite) TestRun(c *C) {
 	}, invalidGlue)
 	c.Assert(err, ErrorMatches, "Unknown checkpoint driver invalid")
 
-	err = lightning.run(&config.Config{
+	err = lightning.run(lightning.ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir: ".",
 			Filter:    []string{"*.*"},
@@ -115,7 +115,6 @@ func (s *lightningServerSuite) SetUpTest(c *C) {
 
 	s.lightning = New(cfg)
 	s.taskCfgCh = make(chan *config.Config)
-	s.lightning.ctx, s.lightning.shutdown = context.WithCancel(context.Background())
 	s.lightning.ctx = context.WithValue(s.lightning.ctx, &taskCfgRecorderKey, s.taskCfgCh)
 	s.lightning.GoServe()
 
