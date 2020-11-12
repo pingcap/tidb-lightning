@@ -174,17 +174,6 @@ func (l *Lightning) RunOnce(ctx context.Context, taskCfg *config.Config, g glue.
 
 	taskCfg.TaskID = time.Now().UnixNano()
 
-	if g == nil {
-		if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
-			return err
-		}
-		db, err := restore.DBFromConfig(taskCfg.TiDB)
-		if err != nil {
-			return err
-		}
-		g = glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode)
-	}
-
 	if replaceLogger != nil {
 		log.SetAppLogger(replaceLogger)
 	}
@@ -267,6 +256,17 @@ func (l *Lightning) run(taskCfg *config.Config, g glue.Glue) (err error) {
 		}
 		return nil
 	})
+
+	if g == nil {
+		if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
+			return err
+		}
+		db, err := restore.DBFromConfig(taskCfg.TiDB)
+		if err != nil {
+			return err
+		}
+		g = glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode)
+	}
 
 	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, &storage.BackendOptions{})
 	if err != nil {
