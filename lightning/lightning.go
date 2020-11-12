@@ -176,6 +176,9 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, g g
 	}
 
 	taskCfg.TaskID = time.Now().UnixNano()
+	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
+		taskCfg.TaskID = int64(val.(int))
+	})
 
 	if replaceLogger != nil {
 		log.SetAppLogger(replaceLogger)
