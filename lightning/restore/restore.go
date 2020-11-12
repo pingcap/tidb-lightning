@@ -686,6 +686,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 				err := task.tr.restoreTable(ctx2, rc, task.cp)
 				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
+				log.L().Warn("lance test", zap.Error(err), zap.String("error", errors.ErrorStack(err)))
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
