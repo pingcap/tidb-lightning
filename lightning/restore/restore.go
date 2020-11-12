@@ -1576,8 +1576,20 @@ func (t *TableRestore) parseColumnPermutations(columns []string) ([]int, error) 
 }
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
-	names := make([]string, 0, len(permutation))
-	for _, idx := range permutation {
+	colIndexes := make([]int, 0, len(permutation))
+	for i := 0; i < len(permutation); i++ {
+		colIndexes = append(colIndexes, -1)
+	}
+	colCnt := 0
+	for i, p := range permutation {
+		if p >= 0 {
+			colIndexes[p] = i
+			colCnt++
+		}
+	}
+
+	names := make([]string, 0, colCnt)
+	for _, idx := range colIndexes {
 		// skip columns with index -1
 		if idx >= 0 {
 			names = append(names, tableInfo.Columns[idx].Name.O)
@@ -1892,6 +1904,8 @@ func (cr *chunkRestore) restore(
 		SQLMode:          rc.cfg.TiDB.SQLMode,
 		Timestamp:        cr.chunk.Timestamp,
 		RowFormatVersion: rc.rowFormatVer,
+		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
+		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 	})
 	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)

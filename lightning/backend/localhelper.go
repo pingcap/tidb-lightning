@@ -78,11 +78,6 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 				}
 				log.L().Warn("split regions", log.ShortError(errSplit), zap.Int("retry time", i+1),
 					zap.Uint64("region_id", regionID))
-				select {
-				case <-time.After(time.Second):
-				case <-ctx.Done():
-					return ctx.Err()
-				}
 				retryKeys = append(retryKeys, keys...)
 			} else {
 				scatterRegions = append(scatterRegions, newRegions...)
@@ -96,6 +91,11 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 			})
 			minKey = retryKeys[0]
 			maxKey = nextKey(retryKeys[len(retryKeys)-1])
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
 	if errSplit != nil {
