@@ -83,14 +83,6 @@ func main() {
 			if err := cfg.LoadFromGlobal(globalCfg); err != nil {
 				return err
 			}
-			//if err := cfg.TiDB.Security.RegisterMySQL(); err != nil {
-			//	return err
-			//}
-			//db, err := restore.DBFromConfig(cfg.TiDB)
-			//if err != nil {
-			//	return err
-			//}
-			//g := glue.NewExternalTiDBGlue(db, cfg.TiDB.SQLMode)
 			return app.RunOnce(context.Background(), cfg, nil, nil)
 		}
 	}()

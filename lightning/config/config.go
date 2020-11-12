@@ -287,7 +287,7 @@ func (sec *Security) RegisterMySQL() error {
 		return err
 	case tlsConfig != nil:
 		// error happens only when the key coincides with the built-in names.
-		return gomysql.RegisterTLSConfig("cluster", tlsConfig)
+		_ = gomysql.RegisterTLSConfig("cluster", tlsConfig)
 	default:
 		gomysql.DeregisterTLSConfig("cluster")
 	}
