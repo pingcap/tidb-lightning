@@ -243,9 +243,7 @@ func NewRestoreControllerWithPauser(
 
 func (rc *RestoreController) Close() {
 	rc.backend.Close()
-	if rc.tidbGlue.OwnsSQLExecutor() {
-		rc.tidbGlue.GetSQLExecutor().Close()
-	}
+	rc.tidbGlue.GetSQLExecutor().Close()
 }
 
 func (rc *RestoreController) Run(ctx context.Context) error {
