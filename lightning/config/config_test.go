@@ -15,6 +15,7 @@ package config_test
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"net"
@@ -77,7 +78,7 @@ func (s *configTestSuite) TestAdjustPdAddrAndPort(c *C) {
 	cfg.TiDB.StatusPort = port
 	cfg.Mydumper.SourceDir = "."
 
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(cfg.TiDB.Port, Equals, 4444)
 	c.Assert(cfg.TiDB.PdAddr, Equals, "123.45.67.89:1234")
@@ -94,7 +95,7 @@ func (s *configTestSuite) TestAdjustPdAddrAndPortViaAdvertiseAddr(c *C) {
 	cfg.TiDB.StatusPort = port
 	cfg.Mydumper.SourceDir = "."
 
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(cfg.TiDB.Port, Equals, 6666)
 	c.Assert(cfg.TiDB.PdAddr, Equals, "34.34.34.34:3434")
@@ -108,7 +109,7 @@ func (s *configTestSuite) TestAdjustPageNotFound(c *C) {
 	cfg.TiDB.Host = host
 	cfg.TiDB.StatusPort = port
 
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
 }
 
@@ -121,14 +122,14 @@ func (s *configTestSuite) TestAdjustConnectRefused(c *C) {
 
 	ts.Close() // immediately close to ensure connection refused.
 
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
 }
 
 func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = "no_such_backend"
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend` \\(no_such_backend\\)")
 }
 
@@ -140,7 +141,7 @@ func (s *configTestSuite) TestDecodeError(c *C) {
 	cfg.TiDB.Host = host
 	cfg.TiDB.StatusPort = port
 
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
 }
 
@@ -152,7 +153,7 @@ func (s *configTestSuite) TestInvalidSetting(c *C) {
 	cfg.TiDB.Host = host
 	cfg.TiDB.StatusPort = port
 
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "invalid `tidb.port` setting")
 }
 
@@ -164,7 +165,7 @@ func (s *configTestSuite) TestInvalidPDAddr(c *C) {
 	cfg.TiDB.Host = host
 	cfg.TiDB.StatusPort = port
 
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "invalid `tidb.pd-addr` setting")
 }
 
@@ -172,7 +173,7 @@ func (s *configTestSuite) TestAdjustWillNotContactServerIfEverythingIsDefined(c 
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(cfg.TiDB.Port, Equals, 4567)
 	c.Assert(cfg.TiDB.PdAddr, Equals, "234.56.78.90:12345")
@@ -182,7 +183,7 @@ func (s *configTestSuite) TestAdjustWillBatchImportRatioInvalid(c *C) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.Mydumper.BatchImportRatio = -1
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(cfg.Mydumper.BatchImportRatio, Equals, 0.75)
 }
@@ -261,7 +262,7 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 		err := cfg.LoadFromTOML([]byte(tc.input))
 		c.Assert(err, IsNil, comment)
 
-		err = cfg.Adjust()
+		err = cfg.Adjust(context.Background())
 		c.Assert(err, IsNil, comment)
 		c.Assert(cfg.TiDB.Security.CAPath, Equals, tc.expectedCA, comment)
 		c.Assert(cfg.TiDB.TLS, Equals, tc.expectedTLS, comment)
@@ -400,7 +401,7 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 		err := cfg.LoadFromTOML([]byte(tc.input))
 		c.Assert(err, IsNil)
 
-		err = cfg.Adjust()
+		err = cfg.Adjust(context.Background())
 		if tc.err != "" {
 			c.Assert(err, ErrorMatches, regexp.QuoteMeta(tc.err), comment)
 		} else {
@@ -498,7 +499,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 
 	taskCfg.Checkpoint.DSN = ""
 	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
-	err = taskCfg.Adjust()
+	err = taskCfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864&tls=false")
 
@@ -510,7 +511,7 @@ func (s *configTestSuite) TestDefaultImporterBackendValue(c *C) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.TikvImporter.Backend = "importer"
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(cfg.App.IndexConcurrency, Equals, 2)
 	c.Assert(cfg.App.TableConcurrency, Equals, 6)
@@ -521,7 +522,7 @@ func (s *configTestSuite) TestDefaultTidbBackendValue(c *C) {
 	assignMinimalLegalValue(cfg)
 	cfg.TikvImporter.Backend = "tidb"
 	cfg.App.RegionConcurrency = 123
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(cfg.App.IndexConcurrency, Equals, 123)
 	c.Assert(cfg.App.TableConcurrency, Equals, 123)
@@ -533,7 +534,7 @@ func (s *configTestSuite) TestDefaultCouldBeOverwritten(c *C) {
 	cfg.TikvImporter.Backend = "importer"
 	cfg.App.IndexConcurrency = 20
 	cfg.App.TableConcurrency = 60
-	err := cfg.Adjust()
+	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(cfg.App.IndexConcurrency, Equals, 20)
 	c.Assert(cfg.App.TableConcurrency, Equals, 60)
@@ -619,14 +620,15 @@ func (s *configTestSuite) TestAdjustWithLegacyBlackWhiteList(c *C) {
 	c.Assert(cfg.Mydumper.Filter, DeepEquals, config.DefaultFilter)
 	c.Assert(cfg.HasLegacyBlackWhiteList(), IsFalse)
 
+	ctx := context.Background()
 	cfg.Mydumper.Filter = []string{"test.*"}
-	c.Assert(cfg.Adjust(), IsNil)
+	c.Assert(cfg.Adjust(ctx), IsNil)
 	c.Assert(cfg.HasLegacyBlackWhiteList(), IsFalse)
 
 	cfg.BWList.DoDBs = []string{"test"}
-	c.Assert(cfg.Adjust(), ErrorMatches, "invalid config: `mydumper\\.filter` and `black-white-list` cannot be simultaneously defined")
+	c.Assert(cfg.Adjust(ctx), ErrorMatches, "invalid config: `mydumper\\.filter` and `black-white-list` cannot be simultaneously defined")
 
 	cfg.Mydumper.Filter = config.DefaultFilter
-	c.Assert(cfg.Adjust(), IsNil)
+	c.Assert(cfg.Adjust(ctx), IsNil)
 	c.Assert(cfg.HasLegacyBlackWhiteList(), IsTrue)
 }

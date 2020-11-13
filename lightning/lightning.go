@@ -174,7 +174,7 @@ func (l *Lightning) RunOnce() error {
 	if err := cfg.LoadFromGlobal(l.globalCfg); err != nil {
 		return err
 	}
-	if err := cfg.Adjust(); err != nil {
+	if err := cfg.Adjust(l.ctx); err != nil {
 		return err
 	}
 
@@ -434,7 +434,7 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot parse task (must be TOML)", err)
 		return
 	}
-	if err = cfg.Adjust(); err != nil {
+	if err = cfg.Adjust(l.ctx); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid task configuration", err)
 		return
 	}

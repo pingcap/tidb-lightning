@@ -14,6 +14,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -459,7 +460,7 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 }
 
 // Adjust fixes the invalid or unspecified settings to reasonable valid values.
-func (cfg *Config) Adjust() error {
+func (cfg *Config) Adjust(ctx context.Context) error {
 	// Reject problematic CSV configurations.
 	csv := &cfg.Mydumper.CSV
 	if len(csv.Separator) == 0 {
@@ -579,7 +580,7 @@ func (cfg *Config) Adjust() error {
 		}
 
 		var settings tidbcfg.Config
-		err = tls.GetJSON("/settings", &settings)
+		err = tls.GetJSONWithContext(ctx, "/settings", &settings)
 		if err != nil {
 			return errors.Annotate(err, "cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
 		}
