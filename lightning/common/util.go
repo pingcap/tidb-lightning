@@ -177,6 +177,7 @@ func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, ar
 	if !t.HideQueryLog {
 		logger = logger.With(zap.String("query", query), zap.Reflect("args", args))
 	}
+	logger.Warn("lance test 1")
 	return t.perform(ctx, logger, purpose, func() error {
 		_, err := t.DB.ExecContext(ctx, query, args...)
 		return errors.Trace(err)
