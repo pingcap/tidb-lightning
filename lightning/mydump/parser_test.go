@@ -66,7 +66,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			"insert another_table values (10,11e1,12, '(13)', '(', 14, ')');",
 	)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), s.ioWorkers)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
@@ -136,7 +136,7 @@ func (s *testMydumpParserSuite) TestReadChunks(c *C) {
 		INSERT foo VALUES (29,30,31,32),(33,34,35,36);
 	`)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), s.ioWorkers)
 
 	chunks, err := mydump.ReadChunks(parser, 32)
 	c.Assert(err, IsNil)
@@ -182,7 +182,7 @@ func (s *testMydumpParserSuite) TestNestedRow(c *C) {
 		("789",CONVERT("[]" USING UTF8MB4));
 	`)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), s.ioWorkers)
 	chunks, err := mydump.ReadChunks(parser, 96)
 
 	c.Assert(err, IsNil)
@@ -349,7 +349,7 @@ func (s *testMydumpParserSuite) TestVariousSyntax(c *C) {
 		},
 	}
 
-	s.runTestCases(c, mysql.ModeNone, config.ReadBlockSize, testCases)
+	s.runTestCases(c, mysql.ModeNone, int64(config.ReadBlockSize), testCases)
 }
 
 func (s *testMydumpParserSuite) TestContinuation(c *C) {
@@ -415,7 +415,7 @@ func (s *testMydumpParserSuite) TestPseudoKeywords(c *C) {
 		) VALUES ();
 	`)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, config.ReadBlockSize, s.ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), s.ioWorkers)
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.Columns(), DeepEquals, []string{
 		"c", "c",
@@ -482,7 +482,7 @@ func (s *testMydumpParserSuite) TestSyntaxError(c *C) {
 		"/* ...",
 	}
 
-	s.runFailingTestCases(c, mysql.ModeNone, config.ReadBlockSize, inputs)
+	s.runFailingTestCases(c, mysql.ModeNone, int64(config.ReadBlockSize), inputs)
 }
 
 // Various syntax error cases collected via fuzzing.

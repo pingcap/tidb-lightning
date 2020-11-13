@@ -10,6 +10,7 @@ require (
 	github.com/cockroachdb/pebble v0.0.0-20201023120638-f1224da22976
 	github.com/coreos/go-semver v0.3.0
 	github.com/dgraph-io/ristretto v0.0.2-0.20200115201040-8f368f2f2ab3 // indirect
+	github.com/docker/go-units v0.4.0
 	github.com/fsouza/fake-gcs-server v1.19.0 // indirect
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gogo/protobuf v1.3.1

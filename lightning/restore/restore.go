@@ -207,7 +207,7 @@ func NewRestoreControllerWithPauser(
 		}
 		backend = kv.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate)
 	case config.BackendLocal:
-		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, cfg.TikvImporter.RegionSplitSize,
+		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, int64(cfg.TikvImporter.RegionSplitSize),
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
 			cfg.Checkpoint.Enable)
 		if err != nil {
@@ -434,7 +434,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
+					if fileMeta.Size > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
 						estimatedChunkCount += math.Round(float64(fileMeta.Size) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount += 1
@@ -1362,7 +1362,7 @@ func newChunkRestore(
 	store storage.ExternalStorage,
 	tableInfo *TidbTableInfo,
 ) (*chunkRestore, error) {
-	blockBufSize := cfg.Mydumper.ReadBlockSize
+	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
 	reader, err := store.Open(ctx, chunk.Key.Path)
 	if err != nil {
