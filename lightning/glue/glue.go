@@ -30,6 +30,7 @@ import (
 type Glue interface {
 	OwnsSQLExecutor() bool
 	GetSQLExecutor() SQLExecutor
+	GetDB() (*sql.DB, error)
 	GetParser() *parser.Parser
 	GetTables(context.Context, string) ([]*model.TableInfo, error)
 	OpenCheckpointsDB(context.Context, *config.Config) (checkpoints.CheckpointsDB, error)
@@ -75,12 +76,12 @@ func (e ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string,
 	return s, err
 }
 
-func (e ExternalTiDBGlue) GetParser() *parser.Parser {
-	return e.parser
+func (e ExternalTiDBGlue) GetDB() (*sql.DB, error) {
+	return e.db, nil
 }
 
-func (e ExternalTiDBGlue) GetDB() *sql.DB {
-	return e.db
+func (e ExternalTiDBGlue) GetParser() *parser.Parser {
+	return e.parser
 }
 
 func (e ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {

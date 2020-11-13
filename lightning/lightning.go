@@ -82,7 +82,6 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 	}
 
 	ctx, shutdown := context.WithCancel(context.Background())
-
 	return &Lightning{
 		globalCfg: globalCfg,
 		globalTLS: tls,
@@ -204,8 +203,7 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
-
-		err = l.run(l.ctx, task, nil)
+		err = l.run(context.Background(), task, nil)
 		if err != nil {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
