@@ -170,7 +170,13 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	return nil
 }
 
-func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, g glue.Glue, replaceLogger *zap.Logger) error {
+// RunOnce is used by binary lightning and host when using lightning as a library.
+// - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
+//   cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. and glue could be nil to let lightning
+//   use a default glue later.
+// - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
+//   caller implemented glue.
+func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glue glue.Glue, replaceLogger *zap.Logger) error {
 	if err := taskCfg.Adjust(); err != nil {
 		return err
 	}
@@ -183,7 +189,7 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, g g
 	if replaceLogger != nil {
 		log.SetAppLogger(replaceLogger)
 	}
-	return l.run(taskCtx, taskCfg, g)
+	return l.run(taskCtx, taskCfg, glue)
 }
 
 func (l *Lightning) RunServer() error {
@@ -199,29 +205,11 @@ func (l *Lightning) RunServer() error {
 			return err
 		}
 
-		// prepare and run a task
-		err = func() error {
-			failpoint.Inject("SkipRunTask", func() {
-				failpoint.Return(l.run(l.ctx, task, nil))
-			})
-
-			if err = task.TiDB.Security.RegisterMySQL(); err != nil {
-				return errors.Trace(err)
-			}
-			db, err := restore.DBFromConfig(task.TiDB)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			g := glue.NewExternalTiDBGlue(db, task.TiDB.SQLMode)
-			return l.run(l.ctx, task, g)
-		}()
+		err = l.run(l.ctx, task, nil)
 		if err != nil {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
 		}
-		// deregister TLS config with name "cluster"
-		task.TiDB.Security.CAPath = ""
-		task.TiDB.Security.RegisterMySQL()
 	}
 }
 
@@ -260,10 +248,21 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 		failpoint.Return(nil)
 	})
 
-	if g == nil {
-		if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
-			return err
+	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
+		return err
+	}
+	defer func() {
+		// deregister TLS config with name "cluster"
+		if taskCfg.TiDB.Security == nil {
+			return
 		}
+		taskCfg.TiDB.Security.CAPath = ""
+		taskCfg.TiDB.Security.RegisterMySQL()
+	}()
+
+	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
+	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
+	if g == nil {
 		db, err := restore.DBFromConfig(taskCfg.TiDB)
 		if err != nil {
 			return err

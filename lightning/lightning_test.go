@@ -64,13 +64,13 @@ func (s *lightningSuite) TestRun(c *C) {
 	cfg := config.NewConfig()
 	err := cfg.LoadFromGlobal(globalConfig)
 	c.Assert(err, IsNil)
-	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
-	err = lightning.RunOnce(context.Background(), cfg, invalidGlue, nil)
+	err = lightning.RunOnce(context.Background(), cfg, nil, nil)
 	c.Assert(err, ErrorMatches, ".*mydumper dir does not exist")
 
 	path, _ := filepath.Abs(".")
-	lightning.ctx = context.Background()
-	err = lightning.run(lightning.ctx, &config.Config{
+	ctx := context.Background()
+	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
+	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
 			Filter:           []string{"*.*"},
@@ -83,7 +83,7 @@ func (s *lightningSuite) TestRun(c *C) {
 	}, invalidGlue)
 	c.Assert(err, ErrorMatches, "Unknown checkpoint driver invalid")
 
-	err = lightning.run(lightning.ctx, &config.Config{
+	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir: ".",
 			Filter:    []string{"*.*"},
