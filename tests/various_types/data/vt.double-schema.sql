@@ -1,4 +1,4 @@
 CREATE TABLE `double` (
     `ref` INT NOT NULL,
-    `pk` DOUBLE(16) NOT NULL PRIMARY KEY
+    `pk` DOUBLE(16, 2) NOT NULL PRIMARY KEY
 );

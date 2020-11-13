@@ -34,6 +34,7 @@ type Glue interface {
 	GetParser() *parser.Parser
 	GetTables(context.Context, string) ([]*model.TableInfo, error)
 	OpenCheckpointsDB(context.Context, *config.Config) (checkpoints.CheckpointsDB, error)
+	// Record is used to report some information (key, value) to host TiDB, including progress, stage currently
 	Record(string, uint64)
 }
 
@@ -55,11 +56,11 @@ func NewExternalTiDBGlue(db *sql.DB, sqlMode mysql.SQLMode) *ExternalTiDBGlue {
 	return &ExternalTiDBGlue{db: db, parser: p}
 }
 
-func (e ExternalTiDBGlue) GetSQLExecutor() SQLExecutor {
+func (e *ExternalTiDBGlue) GetSQLExecutor() SQLExecutor {
 	return e
 }
 
-func (e ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) error {
+func (e *ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) error {
 	sql := common.SQLWithRetry{
 		DB:     e.db,
 		Logger: log.Logger{Logger: logger},
@@ -67,7 +68,7 @@ func (e ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, purp
 	return sql.Exec(ctx, purpose, query)
 }
 
-func (e ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) (string, error) {
+func (e *ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) (string, error) {
 	var s string
 	err := common.SQLWithRetry{
 		DB:     e.db,
@@ -76,31 +77,31 @@ func (e ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string,
 	return s, err
 }
 
-func (e ExternalTiDBGlue) GetDB() (*sql.DB, error) {
+func (e *ExternalTiDBGlue) GetDB() (*sql.DB, error) {
 	return e.db, nil
 }
 
-func (e ExternalTiDBGlue) GetParser() *parser.Parser {
+func (e *ExternalTiDBGlue) GetParser() *parser.Parser {
 	return e.parser
 }
 
-func (e ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
+func (e *ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
 	return nil, nil
 }
 
-func (e ExternalTiDBGlue) OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (checkpoints.CheckpointsDB, error) {
+func (e *ExternalTiDBGlue) OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (checkpoints.CheckpointsDB, error) {
 	return checkpoints.OpenCheckpointsDB(ctx, cfg)
 }
 
-func (e ExternalTiDBGlue) OwnsSQLExecutor() bool {
+func (e *ExternalTiDBGlue) OwnsSQLExecutor() bool {
 	return true
 }
 
-func (e ExternalTiDBGlue) Close() {
+func (e *ExternalTiDBGlue) Close() {
 	e.db.Close()
 }
 
-func (e ExternalTiDBGlue) Record(string, uint64) {
+func (e *ExternalTiDBGlue) Record(string, uint64) {
 }
 
 type ImportStage uint64
