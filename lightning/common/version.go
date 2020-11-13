@@ -66,7 +66,7 @@ func PrintInfo(app string, callback func()) {
 // FetchPDVersion get pd version
 func FetchPDVersion(ctx context.Context, tls *TLS, pdAddr string) (*semver.Version, error) {
 	var rawVersion string
-	err := tls.WithHost(pdAddr).GetJSONWithContext(ctx, "/pd/api/v1/config/cluster-version", &rawVersion)
+	err := tls.WithHost(pdAddr).GetJSON(ctx, "/pd/api/v1/config/cluster-version", &rawVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

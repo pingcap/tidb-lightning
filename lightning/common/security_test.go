@@ -49,10 +49,10 @@ func (s *securitySuite) TestGetJSONInsecure(c *C) {
 	c.Assert(err, IsNil)
 
 	var result struct{ Path string }
-	err = tls.GetJSONWithContext(ctx, "/aaa", &result)
+	err = tls.GetJSON(ctx, "/aaa", &result)
 	c.Assert(err, IsNil)
 	c.Assert(result.Path, Equals, "/aaa")
-	err = tls.GetJSONWithContext(ctx, "/bbbb", &result)
+	err = tls.GetJSON(ctx, "/bbbb", &result)
 	c.Assert(err, IsNil)
 	c.Assert(result.Path, Equals, "/bbbb")
 }
@@ -65,10 +65,10 @@ func (s *securitySuite) TestGetJSONSecure(c *C) {
 	tls := common.NewTLSFromMockServer(mockServer)
 
 	var result struct{ Path string }
-	err := tls.GetJSONWithContext(ctx, "/ccc", &result)
+	err := tls.GetJSON(ctx, "/ccc", &result)
 	c.Assert(err, IsNil)
 	c.Assert(result.Path, Equals, "/ccc")
-	err = tls.GetJSONWithContext(ctx, "/dddd", &result)
+	err = tls.GetJSON(ctx, "/dddd", &result)
 	c.Assert(err, IsNil)
 	c.Assert(result.Path, Equals, "/dddd")
 }

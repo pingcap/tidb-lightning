@@ -144,7 +144,7 @@ type AbstractBackend interface {
 
 func fetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {
 	var tables []*model.TableInfo
-	err := tls.GetJSONWithContext(ctx, "/schema/"+schema, &tables)
+	err := tls.GetJSON(ctx, "/schema/"+schema, &tables)
 	if err != nil {
 		return nil, errors.Annotatef(err, "cannot read schema '%s' from remote", schema)
 	}

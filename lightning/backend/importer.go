@@ -255,7 +255,7 @@ func (importer *importer) CheckRequirements(ctx context.Context) error {
 
 func checkTiDBVersion(ctx context.Context, tls *common.TLS, requiredVersion semver.Version) error {
 	var status struct{ Version string }
-	err := tls.GetJSONWithContext(ctx, "/status", &status)
+	err := tls.GetJSON(ctx, "/status", &status)
 	if err != nil {
 		return err
 	}
