@@ -137,17 +137,18 @@ func (s *configTestSuite) TestAdjustFileRoutePath(c *C) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 
+	ctx := context.Background()
 	tmpDir := c.MkDir()
 	cfg.Mydumper.SourceDir = tmpDir
 	invalidPath := filepath.Join(tmpDir, "../test123/1.sql")
 	rule := &config.FileRouteRule{Path: invalidPath, Type: "sql", Schema: "test", Table: "tbl"}
 	cfg.Mydumper.FileRouters = []*config.FileRouteRule{rule}
-	err := cfg.Adjust()
+	err := cfg.Adjust(ctx)
 	c.Assert(err, ErrorMatches, fmt.Sprintf("file route path '%s' is not in source dir '%s'", invalidPath, tmpDir))
 
 	relPath := "test_dir/1.sql"
 	rule.Path = filepath.Join(tmpDir, relPath)
-	err = cfg.Adjust()
+	err = cfg.Adjust(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(cfg.Mydumper.FileRouters[0].Path, Equals, relPath)
 }
