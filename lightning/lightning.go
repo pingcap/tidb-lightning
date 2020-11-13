@@ -56,14 +56,14 @@ type Lightning struct {
 	// taskCfgs is the list of task configurations enqueued in the server mode
 	taskCfgs   *config.ConfigList
 	ctx        context.Context
-	shutdown   context.CancelFunc
+	shutdown   context.CancelFunc // for whole lightning context
 	server     http.Server
 	serverAddr net.Addr
 	serverLock sync.Mutex
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
-	cancel     context.CancelFunc
+	cancel     context.CancelFunc // for per task context, which maybe different from lightning context
 }
 
 func initEnv(cfg *config.GlobalConfig) error {
@@ -315,6 +315,11 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 }
 
 func (l *Lightning) Stop() {
+	l.cancelLock.Lock()
+	if l.cancel != nil {
+		l.cancel()
+	}
+	l.cancelLock.Unlock()
 	if err := l.server.Shutdown(l.ctx); err != nil {
 		log.L().Warn("failed to shutdown HTTP server", log.ShortError(err))
 	}
