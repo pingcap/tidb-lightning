@@ -104,19 +104,7 @@ func (e *ExternalTiDBGlue) Close() {
 func (e *ExternalTiDBGlue) Record(string, uint64) {
 }
 
-type ImportStage uint64
-
 const (
-	StageWriting ImportStage = iota
-	StagePostProcessing
+	RecordEstimatedChunk = "EstimatedChunk"
+	RecordFinishedChunk  = "FinishedChunk"
 )
-
-func (s ImportStage) String() string {
-	switch s {
-	case StageWriting:
-		return "Writing"
-	case StagePostProcessing:
-		return "PostProcessing"
-	}
-	return ""
-}

@@ -446,6 +446,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 		}
 	}
 	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(estimatedChunkCount)
+	rc.tidbGlue.Record(glue.RecordEstimatedChunk, uint64(estimatedChunkCount))
 	return nil
 }
 
@@ -617,15 +618,8 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 				remaining,
 			)
 		case <-glueProgressTicker.C:
-			stage := glue.StageWriting
-			estimated := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
 			finished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
-			if finished >= estimated {
-				finished = estimated
-				stage = glue.StagePostProcessing
-			}
-			rc.tidbGlue.Record("ProgressPermillage", uint64(estimated/finished*1000))
-			rc.tidbGlue.Record("Stage", uint64(stage))
+			rc.tidbGlue.Record(glue.RecordFinishedChunk, uint64(finished))
 		}
 	}
 }
