@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/util/mock"
 
@@ -38,6 +39,7 @@ type tidbSuite struct {
 	mockDB  sqlmock.Sqlmock
 	handler http.Handler
 	timgr   *TiDBManager
+	tiGlue  glue.Glue
 }
 
 func TestTiDB(t *testing.T) {
@@ -53,6 +55,7 @@ func (s *tidbSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 
 	s.timgr = NewTiDBManagerWithDB(db, defaultSQLMode)
+	s.tiGlue = glue.NewExternalTiDBGlue(db, defaultSQLMode)
 }
 
 func (s *tidbSuite) TearDownTest(c *C) {
@@ -62,7 +65,7 @@ func (s *tidbSuite) TearDownTest(c *C) {
 
 func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 	createTableIfNotExistsStmt := func(createTable, tableName string) string {
-		res, err := s.timgr.createTableIfNotExistsStmt(createTable, tableName)
+		res, err := s.timgr.createTableIfNotExistsStmt(s.tiGlue.GetParser(), createTable, tableName)
 		c.Assert(err, IsNil)
 		return res
 	}
@@ -158,7 +161,7 @@ func (s *tidbSuite) TestInitSchema(c *C) {
 		ExpectClose()
 
 	s.mockDB.MatchExpectationsInOrder(false) // maps are unordered.
-	err := s.timgr.InitSchema(ctx, "db", map[string]string{
+	err := s.timgr.InitSchema(ctx, s.tiGlue, "db", map[string]string{
 		"t1": "create table t1 (a int primary key, b varchar(200));",
 		"t2": "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;CREATE TABLE `db`.`t2` (xx TEXT) AUTO_INCREMENT=11203;",
 	})
@@ -178,7 +181,7 @@ func (s *tidbSuite) TestInitSchemaSyntaxError(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := s.timgr.InitSchema(ctx, "db", map[string]string{
+	err := s.timgr.InitSchema(ctx, s.tiGlue, "db", map[string]string{
 		"t1": "create table `t1` with invalid syntax;",
 	})
 	c.Assert(err, NotNil)
@@ -202,7 +205,7 @@ func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := s.timgr.InitSchema(ctx, "db", map[string]string{
+	err := s.timgr.InitSchema(ctx, s.tiGlue, "db", map[string]string{
 		"t1": "create table `t1` (a VARCHAR(999999999));",
 	})
 	c.Assert(err, ErrorMatches, ".*Column length too big.*")
@@ -312,7 +315,7 @@ func (s *tidbSuite) TestAlterAutoInc(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoIncrement(ctx, s.timgr.db, "`db`.`table`", 12345)
+	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
 	c.Assert(err, IsNil)
 }
 
@@ -325,7 +328,7 @@ func (s *tidbSuite) TestAlterAutoRandom(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoRandom(ctx, s.timgr.db, "`db`.`table`", 12345)
+	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
 	c.Assert(err, IsNil)
 }
 
@@ -338,7 +341,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	version := ObtainRowFormatVersion(ctx, s.timgr.db)
+	version := ObtainRowFormatVersion(ctx, s.tiGlue.GetSQLExecutor())
 	c.Assert(version, Equals, "2")
 }
 
@@ -351,7 +354,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	version := ObtainRowFormatVersion(ctx, s.timgr.db)
+	version := ObtainRowFormatVersion(ctx, s.tiGlue.GetSQLExecutor())
 	c.Assert(version, Equals, "1")
 }
 
@@ -360,7 +363,7 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E")
-	version := ObtainNewCollationEnabled(ctx, s.timgr.db)
+	version := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
 	c.Assert(version, Equals, false)
 
 	kvMap := map[string]bool{
@@ -372,7 +375,7 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 			ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).AddRow(k))
 
-		version := ObtainNewCollationEnabled(ctx, s.timgr.db)
+		version := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
 		c.Assert(version, Equals, v)
 	}
 	s.mockDB.
