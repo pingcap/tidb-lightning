@@ -864,7 +864,7 @@ func (local *local) writeAndIngestByRange(
 	defer cancel()
 
 WriteAndIngest:
-	for retry := 0; retry < maxRetryTimes; retry++ {
+	for retry := 0; retry < maxRetryTimes; {
 		if retry != 0 {
 			select {
 			case <-time.After(time.Second):
@@ -887,14 +887,13 @@ WriteAndIngest:
 				zap.Binary("end", region.Region.GetEndKey()), zap.Reflect("peers", region.Region.GetPeers()))
 
 			w := local.ingestConcurrency.Apply()
-			rg, err1 := local.writeAndIngestPairs(ctx, engineFile, region, start, end)
+			var rg *Range
+			rg, err = local.writeAndIngestPairs(ctx, engineFile, region, pairStart, end)
 			local.ingestConcurrency.Recycle(w)
-			if err1 != nil {
-				err = err1
-				regionRange := intersectRange(region.Region, Range{start: start, end: end})
+			if err != nil {
+				regionRange := intersectRange(region.Region, Range{start: pairStart, end: end})
 				// if we have at least succeeded one region, retry without increasing the retry count
-				if bytes.Compare(regionRange.start, start) > 0 {
-					start = regionRange.start
+				if bytes.Compare(regionRange.start, pairStart) > 0 {
 					pairStart = regionRange.start
 				} else {
 					retry++
@@ -908,9 +907,7 @@ WriteAndIngest:
 
 		return err
 	}
-	if err == nil {
-		err = errors.New("all retry failed")
-	}
+
 	return err
 }
 
