@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -229,8 +230,8 @@ func (c *testPDClient) currentSafePoint() uint64 {
 }
 
 func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
-	if serviceID == "" {
-		panic("service ID must not be empty")
+	if !strings.HasPrefix(serviceID, "lightning") {
+		panic("service ID must start with 'lightning'")
 	}
 	atomic.AddInt32(&c.count, 1)
 	c.Lock()
@@ -257,7 +258,7 @@ func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 func (s *checksumSuite) TestGcTTLManagerSingle(c *C) {
 	pdClient := &testPDClient{}
 	manager := newGCTTLManager(pdClient)
-	c.Assert(manager.serviceID != "", IsTrue)
+	c.Assert(manager.serviceID, Not(Equals), "")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	oldTTL := serviceSafePointTTL
@@ -270,16 +271,17 @@ func (s *checksumSuite) TestGcTTLManagerSingle(c *C) {
 	err := manager.addOneJob(ctx, "test", uint64(time.Now().Unix()))
 	c.Assert(err, IsNil)
 
-	time.Sleep(6 * time.Second)
+	time.Sleep(6*time.Second + 10*time.Millisecond)
 
-	// after 11 seconds, must at least update 5 times
+	// after 6 seconds, must at least update 5 times
 	val := atomic.LoadInt32(&pdClient.count)
-	c.Assert(val >= 5, IsTrue)
+	c.Assert(val, GreaterEqual, int32(5))
 
 	// after remove the job, there are no job remain, gc ttl needn't to be updated
 	manager.removeOneJob("test")
+	time.Sleep(10 * time.Millisecond)
 	val = atomic.LoadInt32(&pdClient.count)
-	time.Sleep(3 * time.Second)
+	time.Sleep(3*time.Second + 10*time.Millisecond)
 	c.Assert(atomic.LoadInt32(&pdClient.count), Equals, val)
 }
 
@@ -312,9 +314,9 @@ func (s *checksumSuite) TestGcTTLManagerMulti(c *C) {
 func (s *checksumSuite) TestPdServiceID(c *C) {
 	pdCli := &testPDClient{}
 	gcTTLManager1 := newGCTTLManager(pdCli)
-	c.Assert(gcTTLManager1.serviceID != "", IsTrue)
+	c.Assert(gcTTLManager1.serviceID, Matches, "lightning-.*")
 	gcTTLManager2 := newGCTTLManager(pdCli)
-	c.Assert(gcTTLManager2.serviceID != "", IsTrue)
+	c.Assert(gcTTLManager2.serviceID, Matches, "lightning-.*")
 
 	c.Assert(gcTTLManager1.serviceID != gcTTLManager2.serviceID, IsTrue)
 }

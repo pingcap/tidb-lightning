@@ -10,6 +10,7 @@ require (
 	github.com/cockroachdb/pebble v0.0.0-20201023120638-f1224da22976
 	github.com/coreos/go-semver v0.3.0
 	github.com/dgraph-io/ristretto v0.0.2-0.20200115201040-8f368f2f2ab3 // indirect
+	github.com/docker/go-units v0.4.0
 	github.com/fsouza/fake-gcs-server v1.19.0 // indirect
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gogo/protobuf v1.3.1
@@ -34,7 +35,7 @@ require (
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tikv/pd v1.1.0-beta.0.20200910042021-254d1345be09
-	github.com/xitongsys/parquet-go v1.5.4-0.20201010004835-f51647f24120
+	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b // indirect
 	go.uber.org/zap v1.16.0
