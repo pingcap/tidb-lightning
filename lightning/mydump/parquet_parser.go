@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/pingcap/br/pkg/storage"
@@ -89,7 +90,7 @@ func NewParquetParser(
 	for i, c := range reader.SchemaHandler.SchemaElements {
 		if c.GetNumChildren() == 0 {
 			// the SchemaElement.Name is capitalized, we should use the original name
-			columns = append(columns, reader.SchemaHandler.Infos[i].ExName)
+			columns = append(columns, strings.ToLower(reader.SchemaHandler.Infos[i].ExName))
 			columnMetas = append(columnMetas, c)
 		}
 	}

@@ -21,7 +21,7 @@ var (
 
 func genParquetFile(dir, name string, count int) error {
 	type Test struct {
-		I int32  `parquet:"name=i, type=INT32"`
+		I int32  `parquet:"name=iVal, type=INT32"`
 		S string `parquet:"name=s, type=UTF8, encoding=PLAIN_DICTIONARY"`
 	}
 
