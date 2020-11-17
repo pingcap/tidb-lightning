@@ -48,6 +48,9 @@ default: clean lightning lightning-ctl checksuccess
 prepare:
 	$(PREPARE_MOD)
 
+finish-prepare:
+	$(FINISH_MOD)
+
 clean:
 	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN) $(FAILPOINT_CTL_BIN) $(REVIVE_BIN) $(VFSGENDEV_BIN) go.mod go.sum
 
