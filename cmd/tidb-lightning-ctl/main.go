@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
@@ -172,7 +173,7 @@ func fetchMode(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
 }
 
 func checkpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -182,7 +183,7 @@ func checkpointRemove(ctx context.Context, cfg *config.Config, tableName string)
 }
 
 func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -192,7 +193,7 @@ func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName st
 }
 
 func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common.TLS, tableName string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -264,7 +265,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 }
 
 func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}

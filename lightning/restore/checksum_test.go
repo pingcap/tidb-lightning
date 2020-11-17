@@ -58,7 +58,7 @@ func (s *checksumSuite) TestDoChecksum(c *C) {
 	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
-	checksum, err := DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
+	checksum, err := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 	c.Assert(err, IsNil)
 	c.Assert(*checksum, DeepEquals, RemoteChecksum{
 		Schema:     "test",
@@ -103,7 +103,7 @@ func (s *checksumSuite) TestDoChecksumParallel(c *C) {
 	for i := 0; i < 5; i++ {
 		go func() {
 			defer wg.Done()
-			checksum, err := DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
+			checksum, err := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 			c.Assert(err, IsNil)
 			c.Assert(*checksum, DeepEquals, RemoteChecksum{
 				Schema:     "test",
@@ -142,7 +142,7 @@ func (s *checksumSuite) TestIncreaseGCLifeTimeFail(c *C) {
 	wg.Add(5)
 	for i := 0; i < 5; i++ {
 		go func() {
-			_, err = DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
+			_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 			c.Assert(err, ErrorMatches, "update GC lifetime failed: update gc error: context canceled")
 			wg.Done()
 		}()
@@ -173,7 +173,7 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 
 	startTs := oracle.ComposeTS(time.Now().Unix()*1000, 0)
 	ctx := context.WithValue(context.Background(), &checksumManagerKey, checksumExec)
-	_, err = DoChecksum(ctx, nil, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
+	_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 	c.Assert(err, IsNil)
 
 	// after checksum, safepint should be small than start ts
@@ -197,7 +197,7 @@ func (s *checksumSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
 	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
-	_, err = DoChecksum(ctx, db, &TidbTableInfo{DB: "test", Name: "t"})
+	_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 	c.Assert(err, ErrorMatches, "compute remote checksum failed: mock syntax error.*")
 
 	c.Assert(db.Close(), IsNil)
@@ -258,7 +258,7 @@ func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 func (s *checksumSuite) TestGcTTLManagerSingle(c *C) {
 	pdClient := &testPDClient{}
 	manager := newGCTTLManager(pdClient)
-	c.Assert(manager.serviceID != "", IsTrue)
+	c.Assert(manager.serviceID, Not(Equals), "")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	oldTTL := serviceSafePointTTL
@@ -271,16 +271,17 @@ func (s *checksumSuite) TestGcTTLManagerSingle(c *C) {
 	err := manager.addOneJob(ctx, "test", uint64(time.Now().Unix()))
 	c.Assert(err, IsNil)
 
-	time.Sleep(6 * time.Second)
+	time.Sleep(6*time.Second + 10*time.Millisecond)
 
-	// after 11 seconds, must at least update 5 times
+	// after 6 seconds, must at least update 5 times
 	val := atomic.LoadInt32(&pdClient.count)
-	c.Assert(val >= 5, IsTrue)
+	c.Assert(val, GreaterEqual, int32(5))
 
 	// after remove the job, there are no job remain, gc ttl needn't to be updated
 	manager.removeOneJob("test")
+	time.Sleep(10 * time.Millisecond)
 	val = atomic.LoadInt32(&pdClient.count)
-	time.Sleep(3 * time.Second)
+	time.Sleep(3*time.Second + 10*time.Millisecond)
 	c.Assert(atomic.LoadInt32(&pdClient.count), Equals, val)
 }
 

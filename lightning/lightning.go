@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
@@ -55,14 +56,14 @@ type Lightning struct {
 	// taskCfgs is the list of task configurations enqueued in the server mode
 	taskCfgs   *config.ConfigList
 	ctx        context.Context
-	shutdown   context.CancelFunc
+	shutdown   context.CancelFunc // for whole lightning context
 	server     http.Server
 	serverAddr net.Addr
 	serverLock sync.Mutex
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
-	cancel     context.CancelFunc
+	cancel     context.CancelFunc // for per task context, which maybe different from lightning context
 }
 
 func initEnv(cfg *config.GlobalConfig) error {
@@ -168,21 +169,26 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	return nil
 }
 
-// Run Lightning using the global config as the same as the task config.
-func (l *Lightning) RunOnce() error {
-	cfg := config.NewConfig()
-	if err := cfg.LoadFromGlobal(l.globalCfg); err != nil {
-		return err
-	}
-	if err := cfg.Adjust(l.ctx); err != nil {
+// RunOnce is used by binary lightning and host when using lightning as a library.
+// - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
+//   cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. and glue could be nil to let lightning
+//   use a default glue later.
+// - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
+//   caller implemented glue.
+func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glue glue.Glue, replaceLogger *zap.Logger) error {
+	if err := taskCfg.Adjust(taskCtx); err != nil {
 		return err
 	}
 
-	cfg.TaskID = time.Now().UnixNano()
+	taskCfg.TaskID = time.Now().UnixNano()
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
-		cfg.TaskID = int64(val.(int))
+		taskCfg.TaskID = int64(val.(int))
 	})
-	return l.run(cfg)
+
+	if replaceLogger != nil {
+		log.SetAppLogger(replaceLogger)
+	}
+	return l.run(taskCtx, taskCfg, glue)
 }
 
 func (l *Lightning) RunServer() error {
@@ -197,7 +203,7 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
-		err = l.run(task)
+		err = l.run(context.Background(), task, nil)
 		if err != nil {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
@@ -207,14 +213,14 @@ func (l *Lightning) RunServer() error {
 
 var taskCfgRecorderKey struct{}
 
-func (l *Lightning) run(taskCfg *config.Config) (err error) {
+func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.Glue) (err error) {
 	common.PrintInfo("lightning", func() {
 		log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 	})
 
 	logEnvVariables()
 
-	ctx, cancel := context.WithCancel(l.ctx)
+	ctx, cancel := context.WithCancel(taskCtx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
 	l.curTask = taskCfg
@@ -229,16 +235,38 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 		web.BroadcastEndTask(err)
 	}()
 
-	failpoint.Inject("SkipRunTask", func() error {
+	failpoint.Inject("SkipRunTask", func() {
 		if recorder, ok := l.ctx.Value(&taskCfgRecorderKey).(chan *config.Config); ok {
 			select {
 			case recorder <- taskCfg:
 			case <-ctx.Done():
-				return ctx.Err()
+				failpoint.Return(ctx.Err())
 			}
 		}
-		return nil
+		failpoint.Return(nil)
 	})
+
+	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
+		return err
+	}
+	defer func() {
+		// deregister TLS config with name "cluster"
+		if taskCfg.TiDB.Security == nil {
+			return
+		}
+		taskCfg.TiDB.Security.CAPath = ""
+		taskCfg.TiDB.Security.RegisterMySQL()
+	}()
+
+	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
+	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
+	if g == nil {
+		db, err := restore.DBFromConfig(taskCfg.TiDB)
+		if err != nil {
+			return err
+		}
+		g = glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode)
+	}
 
 	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, &storage.BackendOptions{})
 	if err != nil {
@@ -272,7 +300,7 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 	web.BroadcastInitProgress(dbMetas)
 
 	var procedure *restore.RestoreController
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s)
+	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s, g)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
@@ -284,6 +312,11 @@ func (l *Lightning) run(taskCfg *config.Config) (err error) {
 }
 
 func (l *Lightning) Stop() {
+	l.cancelLock.Lock()
+	if l.cancel != nil {
+		l.cancel()
+	}
+	l.cancelLock.Unlock()
 	if err := l.server.Shutdown(l.ctx); err != nil {
 		log.L().Warn("failed to shutdown HTTP server", log.ShortError(err))
 	}

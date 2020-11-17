@@ -371,6 +371,32 @@ type CheckpointsDB interface {
 	DumpChunks(ctx context.Context, csv io.Writer) error
 }
 
+func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, error) {
+	if !cfg.Checkpoint.Enable {
+		return NewNullCheckpointsDB(), nil
+	}
+
+	switch cfg.Checkpoint.Driver {
+	case config.CheckpointDriverMySQL:
+		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema, cfg.TaskID)
+		if err != nil {
+			db.Close()
+			return nil, errors.Trace(err)
+		}
+		return cpdb, nil
+
+	case config.CheckpointDriverFile:
+		return NewFileCheckpointsDB(cfg.Checkpoint.DSN), nil
+
+	default:
+		return nil, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
+	}
+}
+
 // NullCheckpointsDB is a checkpoints database with no checkpoints.
 type NullCheckpointsDB struct{}
 

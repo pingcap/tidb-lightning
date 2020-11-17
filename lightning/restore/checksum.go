@@ -84,7 +84,11 @@ func newChecksumManager(ctx context.Context, rc *RestoreController) (ChecksumMan
 
 		manager = newTiKVChecksumManager(store.(tikv.Storage).GetClient(), pdCli)
 	} else {
-		manager = newTiDBChecksumExecutor(rc.tidbMgr.db)
+		db, err := rc.tidbGlue.GetDB()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		manager = newTiDBChecksumExecutor(db)
 	}
 
 	return manager, nil
@@ -138,7 +142,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *TidbTabl
 
 // DoChecksum do checksum for tables.
 // table should be in <db>.<table>, format.  e.g. foo.bar
-func DoChecksum(ctx context.Context, db *sql.DB, table *TidbTableInfo) (*RemoteChecksum, error) {
+func DoChecksum(ctx context.Context, table *TidbTableInfo) (*RemoteChecksum, error) {
 	var err error
 	manager, ok := ctx.Value(&checksumManagerKey).(ChecksumManager)
 	if !ok {
