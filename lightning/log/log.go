@@ -106,6 +106,11 @@ func L() Logger {
 	return appLogger
 }
 
+// SetAppLogger replaces the default logger in this package to given one
+func SetAppLogger(l *zap.Logger) {
+	appLogger = Logger{l.WithOptions(zap.AddStacktrace(zap.DPanicLevel))}
+}
+
 // Level returns the current global log level.
 func Level() zapcore.Level {
 	return appLevel.Level()
