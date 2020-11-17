@@ -217,14 +217,7 @@ func makeParquetFileRegion(
 	if err != nil {
 		return prevRowIdxMax, nil, errors.Trace(err)
 	}
-	pr, err := NewParquetParser(ctx, store, r, dataFile.FileMeta.Path)
-	if err != nil {
-		return prevRowIdxMax, nil, errors.Trace(err)
-	}
-	defer pr.Close()
-
-	// EndOffset for parquet files are the number of rows
-	numberRows := pr.Reader.GetNumRows()
+	numberRows, err := ReadParquetFileRowCount(ctx, store, r, dataFile.FileMeta.Path)
 	rowIDMax := prevRowIdxMax + numberRows
 	region := &TableRegion{
 		DB:       meta.DB,

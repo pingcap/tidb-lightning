@@ -65,6 +65,33 @@ func (r *readerWrapper) Create(name string) (source.ParquetFile, error) {
 	return nil, errors.New("unsupported operation")
 }
 
+// a special func to fetch parquet file row count fast.
+func ReadParquetFileRowCount(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	r storage.ReadSeekCloser,
+	path string,
+) (int64, error) {
+	wrapper := &readerWrapper{
+		ReadSeekCloser: r,
+		store:          store,
+		ctx:            ctx,
+		path:           path,
+	}
+	var err error
+	res := new(preader.ParquetReader)
+	res.NP = 2
+	res.PFile = wrapper
+	if err = res.ReadFooter(); err != nil {
+		return 0, err
+	}
+	numRows := res.Footer.NumRows
+	if err = wrapper.Close(); err != nil {
+		return 0, err
+	}
+	return numRows, nil
+}
+
 func NewParquetParser(
 	ctx context.Context,
 	store storage.ExternalStorage,
