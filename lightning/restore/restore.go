@@ -1368,7 +1368,13 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := cfg.Mydumper.ReadBlockSize
 
-	reader, err := store.Open(ctx, chunk.Key.Path)
+	var reader storage.ReadSeekCloser
+	var err error
+	if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.Size)
+	} else {
+		reader, err = store.Open(ctx, chunk.FileMeta.Path)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1381,7 +1387,7 @@ func newChunkRestore(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.Key.Path)
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
