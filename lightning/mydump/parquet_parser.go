@@ -92,7 +92,7 @@ func (r *bytesReaderWrapper) Write(p []byte) (n int, err error) {
 
 func (r *bytesReaderWrapper) Open(name string) (source.ParquetFile, error) {
 	if name != r.path {
-		panic("Open with a different name is not supported!")
+		panic(fmt.Sprintf("Open with a different name is not supported! current: '%s', new: '%s'", r.path, name))
 	}
 	return &bytesReaderWrapper{
 		Reader:   bytes.NewReader(r.rawBytes),
