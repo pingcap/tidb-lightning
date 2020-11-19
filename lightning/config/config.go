@@ -50,6 +50,8 @@ const (
 	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
 	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
+	// BackendNoop is a backend that does nothing. This is useful to test the restore phase.
+	BackendNoop = "noop"
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -510,7 +512,7 @@ func (cfg *Config) Adjust() error {
 			cfg.App.TableConcurrency = cfg.App.RegionConcurrency
 		}
 		mustHaveInternalConnections = false
-	case BackendImporter, BackendLocal:
+	case BackendImporter, BackendLocal, BackendNoop:
 		if cfg.App.IndexConcurrency == 0 {
 			cfg.App.IndexConcurrency = 2
 		}

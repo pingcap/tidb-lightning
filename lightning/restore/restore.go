@@ -213,6 +213,8 @@ func NewRestoreControllerWithPauser(
 		if err != nil {
 			return nil, err
 		}
+	case config.BackendNoop:
+		backend = kv.NewNoopBackend(tls, int64(cfg.TikvImporter.RegionSplitSize))
 	default:
 		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
 	}
