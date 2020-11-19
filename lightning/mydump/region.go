@@ -16,6 +16,9 @@ package mydump
 import (
 	"context"
 	"math"
+	"sync"
+
+	"github.com/pingcap/br/pkg/utils"
 
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/errors"
@@ -125,6 +128,146 @@ func AllocateEngineIDs(
 }
 
 func MakeTableRegions(
+	ctx context.Context,
+	meta *MDTableMeta,
+	columns int,
+	cfg *config.Config,
+	ioWorkers *worker.Pool,
+	store storage.ExternalStorage,
+) ([]*TableRegion, error) {
+	// Split files into regions
+	type fileRegionRes struct {
+		info    FileInfo
+		regions []*TableRegion
+		sizes   []float64
+		err     error
+	}
+
+	execCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	concurrency := utils.MaxInt(cfg.App.RegionConcurrency, 2)
+	fileChan := make(chan FileInfo, concurrency)
+	resultChan := make(chan fileRegionRes, concurrency)
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			for info := range fileChan {
+				regions, sizes, err := makeSourceFileRegion(execCtx, meta, info, columns, cfg, ioWorkers, store)
+				resultChan <- fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}
+			}
+			wg.Done()
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	errChan := make(chan error, 1)
+	fileRegionsMap := make(map[string]fileRegionRes, len(meta.DataFiles))
+	go func() {
+		for res := range resultChan {
+			if res.err != nil {
+				errChan <- res.err
+				return
+			}
+			fileRegionsMap[res.info.FileMeta.Path] = res
+		}
+		errChan <- nil
+	}()
+
+	for _, dataFile := range meta.DataFiles {
+		fileChan <- dataFile
+	}
+	close(fileChan)
+	err := <-errChan
+	if err != nil {
+		return nil, err
+	}
+
+	filesRegions := make([]*TableRegion, 0, len(meta.DataFiles))
+	dataFileSizes := make([]float64, 0, len(meta.DataFiles))
+	prevRowIDMax := int64(0)
+	for _, dataFile := range meta.DataFiles {
+		fileRegionsRes := fileRegionsMap[dataFile.FileMeta.Path]
+		var delta int64
+		if len(fileRegionsRes.regions) > 0 {
+			delta = prevRowIDMax - fileRegionsRes.regions[0].Chunk.PrevRowIDMax
+		}
+
+		for _, region := range fileRegionsRes.regions {
+			region.Chunk.PrevRowIDMax += delta
+			region.Chunk.RowIDMax += delta
+		}
+		filesRegions = append(filesRegions, fileRegionsRes.regions...)
+		dataFileSizes = append(dataFileSizes, fileRegionsRes.sizes...)
+		prevRowIDMax = fileRegionsRes.regions[len(fileRegionsRes.regions)-1].Chunk.RowIDMax
+	}
+
+	log.L().Debug("in makeTableRegions",
+		zap.Int64("maxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
+		zap.Int("len fileRegions", len(filesRegions)))
+
+	AllocateEngineIDs(filesRegions, dataFileSizes, float64(cfg.Mydumper.BatchSize), cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
+	return filesRegions, nil
+}
+
+func makeSourceFileRegion(
+	ctx context.Context,
+	meta *MDTableMeta,
+	fi FileInfo,
+	columns int,
+	cfg *config.Config,
+	ioWorkers *worker.Pool,
+	store storage.ExternalStorage,
+) ([]*TableRegion, []float64, error) {
+	if fi.FileMeta.Type == SourceTypeParquet {
+		_, region, err := makeParquetFileRegion(ctx, store, meta, fi, 0)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []*TableRegion{region}, []float64{float64(fi.Size)}, nil
+	}
+
+	dataFileSize := fi.Size
+	divisor := int64(columns)
+	isCsvFile := fi.FileMeta.Type == SourceTypeCSV
+	if !isCsvFile {
+		divisor += 2
+	}
+	// If a csv file is overlarge, we need to split it into multiple regions.
+	// Note: We can only split a csv file whose format is strict.
+	if isCsvFile && dataFileSize > int64(cfg.Mydumper.MaxRegionSize) && cfg.Mydumper.StrictFormat {
+
+		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
+		return regions, subFileSizes, err
+	}
+
+	tableRegion := &TableRegion{
+		DB:       meta.DB,
+		Table:    meta.Name,
+		FileMeta: fi.FileMeta,
+		Chunk: Chunk{
+			Offset:       0,
+			EndOffset:    fi.Size,
+			PrevRowIDMax: 0,
+			RowIDMax:     fi.Size / divisor,
+		},
+	}
+
+	if tableRegion.Size() > tableRegionSizeWarningThreshold {
+		log.L().Warn(
+			"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
+			zap.String("file", fi.FileMeta.Path),
+			zap.Int64("size", dataFileSize))
+	}
+	return []*TableRegion{tableRegion}, []float64{float64(fi.Size)}, nil
+}
+
+func MakeTableRegions3(
 	ctx context.Context,
 	meta *MDTableMeta,
 	columns int,

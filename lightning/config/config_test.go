@@ -453,7 +453,7 @@ func (s *configTestSuite) TestDurationUnmarshal(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(duration.Duration.Seconds(), Equals, 13*60+20.0)
 	err = duration.UnmarshalText([]byte("13x20s"))
-	c.Assert(err, ErrorMatches, "time: unknown unit x in duration 13x20s")
+	c.Assert(err, ErrorMatches, "time: unknown unit .?x.? in duration .?13x20s.?")
 }
 
 func (s *configTestSuite) TestDurationMarshalJSON(c *C) {
