@@ -512,11 +512,11 @@ func (g GlueCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName strin
 	var tableNameBuilder strings.Builder
 	common.EscapeMySQLSingleQuote(&tableNameBuilder, tableName)
 	tableName = tableNameBuilder.String()
-	deleteChunkQuery := fmt.Sprintf(DeleteChunkTemplate, g.schema, CheckpointTableNameChunk)
+	deleteChunkQuery := fmt.Sprintf(DeleteCheckpointRecordTemplate, g.schema, CheckpointTableNameChunk)
 	deleteChunkQuery = strings.ReplaceAll(deleteChunkQuery, "?", tableName)
-	deleteEngineQuery := fmt.Sprintf(DeleteEngineTemplate, g.schema, CheckpointTableNameEngine)
+	deleteEngineQuery := fmt.Sprintf(DeleteCheckpointRecordTemplate, g.schema, CheckpointTableNameEngine)
 	deleteEngineQuery = strings.ReplaceAll(deleteEngineQuery, "?", tableName)
-	deleteTableQuery := fmt.Sprintf(DeleteTableTemplate, g.schema, CheckpointTableNameTable)
+	deleteTableQuery := fmt.Sprintf(DeleteCheckpointRecordTemplate, g.schema, CheckpointTableNameTable)
 	deleteTableQuery = strings.ReplaceAll(deleteTableQuery, "?", tableName)
 
 	return errors.Trace(Transact(ctx, "remove checkpoints", se, logger, func(c context.Context, s Session) error {

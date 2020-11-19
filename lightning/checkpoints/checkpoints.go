@@ -171,9 +171,7 @@ const (
 		UPDATE %s.%s SET status = ? WHERE table_name = ?;`
 	UpdateEngineTemplate = `
 		UPDATE %s.%s SET status = ? WHERE (table_name, engine_id) = (?, ?);`
-	DeleteChunkTemplate  = "DELETE FROM %s.%s WHERE table_name = ?;"
-	DeleteEngineTemplate = "DELETE FROM %s.%s WHERE table_name = ?;"
-	DeleteTableTemplate  = "DELETE FROM %s.%s WHERE table_name = ?;"
+	DeleteCheckpointRecordTemplate = "DELETE FROM %s.%s WHERE table_name = ?;"
 )
 
 func IsCheckpointTable(name string) bool {
@@ -1157,9 +1155,9 @@ func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName 
 		return s.Exec(ctx, "remove all checkpoints", "DROP SCHEMA "+cpdb.schema)
 	}
 
-	deleteChunkQuery := fmt.Sprintf(DeleteChunkTemplate, cpdb.schema, CheckpointTableNameChunk)
-	deleteEngineQuery := fmt.Sprintf(DeleteEngineTemplate, cpdb.schema, CheckpointTableNameEngine)
-	deleteTableQuery := fmt.Sprintf(DeleteTableTemplate, cpdb.schema, CheckpointTableNameTable)
+	deleteChunkQuery := fmt.Sprintf(DeleteCheckpointRecordTemplate, cpdb.schema, CheckpointTableNameChunk)
+	deleteEngineQuery := fmt.Sprintf(DeleteCheckpointRecordTemplate, cpdb.schema, CheckpointTableNameEngine)
+	deleteTableQuery := fmt.Sprintf(DeleteCheckpointRecordTemplate, cpdb.schema, CheckpointTableNameTable)
 
 	return s.Transact(ctx, "remove checkpoints", func(c context.Context, tx *sql.Tx) error {
 		if _, e := tx.ExecContext(c, deleteChunkQuery, tableName); e != nil {
