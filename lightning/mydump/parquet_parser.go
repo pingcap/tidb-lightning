@@ -138,7 +138,6 @@ func ReadParquetFileRowCount(
 	r storage.ReadSeekCloser,
 	path string,
 ) (int64, error) {
-	start := time.Now()
 	wrapper := &readerWrapper{
 		ReadSeekCloser: r,
 		store:          store,
@@ -147,7 +146,7 @@ func ReadParquetFileRowCount(
 	}
 	var err error
 	res := new(preader.ParquetReader)
-	res.NP = 2
+	res.NP = 1
 	res.PFile = wrapper
 	if err = res.ReadFooter(); err != nil {
 		return 0, err
@@ -156,8 +155,6 @@ func ReadParquetFileRowCount(
 	if err = wrapper.Close(); err != nil {
 		return 0, err
 	}
-	log.L().Info("read parquet file row count", zap.String("path", path), zap.Int64("rows", numRows),
-		zap.Duration("cost", time.Since(start)))
 	return numRows, nil
 }
 

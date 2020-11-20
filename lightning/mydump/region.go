@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/pingcap/br/pkg/utils"
 
@@ -143,6 +144,8 @@ func MakeTableRegions(
 		err     error
 	}
 
+	start := time.Now()
+
 	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -207,9 +210,10 @@ func MakeTableRegions(
 		prevRowIDMax = fileRegionsRes.regions[len(fileRegionsRes.regions)-1].Chunk.RowIDMax
 	}
 
-	log.L().Debug("in makeTableRegions",
-		zap.Int64("maxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
-		zap.Int("len fileRegions", len(filesRegions)))
+	log.L().Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
+		zap.Int64("maxRegionSize", cfg.Mydumper.MaxRegionSize),
+		zap.Int("RegionsCount", len(filesRegions)),
+		zap.Duration("cost", time.Since(start)))
 
 	AllocateEngineIDs(filesRegions, dataFileSizes, float64(cfg.Mydumper.BatchSize), cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
 	return filesRegions, nil
