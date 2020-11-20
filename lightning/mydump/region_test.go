@@ -216,7 +216,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 	colCnt := int64(3)
 	columns := []string{"a", "b", "c"}
 	for _, tc := range []struct {
-		maxRegionSize int64
+		maxRegionSize config.ByteSize
 		chkCnt        int
 		offsets       [][]int64
 	}{

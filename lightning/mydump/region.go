@@ -211,7 +211,7 @@ func MakeTableRegions(
 	}
 
 	log.L().Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
-		zap.Int64("maxRegionSize", cfg.Mydumper.MaxRegionSize),
+		zap.Int64("maxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
 		zap.Int("RegionsCount", len(filesRegions)),
 		zap.Duration("cost", time.Since(start)))
 
@@ -244,7 +244,7 @@ func makeSourceFileRegion(
 	}
 	// If a csv file is overlarge, we need to split it into multiple regions.
 	// Note: We can only split a csv file whose format is strict.
-	if isCsvFile && dataFileSize > cfg.Mydumper.MaxRegionSize && cfg.Mydumper.StrictFormat {
+	if isCsvFile && dataFileSize > int64(cfg.Mydumper.MaxRegionSize) && cfg.Mydumper.StrictFormat {
 
 		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
 		return regions, subFileSizes, err
@@ -317,7 +317,7 @@ func SplitLargeFile(
 	ioWorker *worker.Pool,
 	store storage.ExternalStorage,
 ) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
-	maxRegionSize := cfg.Mydumper.MaxRegionSize
+	maxRegionSize := int64(cfg.Mydumper.MaxRegionSize)
 	dataFileSizes = make([]float64, 0, dataFile.FileMeta.Size/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
 	var columns []string
@@ -326,7 +326,7 @@ func SplitLargeFile(
 		if err != nil {
 			return 0, nil, nil, err
 		}
-		parser := NewCSVParser(&cfg.Mydumper.CSV, r, cfg.Mydumper.ReadBlockSize, ioWorker, true)
+		parser := NewCSVParser(&cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, true)
 		if err = parser.ReadColumns(); err != nil {
 			return 0, nil, nil, err
 		}
@@ -342,7 +342,7 @@ func SplitLargeFile(
 			if err != nil {
 				return 0, nil, nil, err
 			}
-			parser := NewCSVParser(&cfg.Mydumper.CSV, r, cfg.Mydumper.ReadBlockSize, ioWorker, false)
+			parser := NewCSVParser(&cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false)
 			if err = parser.SetPos(endOffset, prevRowIdMax); err != nil {
 				return 0, nil, nil, err
 			}
