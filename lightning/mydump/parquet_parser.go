@@ -89,7 +89,8 @@ func NewParquetParser(
 	columnMetas := make([]*parquet.SchemaElement, 0, len(reader.Footer.Schema)-1)
 	for i, c := range reader.SchemaHandler.SchemaElements {
 		if c.GetNumChildren() == 0 {
-			// the SchemaElement.Name is capitalized, we should use the original name
+			// NOTE: the SchemaElement.Name is capitalized, SchemaHandler.Infos.ExName is the raw column name
+			// though in this context, there is no difference between these two fields
 			columns = append(columns, strings.ToLower(reader.SchemaHandler.Infos[i].ExName))
 			columnMetas = append(columnMetas, c)
 		}
