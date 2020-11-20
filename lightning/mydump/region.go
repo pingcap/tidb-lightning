@@ -158,7 +158,14 @@ func MakeTableRegions(
 		go func() {
 			for info := range fileChan {
 				regions, sizes, err := makeSourceFileRegion(execCtx, meta, info, columns, cfg, ioWorkers, store)
-				resultChan <- fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}
+				select {
+				case resultChan <- fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}:
+				case <-ctx.Done():
+					break
+				}
+				if err != nil {
+					break
+				}
 			}
 			wg.Done()
 		}()
@@ -183,7 +190,14 @@ func MakeTableRegions(
 	}()
 
 	for _, dataFile := range meta.DataFiles {
-		fileChan <- dataFile
+		select {
+		case fileChan <- dataFile:
+		case <-ctx.Done():
+			close(fileChan)
+			return nil, ctx.Err()
+		case err := <-errChan:
+			return nil, err
+		}
 	}
 	close(fileChan)
 	err := <-errChan
