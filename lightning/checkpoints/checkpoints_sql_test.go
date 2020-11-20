@@ -121,7 +121,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 		ExpectPrepare("REPLACE INTO `mock-schema`\\.chunk_v\\d+ .+")
 	insertChunkStmt.
 		ExpectExec().
-		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", []byte("null"), 12, 102400, 1, 5000, 1234567890).
+		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, []byte("null"), 12, 102400, 1, 5000, 1234567890).
 		WillReturnResult(sqlmock.NewResult(10, 1))
 	s.mock.ExpectCommit()
 
@@ -137,6 +137,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 				FileMeta: mydump.SourceFileMeta{
 					Path: "/tmp/path/1.sql",
 					Type: mydump.SourceTypeSQL,
+					Size: 123,
 				},
 				Chunk: mydump.Chunk{
 					Offset:       12,
@@ -229,12 +230,12 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
-				"engine_id", "path", "offset", "type", "compression", "sort_key", "columns",
+				"engine_id", "path", "offset", "type", "compression", "sort_key", "size", "columns",
 				"pos", "end_offset", "prev_rowid_max", "rowid_max",
 				"kvc_bytes", "kvc_kvs", "kvc_checksum", "unix_timestamp(create_time)",
 			}).
 				AddRow(
-					0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", "[]",
+					0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, "[]",
 					55904, 102400, 681, 5000,
 					4491, 586, 486070148917, 1234567894,
 				),
@@ -266,6 +267,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 					FileMeta: mydump.SourceFileMeta{
 						Path: "/tmp/path/1.sql",
 						Type: mydump.SourceTypeSQL,
+						Size: 123,
 					},
 					ColumnPermutation: []int{},
 					Chunk: mydump.Chunk{
@@ -414,12 +416,12 @@ func (s *cpSQLSuite) TestDump(c *C) {
 		ExpectQuery("SELECT (?s:.+) FROM `mock-schema`\\.chunk_v\\d+").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
-				"table_name", "path", "offset", "type", "compression", "sort_key", "columns",
+				"table_name", "path", "offset", "type", "compression", "sort_key", "size", "columns",
 				"pos", "end_offset", "prev_rowid_max", "rowid_max",
 				"kvc_bytes", "kvc_kvs", "kvc_checksum",
 				"create_time", "update_time",
 			}).AddRow(
-				"`db1`.`t2`", "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, mydump.CompressionNone, "", "[]",
+				"`db1`.`t2`", "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, mydump.CompressionNone, "", 456, "[]",
 				55904, 102400, 681, 5000,
 				4491, 586, 486070148917,
 				t, t,
@@ -430,8 +432,8 @@ func (s *cpSQLSuite) TestDump(c *C) {
 	err := s.cpdb.DumpChunks(ctx, &csvBuilder)
 	c.Assert(err, IsNil)
 	c.Assert(csvBuilder.String(), Equals,
-		"table_name,path,offset,type,compression,sort_key,columns,pos,end_offset,prev_rowid_max,rowid_max,kvc_bytes,kvc_kvs,kvc_checksum,create_time,update_time\n"+
-			"`db1`.`t2`,/tmp/path/1.sql,0,3,0,,[],55904,102400,681,5000,4491,586,486070148917,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
+		"table_name,path,offset,type,compression,sort_key,size,columns,pos,end_offset,prev_rowid_max,rowid_max,kvc_bytes,kvc_kvs,kvc_checksum,create_time,update_time\n"+
+			"`db1`.`t2`,/tmp/path/1.sql,0,3,0,,456,[],55904,102400,681,5000,4491,586,486070148917,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
 	)
 
 	s.mock.

@@ -484,6 +484,7 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 			type int NOT NULL,
 			compression int NOT NULL,
 			sort_key varchar(256) NOT NULL,
+			size bigint NOT NULL,
 			columns text NULL,
 			should_include_row_id BOOL NOT NULL,
 			end_offset bigint NOT NULL,
@@ -635,7 +636,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 
 		chunkQuery := fmt.Sprintf(`
 			SELECT
-				engine_id, path, offset, type, compression, sort_key, columns,
+				engine_id, path, offset, type, compression, sort_key, size, columns,
 				pos, end_offset, prev_rowid_max, rowid_max,
 				kvc_bytes, kvc_kvs, kvc_checksum, unix_timestamp(create_time)
 			FROM %s.%s WHERE table_name = ?
@@ -657,7 +658,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 			)
 			if err := chunkRows.Scan(
 				&engineID, &value.Key.Path, &value.Key.Offset, &value.FileMeta.Type, &value.FileMeta.Compression,
-				&value.FileMeta.SortKey, &colPerm, &value.Chunk.Offset, &value.Chunk.EndOffset,
+				&value.FileMeta.SortKey, &value.FileMeta.Size, &colPerm, &value.Chunk.Offset, &value.Chunk.EndOffset,
 				&value.Chunk.PrevRowIDMax, &value.Chunk.RowIDMax, &kvcBytes, &kvcKVs, &kvcChecksum,
 				&value.Timestamp,
 			); err != nil {
@@ -712,12 +713,12 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 		chunkStmt, err := tx.PrepareContext(c, fmt.Sprintf(`
 			REPLACE INTO %s.%s (
 				table_name, engine_id,
-				path, offset, type, compression, sort_key, columns, should_include_row_id,
+				path, offset, type, compression, sort_key, size, columns, should_include_row_id,
 				pos, end_offset, prev_rowid_max, rowid_max,
 				kvc_bytes, kvc_kvs, kvc_checksum, create_time
 			) VALUES (
 				?, ?,
-				?, ?, ?, ?, ?, ?, FALSE,
+				?, ?, ?, ?, ?, ?, ?, FALSE,
 				?, ?, ?, ?,
 				0, 0, 0, from_unixtime(?)
 			);
@@ -740,7 +741,7 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 				_, err = chunkStmt.ExecContext(
 					c, tableName, engineID,
 					value.Key.Path, value.Key.Offset, value.FileMeta.Type, value.FileMeta.Compression,
-					value.FileMeta.SortKey, columnPerm, value.Chunk.Offset, value.Chunk.EndOffset,
+					value.FileMeta.SortKey, value.FileMeta.Size, columnPerm, value.Chunk.Offset, value.Chunk.EndOffset,
 					value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax, value.Timestamp,
 				)
 				if err != nil {
@@ -993,6 +994,7 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 					Type:        mydump.SourceType(chunkModel.Type),
 					Compression: mydump.Compression(chunkModel.Compression),
 					SortKey:     chunkModel.SortKey,
+					Size:        chunkModel.Size_,
 				},
 				ColumnPermutation: colPerm,
 				Chunk: mydump.Chunk{
@@ -1039,6 +1041,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			chunk.Type = int32(value.FileMeta.Type)
 			chunk.Compression = int32(value.FileMeta.Compression)
 			chunk.SortKey = value.FileMeta.SortKey
+			chunk.Size_ = value.FileMeta.Size
 			chunk.Pos = value.Chunk.Offset
 			chunk.EndOffset = value.Chunk.EndOffset
 			chunk.PrevRowidMax = value.Chunk.PrevRowIDMax
@@ -1326,6 +1329,7 @@ func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer
 			type,
 			compression,
 			sort_key,
+			size,
 			columns,
 			pos,
 			end_offset,

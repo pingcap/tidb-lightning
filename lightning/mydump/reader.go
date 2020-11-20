@@ -77,8 +77,8 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage, sqlFile
 
 	br := bufio.NewReader(fd)
 
-	data := make([]byte, 0, sqlFile.Size+1)
-	buffer := make([]byte, 0, sqlFile.Size+1)
+	data := make([]byte, 0, sqlFile.FileMeta.Size+1)
+	buffer := make([]byte, 0, sqlFile.FileMeta.Size+1)
 	for {
 		line, err := br.ReadBytes('\n')
 		if errors.Cause(err) == io.EOF {

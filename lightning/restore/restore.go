@@ -451,8 +451,8 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if fileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += math.Round(float64(fileMeta.Size) / float64(cfg.MaxRegionSize))
+					if fileMeta.FileMeta.Size > cfg.MaxRegionSize && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += math.Round(float64(fileMeta.FileMeta.Size) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount += 1
 					}

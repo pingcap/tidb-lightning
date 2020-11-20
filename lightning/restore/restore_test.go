@@ -259,14 +259,14 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 		fakeDataPath := filepath.Join(fakeDataDir, fakeFileName)
 		err = ioutil.WriteFile(fakeDataPath, fakeDataFilesContent, 0644)
 		c.Assert(err, IsNil)
-		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeFileName, Type: mydump.SourceTypeSQL, SortKey: fmt.Sprintf("%d", i)}, Size: 37})
+		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeFileName, Type: mydump.SourceTypeSQL, SortKey: fmt.Sprintf("%d", i), Size: 37}})
 	}
 
 	fakeCsvContent := []byte("1,2,3\r\n4,5,6\r\n")
 	csvName := "db.table.99.csv"
 	err = ioutil.WriteFile(filepath.Join(fakeDataDir, csvName), fakeCsvContent, 0644)
 	c.Assert(err, IsNil)
-	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: "99"}, Size: 14})
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: "99", Size: 14}})
 
 	s.tableMeta = &mydump.MDTableMeta{
 		DB:         "db",
@@ -435,8 +435,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
 		c.Assert(err, IsNil)
 		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 			TableName: filter.Table{"db", "table"},
-			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i)},
-			Size:      int64(len(s)),
+			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i), Size: int64(len(s))},
 		})
 		total += len(s)
 	}
