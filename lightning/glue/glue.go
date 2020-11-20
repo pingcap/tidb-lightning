@@ -40,6 +40,7 @@ type Glue interface {
 }
 
 type SQLExecutor interface {
+	// ExecuteWithLog and ObtainStringWithLog should support concurrently call
 	ExecuteWithLog(ctx context.Context, query string, purpose string, logger log.Logger) error
 	ObtainStringWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (string, error)
 	Close()

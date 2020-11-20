@@ -46,7 +46,7 @@ func (s *cpSQLSuite) SetUpTest(c *C) {
 		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.chunk_v\\d+ .+").
 		WillReturnResult(sqlmock.NewResult(5, 1))
 
-	cpdb, err := checkpoints.NewMySQLCheckpointsDB(context.Background(), s.db, "mock-schema", 1234)
+	cpdb, err := checkpoints.NewMySQLCheckpointsDB(context.Background(), s.db, "mock-schema")
 	c.Assert(err, IsNil)
 	c.Assert(s.mock.ExpectationsWereMet(), IsNil)
 	s.cpdb = cpdb

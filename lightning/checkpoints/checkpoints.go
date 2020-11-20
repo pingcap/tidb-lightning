@@ -489,7 +489,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema, cfg.TaskID)
+		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema)
 		if err != nil {
 			db.Close()
 			return nil, errors.Trace(err)
@@ -539,10 +539,9 @@ func (*NullCheckpointsDB) Update(map[string]*TableCheckpointDiff) {}
 type MySQLCheckpointsDB struct {
 	db     *sql.DB
 	schema string
-	taskID int64
 }
 
-func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, taskID int64) (*MySQLCheckpointsDB, error) {
+func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (*MySQLCheckpointsDB, error) {
 	var escapedSchemaName strings.Builder
 	common.WriteMySQLIdentifier(&escapedSchemaName, schemaName)
 	schema := escapedSchemaName.String()
@@ -580,7 +579,6 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string, t
 	return &MySQLCheckpointsDB{
 		db:     db,
 		schema: schema,
-		taskID: taskID,
 	}, nil
 }
 
@@ -616,7 +614,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 		for _, db := range dbInfo {
 			for _, table := range db.Tables {
 				tableName := common.UniqueTable(db.Name, table.Name)
-				_, err = stmt.ExecContext(c, cpdb.taskID, tableName, 0, table.ID)
+				_, err = stmt.ExecContext(c, cfg.TaskID, tableName, 0, table.ID)
 				if err != nil {
 					return errors.Trace(err)
 				}

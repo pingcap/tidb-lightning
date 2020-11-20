@@ -48,12 +48,12 @@ type Session interface {
 // TODO: Encapsulate Begin/Commit/Rollback txn, form SQL with args and query/iter/scan TiDB's RecordSet into a interface
 // to reuse MySQLCheckpointsDB.
 type GlueCheckpointsDB struct {
+	// getSessionFunc will get a new session from TiDB
 	getSessionFunc func() (Session, error)
 	schema         string
-	taskID         int64 // TODO(lance6716): rename or make it clear that taskID is different from cfg.TaskID
 }
 
-func NewGlueCheckpointsDB(ctx context.Context, se Session, f func() (Session, error), schemaName string, taskID int64) (*GlueCheckpointsDB, error) {
+func NewGlueCheckpointsDB(ctx context.Context, se Session, f func() (Session, error), schemaName string) (*GlueCheckpointsDB, error) {
 	var escapedSchemaName strings.Builder
 	common.WriteMySQLIdentifier(&escapedSchemaName, schemaName)
 	schema := escapedSchemaName.String()
@@ -107,7 +107,6 @@ func NewGlueCheckpointsDB(ctx context.Context, se Session, f func() (Session, er
 	return &GlueCheckpointsDB{
 		getSessionFunc: f,
 		schema:         schema,
-		taskID:         taskID,
 	}, nil
 }
 
@@ -150,7 +149,7 @@ func (g GlueCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, d
 			for _, table := range db.Tables {
 				tableName := common.UniqueTable(db.Name, table.Name)
 				_, err = s.ExecutePreparedStmt(c, stmtID2, []types.Datum{
-					types.NewIntDatum(g.taskID),
+					types.NewIntDatum(cfg.TaskID),
 					types.NewStringDatum(tableName),
 					types.NewIntDatum(0),
 					types.NewIntDatum(table.ID),
