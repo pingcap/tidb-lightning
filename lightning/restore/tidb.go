@@ -135,19 +135,12 @@ func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var useDB strings.Builder
-	useDB.WriteString("USE ")
-	common.WriteMySQLIdentifier(&useDB, database)
-	err = sqlExecutor.ExecuteWithLog(ctx, useDB.String(), "use database", logger)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	task := logger.Begin(zap.InfoLevel, "create tables")
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateTable, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, tbl)
+		sqlCreateTable, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
 		if err != nil {
 			break
 		}
@@ -167,7 +160,7 @@ func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema 
 	return errors.Trace(err)
 }
 
-func createTableIfNotExistsStmt(p *parser.Parser, createTable, tblName string) (string, error) {
+func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) (string, error) {
 	stmts, _, err := p.Parse(createTable, "", "")
 	if err != nil {
 		return "", err
@@ -179,7 +172,7 @@ func createTableIfNotExistsStmt(p *parser.Parser, createTable, tblName string) (
 
 	for _, stmt := range stmts {
 		if createTableNode, ok := stmt.(*ast.CreateTableStmt); ok {
-			createTableNode.Table.Schema = model.NewCIStr("")
+			createTableNode.Table.Schema = model.NewCIStr(dbName)
 			createTableNode.Table.Name = model.NewCIStr(tblName)
 			createTableNode.IfNotExists = true
 		}
