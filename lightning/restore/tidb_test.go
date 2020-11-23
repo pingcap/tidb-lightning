@@ -166,8 +166,8 @@ func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 		DeepEquals,
 		[]string{
 			"SET NAMES 'binary';",
-			"DROP TABLE IF EXISTS `m`;",
-			"DROP VIEW IF EXISTS `m`;",
+			"DROP TABLE IF EXISTS `testdb`.`m`;",
+			"DROP VIEW IF EXISTS `testdb`.`m`;",
 			"SET @`PREV_CHARACTER_SET_CLIENT`=@@`character_set_client`;",
 			"SET @`PREV_CHARACTER_SET_RESULTS`=@@`character_set_results`;",
 			"SET @`PREV_COLLATION_CONNECTION`=@@`collation_connection`;",
