@@ -55,10 +55,10 @@ func (s *checkReqSuite) TestCheckTiDBVersion(c *C) {
 	tls := common.NewTLSFromMockServer(mockServer)
 
 	version = "5.7.25-TiDB-v9999.0.0"
-	c.Assert(checkTiDBVersion(ctx, tls, requiredTiDBVersion), IsNil)
+	c.Assert(checkTiDBVersionByTLS(ctx, tls, requiredTiDBVersion), IsNil)
 
 	version = "5.7.25-TiDB-v1.0.0"
-	c.Assert(checkTiDBVersion(ctx, tls, requiredTiDBVersion), ErrorMatches, "TiDB version too old.*")
+	c.Assert(checkTiDBVersionByTLS(ctx, tls, requiredTiDBVersion), ErrorMatches, "TiDB version too old.*")
 }
 
 func (s *checkReqSuite) TestCheckPDVersion(c *C) {

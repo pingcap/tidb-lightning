@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	kv "github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb/table"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -241,7 +242,7 @@ func (*importer) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
 }
 
 func (importer *importer) CheckRequirements(ctx context.Context) error {
-	if err := checkTiDBVersion(ctx, importer.tls, requiredTiDBVersion); err != nil {
+	if err := checkTiDBVersionByTLS(ctx, importer.tls, requiredTiDBVersion); err != nil {
 		return err
 	}
 	if err := checkPDVersion(ctx, importer.tls, importer.pdAddr, requiredPDVersion); err != nil {
@@ -253,18 +254,35 @@ func (importer *importer) CheckRequirements(ctx context.Context) error {
 	return nil
 }
 
-func checkTiDBVersion(ctx context.Context, tls *common.TLS, requiredVersion semver.Version) error {
+func checkTiDBVersionByTLS(ctx context.Context, tls *common.TLS, requiredVersion semver.Version) error {
 	var status struct{ Version string }
 	err := tls.GetJSON(ctx, "/status", &status)
 	if err != nil {
 		return err
 	}
 
-	version, err := common.ExtractTiDBVersion(status.Version)
+	return checkTiDBVersion(status.Version, requiredVersion)
+}
+
+func checkTiDBVersion(versionStr string, requiredVersion semver.Version) error {
+	version, err := common.ExtractTiDBVersion(versionStr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return checkVersion("TiDB", requiredVersion, *version)
+}
+
+func checkTiDBVersionBySQL(ctx context.Context, g glue.Glue, requiredVersion semver.Version) error {
+	versionStr, err := g.GetSQLExecutor().ObtainStringWithLog(
+		ctx,
+		"SELECT version();",
+		"check TiDB version",
+		log.L())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return checkTiDBVersion(versionStr, requiredVersion)
 }
 
 func checkPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredVersion semver.Version) error {

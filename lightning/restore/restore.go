@@ -209,7 +209,7 @@ func NewRestoreControllerWithPauser(
 	case config.BackendLocal:
 		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, int64(cfg.TikvImporter.RegionSplitSize),
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
-			cfg.Checkpoint.Enable)
+			cfg.Checkpoint.Enable, g)
 		if err != nil {
 			return nil, err
 		}
@@ -294,15 +294,14 @@ outside:
 }
 
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
-	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB, rc.tls)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer tidbMgr.Close()
-
 	if !rc.cfg.Mydumper.NoSchema {
 		if rc.tidbGlue.OwnsSQLExecutor() {
-			tidbMgr.db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
+			db, err := DBFromConfig(rc.cfg.TiDB)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer db.Close()
+			db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
 		}
 
 		for _, dbMeta := range rc.dbMetas {
@@ -312,7 +311,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			for _, tblMeta := range dbMeta.Tables {
 				tablesSchema[tblMeta.Name] = tblMeta.GetSchema(ctx, rc.store)
 			}
-			err = tidbMgr.InitSchema(ctx, rc.tidbGlue, dbMeta.Name, tablesSchema)
+			err := InitSchema(ctx, rc.tidbGlue, dbMeta.Name, tablesSchema)
 
 			task.End(zap.ErrorLevel, err)
 			if err != nil {
@@ -324,7 +323,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	if !rc.tidbGlue.OwnsSQLExecutor() {
 		getTableFunc = rc.tidbGlue.GetTables
 	}
-	dbInfos, err := tidbMgr.LoadSchemaInfo(ctx, rc.dbMetas, getTableFunc)
+	dbInfos, err := LoadSchemaInfo(ctx, rc.dbMetas, getTableFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1632,7 +1631,7 @@ func (tr *TableRestore) compareChecksum(ctx context.Context, localChecksum verif
 
 func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) error {
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
-	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger.Logger)
+	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger)
 	task.End(zap.ErrorLevel, err)
 	return err
 }

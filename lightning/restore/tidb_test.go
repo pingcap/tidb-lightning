@@ -64,8 +64,9 @@ func (s *tidbSuite) TearDownTest(c *C) {
 }
 
 func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
+	dbName := "testdb"
 	createTableIfNotExistsStmt := func(createTable, tableName string) string {
-		res, err := s.timgr.createTableIfNotExistsStmt(s.tiGlue.GetParser(), createTable, tableName)
+		res, err := createTableIfNotExistsStmt(s.tiGlue.GetParser(), createTable, dbName, tableName)
 		c.Assert(err, IsNil)
 		return res
 	}
@@ -73,61 +74,61 @@ func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` TINYINT(1));", "foo"),
 		Equals,
-		"CREATE TABLE IF NOT EXISTS `foo` (`bar` TINYINT(1));",
+		"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));",
 	)
 
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE IF NOT EXISTS `foo`(`bar` TINYINT(1));", "foo"),
 		Equals,
-		"CREATE TABLE IF NOT EXISTS `foo` (`bar` TINYINT(1));",
+		"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));",
 	)
 
 	// case insensitive
 	c.Assert(
 		createTableIfNotExistsStmt("/* cOmmEnt */ creAte tablE `fOo`(`bar` TinyinT(1));", "fOo"),
 		Equals,
-		"CREATE TABLE IF NOT EXISTS `fOo` (`bar` TINYINT(1));",
+		"CREATE TABLE IF NOT EXISTS `testdb`.`fOo` (`bar` TINYINT(1));",
 	)
 
 	c.Assert(
 		createTableIfNotExistsStmt("/* coMMenT */ crEatE tAble If not EXISts `FoO`(`bAR` tiNyInT(1));", "FoO"),
 		Equals,
-		"CREATE TABLE IF NOT EXISTS `FoO` (`bAR` TINYINT(1));",
+		"CREATE TABLE IF NOT EXISTS `testdb`.`FoO` (`bAR` TINYINT(1));",
 	)
 
 	// only one "CREATE TABLE" is replaced
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE');", "foo"),
 		Equals,
-		"CREATE TABLE IF NOT EXISTS `foo` (`bar` INT(1) COMMENT 'CREATE TABLE');",
+		"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE');",
 	)
 
 	// upper case becomes shorter
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `ſ`(`ı` TINYINT(1));", "ſ"),
 		Equals,
-		"CREATE TABLE IF NOT EXISTS `ſ` (`ı` TINYINT(1));",
+		"CREATE TABLE IF NOT EXISTS `testdb`.`ſ` (`ı` TINYINT(1));",
 	)
 
 	// upper case becomes longer
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `ɑ`(`ȿ` TINYINT(1));", "ɑ"),
 		Equals,
-		"CREATE TABLE IF NOT EXISTS `ɑ` (`ȿ` TINYINT(1));",
+		"CREATE TABLE IF NOT EXISTS `testdb`.`ɑ` (`ȿ` TINYINT(1));",
 	)
 
 	// non-utf-8
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `\xcc\xcc\xcc`(`\xdd\xdd\xdd` TINYINT(1));", "\xcc\xcc\xcc"),
 		Equals,
-		"CREATE TABLE IF NOT EXISTS `\xcc\xcc\xcc` (`ÝÝÝ` TINYINT(1));",
+		"CREATE TABLE IF NOT EXISTS `testdb`.`\xcc\xcc\xcc` (`ÝÝÝ` TINYINT(1));",
 	)
 
 	// renaming a table
 	c.Assert(
 		createTableIfNotExistsStmt("create table foo(x int);", "ba`r"),
 		Equals,
-		"CREATE TABLE IF NOT EXISTS `ba``r` (`x` INT);",
+		"CREATE TABLE IF NOT EXISTS `testdb`.`ba``r` (`x` INT);",
 	)
 
 	// conditional comments
@@ -138,7 +139,7 @@ func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 			CREATE TABLE x.y (z double) ENGINE=InnoDB AUTO_INCREMENT=8343230 DEFAULT CHARSET=utf8;
 		`, "m"),
 		Equals,
-		"SET NAMES 'binary';SET @@SESSION.`FOREIGN_KEY_CHECKS`=0;CREATE TABLE IF NOT EXISTS `m` (`z` DOUBLE) ENGINE = InnoDB AUTO_INCREMENT = 8343230 DEFAULT CHARACTER SET = UTF8;",
+		"SET NAMES 'binary';SET @@SESSION.`FOREIGN_KEY_CHECKS`=0;CREATE TABLE IF NOT EXISTS `testdb`.`m` (`z` DOUBLE) ENGINE = InnoDB AUTO_INCREMENT = 8343230 DEFAULT CHARACTER SET = UTF8;",
 	)
 }
 
@@ -149,19 +150,16 @@ func (s *tidbSuite) TestInitSchema(c *C) {
 		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
-		ExpectExec("USE `db`").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mockDB.
-		ExpectExec("\\QCREATE TABLE IF NOT EXISTS `t1` (`a` INT PRIMARY KEY,`b` VARCHAR(200));\\E").
+		ExpectExec("\\QCREATE TABLE IF NOT EXISTS `db`.`t1` (`a` INT PRIMARY KEY,`b` VARCHAR(200));\\E").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	s.mockDB.
-		ExpectExec("\\QSET @@SESSION.`FOREIGN_KEY_CHECKS`=0;CREATE TABLE IF NOT EXISTS `t2` (`xx` TEXT) AUTO_INCREMENT = 11203;\\E").
+		ExpectExec("\\QSET @@SESSION.`FOREIGN_KEY_CHECKS`=0;CREATE TABLE IF NOT EXISTS `db`.`t2` (`xx` TEXT) AUTO_INCREMENT = 11203;\\E").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	s.mockDB.
 		ExpectClose()
 
 	s.mockDB.MatchExpectationsInOrder(false) // maps are unordered.
-	err := s.timgr.InitSchema(ctx, s.tiGlue, "db", map[string]string{
+	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
 		"t1": "create table t1 (a int primary key, b varchar(200));",
 		"t2": "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;CREATE TABLE `db`.`t2` (xx TEXT) AUTO_INCREMENT=11203;",
 	})
@@ -176,12 +174,9 @@ func (s *tidbSuite) TestInitSchemaSyntaxError(c *C) {
 		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
-		ExpectExec("USE `db`").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mockDB.
 		ExpectClose()
 
-	err := s.timgr.InitSchema(ctx, s.tiGlue, "db", map[string]string{
+	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
 		"t1": "create table `t1` with invalid syntax;",
 	})
 	c.Assert(err, NotNil)
@@ -194,10 +189,7 @@ func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {
 		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
-		ExpectExec("USE `db`").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mockDB.
-		ExpectExec("CREATE TABLE IF NOT EXISTS `t1`.*").
+		ExpectExec("CREATE TABLE IF NOT EXISTS `db`.`t1`.*").
 		WillReturnError(&mysql.MySQLError{
 			Number:  tmysql.ErrTooBigFieldlength,
 			Message: "Column length too big",
@@ -205,7 +197,7 @@ func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := s.timgr.InitSchema(ctx, s.tiGlue, "db", map[string]string{
+	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
 		"t1": "create table `t1` (a VARCHAR(999999999));",
 	})
 	c.Assert(err, ErrorMatches, ".*Column length too big.*")
@@ -243,7 +235,7 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 		tableInfos = append(tableInfos, info)
 	}
 
-	loaded, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "db"}}, func(ctx context.Context, schema string) ([]*model.TableInfo, error) {
+	loaded, err := LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "db"}}, func(ctx context.Context, schema string) ([]*model.TableInfo, error) {
 		c.Assert(schema, Equals, "db")
 		return tableInfos, nil
 	})
@@ -272,7 +264,7 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 func (s *tidbSuite) TestLoadSchemaInfoMissing(c *C) {
 	ctx := context.Background()
 
-	_, err := s.timgr.LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "asdjalsjdlas"}}, func(ctx context.Context, schema string) ([]*model.TableInfo, error) {
+	_, err := LoadSchemaInfo(ctx, []*mydump.MDDatabaseMeta{{Name: "asdjalsjdlas"}}, func(ctx context.Context, schema string) ([]*model.TableInfo, error) {
 		return nil, errors.Errorf("[schema:1049]Unknown database '%s'", schema)
 	})
 	c.Assert(err, ErrorMatches, ".*Unknown database.*")
