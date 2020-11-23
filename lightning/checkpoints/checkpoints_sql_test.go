@@ -46,7 +46,7 @@ func (s *cpSQLSuite) SetUpTest(c *C) {
 		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.chunk_v\\d+ .+").
 		WillReturnResult(sqlmock.NewResult(5, 1))
 
-	cpdb, err := checkpoints.NewMySQLCheckpointsDB(context.Background(), s.db, "mock-schema", 1234)
+	cpdb, err := checkpoints.NewMySQLCheckpointsDB(context.Background(), s.db, "mock-schema")
 	c.Assert(err, IsNil)
 	c.Assert(s.mock.ExpectationsWereMet(), IsNil)
 	s.cpdb = cpdb
@@ -73,13 +73,13 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 	initializeStmt = s.mock.
 		ExpectPrepare("INSERT INTO `mock-schema`\\.table_v\\d+")
 	initializeStmt.ExpectExec().
-		WithArgs(1234, "`db1`.`t1`", sqlmock.AnyArg(), int64(1)).
+		WithArgs(123, "`db1`.`t1`", sqlmock.AnyArg(), int64(1)).
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	initializeStmt.ExpectExec().
-		WithArgs(1234, "`db1`.`t2`", sqlmock.AnyArg(), int64(2)).
+		WithArgs(123, "`db1`.`t2`", sqlmock.AnyArg(), int64(2)).
 		WillReturnResult(sqlmock.NewResult(8, 1))
 	initializeStmt.ExpectExec().
-		WithArgs(1234, "`db2`.`t3`", sqlmock.AnyArg(), int64(3)).
+		WithArgs(123, "`db2`.`t3`", sqlmock.AnyArg(), int64(3)).
 		WillReturnResult(sqlmock.NewResult(9, 1))
 	s.mock.ExpectCommit()
 

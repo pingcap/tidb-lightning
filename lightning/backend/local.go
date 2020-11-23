@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -167,6 +168,7 @@ type local struct {
 	splitCli split.SplitClient
 	tls      *common.TLS
 	pdAddr   string
+	g        glue.Glue
 
 	localStoreDir   string
 	regionSplitSize int64
@@ -248,6 +250,7 @@ func NewLocalBackend(
 	rangeConcurrency int,
 	sendKVPairs int,
 	enableCheckpoint bool,
+	g glue.Glue,
 ) (Backend, error) {
 	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
@@ -278,6 +281,7 @@ func NewLocalBackend(
 		splitCli: splitCli,
 		tls:      tls,
 		pdAddr:   pdAddr,
+		g:        g,
 
 		localStoreDir:   localFile,
 		regionSplitSize: regionSplitSize,
@@ -1131,7 +1135,7 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 func (local *local) CheckRequirements() error {
-	if err := checkTiDBVersion(local.tls, localMinTiDBVersion); err != nil {
+	if err := checkTiDBVersionBySQL(local.g, localMinTiDBVersion); err != nil {
 		return err
 	}
 	if err := checkPDVersion(local.tls, local.pdAddr, localMinPDVersion); err != nil {
