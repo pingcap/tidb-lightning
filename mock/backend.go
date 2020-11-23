@@ -46,17 +46,17 @@ func (m *MockBackend) EXPECT() *MockBackendMockRecorder {
 }
 
 // CheckRequirements mocks base method
-func (m *MockBackend) CheckRequirements() error {
+func (m *MockBackend) CheckRequirements(arg0 context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckRequirements")
+	ret := m.ctrl.Call(m, "CheckRequirements", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CheckRequirements indicates an expected call of CheckRequirements
-func (mr *MockBackendMockRecorder) CheckRequirements() *gomock.Call {
+func (mr *MockBackendMockRecorder) CheckRequirements(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockBackend)(nil).CheckRequirements))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockBackend)(nil).CheckRequirements), arg0)
 }
 
 // CleanupEngine mocks base method
