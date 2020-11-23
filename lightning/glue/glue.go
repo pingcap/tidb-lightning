@@ -16,6 +16,7 @@ package glue
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
-	"go.uber.org/zap"
 )
 
 type Glue interface {
@@ -33,14 +33,17 @@ type Glue interface {
 	GetDB() (*sql.DB, error)
 	GetParser() *parser.Parser
 	GetTables(context.Context, string) ([]*model.TableInfo, error)
+	GetSession() (checkpoints.Session, error)
 	OpenCheckpointsDB(context.Context, *config.Config) (checkpoints.CheckpointsDB, error)
 	// Record is used to report some information (key, value) to host TiDB, including progress, stage currently
 	Record(string, uint64)
 }
 
 type SQLExecutor interface {
-	ExecuteWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) error
-	ObtainStringWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) (string, error)
+	// ExecuteWithLog and ObtainStringWithLog should support concurrently call and can't assure different calls goes to
+	// same underlying connection
+	ExecuteWithLog(ctx context.Context, query string, purpose string, logger log.Logger) error
+	ObtainStringWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (string, error)
 	Close()
 }
 
@@ -60,19 +63,19 @@ func (e *ExternalTiDBGlue) GetSQLExecutor() SQLExecutor {
 	return e
 }
 
-func (e *ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) error {
+func (e *ExternalTiDBGlue) ExecuteWithLog(ctx context.Context, query string, purpose string, logger log.Logger) error {
 	sql := common.SQLWithRetry{
 		DB:     e.db,
-		Logger: log.Logger{Logger: logger},
+		Logger: logger,
 	}
 	return sql.Exec(ctx, purpose, query)
 }
 
-func (e *ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string, purpose string, logger *zap.Logger) (string, error) {
+func (e *ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (string, error) {
 	var s string
 	err := common.SQLWithRetry{
 		DB:     e.db,
-		Logger: log.Logger{Logger: logger},
+		Logger: logger,
 	}.QueryRow(ctx, purpose, query, &s)
 	return s, err
 }
@@ -85,8 +88,12 @@ func (e *ExternalTiDBGlue) GetParser() *parser.Parser {
 	return e.parser
 }
 
-func (e *ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
-	return nil, nil
+func (e ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo, error) {
+	return nil, errors.New("ExternalTiDBGlue doesn't have a valid GetTables function")
+}
+
+func (e ExternalTiDBGlue) GetSession() (checkpoints.Session, error) {
+	return nil, errors.New("ExternalTiDBGlue doesn't have a valid GetSession function")
 }
 
 func (e *ExternalTiDBGlue) OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (checkpoints.CheckpointsDB, error) {

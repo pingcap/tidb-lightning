@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	kv "github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb/table"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -261,6 +262,22 @@ func checkTiDBVersion(tls *common.TLS, requiredVersion semver.Version) error {
 	}
 
 	version, err := common.ExtractTiDBVersion(status.Version)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return checkVersion("TiDB", requiredVersion, *version)
+}
+
+func checkTiDBVersionBySQL(g glue.Glue, requiredVersion semver.Version) error {
+	versionStr, err := g.GetSQLExecutor().ObtainStringWithLog(
+		context.Background(),
+		"SELECT version();",
+		"check TiDB version",
+		log.L())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	version, err := common.ExtractTiDBVersion(versionStr)
 	if err != nil {
 		return errors.Trace(err)
 	}
