@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/br/pkg/utils"
+
 	split "github.com/pingcap/br/pkg/restore"
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -21,7 +23,11 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/log"
 )
 
-const SplitRetryTimes = 8
+const (
+	SplitRetryTimes = 8
+
+	maxBatchSplitKeys = 64
+)
 
 // TODO remove this file and use br internal functions
 // This File include region split & scatter operation just like br.
@@ -61,26 +67,35 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 		} else {
 			splitKeyMap = getSplitKeysByRanges(ranges, regions)
 		}
-
 		for regionID, keys := range splitKeyMap {
 			var newRegions []*split.RegionInfo
 			region := regionMap[regionID]
-			newRegions, errSplit = local.BatchSplitRegions(ctx, region, keys)
-			if errSplit != nil {
-				if strings.Contains(errSplit.Error(), "no valid key") {
-					for _, key := range keys {
-						log.L().Warn("no valid key",
-							zap.Binary("startKey", region.Region.StartKey),
-							zap.Binary("endKey", region.Region.EndKey),
-							zap.Binary("key", codec.EncodeBytes([]byte{}, key)))
+			sort.Slice(keys, func(i, j int) bool {
+				return bytes.Compare(keys[i], keys[j]) < 0
+			})
+			splitRegion := region
+			for i := 0; i < (len(keys)+maxBatchSplitKeys)/maxBatchSplitKeys; i++ {
+				start := i * maxBatchSplitKeys
+				end := utils.MinInt((i+1)*maxBatchSplitKeys, len(keys))
+				newRegions, errSplit = local.BatchSplitRegions(ctx, splitRegion, keys[start:end])
+				if errSplit != nil {
+					if strings.Contains(errSplit.Error(), "no valid key") {
+						for _, key := range keys {
+							log.L().Warn("no valid key",
+								zap.Binary("startKey", region.Region.StartKey),
+								zap.Binary("endKey", region.Region.EndKey),
+								zap.Binary("key", codec.EncodeBytes([]byte{}, key)))
+						}
+						return errors.Trace(errSplit)
 					}
-					return errors.Trace(errSplit)
+					log.L().Warn("split regions", log.ShortError(errSplit), zap.Int("retry time", i+1),
+						zap.Uint64("region_id", regionID))
+					retryKeys = append(retryKeys, keys[start:]...)
+					break
+				} else {
+					scatterRegions = append(scatterRegions, newRegions...)
+					splitRegion = newRegions[len(newRegions)-1]
 				}
-				log.L().Warn("split regions", log.ShortError(errSplit), zap.Int("retry time", i+1),
-					zap.Uint64("region_id", regionID))
-				retryKeys = append(retryKeys, keys...)
-			} else {
-				scatterRegions = append(scatterRegions, newRegions...)
 			}
 		}
 		if len(retryKeys) == 0 {
