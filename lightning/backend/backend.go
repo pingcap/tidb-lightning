@@ -18,13 +18,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	uuid "github.com/satori/go.uuid"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -76,11 +76,11 @@ func makeLogger(tag string, engineUUID uuid.UUID) log.Logger {
 
 func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
 	tag := makeTag(tableName, engineID)
-	engineUUID := uuid.NewV5(engineNamespace, tag)
+	engineUUID := uuid.NewSHA1(engineNamespace, []byte(tag))
 	return tag, engineUUID
 }
 
-var engineNamespace = uuid.Must(uuid.FromString("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf"))
+var engineNamespace = uuid.MustParse("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf")
 
 // AbstractBackend is the abstract interface behind Backend.
 // Implementations of this interface must be goroutine safe: you can share an

@@ -184,6 +184,9 @@ type regexRouterParser struct{}
 
 func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) {
 	rule := &RegexRouter{}
+	if r.Path == "" && r.Pattern == "" {
+		return nil, errors.New("`path` and `pattern` must not be both empty in [[mydumper.files]]")
+	}
 	if r.Path != "" && r.Pattern != "" {
 		return nil, errors.New("can't set both `path` and `pattern` field in [[mydumper.files]]")
 	}

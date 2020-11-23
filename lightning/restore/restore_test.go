@@ -22,6 +22,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/golang/mock/gomock"
+	"github.com/google/uuid"
 	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -31,10 +32,10 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/ddl"
 	tmock "github.com/pingcap/tidb/util/mock"
-	uuid "github.com/satori/go.uuid"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
@@ -409,6 +410,209 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	s.cfg.Mydumper.CSV.Header = false
 }
 
+func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
+	fakeDataDir := c.MkDir()
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	c.Assert(err, IsNil)
+
+	fakeDataFiles := make([]mydump.FileInfo, 0)
+
+	fakeCsvContents := []string{
+		// small full header
+		"a,b,c\r\n1,2,3\r\n",
+		// small partial header
+		"b,c\r\n2,3\r\n",
+		// big full header
+		"a,b,c\r\n90000,80000,700000\r\n1000,2000,3000\r\n11,22,33\r\n3,4,5\r\n",
+		// big full header unordered
+		"c,a,b\r\n,1000,2000,3000\r\n11,22,33\r\n1000,2000,404\r\n3,4,5\r\n90000,80000,700000\r\n7999999,89999999,9999999\r\n",
+		// big partial header
+		"b,c\r\n2000001,30000001\r\n35231616,462424626\r\n62432,434898934\r\n",
+	}
+	total := 0
+	for i, s := range fakeCsvContents {
+		csvName := fmt.Sprintf("db.table.%02d.csv", i)
+		err := ioutil.WriteFile(filepath.Join(fakeDataDir, csvName), []byte(s), 0644)
+		c.Assert(err, IsNil)
+		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
+			TableName: filter.Table{"db", "table"},
+			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i)},
+			Size:      int64(len(s)),
+		})
+		total += len(s)
+	}
+	tableMeta := &mydump.MDTableMeta{
+		DB:         "db",
+		Name:       "table",
+		TotalSize:  int64(total),
+		SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: mydump.SourceFileMeta{Path: "db.table-schema.sql", Type: mydump.SourceTypeTableSchema}},
+		DataFiles:  fakeDataFiles,
+	}
+
+	failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/restore/PopulateChunkTimestamp", "return(1234567897)")
+	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/restore/PopulateChunkTimestamp")
+
+	cp := &TableCheckpoint{
+		Engines: make(map[int32]*EngineCheckpoint),
+	}
+
+	cfg := config.NewConfig()
+	cfg.Mydumper.BatchSize = 100
+	cfg.Mydumper.MaxRegionSize = 40
+
+	cfg.Mydumper.CSV.Header = true
+	cfg.Mydumper.StrictFormat = true
+	rc := &RestoreController{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
+
+	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &TableCheckpoint{})
+	c.Assert(err, IsNil)
+	c.Assert(tr.populateChunks(context.Background(), rc, cp), IsNil)
+
+	c.Assert(cp.Engines, DeepEquals, map[int32]*EngineCheckpoint{
+		-1: {
+			Status: CheckpointStatusLoaded,
+		},
+		0: {
+			Status: CheckpointStatusLoaded,
+			Chunks: []*ChunkCheckpoint{
+				{
+					Key:      ChunkCheckpointKey{Path: tableMeta.DataFiles[0].FileMeta.Path, Offset: 0},
+					FileMeta: tableMeta.DataFiles[0].FileMeta,
+					Chunk: mydump.Chunk{
+						Offset:       0,
+						EndOffset:    14,
+						PrevRowIDMax: 0,
+						RowIDMax:     4, // 37 bytes with 3 columns can store at most 7 rows.
+					},
+					Timestamp: 1234567897,
+				},
+				{
+					Key:      ChunkCheckpointKey{Path: tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
+					FileMeta: tableMeta.DataFiles[1].FileMeta,
+					Chunk: mydump.Chunk{
+						Offset:       0,
+						EndOffset:    10,
+						PrevRowIDMax: 4,
+						RowIDMax:     7,
+					},
+					Timestamp: 1234567897,
+				},
+				{
+					Key:               ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 6},
+					FileMeta:          tableMeta.DataFiles[2].FileMeta,
+					ColumnPermutation: []int{0, 1, 2, -1},
+					Chunk: mydump.Chunk{
+						Offset:       6,
+						EndOffset:    52,
+						PrevRowIDMax: 7,
+						RowIDMax:     20,
+						Columns:      []string{"a", "b", "c"},
+					},
+
+					Timestamp: 1234567897,
+				},
+				{
+					Key:               ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 52},
+					FileMeta:          tableMeta.DataFiles[2].FileMeta,
+					ColumnPermutation: []int{0, 1, 2, -1},
+					Chunk: mydump.Chunk{
+						Offset:       52,
+						EndOffset:    60,
+						PrevRowIDMax: 20,
+						RowIDMax:     22,
+						Columns:      []string{"a", "b", "c"},
+					},
+					Timestamp: 1234567897,
+				},
+				{
+					Key:               ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 6},
+					FileMeta:          tableMeta.DataFiles[3].FileMeta,
+					ColumnPermutation: []int{1, 2, 0, -1},
+					Chunk: mydump.Chunk{
+						Offset:       6,
+						EndOffset:    48,
+						PrevRowIDMax: 22,
+						RowIDMax:     35,
+						Columns:      []string{"c", "a", "b"},
+					},
+					Timestamp: 1234567897,
+				},
+			},
+		},
+		1: {
+			Status: CheckpointStatusLoaded,
+			Chunks: []*ChunkCheckpoint{
+				{
+					Key:               ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 48},
+					FileMeta:          tableMeta.DataFiles[3].FileMeta,
+					ColumnPermutation: []int{1, 2, 0, -1},
+					Chunk: mydump.Chunk{
+						Offset:       48,
+						EndOffset:    101,
+						PrevRowIDMax: 35,
+						RowIDMax:     48,
+						Columns:      []string{"c", "a", "b"},
+					},
+					Timestamp: 1234567897,
+				},
+				{
+					Key:               ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 101},
+					FileMeta:          tableMeta.DataFiles[3].FileMeta,
+					ColumnPermutation: []int{1, 2, 0, -1},
+					Chunk: mydump.Chunk{
+						Offset:       101,
+						EndOffset:    102,
+						PrevRowIDMax: 48,
+						RowIDMax:     48,
+						Columns:      []string{"c", "a", "b"},
+					},
+					Timestamp: 1234567897,
+				},
+				{
+					Key:               ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 4},
+					FileMeta:          tableMeta.DataFiles[4].FileMeta,
+					ColumnPermutation: []int{-1, 0, 1, -1},
+					Chunk: mydump.Chunk{
+						Offset:       4,
+						EndOffset:    59,
+						PrevRowIDMax: 48,
+						RowIDMax:     61,
+						Columns:      []string{"b", "c"},
+					},
+					Timestamp: 1234567897,
+				},
+			},
+		},
+		2: {
+			Status: CheckpointStatusLoaded,
+			Chunks: []*ChunkCheckpoint{
+				{
+					Key:               ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 59},
+					FileMeta:          tableMeta.DataFiles[4].FileMeta,
+					ColumnPermutation: []int{-1, 0, 1, -1},
+					Chunk: mydump.Chunk{
+						Offset:       59,
+						EndOffset:    60,
+						PrevRowIDMax: 61,
+						RowIDMax:     61,
+						Columns:      []string{"b", "c"},
+					},
+					Timestamp: 1234567897,
+				},
+			},
+		},
+	})
+}
+
+func (s *tableRestoreSuite) TestGetColumnsNames(c *C) {
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{0, 1, 2, -1}), DeepEquals, []string{"a", "b", "c"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, 0, 2, -1}), DeepEquals, []string{"b", "a", "c"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 0, 1, -1}), DeepEquals, []string{"b", "c"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{0, 1, -1, -1}), DeepEquals, []string{"a", "b"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, -1, 0, -1}), DeepEquals, []string{"c", "a"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 0, -1, -1}), DeepEquals, []string{"b"})
+}
+
 func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
 	ccp := &ChunkCheckpoint{}
 	c.Assert(s.tr.initializeColumns(nil, ccp), IsNil)
@@ -457,7 +661,7 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
 	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
-	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(1234567, 12345, 1234567890))
+	err = s.tr.compareChecksum(ctx, verification.MakeKVChecksum(1234567, 12345, 1234567890))
 	c.Assert(err, IsNil)
 
 	c.Assert(db.Close(), IsNil)
@@ -485,7 +689,7 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure(c *C) {
 	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
-	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(9876543, 54321, 1357924680))
+	err = s.tr.compareChecksum(ctx, verification.MakeKVChecksum(9876543, 54321, 1357924680))
 	c.Assert(err, ErrorMatches, "checksum mismatched.*")
 
 	c.Assert(db.Close(), IsNil)
@@ -501,7 +705,10 @@ func (s *tableRestoreSuite) TestAnalyzeTable(c *C) {
 	mock.ExpectClose()
 
 	ctx := context.Background()
-	err = s.tr.analyzeTable(ctx, db)
+	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	c.Assert(err, IsNil)
+	g := glue.NewExternalTiDBGlue(db, defaultSQLMode)
+	err = s.tr.analyzeTable(ctx, g)
 	c.Assert(err, IsNil)
 
 	c.Assert(db.Close(), IsNil)
@@ -515,7 +722,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	importer := kv.MakeBackend(mockBackend)
 
 	ctx := context.Background()
-	engineUUID := uuid.NewV4()
+	engineUUID := uuid.New()
 
 	mockBackend.EXPECT().
 		CloseEngine(ctx, engineUUID).
@@ -540,7 +747,7 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	importer := kv.MakeBackend(mockBackend)
 
 	ctx := context.Background()
-	engineUUID := uuid.NewV4()
+	engineUUID := uuid.New()
 
 	mockBackend.EXPECT().
 		CloseEngine(ctx, engineUUID).

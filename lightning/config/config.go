@@ -66,7 +66,17 @@ const (
 
 var (
 	defaultConfigPaths    = []string{"tidb-lightning.toml", "conf/tidb-lightning.toml"}
-	supportedStorageTypes = []string{"file", "local", "s3"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop"}
+
+	DefaultFilter = []string{
+		"*.*",
+		"!mysql.*",
+		"!sys.*",
+		"!INFORMATION_SCHEMA.*",
+		"!PERFORMANCE_SCHEMA.*",
+		"!METRICS_SCHEMA.*",
+		"!INSPECTION_SCHEMA.*",
+	}
 )
 
 type DBStore struct {
@@ -151,6 +161,10 @@ func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
 	return nil
 }
 
+func (t PostOpLevel) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
 // parser command line parameter
 func (t *PostOpLevel) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
@@ -206,8 +220,8 @@ type CSVConfig struct {
 }
 
 type MydumperRuntime struct {
-	ReadBlockSize    int64            `toml:"read-block-size" json:"read-block-size"`
-	BatchSize        int64            `toml:"batch-size" json:"batch-size"`
+	ReadBlockSize    ByteSize         `toml:"read-block-size" json:"read-block-size"`
+	BatchSize        ByteSize         `toml:"batch-size" json:"batch-size"`
 	BatchImportRatio float64          `toml:"batch-import-ratio" json:"batch-import-ratio"`
 	SourceDir        string           `toml:"data-source-dir" json:"data-source-dir"`
 	NoSchema         bool             `toml:"no-schema" json:"no-schema"`
@@ -215,7 +229,7 @@ type MydumperRuntime struct {
 	CSV              CSVConfig        `toml:"csv" json:"csv"`
 	CaseSensitive    bool             `toml:"case-sensitive" json:"case-sensitive"`
 	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
-	MaxRegionSize    int64            `toml:"max-region-size" json:"max-region-size"`
+	MaxRegionSize    ByteSize         `toml:"max-region-size" json:"max-region-size"`
 	Filter           []string         `toml:"filter" json:"filter"`
 	FileRouters      []*FileRouteRule `toml:"files" json:"files"`
 	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
@@ -232,14 +246,14 @@ type FileRouteRule struct {
 }
 
 type TikvImporter struct {
-	Addr             string `toml:"addr" json:"addr"`
-	Backend          string `toml:"backend" json:"backend"`
-	OnDuplicate      string `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs       int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
-	SendKVPairs      int    `toml:"send-kv-pairs" json:"send-kv-pairs"`
-	RegionSplitSize  int64  `toml:"region-split-size" json:"region-split-size"`
-	SortedKVDir      string `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
-	RangeConcurrency int    `toml:"range-concurrency" json:"range-concurrency"`
+	Addr             string   `toml:"addr" json:"addr"`
+	Backend          string   `toml:"backend" json:"backend"`
+	OnDuplicate      string   `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs       int      `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	SendKVPairs      int      `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	RegionSplitSize  ByteSize `toml:"region-split-size" json:"region-split-size"`
+	SortedKVDir      string   `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	RangeConcurrency int      `toml:"range-concurrency" json:"range-concurrency"`
 }
 
 type Checkpoint struct {
@@ -292,6 +306,10 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	return err
 }
 
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(d.String()), nil
+}
+
 func (d *Duration) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
 }
@@ -336,7 +354,7 @@ func NewConfig() *Config {
 			},
 			StrictFormat:  false,
 			MaxRegionSize: MaxRegionSize,
-			Filter:        []string{"*.*"},
+			Filter:        DefaultFilter,
 		},
 		TikvImporter: TikvImporter{
 			Backend:         BackendImporter,
@@ -461,6 +479,21 @@ func (cfg *Config) Adjust() error {
 		}
 	}
 
+	// adjust file routing
+	for _, rule := range cfg.Mydumper.FileRouters {
+		if filepath.IsAbs(rule.Path) {
+			relPath, err := filepath.Rel(cfg.Mydumper.SourceDir, rule.Path)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// ".." means that this path is not in source dir, so we should return an error
+			if strings.HasPrefix(relPath, "..") {
+				return errors.Errorf("file route path '%s' is not in source dir '%s'", rule.Path, cfg.Mydumper.SourceDir)
+			}
+			rule.Path = relPath
+		}
+	}
+
 	// enable default file route rule if no rules are set
 	if len(cfg.Mydumper.FileRouters) == 0 {
 		cfg.Mydumper.DefaultFileRules = true
@@ -539,7 +572,7 @@ func (cfg *Config) Adjust() error {
 	// mydumper.filter and black-white-list cannot co-exist.
 	if cfg.HasLegacyBlackWhiteList() {
 		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
-		if !(len(cfg.Mydumper.Filter) == 1 && cfg.Mydumper.Filter[0] == "*.*") {
+		if !common.StringSliceEqual(cfg.Mydumper.Filter, DefaultFilter) {
 			return errors.New("invalid config: `mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 		}
 	}
@@ -583,12 +616,9 @@ func (cfg *Config) Adjust() error {
 
 	// handle mydumper
 	if cfg.Mydumper.BatchSize <= 0 {
-		// a smaller batch size can improve performance by about 5% in local mode.
-		if cfg.TikvImporter.Backend == BackendLocal {
-			cfg.Mydumper.BatchSize = 10 * _G
-		} else {
-			cfg.Mydumper.BatchSize = 100 * _G
-		}
+		// if rows in source files are not sorted by primary key(if primary is number or cluster index enabled),
+		// the key range in each data engine may have overlap, thus a bigger engine size can somewhat alleviate it.
+		cfg.Mydumper.BatchSize = defaultBatchSize
 
 	}
 	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {

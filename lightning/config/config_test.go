@@ -14,6 +14,7 @@
 package config_test
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"net"
@@ -24,7 +25,9 @@ import (
 	"regexp"
 	"strconv"
 	"testing"
+	"time"
 
+	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 
@@ -127,6 +130,25 @@ func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 	cfg.TikvImporter.Backend = "no_such_backend"
 	err := cfg.Adjust()
 	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend` \\(no_such_backend\\)")
+}
+
+func (s *configTestSuite) TestAdjustFileRoutePath(c *C) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+
+	tmpDir := c.MkDir()
+	cfg.Mydumper.SourceDir = tmpDir
+	invalidPath := filepath.Join(tmpDir, "../test123/1.sql")
+	rule := &config.FileRouteRule{Path: invalidPath, Type: "sql", Schema: "test", Table: "tbl"}
+	cfg.Mydumper.FileRouters = []*config.FileRouteRule{rule}
+	err := cfg.Adjust()
+	c.Assert(err, ErrorMatches, fmt.Sprintf("file route path '%s' is not in source dir '%s'", invalidPath, tmpDir))
+
+	relPath := "test_dir/1.sql"
+	rule.Path = filepath.Join(tmpDir, relPath)
+	err = cfg.Adjust()
+	c.Assert(err, IsNil)
+	c.Assert(cfg.Mydumper.FileRouters[0].Path, Equals, relPath)
 }
 
 func (s *configTestSuite) TestDecodeError(c *C) {
@@ -566,12 +588,19 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		"false":      config.OpLevelOff,
 	}
 
+	var b bytes.Buffer
+	enc := toml.NewEncoder(&b)
+
 	for k, v := range kvMap {
 		cfg := &config.Config{}
 		confStr := fmt.Sprintf("[post-restore]\r\nchecksum= %s\r\n", k)
 		err := cfg.LoadFromTOML([]byte(confStr))
 		c.Assert(err, IsNil)
 		c.Assert(cfg.PostRestore.Checksum, Equals, v)
+
+		b.Reset()
+		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
+		c.Assert(&b, Matches, fmt.Sprintf(`(?s).*checksum = "\Q%s\E".*`, v))
 	}
 
 	for k, v := range kvMap {
@@ -580,5 +609,43 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 		err := cfg.LoadFromTOML([]byte(confStr))
 		c.Assert(err, IsNil)
 		c.Assert(cfg.PostRestore.Analyze, Equals, v)
+
+		b.Reset()
+		c.Assert(enc.Encode(cfg.PostRestore), IsNil)
+		c.Assert(&b, Matches, fmt.Sprintf(`(?s).*analyze = "\Q%s\E".*`, v))
 	}
+}
+
+func (s *configTestSuite) TestCronEncodeDecode(c *C) {
+	cfg := &config.Config{}
+	d, _ := time.ParseDuration("1m")
+	cfg.Cron.SwitchMode.Duration = d
+	d, _ = time.ParseDuration("2m")
+	cfg.Cron.LogProgress.Duration = d
+	var b bytes.Buffer
+	c.Assert(toml.NewEncoder(&b).Encode(cfg.Cron), IsNil)
+	c.Assert(b.String(), Equals, "switch-mode = \"1m0s\"\nlog-progress = \"2m0s\"\n")
+
+	confStr := "[cron]\r\n" + b.String()
+	cfg2 := &config.Config{}
+	c.Assert(cfg2.LoadFromTOML([]byte(confStr)), IsNil)
+	c.Assert(cfg2.Cron, DeepEquals, cfg.Cron)
+}
+
+func (s *configTestSuite) TestAdjustWithLegacyBlackWhiteList(c *C) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	c.Assert(cfg.Mydumper.Filter, DeepEquals, config.DefaultFilter)
+	c.Assert(cfg.HasLegacyBlackWhiteList(), IsFalse)
+
+	cfg.Mydumper.Filter = []string{"test.*"}
+	c.Assert(cfg.Adjust(), IsNil)
+	c.Assert(cfg.HasLegacyBlackWhiteList(), IsFalse)
+
+	cfg.BWList.DoDBs = []string{"test"}
+	c.Assert(cfg.Adjust(), ErrorMatches, "invalid config: `mydumper\\.filter` and `black-white-list` cannot be simultaneously defined")
+
+	cfg.Mydumper.Filter = config.DefaultFilter
+	c.Assert(cfg.Adjust(), IsNil)
+	c.Assert(cfg.HasLegacyBlackWhiteList(), IsTrue)
 }

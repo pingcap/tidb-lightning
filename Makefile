@@ -18,9 +18,11 @@ TEST_DIR := /tmp/lightning_test_result
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
-GO        := go
-GOBUILD   := GO111MODULE=on CGO_ENABLED=1 $(GO) build
-GOTEST    := GO111MODULE=on CGO_ENABLED=1 $(GO) test -p 3
+GO          := go
+GOBUILD     := GO111MODULE=on CGO_ENABLED=1 $(GO) build
+GOTEST      := GO111MODULE=on CGO_ENABLED=1 $(GO) test -p 3
+PREPARE_MOD := cp go.mod1 go.mod && cp go.sum1 go.sum
+FINISH_MOD  := cp go.mod go.mod1 && cp go.sum go.sum1
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -43,8 +45,14 @@ endif
 
 default: clean lightning lightning-ctl checksuccess
 
+prepare:
+	$(PREPARE_MOD)
+
+finish-prepare:
+	$(FINISH_MOD)
+
 clean:
-	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN) $(FAILPOINT_CTL_BIN) $(REVIVE_BIN) $(VFSGENDEV_BIN)
+	rm -f $(LIGHTNING_BIN) $(LIGHTNING_CTRL_BIN) $(FAILPOINT_CTL_BIN) $(REVIVE_BIN) $(VFSGENDEV_BIN) go.mod go.sum
 
 checksuccess:
 	@if [ -f $(LIGHTNING_BIN) ] && [ -f $(LIGHTNING_CTRL_BIN) ]; \
@@ -68,22 +76,29 @@ web:
 	cd web && npm install && npm run build
 
 lightning_for_web:
+	$(PREPARE_MOD)
 	$(GOBUILD) $(RACE_FLAG) -tags dev -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/tidb-lightning/main.go
 
 lightning:
+	$(PREPARE_MOD)
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_BIN) cmd/tidb-lightning/main.go
 
 lightning-ctl:
+	$(PREPARE_MOD)
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o $(LIGHTNING_CTL_BIN) cmd/tidb-lightning-ctl/main.go
 
-test: ensure_failpoint_ctl
+test:
+	$(PREPARE_MOD)
+	@make ensure_failpoint_ctl
 	mkdir -p "$(TEST_DIR)"
 	$(FAILPOINT_ENABLE)
 	@export log_level=error;\
 	$(GOTEST) -cover -covermode=count -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES) || ( $(FAILPOINT_DISABLE) && exit 1 )
 	$(FAILPOINT_DISABLE)
 
-lightning_for_integration_test: ensure_failpoint_ctl
+lightning_for_integration_test:
+	$(PREPARE_MOD)
+	@make ensure_failpoint_ctl
 	$(FAILPOINT_ENABLE)
 	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb-lightning/... \
@@ -115,14 +130,21 @@ else
 endif
 
 update:
+	$(PREPARE_MOD)
 	GO111MODULE=on go mod verify
 	GO111MODULE=on go mod tidy
+	$(FINISH_MOD)
+
+manual_update:
+	GO111MODULE=on go mod verify
+	GO111MODULE=on go mod tidy
+	$(FINISH_MOD)
 
 $(FAILPOINT_CTL_BIN):
 	cd tools && $(GOBUILD) -o ../$(FAILPOINT_CTL_BIN) github.com/pingcap/failpoint/failpoint-ctl
 
 ensure_failpoint_ctl: $(FAILPOINT_CTL_BIN)
-	@[ "$$(grep -h failpoint go.mod tools/go.mod | uniq | wc -l)" -eq 1 ] || \
+	@[ "$$(grep -h failpoint go.mod1 tools/go.mod | uniq | wc -l)" -eq 1 ] || \
 	( echo 'failpoint version of go.mod and tools/go.mod differ' && false )
 
 failpoint_enable: ensure_failpoint_ctl
@@ -132,7 +154,11 @@ failpoint_disable: ensure_failpoint_ctl
 	$(FAILPOINT_DISABLE)
 
 
-check: fmt revive vet lint
+check:
+	@make prepare
+	GO111MODULE=on go mod tidy
+	git diff --quiet go.mod go.sum || ("$(FINISH_MOD)" && exit 1)
+	@make fmt revive vet lint
 
 fmt:
 	gofmt -s -l -w $(FILES)
