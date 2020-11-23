@@ -328,3 +328,68 @@ func (s *backendSuite) TestNewEncoder(c *C) {
 	c.Assert(realEncoder, Equals, encoder)
 	c.Assert(err, IsNil)
 }
+
+func (s *backendSuite) TestCheckDiskQuota(c *C) {
+	s.setUpTest(c)
+	defer s.tearDownTest()
+
+	uuid1 := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	uuid3 := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	uuid5 := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	uuid7 := uuid.MustParse("77777777-7777-7777-7777-777777777777")
+	uuid9 := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+
+	fileSizes := []kv.EngineFileSize{
+		{
+			UUID:        uuid1,
+			Size:        1000,
+			IsImporting: false,
+		},
+		{
+			UUID:        uuid3,
+			Size:        3000,
+			IsImporting: true,
+		},
+		{
+			UUID:        uuid5,
+			Size:        5000,
+			IsImporting: false,
+		},
+		{
+			UUID:        uuid7,
+			Size:        7000,
+			IsImporting: true,
+		},
+		{
+			UUID:        uuid9,
+			Size:        9000,
+			IsImporting: false,
+		},
+	}
+
+	s.mockBackend.EXPECT().EngineFileSizes().Return(fileSizes).Times(4)
+
+	// No quota exceeded
+	le, iple, ts := s.backend.CheckDiskQuota(30000)
+	c.Assert(le, HasLen, 0)
+	c.Assert(iple, Equals, 0)
+	c.Assert(ts, Equals, int64(25000))
+
+	// Quota exceeded, the largest one is out
+	le, iple, ts = s.backend.CheckDiskQuota(20000)
+	c.Assert(le, DeepEquals, []uuid.UUID{uuid9})
+	c.Assert(iple, Equals, 0)
+	c.Assert(ts, Equals, int64(25000))
+
+	// Quota exceeded, the importing one should be ranked least priority
+	le, iple, ts = s.backend.CheckDiskQuota(12000)
+	c.Assert(le, DeepEquals, []uuid.UUID{uuid5, uuid9})
+	c.Assert(iple, Equals, 0)
+	c.Assert(ts, Equals, int64(25000))
+
+	// Quota exceeded, the importing ones should not be visible
+	le, iple, ts = s.backend.CheckDiskQuota(5000)
+	c.Assert(le, DeepEquals, []uuid.UUID{uuid1, uuid5, uuid9})
+	c.Assert(iple, Equals, 1)
+	c.Assert(ts, Equals, int64(25000))
+}

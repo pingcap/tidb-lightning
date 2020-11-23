@@ -41,11 +41,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -53,6 +53,8 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/manual"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
@@ -67,7 +69,7 @@ const (
 	gRPCKeepAliveTimeout = 3 * time.Second
 	gRPCBackOffMaxDelay  = 3 * time.Second
 
-	LocalMemoryTableSize = 512 << 20
+	LocalMemoryTableSize = config.LocalMemoryTableSize
 
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
 	regionMaxKeyCount = 1_440_000
@@ -95,19 +97,29 @@ type Range struct {
 // localFileMeta contains some field that is necessary to continue the engine restore/import process.
 // These field should be written to disk when we update chunk checkpoint
 type localFileMeta struct {
-	Ts        uint64 `json:"ts"`
-	Length    int64  `json:"length"`
-	TotalSize int64  `json:"total_size"`
+	Ts uint64 `json:"ts"`
+	// Length is the number of KV pairs stored by the engine.
+	Length int64 `json:"length"`
+	// TotalSize is the total pre-compressed KV byte size stored by engine.
+	TotalSize int64 `json:"total_size"`
 }
 
 type LocalFile struct {
 	localFileMeta
 	db   *pebble.DB
 	Uuid uuid.UUID
+
+	// isImporting is an atomic variable recording whether an ImportEngine() is
+	// running for this *LocalFile. 0 = not importing, 1 = importing. This flag
+	// is mainly informational. It is used in disk quota to avoid ingesting an
+	// already running engine, and will not prevent the caller wrongly calling
+	// ImportEngine() twice in parallel.
+	isImporting int32
 }
 
 func (e *LocalFile) Close() error {
-	return e.db.Close()
+	log.L().Debug("closing local engine", zap.Stringer("engine", e.Uuid), zap.Stack("stack"))
+	return errors.Trace(e.db.Close())
 }
 
 // Cleanup remove meta and db files
@@ -272,7 +284,7 @@ func NewLocalBackend(
 	if shouldCreate {
 		err = os.Mkdir(localFile, 0700)
 		if err != nil {
-			return MakeBackend(nil), err
+			return MakeBackend(nil), errors.Annotate(err, "invalid sorted-kv-dir for local backend, please change the config or delete the path")
 		}
 	}
 
@@ -347,7 +359,7 @@ func (local *local) Close() {
 		v.(*LocalFile).Close()
 		return true
 	})
-
+	local.engines = sync.Map{}
 	local.conns.Close()
 
 	// if checkpoint is disable or we finish load all data successfully, then files in this
@@ -360,8 +372,8 @@ func (local *local) Close() {
 	}
 }
 
-// Flush ensure the written data is saved successfully, to make sure no data lose after restart
-func (local *local) Flush(engineId uuid.UUID) error {
+// FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
+func (local *local) FlushEngine(engineId uuid.UUID) error {
 	if engine, ok := local.engines.Load(engineId); ok {
 		engineFile := engine.(*LocalFile)
 		if err := engineFile.db.Flush(); err != nil {
@@ -370,6 +382,45 @@ func (local *local) Flush(engineId uuid.UUID) error {
 		return local.saveEngineMeta(engineFile)
 	}
 	return errors.Errorf("engine '%s' not found", engineId)
+}
+
+func (local *local) FlushAllEngines() (err error) {
+	var flushFinishedWg sync.WaitGroup
+	var flushedEngines []*LocalFile
+
+	// first, (asynchronously) flush all opened engines
+	local.engines.Range(func(k, v interface{}) bool {
+		engineFile := v.(*LocalFile)
+		if atomic.LoadInt32(&engineFile.isImporting) != 0 {
+			// ignore closed engines.
+			return true
+		}
+
+		flushFinishedWg.Add(1)
+		flushFinishedCh, e := engineFile.db.AsyncFlush()
+		if e != nil {
+			err = e
+			return false
+		}
+		flushedEngines = append(flushedEngines, engineFile)
+		go func() {
+			<-flushFinishedCh
+			flushFinishedWg.Done()
+		}()
+		return true
+	})
+
+	// then, wait for all engines being flushed, and then save the metadata.
+	if err == nil {
+		flushFinishedWg.Wait()
+		for _, engineFile := range flushedEngines {
+			err = local.saveEngineMeta(engineFile)
+			if err != nil {
+				break
+			}
+		}
+	}
+	return
 }
 
 func (local *local) RetryImportDelay() time.Duration {
@@ -1002,44 +1053,45 @@ loopWrite:
 func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainRanges *syncdRanges) error {
 	if engineFile.Length == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
-		log.L().Warn("engine contains no data", zap.Stringer("uuid", engineFile.Uuid))
+		log.L().Info("engine contains no data", zap.Stringer("uuid", engineFile.Uuid))
 		return nil
 	}
 	log.L().Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
 
-	errCh := make(chan error, len(ranges))
+	var allErrLock sync.Mutex
+	var allErr error
+	var wg sync.WaitGroup
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	wg.Add(len(ranges))
+
 	for _, r := range ranges {
 		startKey := r.start
 		endKey := r.end
 		w := local.rangeConcurrency.Apply()
 		go func(w *worker.Worker) {
-			defer local.rangeConcurrency.Recycle(w)
+			defer func() {
+				local.rangeConcurrency.Recycle(w)
+				wg.Done()
+			}()
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
-				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainRanges); err != nil {
-					log.L().Warn("write and ingest by range failed",
-						zap.Int("retry time", i+1), log.ShortError(err))
-				} else {
-					break
+				err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainRanges)
+				if err == nil {
+					return
 				}
+				log.L().Warn("write and ingest by range failed", zap.Int("retry time", i+1), log.ShortError(err))
 			}
-			errCh <- err
+
+			allErrLock.Lock()
+			allErr = multierr.Append(allErr, err)
+			allErrLock.Unlock()
 		}(w)
 	}
 
-	var err error
-	for i := 0; i < len(ranges); i++ {
-		// wait for all sub tasks finish to avoid panic. if we return on the first error,
-		// the outer tasks may close the pebble db but some sub tasks still read from the db
-		e := <-errCh
-		if e != nil && err == nil {
-			err = e
-		}
-	}
-	return err
+	// wait for all sub tasks finish to avoid panic. if we return on the first error,
+	// the outer tasks may close the pebble db but some sub tasks still read from the db
+	wg.Wait()
+	return allErr
 }
 
 type syncdRanges struct {
@@ -1078,6 +1130,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
+
+	atomic.StoreInt32(&lf.isImporting, 1)
+	defer atomic.StoreInt32(&lf.isImporting, 0)
 
 	// split sorted file into range by 96MB size per file
 	ranges, err := local.readAndSplitIntoRange(lf)
@@ -1124,10 +1179,26 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 	return nil
 }
 
+func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
+	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
+	if err := local.CleanupEngine(ctx, engineUUID); err != nil {
+		return err
+	}
+	if err := local.OpenEngine(ctx, engineUUID); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// release this engine after import success
 	engineFile, ok := local.engines.Load(engineUUID)
 	if ok {
+		// since closing the engine causes all subsequent operations on it panic,
+		// we make sure to delete it from the engine map before calling Close().
+		// (note that Close() returning error does _not_ mean the pebble DB
+		// remains open/usable.)
+		local.engines.Delete(engineUUID)
 		localEngine := engineFile.(*LocalFile)
 		err := localEngine.Close()
 		if err != nil {
@@ -1137,7 +1208,6 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 		if err != nil {
 			return err
 		}
-		local.engines.Delete(engineUUID)
 	} else {
 		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 	}
@@ -1176,7 +1246,7 @@ func (local *local) WriteRows(
 
 	e, ok := local.engines.Load(engineUUID)
 	if !ok {
-		return errors.Errorf("could not find engine for %s", engineUUID.String())
+		return errors.Errorf("could not find engine for %s", engineUUID)
 	}
 	engineFile := e.(*LocalFile)
 
@@ -1468,4 +1538,18 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 		prop := i.(*rangeProperty)
 		return f(prop)
 	})
+}
+
+func (local *local) EngineFileSizes() (res []EngineFileSize) {
+	local.engines.Range(func(k, v interface{}) bool {
+		engine := v.(*LocalFile)
+		metrics := engine.db.Metrics()
+		res = append(res, EngineFileSize{
+			UUID:        engine.Uuid,
+			Size:        metrics.Total().Size + int64(metrics.MemTable.Size),
+			IsImporting: atomic.LoadInt32(&engine.isImporting) != 0,
+		})
+		return true
+	})
+	return
 }

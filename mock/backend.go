@@ -97,6 +97,20 @@ func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1 interface{}) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloseEngine", reflect.TypeOf((*MockBackend)(nil).CloseEngine), arg0, arg1)
 }
 
+// EngineFileSizes mocks base method
+func (m *MockBackend) EngineFileSizes() []backend.EngineFileSize {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EngineFileSizes")
+	ret0, _ := ret[0].([]backend.EngineFileSize)
+	return ret0
+}
+
+// EngineFileSizes indicates an expected call of EngineFileSizes
+func (mr *MockBackendMockRecorder) EngineFileSizes() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EngineFileSizes", reflect.TypeOf((*MockBackend)(nil).EngineFileSizes))
+}
+
 // FetchRemoteTableModels mocks base method
 func (m *MockBackend) FetchRemoteTableModels(arg0 context.Context, arg1 string) ([]*model.TableInfo, error) {
 	m.ctrl.T.Helper()
@@ -110,6 +124,34 @@ func (m *MockBackend) FetchRemoteTableModels(arg0 context.Context, arg1 string) 
 func (mr *MockBackendMockRecorder) FetchRemoteTableModels(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockBackend)(nil).FetchRemoteTableModels), arg0, arg1)
+}
+
+// FlushAllEngines mocks base method
+func (m *MockBackend) FlushAllEngines() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FlushAllEngines")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// FlushAllEngines indicates an expected call of FlushAllEngines
+func (mr *MockBackendMockRecorder) FlushAllEngines() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushAllEngines", reflect.TypeOf((*MockBackend)(nil).FlushAllEngines))
+}
+
+// FlushEngine mocks base method
+func (m *MockBackend) FlushEngine(arg0 uuid.UUID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FlushEngine", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// FlushEngine indicates an expected call of FlushEngine
+func (mr *MockBackendMockRecorder) FlushEngine(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushEngine", reflect.TypeOf((*MockBackend)(nil).FlushEngine), arg0)
 }
 
 // ImportEngine mocks base method
@@ -181,6 +223,20 @@ func (m *MockBackend) OpenEngine(arg0 context.Context, arg1 uuid.UUID) error {
 func (mr *MockBackendMockRecorder) OpenEngine(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OpenEngine", reflect.TypeOf((*MockBackend)(nil).OpenEngine), arg0, arg1)
+}
+
+// ResetEngine mocks base method
+func (m *MockBackend) ResetEngine(arg0 context.Context, arg1 uuid.UUID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResetEngine", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResetEngine indicates an expected call of ResetEngine
+func (mr *MockBackendMockRecorder) ResetEngine(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetEngine", reflect.TypeOf((*MockBackend)(nil).ResetEngine), arg0, arg1)
 }
 
 // RetryImportDelay mocks base method

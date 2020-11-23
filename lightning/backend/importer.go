@@ -325,3 +325,19 @@ func checkVersion(component string, expected, actual semver.Version) error {
 func (importer *importer) FetchRemoteTableModels(ctx context.Context, schema string) ([]*model.TableInfo, error) {
 	return fetchRemoteTableModelsFromTLS(ctx, importer.tls, schema)
 }
+
+func (importer *importer) EngineFileSizes() []EngineFileSize {
+	return nil
+}
+
+func (importer *importer) FlushEngine(uuid.UUID) error {
+	return nil
+}
+
+func (importer *importer) FlushAllEngines() error {
+	return nil
+}
+
+func (importer *importer) ResetEngine(context.Context, uuid.UUID) error {
+	return errors.New("cannot reset an engine in importer backend")
+}

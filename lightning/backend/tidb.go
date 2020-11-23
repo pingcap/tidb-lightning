@@ -498,3 +498,19 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 	})
 	return
 }
+
+func (be *tidbBackend) EngineFileSizes() []EngineFileSize {
+	return nil
+}
+
+func (be *tidbBackend) FlushEngine(uuid.UUID) error {
+	return nil
+}
+
+func (be *tidbBackend) FlushAllEngines() error {
+	return nil
+}
+
+func (be *tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
+	return errors.New("cannot reset an engine in TiDB backend")
+}

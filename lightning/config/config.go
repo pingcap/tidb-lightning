@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -63,6 +65,28 @@ const (
 	IgnoreOnDup = "ignore"
 	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
+)
+
+const (
+	LocalMemoryTableSize = 512 * units.MiB
+
+	// autoDiskQuotaLocalReservedSize is the estimated size a local-backend
+	// engine may gain after calling Flush(). This is currently defined by its
+	// max MemTable size (512 MiB). It is used to compensate for the soft limit
+	// of the disk quota against the hard limit of the disk free space.
+	//
+	// With a maximum of 8 engines, this should contribute 4.0 GiB to the
+	// reserved size.
+	autoDiskQuotaLocalReservedSize uint64 = LocalMemoryTableSize
+
+	// autoDiskQuotaLocalReservedSpeed is the estimated size increase per
+	// millisecond per write thread the local backend may gain on all engines.
+	// This is used to compute the maximum size overshoot between two disk quota
+	// checks, if the first one has barely passed.
+	//
+	// With cron.check-disk-quota = 1m, region-concurrency = 40, this should
+	// contribute 2.3 GiB to the reserved size.
+	autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
 )
 
 var (
@@ -254,6 +278,7 @@ type TikvImporter struct {
 	SendKVPairs      int      `toml:"send-kv-pairs" json:"send-kv-pairs"`
 	RegionSplitSize  ByteSize `toml:"region-split-size" json:"region-split-size"`
 	SortedKVDir      string   `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota        ByteSize `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency int      `toml:"range-concurrency" json:"range-concurrency"`
 }
 
@@ -266,8 +291,9 @@ type Checkpoint struct {
 }
 
 type Cron struct {
-	SwitchMode  Duration `toml:"switch-mode" json:"switch-mode"`
-	LogProgress Duration `toml:"log-progress" json:"log-progress"`
+	SwitchMode     Duration `toml:"switch-mode" json:"switch-mode"`
+	LogProgress    Duration `toml:"log-progress" json:"log-progress"`
+	CheckDiskQuota Duration `toml:"check-disk-quota" json:"check-disk-quota"`
 }
 
 type Security struct {
@@ -339,8 +365,9 @@ func NewConfig() *Config {
 			ChecksumTableConcurrency:   16,
 		},
 		Cron: Cron{
-			SwitchMode:  Duration{Duration: 5 * time.Minute},
-			LogProgress: Duration{Duration: 5 * time.Minute},
+			SwitchMode:     Duration{Duration: 5 * time.Minute},
+			LogProgress:    Duration{Duration: 5 * time.Minute},
+			CheckDiskQuota: Duration{Duration: 1 * time.Minute},
 		},
 		Mydumper: MydumperRuntime{
 			ReadBlockSize: ReadBlockSize,
@@ -531,6 +558,40 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	if cfg.TikvImporter.Backend == BackendLocal {
 		if len(cfg.TikvImporter.SortedKVDir) == 0 {
 			return errors.Errorf("tikv-importer.sorted-kv-dir must not be empty!")
+		}
+
+		storageSizeDir := filepath.Clean(cfg.TikvImporter.SortedKVDir)
+		sortedKVDirInfo, err := os.Stat(storageSizeDir)
+		switch {
+		case os.IsNotExist(err):
+			// the sorted-kv-dir does not exist, meaning we will create it automatically.
+			// so we extract the storage size from its parent directory.
+			storageSizeDir = filepath.Dir(storageSizeDir)
+		case err == nil:
+			if !sortedKVDirInfo.IsDir() {
+				return errors.Errorf("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
+			}
+		default:
+			return errors.Annotate(err, "invalid tikv-importer.sorted-kv-dir")
+		}
+
+		if cfg.TikvImporter.DiskQuota == 0 {
+			enginesCount := uint64(cfg.App.IndexConcurrency + cfg.App.TableConcurrency)
+			writeAmount := uint64(cfg.App.RegionConcurrency) * uint64(cfg.Cron.CheckDiskQuota.Milliseconds())
+			reservedSize := enginesCount*autoDiskQuotaLocalReservedSize + writeAmount*autoDiskQuotaLocalReservedSpeed
+
+			storageSize, err := common.GetStorageSize(storageSizeDir)
+			if err != nil {
+				return err
+			}
+			if storageSize.Available <= reservedSize {
+				return errors.Errorf(
+					"insufficient disk free space on `%s` (only %s, expecting >%s)",
+					cfg.TikvImporter.SortedKVDir,
+					units.BytesSize(float64(storageSize.Available)),
+					units.BytesSize(float64(reservedSize)))
+			}
+			cfg.TikvImporter.DiskQuota = ByteSize(storageSize.Available - reservedSize)
 		}
 	}
 
