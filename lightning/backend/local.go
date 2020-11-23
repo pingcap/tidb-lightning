@@ -1065,13 +1065,16 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *Loca
 		}(w)
 	}
 
+	var err error
 	for i := 0; i < len(ranges); i++ {
+		// wait for all sub tasks finish to avoid panic. if we return on the first error,
+		// the outer tasks may close the pebble db but some sub tasks still read from the db
 		e := <-errCh
-		if e != nil {
-			return e
+		if e != nil && err == nil {
+			err = e
 		}
 	}
-	return nil
+	return err
 }
 
 type syncdRanges struct {

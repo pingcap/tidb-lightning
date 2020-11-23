@@ -892,7 +892,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		for engineID, engine := range cp.Engines {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				engineErr.Set(ctx.Err())
 			default:
 			}
 			if engineErr.Get() != nil {
