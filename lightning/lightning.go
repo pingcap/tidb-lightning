@@ -176,7 +176,7 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 // - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
 //   caller implemented glue.
 func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glue glue.Glue, replaceLogger *zap.Logger) error {
-	if err := taskCfg.Adjust(); err != nil {
+	if err := taskCfg.Adjust(taskCtx); err != nil {
 		return err
 	}
 
@@ -467,7 +467,7 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot parse task (must be TOML)", err)
 		return
 	}
-	if err = cfg.Adjust(); err != nil {
+	if err = cfg.Adjust(l.ctx); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid task configuration", err)
 		return
 	}
