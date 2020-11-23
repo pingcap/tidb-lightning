@@ -49,7 +49,7 @@ type SourceFileMeta struct {
 	Type        SourceType
 	Compression Compression
 	SortKey     string
-	Size        int64
+	FileSize    int64
 }
 
 func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
@@ -248,7 +248,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 			}
 		}
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo)
-		tableMeta.TotalSize += fileInfo.FileMeta.Size
+		tableMeta.TotalSize += fileInfo.FileMeta.FileSize
 	}
 
 	for _, dbMeta := range s.loader.dbs {
@@ -288,7 +288,7 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 
 		info := FileInfo{
 			TableName: filter.Table{Schema: res.Schema, Name: res.Name},
-			FileMeta:  SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, Size: size},
+			FileMeta:  SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, FileSize: size},
 		}
 
 		if s.loader.shouldSkip(&info.TableName) {

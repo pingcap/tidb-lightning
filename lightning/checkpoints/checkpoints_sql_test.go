@@ -135,9 +135,9 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 					Offset: 0,
 				},
 				FileMeta: mydump.SourceFileMeta{
-					Path: "/tmp/path/1.sql",
-					Type: mydump.SourceTypeSQL,
-					Size: 123,
+					Path:     "/tmp/path/1.sql",
+					Type:     mydump.SourceTypeSQL,
+					FileSize: 123,
 				},
 				Chunk: mydump.Chunk{
 					Offset:       12,
@@ -230,7 +230,7 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
-				"engine_id", "path", "offset", "type", "compression", "sort_key", "size", "columns",
+				"engine_id", "path", "offset", "type", "compression", "sort_key", "file_size", "columns",
 				"pos", "end_offset", "prev_rowid_max", "rowid_max",
 				"kvc_bytes", "kvc_kvs", "kvc_checksum", "unix_timestamp(create_time)",
 			}).
@@ -265,9 +265,9 @@ func (s *cpSQLSuite) TestNormalOperations(c *C) {
 						Offset: 0,
 					},
 					FileMeta: mydump.SourceFileMeta{
-						Path: "/tmp/path/1.sql",
-						Type: mydump.SourceTypeSQL,
-						Size: 123,
+						Path:     "/tmp/path/1.sql",
+						Type:     mydump.SourceTypeSQL,
+						FileSize: 123,
 					},
 					ColumnPermutation: []int{},
 					Chunk: mydump.Chunk{
@@ -416,7 +416,7 @@ func (s *cpSQLSuite) TestDump(c *C) {
 		ExpectQuery("SELECT (?s:.+) FROM `mock-schema`\\.chunk_v\\d+").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
-				"table_name", "path", "offset", "type", "compression", "sort_key", "size", "columns",
+				"table_name", "path", "offset", "type", "compression", "sort_key", "file_size", "columns",
 				"pos", "end_offset", "prev_rowid_max", "rowid_max",
 				"kvc_bytes", "kvc_kvs", "kvc_checksum",
 				"create_time", "update_time",
@@ -432,7 +432,7 @@ func (s *cpSQLSuite) TestDump(c *C) {
 	err := s.cpdb.DumpChunks(ctx, &csvBuilder)
 	c.Assert(err, IsNil)
 	c.Assert(csvBuilder.String(), Equals,
-		"table_name,path,offset,type,compression,sort_key,size,columns,pos,end_offset,prev_rowid_max,rowid_max,kvc_bytes,kvc_kvs,kvc_checksum,create_time,update_time\n"+
+		"table_name,path,offset,type,compression,sort_key,file_size,columns,pos,end_offset,prev_rowid_max,rowid_max,kvc_bytes,kvc_kvs,kvc_checksum,create_time,update_time\n"+
 			"`db1`.`t2`,/tmp/path/1.sql,0,3,0,,456,[],55904,102400,681,5000,4491,586,486070148917,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
 	)
 

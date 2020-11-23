@@ -247,10 +247,10 @@ func makeSourceFileRegion(
 		if err != nil {
 			return nil, nil, err
 		}
-		return []*TableRegion{region}, []float64{float64(fi.FileMeta.Size)}, nil
+		return []*TableRegion{region}, []float64{float64(fi.FileMeta.FileSize)}, nil
 	}
 
-	dataFileSize := fi.FileMeta.Size
+	dataFileSize := fi.FileMeta.FileSize
 	divisor := int64(columns)
 	isCsvFile := fi.FileMeta.Type == SourceTypeCSV
 	if !isCsvFile {
@@ -270,9 +270,9 @@ func makeSourceFileRegion(
 		FileMeta: fi.FileMeta,
 		Chunk: Chunk{
 			Offset:       0,
-			EndOffset:    fi.FileMeta.Size,
+			EndOffset:    fi.FileMeta.FileSize,
 			PrevRowIDMax: 0,
-			RowIDMax:     fi.FileMeta.Size / divisor,
+			RowIDMax:     fi.FileMeta.FileSize / divisor,
 		},
 	}
 
@@ -282,7 +282,7 @@ func makeSourceFileRegion(
 			zap.String("file", fi.FileMeta.Path),
 			zap.Int64("size", dataFileSize))
 	}
-	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.Size)}, nil
+	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.FileSize)}, nil
 }
 
 // because parquet files can't seek efficiently, there is no benefit in split.
@@ -332,7 +332,7 @@ func SplitLargeFile(
 	store storage.ExternalStorage,
 ) (prevRowIdMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := int64(cfg.Mydumper.MaxRegionSize)
-	dataFileSizes = make([]float64, 0, dataFile.FileMeta.Size/maxRegionSize+1)
+	dataFileSizes = make([]float64, 0, dataFile.FileMeta.FileSize/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
 	var columns []string
 	if cfg.Mydumper.CSV.Header {
@@ -351,7 +351,7 @@ func SplitLargeFile(
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
-		if endOffset != dataFile.FileMeta.Size {
+		if endOffset != dataFile.FileMeta.FileSize {
 			r, err := store.Open(ctx, dataFile.FileMeta.Path)
 			if err != nil {
 				return 0, nil, nil, err
@@ -382,12 +382,12 @@ func SplitLargeFile(
 			})
 		dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))
 		prevRowIdxMax = rowIDMax
-		if endOffset == dataFile.FileMeta.Size {
+		if endOffset == dataFile.FileMeta.FileSize {
 			break
 		}
 		startOffset = endOffset
-		if endOffset += maxRegionSize; endOffset > dataFile.FileMeta.Size {
-			endOffset = dataFile.FileMeta.Size
+		if endOffset += maxRegionSize; endOffset > dataFile.FileMeta.FileSize {
+			endOffset = dataFile.FileMeta.FileSize
 		}
 	}
 	return prevRowIdxMax, regions, dataFileSizes, nil

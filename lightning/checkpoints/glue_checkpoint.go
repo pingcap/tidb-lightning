@@ -282,7 +282,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 				value.FileMeta.Type = mydump.SourceType(row.GetInt64(3))
 				value.FileMeta.Compression = mydump.Compression(row.GetInt64(4))
 				value.FileMeta.SortKey = row.GetString(5)
-				value.FileMeta.Size = row.GetInt64(6)
+				value.FileMeta.FileSize = row.GetInt64(6)
 				colPerm := row.GetBytes(7)
 				value.Chunk.Offset = row.GetInt64(8)
 				value.Chunk.EndOffset = row.GetInt64(9)
@@ -383,7 +383,7 @@ func (g GlueCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableNam
 					types.NewIntDatum(int64(value.FileMeta.Type)),
 					types.NewIntDatum(int64(value.FileMeta.Compression)),
 					types.NewStringDatum(value.FileMeta.SortKey),
-					types.NewIntDatum(value.FileMeta.Size),
+					types.NewIntDatum(value.FileMeta.FileSize),
 					types.NewBytesDatum(columnPerm),
 					types.NewIntDatum(value.Chunk.Offset),
 					types.NewIntDatum(value.Chunk.EndOffset),

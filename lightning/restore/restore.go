@@ -433,8 +433,8 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if fileMeta.FileMeta.Size > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += math.Round(float64(fileMeta.FileMeta.Size) / float64(cfg.MaxRegionSize))
+					if fileMeta.FileMeta.FileSize > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += math.Round(float64(fileMeta.FileMeta.FileSize) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -1360,7 +1360,7 @@ func newChunkRestore(
 	var reader storage.ReadSeekCloser
 	var err error
 	if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.Size)
+		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.FileSize)
 	} else {
 		reader, err = store.Open(ctx, chunk.FileMeta.Path)
 	}

@@ -77,7 +77,7 @@ func (mb *kvMemBuf) Staging() kv.StagingHandle {
 // If the changes are not published by `Release`, they will be discarded.
 func (mb *kvMemBuf) Cleanup(h kv.StagingHandle) {}
 
-// Size returns sum of keys and values length.
+// FileSize returns sum of keys and values length.
 func (mb *kvMemBuf) Size() int {
 	return mb.size
 }
