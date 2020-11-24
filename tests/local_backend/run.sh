@@ -116,3 +116,4 @@ for ckpt in mysql file; do
     --tidb-port 4000 \
     --pd-urls '127.0.0.1:2379' 2>&1 >/dev/null | grep -Fq "Those tables should have intermediate files: []"
 done
+rm -r $TEST_DIR/sorted
