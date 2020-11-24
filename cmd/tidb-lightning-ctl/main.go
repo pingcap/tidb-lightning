@@ -45,6 +45,7 @@ func run() error {
 		compact, flagFetchMode                      *bool
 		mode, flagImportEngine, flagCleanupEngine   *string
 		cpRemove, cpErrIgnore, cpErrDestroy, cpDump *string
+		localStoringTables                          *string
 
 		fsUsage func()
 	)
@@ -68,6 +69,8 @@ func run() error {
 		cpErrIgnore = fs.String("checkpoint-error-ignore", "", "ignore errors encoutered previously on the given table (value can be 'all' or '`db`.`table`'); may corrupt this table if used incorrectly")
 		cpErrDestroy = fs.String("checkpoint-error-destroy", "", "deletes imported data with table which has an error before (value can be 'all' or '`db`.`table`')")
 		cpDump = fs.String("checkpoint-dump", "", "dump the checkpoint information as two CSV files in the given folder")
+
+		localStoringTables = fs.String("check-local-storing", "", "show tables that should have local intermediate files (value can be 'all' or '`db`.`table`')")
 
 		fsUsage = fs.Usage
 	}))
@@ -117,6 +120,9 @@ func run() error {
 	}
 	if len(*cpDump) != 0 {
 		return errors.Trace(checkpointDump(ctx, cfg, *cpDump))
+	}
+	if len(*localStoringTables) != 0 {
+		return errors.Trace(getLocalStoringTables(ctx, cfg, *localStoringTables))
 	}
 
 	fsUsage()
@@ -305,6 +311,22 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	if err := cpdb.DumpChunks(ctx, chunksFile); err != nil {
 		return errors.Trace(err)
 	}
+	return nil
+}
+
+func getLocalStoringTables(ctx context.Context, cfg *config.Config, tableName string) error {
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cpdb.Close()
+
+	tables, err := cpdb.GetLocalStoringTables(ctx, tableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	fmt.Fprintln(os.Stderr, "Those tables should have intermediate files:", tables)
 	return nil
 }
 

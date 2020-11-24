@@ -220,9 +220,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 	}
 	defer se.Close()
 
-	var tableNameBuilder strings.Builder
-	common.EscapeMySQLSingleQuote(&tableNameBuilder, tableName)
-	tableName = tableNameBuilder.String()
+	tableName = common.InterpolateMySQLString(tableName)
 	err = Transact(ctx, "read checkpoint", se, logger, func(c context.Context, s Session) error {
 		// 1. Populate the engines.
 		sql := fmt.Sprintf(ReadEngineTemplate, g.schema, CheckpointTableNameEngine)
@@ -508,9 +506,7 @@ func (g GlueCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName strin
 			return err
 		})
 	}
-	var tableNameBuilder strings.Builder
-	common.EscapeMySQLSingleQuote(&tableNameBuilder, tableName)
-	tableName = tableNameBuilder.String()
+	tableName = common.InterpolateMySQLString(tableName)
 	deleteChunkQuery := fmt.Sprintf(DeleteCheckpointRecordTemplate, g.schema, CheckpointTableNameChunk)
 	deleteChunkQuery = strings.ReplaceAll(deleteChunkQuery, "?", tableName)
 	deleteEngineQuery := fmt.Sprintf(DeleteCheckpointRecordTemplate, g.schema, CheckpointTableNameEngine)
@@ -562,6 +558,99 @@ func (g GlueCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) er
 	return nil
 }
 
+func (g GlueCheckpointsDB) GetLocalStoringTables(ctx context.Context, tableName string) ([]string, error) {
+	se, err := g.getSessionFunc()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer se.Close()
+
+	var table2Check []string
+	if tableName != "all" {
+		table2Check = append(table2Check, tableName)
+	} else {
+		tableQuery := fmt.Sprintf("SELECT table_name FROM %s.%s;", g.schema, CheckpointTableNameTable)
+
+		err := common.Retry("fetch all tables in checkpoint", log.With(zap.String("table", tableName)), func() error {
+			rs, err := se.Execute(ctx, tableQuery)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			r := rs[0]
+			req := r.NewChunk()
+			it := chunk.NewIterator4Chunk(req)
+			for {
+				err = r.Next(ctx, req)
+				if err != nil {
+					r.Close()
+					return err
+				}
+				if req.NumRows() == 0 {
+					break
+				}
+
+				for row := it.Begin(); row != it.End(); row = it.Next() {
+					table2Check = append(table2Check, row.GetString(0))
+				}
+			}
+			r.Close()
+			return nil
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	var localStoringTable []string
+
+	for _, table := range table2Check {
+		common.Retry("check table has local SST", log.With(zap.String("table", tableName)), func() error {
+			// after CheckpointStatusLoaded data begin to write to local SST
+			// and after CheckpointStatusIndexImported all local SST are cleaned
+			beforeIndexImported := fmt.Sprintf(`
+				SELECT count(*) FROM %s.%s WHERE table_name = %s AND status < %d;
+			`, g.schema, CheckpointTableNameTable, common.InterpolateMySQLString(table), CheckpointStatusIndexImported)
+			hasWriteChunk := fmt.Sprintf(`
+				SELECT count(*) FROM %s.%s WHERE table_name = %s AND pos > offset;
+			`, g.schema, CheckpointTableNameChunk, common.InterpolateMySQLString(table))
+
+			rs, err := se.Execute(ctx, beforeIndexImported)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			r := rs[0]
+			req := r.NewChunk()
+			err = r.Next(ctx, req)
+			if err != nil {
+				r.Close()
+				return err
+			}
+			shouldExist := req.GetRow(0).GetUint64(0) == 0
+			r.Close()
+
+			rs, err = se.Execute(ctx, hasWriteChunk)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			r = rs[0]
+			req = r.NewChunk()
+			err = r.Next(ctx, req)
+			if err != nil {
+				r.Close()
+				return err
+			}
+			shouldExist2 := req.GetRow(0).GetUint64(0) == 0
+			r.Close()
+
+			if shouldExist && shouldExist2 {
+				localStoringTable = append(localStoringTable, table)
+			}
+			return nil
+		})
+	}
+	return localStoringTable, nil
+}
+
 func (g GlueCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
 	logger := log.With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
@@ -579,9 +668,7 @@ func (g GlueCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName 
 		colName = "table_name"
 	}
 
-	var tableNameBuilder strings.Builder
-	common.EscapeMySQLSingleQuote(&tableNameBuilder, tableName)
-	tableName = tableNameBuilder.String()
+	tableName = common.InterpolateMySQLString(tableName)
 
 	engineQuery := fmt.Sprintf(`
 		UPDATE %s.%s SET status = %d WHERE %s = %s AND status <= %d;
@@ -620,9 +707,7 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 		aliasedColName = "t.table_name"
 	}
 
-	var tableNameBuilder strings.Builder
-	common.EscapeMySQLSingleQuote(&tableNameBuilder, tableName)
-	tableName = tableNameBuilder.String()
+	tableName = common.InterpolateMySQLString(tableName)
 
 	selectQuery := fmt.Sprintf(`
 		SELECT

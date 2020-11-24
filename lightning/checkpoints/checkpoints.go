@@ -471,6 +471,9 @@ type CheckpointsDB interface {
 	// MoveCheckpoints renames the checkpoint schema to include a suffix
 	// including the taskID (e.g. `tidb_lightning_checkpoints.1234567890.bak`).
 	MoveCheckpoints(ctx context.Context, taskID int64) error
+	// GetLocalStoringTables returns a list containing tables have files stored on local disk.
+	// currently only meaningful for local backend
+	GetLocalStoringTables(ctx context.Context, tableName string) ([]string, error)
 	IgnoreErrorCheckpoint(ctx context.Context, tableName string) error
 	DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error)
 	DumpTables(ctx context.Context, csv io.Writer) error
@@ -1127,6 +1130,9 @@ func (*NullCheckpointsDB) RemoveCheckpoint(context.Context, string) error {
 func (*NullCheckpointsDB) MoveCheckpoints(context.Context, int64) error {
 	return errors.Trace(cannotManageNullDB)
 }
+func (*NullCheckpointsDB) GetLocalStoringTables(context.Context, string) ([]string, error) {
+	return nil, errors.Trace(cannotManageNullDB)
+}
 func (*NullCheckpointsDB) IgnoreErrorCheckpoint(context.Context, string) error {
 	return errors.Trace(cannotManageNullDB)
 }
@@ -1194,6 +1200,71 @@ func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int6
 	}
 
 	return nil
+}
+
+func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context, tableName string) ([]string, error) {
+	var table2Check []string
+	if tableName != "all" {
+		table2Check = append(table2Check, tableName)
+	} else {
+		tableQuery := fmt.Sprintf("SELECT table_name FROM %s.%s;", cpdb.schema, CheckpointTableNameTable)
+
+		err := common.Retry("fetch all tables in checkpoint", log.With(zap.String("table", tableName)), func() error {
+			rows, err := cpdb.db.QueryContext(ctx, tableQuery)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var table string
+				err := rows.Scan(&table)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				table2Check = append(table2Check, table)
+			}
+			if rows.Err() != nil {
+				return errors.Trace(rows.Err())
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	var localStoringTable []string
+	// after CheckpointStatusLoaded data begin to write to local SST
+	// and after CheckpointStatusIndexImported all local SST are cleaned
+	beforeIndexImported := fmt.Sprintf(`
+		SELECT count(*) FROM %s.%s WHERE table_name = ? AND status < %d;
+	`, cpdb.schema, CheckpointTableNameTable, CheckpointStatusIndexImported)
+	hasWriteChunk := fmt.Sprintf(`
+		SELECT count(*) FROM %s.%s WHERE table_name = ? AND pos > offset;
+	`, cpdb.schema, CheckpointTableNameChunk)
+	for _, table := range table2Check {
+		common.Retry("check table has local SST", log.With(zap.String("table", tableName)), func() error {
+			var (
+				shouldExist  bool
+				shouldExist2 bool
+			)
+			row := cpdb.db.QueryRowContext(ctx, beforeIndexImported, table)
+			err := row.Scan(&shouldExist)
+			if err != nil {
+				return err
+			}
+			row = cpdb.db.QueryRowContext(ctx, hasWriteChunk, table)
+			err = row.Scan(&shouldExist2)
+			if err != nil {
+				return err
+			}
+			if shouldExist && shouldExist2 {
+				localStoringTable = append(localStoringTable, table)
+			}
+			return nil
+		})
+	}
+	return localStoringTable, nil
 }
 
 func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
@@ -1392,6 +1463,36 @@ func (cpdb *FileCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64
 
 	newPath := fmt.Sprintf("%s.%d.bak", cpdb.path, taskID)
 	return errors.Trace(os.Rename(cpdb.path, newPath))
+}
+
+func (cpdb *FileCheckpointsDB) GetLocalStoringTables(_ context.Context, targetTableName string) ([]string, error) {
+	cpdb.lock.Lock()
+	defer cpdb.lock.Unlock()
+
+	log.L().Warn("lance test", zap.String("targetTableName", targetTableName))
+
+	var localStoringTable []string
+	for tableName, tableModel := range cpdb.checkpoints.Checkpoints {
+		log.L().Warn("lance test", zap.String("tableName", tableName))
+		if !(targetTableName == "all" || targetTableName == tableName) {
+			continue
+		}
+		if tableModel.Status >= uint32(CheckpointStatusIndexImported) {
+			continue
+		}
+	engineLoop:
+		for _, engineModel := range tableModel.Engines {
+			for _, chunkModel := range engineModel.Chunks {
+				log.L().Warn("lance test", zap.Any("chunkModel.Pos", chunkModel.Pos),
+					zap.Any("chunkModel.Offset", chunkModel.Offset))
+				if chunkModel.Pos > chunkModel.Offset {
+					localStoringTable = append(localStoringTable, tableName)
+					break engineLoop
+				}
+			}
+		}
+	}
+	return localStoringTable, nil
 }
 
 func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTableName string) error {
