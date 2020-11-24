@@ -892,7 +892,10 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		for engineID, engine := range cp.Engines {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				// Set engineErr and break this for loop to wait all the sub-routines done before return.
+				// Directly return may cause panic because caller will close the pebble db but some sub routines
+				// are still reading from or writing to the pebble db.
+				engineErr.Set(ctx.Err())
 			default:
 			}
 			if engineErr.Get() != nil {
