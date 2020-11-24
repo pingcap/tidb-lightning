@@ -297,11 +297,17 @@ func InterpolateMySQLString(s string) string {
 //		return errors.Trace(err)
 //	}
 //	fmt.Println(resp.IP)
-func GetJSON(client *http.Client, url string, v interface{}) error {
-	resp, err := client.Get(url)
+func GetJSON(ctx context.Context, client *http.Client, url string, v interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {

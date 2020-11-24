@@ -54,6 +54,7 @@ func (s *utilSuite) TestGetJSON(c *C) {
 		Password: "lightning-ctl",
 	}
 
+	ctx := context.Background()
 	// Mock success response
 	handle := func(res http.ResponseWriter, req *http.Request) {
 		res.WriteHeader(http.StatusOK)
@@ -68,9 +69,9 @@ func (s *utilSuite) TestGetJSON(c *C) {
 	client := &http.Client{Timeout: time.Second}
 
 	response := TestPayload{}
-	err := common.GetJSON(client, "http://not-exists", &response)
+	err := common.GetJSON(ctx, client, "http://not-exists", &response)
 	c.Assert(err, NotNil)
-	err = common.GetJSON(client, testServer.URL, &response)
+	err = common.GetJSON(ctx, client, testServer.URL, &response)
 	c.Assert(err, IsNil)
 	c.Assert(request, DeepEquals, response)
 
@@ -78,7 +79,7 @@ func (s *utilSuite) TestGetJSON(c *C) {
 	handle = func(res http.ResponseWriter, req *http.Request) {
 		res.WriteHeader(http.StatusNoContent)
 	}
-	err = common.GetJSON(client, testServer.URL, &response)
+	err = common.GetJSON(ctx, client, testServer.URL, &response)
 	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, ".*http status code != 200.*")
 }
