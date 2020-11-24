@@ -77,7 +77,15 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 			for i := 0; i < (len(keys)+maxBatchSplitKeys)/maxBatchSplitKeys; i++ {
 				start := i * maxBatchSplitKeys
 				end := utils.MinInt((i+1)*maxBatchSplitKeys, len(keys))
-				newRegions, errSplit = local.BatchSplitRegions(ctx, splitRegion, keys[start:end])
+				splitRegionStart := codec.EncodeBytes([]byte{}, keys[start])
+				splitRegionEnd := codec.EncodeBytes([]byte{}, keys[end-1])
+				if bytes.Compare(splitRegionStart, splitRegion.Region.StartKey) <= 0 || !beforeEnd(splitRegionEnd, splitRegion.Region.EndKey) {
+					log.L().Fatal("no valid key in region",
+						zap.Binary("startKey", splitRegionStart), zap.Binary("endKey", splitRegionEnd),
+						zap.Binary("regionStart", splitRegion.Region.StartKey), zap.Binary("regionEnd", splitRegion.Region.EndKey),
+						zap.Reflect("region", splitRegion))
+				}
+				splitRegion, newRegions, errSplit = local.BatchSplitRegions(ctx, splitRegion, keys[start:end])
 				if errSplit != nil {
 					if strings.Contains(errSplit.Error(), "no valid key") {
 						for _, key := range keys {
@@ -93,8 +101,14 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 					retryKeys = append(retryKeys, keys[start:]...)
 					break
 				} else {
+					sort.Slice(newRegions, func(i, j int) bool {
+						return bytes.Compare(newRegions[i].Region.StartKey, newRegions[j].Region.StartKey) < 0
+					})
 					scatterRegions = append(scatterRegions, newRegions...)
-					splitRegion = newRegions[len(newRegions)-1]
+					// the region with the max start key is the region need to be further split.
+					if bytes.Compare(splitRegion.Region.StartKey, newRegions[len(newRegions)-1].Region.StartKey) < 0 {
+						splitRegion = newRegions[len(newRegions)-1]
+					}
 				}
 			}
 		}
@@ -167,10 +181,10 @@ func paginateScanRegion(
 	return regions, nil
 }
 
-func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
-	newRegions, err := local.splitCli.BatchSplitRegions(ctx, region, keys)
+func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionInfo, keys [][]byte) (*split.RegionInfo, []*split.RegionInfo, error) {
+	region, newRegions, err := local.splitCli.BatchSplitRegionsRaw(ctx, region, keys)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, region := range newRegions {
 		// Wait for a while until the regions successfully splits.
@@ -180,7 +194,7 @@ func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionI
 			log.L().Debug("scatter region failed", zap.Stringer("region", region.Region), zap.Error(err))
 		}
 	}
-	return newRegions, nil
+	return region, newRegions, nil
 }
 
 func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
