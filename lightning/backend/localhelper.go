@@ -25,8 +25,8 @@ import (
 
 const (
 	SplitRetryTimes = 8
-
-	maxBatchSplitKeys = 64
+	// the max keys count in a batch to split one region
+	maxBatchSplitKeys = 256
 )
 
 // TODO remove this file and use br internal functions
@@ -186,13 +186,21 @@ func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionI
 	if err != nil {
 		return nil, nil, err
 	}
+	failedCnt := 0
+	var failedErr error
 	for _, region := range newRegions {
 		// Wait for a while until the regions successfully splits.
 		local.waitForSplit(ctx, region.Region.Id)
 		if err = local.splitCli.ScatterRegion(ctx, region); err != nil {
-			// the scatter operation likely fails because region replicate not finish yet
-			log.L().Debug("scatter region failed", zap.Stringer("region", region.Region), zap.Error(err))
+			failedCnt++
+			failedErr = err
 		}
+	}
+	if failedCnt > 0 {
+		// the scatter operation likely fails because region replicate not finish yet
+		// pack them to one log to avoid printing a lot warn logs.
+		log.L().Warn("scatter region failed", zap.Int("regionCount", len(newRegions)),
+			zap.Int("failedCount", failedCnt), zap.Error(failedErr))
 	}
 	return region, newRegions, nil
 }
