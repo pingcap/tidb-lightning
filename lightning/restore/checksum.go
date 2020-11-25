@@ -82,7 +82,7 @@ func newChecksumManager(ctx context.Context, rc *RestoreController) (ChecksumMan
 			return nil, errors.Trace(err)
 		}
 
-		manager = newTiKVChecksumManager(store.(tikv.Storage).GetClient(), pdCli)
+		manager = newTiKVChecksumManager(store.(tikv.Storage).GetClient(), pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency))
 	} else {
 		db, err := rc.tidbGlue.GetDB()
 		if err != nil {
@@ -245,21 +245,24 @@ func increaseGCLifeTime(ctx context.Context, manager *gcLifeTimeManager, db *sql
 }
 
 type tikvChecksumManager struct {
-	client  kv.Client
-	manager gcTTLManager
+	client                 kv.Client
+	manager                gcTTLManager
+	distSQLScanConcurrency uint
 }
 
 // newTiKVChecksumManager return a new tikv checksum manager
-func newTiKVChecksumManager(client kv.Client, pdClient pd.Client) *tikvChecksumManager {
+func newTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint) *tikvChecksumManager {
 	return &tikvChecksumManager{
-		client:  client,
-		manager: newGCTTLManager(pdClient),
+		client:                 client,
+		manager:                newGCTTLManager(pdClient),
+		distSQLScanConcurrency: distSQLScanConcurrency,
 	}
 }
 
 func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *TidbTableInfo) (*RemoteChecksum, error) {
-	builder := checksum.NewExecutorBuilder(tableInfo.Core, oracle.ComposeTS(time.Now().Unix()*1000, 0))
-	executor, err := builder.Build()
+	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, oracle.ComposeTS(time.Now().Unix()*1000, 0)).
+		SetConcurrency(e.distSQLScanConcurrency).
+		Build()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
