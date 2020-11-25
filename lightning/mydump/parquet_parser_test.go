@@ -19,8 +19,8 @@ var _ = Suite(testParquetParserSuite{})
 
 func (s testParquetParserSuite) TestParquetParser(c *C) {
 	type Test struct {
-		S string `parquet:"name=s, type=UTF8, encoding=PLAIN_DICTIONARY"`
-		A int32  `parquet:"name=a, type=INT32"`
+		S string `parquet:"name=sS, type=UTF8, encoding=PLAIN_DICTIONARY"`
+		A int32  `parquet:"name=a_A, type=INT32"`
 	}
 
 	dir := c.MkDir()
@@ -50,7 +50,7 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	c.Assert(err, IsNil)
 	defer reader.Close()
 
-	c.Assert(reader.Columns(), DeepEquals, []string{"s", "a"})
+	c.Assert(reader.Columns(), DeepEquals, []string{"ss", "a_a"})
 
 	verifyRow := func(i int) {
 		c.Assert(reader.lastRow.RowID, Equals, int64(i+1))
