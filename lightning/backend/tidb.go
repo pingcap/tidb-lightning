@@ -285,7 +285,7 @@ func (be *tidbBackend) ShouldPostProcess() bool {
 	return false
 }
 
-func (be *tidbBackend) CheckRequirements() error {
+func (be *tidbBackend) CheckRequirements(ctx context.Context) error {
 	log.L().Info("skipping check requirements for tidb backend")
 	return nil
 }
