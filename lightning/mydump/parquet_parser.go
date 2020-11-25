@@ -1,6 +1,7 @@
 package mydump
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -20,6 +21,10 @@ import (
 
 const (
 	batchReadRowSize = 32
+
+	// if a parquet if small than this threshold, parquet will load the whole file in a byte slice to
+	// optimize the read performance
+	smallParquetFileThreshold = 256 * 1024 * 1024
 )
 
 type ParquetParser struct {
@@ -66,17 +71,109 @@ func (r *readerWrapper) Create(name string) (source.ParquetFile, error) {
 	return nil, errors.New("unsupported operation")
 }
 
+// bytesReaderWrapper is a wrapper of bytes.Reader used for implement `source.ParquetFile`
+type bytesReaderWrapper struct {
+	*bytes.Reader
+	rawBytes []byte
+	// current file path
+	path string
+}
+
+func (r *bytesReaderWrapper) Close() error {
+	return nil
+}
+
+func (r *bytesReaderWrapper) Create(name string) (source.ParquetFile, error) {
+	return nil, errors.New("unsupported operation")
+}
+
+func (r *bytesReaderWrapper) Write(p []byte) (n int, err error) {
+	return 0, errors.New("unsupported operation")
+}
+
+func (r *bytesReaderWrapper) Open(name string) (source.ParquetFile, error) {
+	if len(name) > 0 && name != r.path {
+		panic(fmt.Sprintf("Open with a different name is not supported! current: '%s', new: '%s'", r.path, name))
+	}
+	return &bytesReaderWrapper{
+		Reader:   bytes.NewReader(r.rawBytes),
+		rawBytes: r.rawBytes,
+		path:     r.path,
+	}, nil
+}
+
+func OpenParquetReader(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	path string,
+	size int64,
+) (source.ParquetFile, error) {
+	if size <= smallParquetFileThreshold {
+		fileBytes, err := store.Read(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		return &bytesReaderWrapper{
+			Reader:   bytes.NewReader(fileBytes),
+			rawBytes: fileBytes,
+			path:     path,
+		}, nil
+	}
+
+	r, err := store.Open(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return &readerWrapper{
+		ReadSeekCloser: r,
+		store:          store,
+		ctx:            ctx,
+		path:           path,
+	}, nil
+}
+
+// a special func to fetch parquet file row count fast.
+func ReadParquetFileRowCount(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	r storage.ReadSeekCloser,
+	path string,
+) (int64, error) {
+	wrapper := &readerWrapper{
+		ReadSeekCloser: r,
+		store:          store,
+		ctx:            ctx,
+		path:           path,
+	}
+	var err error
+	res := new(preader.ParquetReader)
+	res.NP = 1
+	res.PFile = wrapper
+	if err = res.ReadFooter(); err != nil {
+		return 0, err
+	}
+	numRows := res.Footer.NumRows
+	if err = wrapper.Close(); err != nil {
+		return 0, err
+	}
+	return numRows, nil
+}
+
 func NewParquetParser(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	r storage.ReadSeekCloser,
 	path string,
 ) (*ParquetParser, error) {
-	wrapper := &readerWrapper{
-		ReadSeekCloser: r,
-		store:          store,
-		ctx:            ctx,
-		path:           path,
+	// check to avoid wrapping twice
+	wrapper, ok := r.(source.ParquetFile)
+	if !ok {
+		wrapper = &readerWrapper{
+			ReadSeekCloser: r,
+			store:          store,
+			ctx:            ctx,
+			path:           path,
+		}
 	}
 
 	// FIXME: need to bench what the best value for the concurrent reader number
