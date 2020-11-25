@@ -45,7 +45,7 @@ require (
 	modernc.org/mathutil v1.1.1
 )
 
-replace github.com/pingcap/br => github.com/july2993/br v4.0.0-beta.2.0.20201124102539-70c65a88f7da+incompatible
+replace github.com/pingcap/br => github.com/july2993/br v4.0.0-beta.2.0.20201125023340-27eb2972a2f4+incompatible
 
 replace github.com/pingcap/tidb => github.com/breeswish/tidb v1.1.0-alpha.0.20201123133602-e4cef95585a2
 

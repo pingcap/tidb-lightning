@@ -528,6 +528,8 @@ github.com/juju/testing v0.0.0-20191001232224-ce9dec17d28b/go.mod h1:63prj8cnj0t
 github.com/julienschmidt/httprouter v1.2.0/go.mod h1:SYymIcj16QtmaHHD7aYtjjsJG7VTCxuUUipMqKk8s4w=
 github.com/july2993/br v4.0.0-beta.2.0.20201124102539-70c65a88f7da+incompatible h1:euy9B6o6bDB68mDFfgDdLB6Wqp7LvMKix1DNc+do/yo=
 github.com/july2993/br v4.0.0-beta.2.0.20201124102539-70c65a88f7da+incompatible/go.mod h1:OAa8jK/ooEjLvJGXsP23BneLPv6q0UCdGigD5ySBDHM=
+github.com/july2993/br v4.0.0-beta.2.0.20201125023340-27eb2972a2f4+incompatible h1:Up27ZrOMZldXaHzwXy4s3/Uiim/UQmgQjEdU/TCJa90=
+github.com/july2993/br v4.0.0-beta.2.0.20201125023340-27eb2972a2f4+incompatible/go.mod h1:OAa8jK/ooEjLvJGXsP23BneLPv6q0UCdGigD5ySBDHM=
 github.com/july2993/kvproto v0.0.0-20201124080438-b67ded362c4e h1:zTP5z66PCGdfYw7dIBSwNAwkyNu1Zk8Rq7o5mFdErsc=
 github.com/july2993/kvproto v0.0.0-20201124080438-b67ded362c4e/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/jung-kurt/gofpdf v1.0.3-0.20190309125859-24315acbbda5/go.mod h1:7Id9E/uU8ce6rXgefFLlgrJj/GYY22cpxn+r32jIOes=
