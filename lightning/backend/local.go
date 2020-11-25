@@ -252,7 +252,7 @@ func NewLocalBackend(
 	enableCheckpoint bool,
 	g glue.Glue,
 ) (Backend, error) {
-	pdCli, err := pd.NewClient([]string{pdAddr}, tls.ToPDSecurityOption())
+	pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
 		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
 	}
@@ -1065,13 +1065,16 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *Loca
 		}(w)
 	}
 
+	var err error
 	for i := 0; i < len(ranges); i++ {
+		// wait for all sub tasks finish to avoid panic. if we return on the first error,
+		// the outer tasks may close the pebble db but some sub tasks still read from the db
 		e := <-errCh
-		if e != nil {
-			return e
+		if e != nil && err == nil {
+			err = e
 		}
 	}
-	return nil
+	return err
 }
 
 type syncdRanges struct {
@@ -1173,21 +1176,21 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	return nil
 }
 
-func (local *local) CheckRequirements() error {
-	if err := checkTiDBVersionBySQL(local.g, localMinTiDBVersion); err != nil {
+func (local *local) CheckRequirements(ctx context.Context) error {
+	if err := checkTiDBVersionBySQL(ctx, local.g, localMinTiDBVersion); err != nil {
 		return err
 	}
-	if err := checkPDVersion(local.tls, local.pdAddr, localMinPDVersion); err != nil {
+	if err := checkPDVersion(ctx, local.tls, local.pdAddr, localMinPDVersion); err != nil {
 		return err
 	}
-	if err := checkTiKVVersion(local.tls, local.pdAddr, localMinTiKVVersion); err != nil {
+	if err := checkTiKVVersion(ctx, local.tls, local.pdAddr, localMinTiKVVersion); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return fetchRemoteTableModelsFromTLS(local.tls, schemaName)
+	return fetchRemoteTableModelsFromTLS(ctx, local.tls, schemaName)
 }
 
 func (local *local) WriteRows(
