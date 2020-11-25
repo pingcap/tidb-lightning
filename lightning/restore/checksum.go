@@ -49,14 +49,14 @@ type ChecksumManager interface {
 	Checksum(ctx context.Context, tableInfo *TidbTableInfo) (*RemoteChecksum, error)
 }
 
-func newChecksumManager(rc *RestoreController) (ChecksumManager, error) {
+func newChecksumManager(ctx context.Context, rc *RestoreController) (ChecksumManager, error) {
 	// if we don't need checksum, just return nil
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 		return nil, nil
 	}
 
 	pdAddr := rc.cfg.TiDB.PdAddr
-	pdVersion, err := common.FetchPDVersion(rc.tls, pdAddr)
+	pdVersion, err := common.FetchPDVersion(ctx, rc.tls, pdAddr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -65,7 +65,7 @@ func newChecksumManager(rc *RestoreController) (ChecksumManager, error) {
 	var manager ChecksumManager
 	if pdVersion.Major >= 4 {
 		tlsOpt := rc.tls.ToPDSecurityOption()
-		pdCli, err := pd.NewClient([]string{pdAddr}, tlsOpt)
+		pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tlsOpt)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -82,7 +82,7 @@ func newChecksumManager(rc *RestoreController) (ChecksumManager, error) {
 			return nil, errors.Trace(err)
 		}
 
-		manager = newTiKVChecksumManager(store.(tikv.Storage).GetClient(), pdCli)
+		manager = newTiKVChecksumManager(store.(tikv.Storage).GetClient(), pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency))
 	} else {
 		db, err := rc.tidbGlue.GetDB()
 		if err != nil {
@@ -245,21 +245,24 @@ func increaseGCLifeTime(ctx context.Context, manager *gcLifeTimeManager, db *sql
 }
 
 type tikvChecksumManager struct {
-	client  kv.Client
-	manager gcTTLManager
+	client                 kv.Client
+	manager                gcTTLManager
+	distSQLScanConcurrency uint
 }
 
 // newTiKVChecksumManager return a new tikv checksum manager
-func newTiKVChecksumManager(client kv.Client, pdClient pd.Client) *tikvChecksumManager {
+func newTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint) *tikvChecksumManager {
 	return &tikvChecksumManager{
-		client:  client,
-		manager: newGCTTLManager(pdClient),
+		client:                 client,
+		manager:                newGCTTLManager(pdClient),
+		distSQLScanConcurrency: distSQLScanConcurrency,
 	}
 }
 
 func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *TidbTableInfo) (*RemoteChecksum, error) {
-	builder := checksum.NewExecutorBuilder(tableInfo.Core, oracle.ComposeTS(time.Now().Unix()*1000, 0))
-	executor, err := builder.Build()
+	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, oracle.ComposeTS(time.Now().Unix()*1000, 0)).
+		SetConcurrency(e.distSQLScanConcurrency).
+		Build()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

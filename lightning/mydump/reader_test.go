@@ -52,7 +52,7 @@ func (s *testMydumpReaderSuite) TestExportStatementNoTrailingNewLine(c *C) {
 	err = file.Close()
 	c.Assert(err, IsNil)
 
-	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
@@ -83,7 +83,7 @@ func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
 	store, err := storage.NewLocalStorage(dir)
 	c.Assert(err, IsNil)
 
-	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
@@ -112,7 +112,7 @@ func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(
 
 	store, err := storage.NewLocalStorage(dir)
 	c.Assert(err, IsNil)
-	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
@@ -138,7 +138,7 @@ func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
 
 	store, err := storage.NewLocalStorage(dir)
 	c.Assert(err, IsNil)
-	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, []byte("CREATE TABLE a (b int(11) COMMENT '总案例');"))
@@ -160,7 +160,7 @@ func (s *testMydumpReaderSuite) TestExportStatementGibberishError(c *C) {
 	store, err := storage.NewLocalStorage(dir)
 	c.Assert(err, IsNil)
 
-	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name()}, Size: stat.Size()}
+	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	c.Assert(data, HasLen, 0)
 	c.Assert(err, ErrorMatches, `failed to decode \w* as auto: invalid schema encoding`)
@@ -189,7 +189,7 @@ func (s *testMydumpReaderSuite) TestExportStatementHandleNonEOFError(c *C) {
 		Open(ctx, "no-perm-file").
 		Return(AlwaysErrorReadSeekCloser{}, nil)
 
-	f := FileInfo{FileMeta: SourceFileMeta{Path: "no-perm-file"}, Size: 1}
+	f := FileInfo{FileMeta: SourceFileMeta{Path: "no-perm-file", FileSize: 1}}
 	_, err := ExportStatement(ctx, mockStorage, f, "auto")
 	c.Assert(err, ErrorMatches, "read error!")
 }

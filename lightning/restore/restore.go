@@ -433,8 +433,8 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if fileMeta.Size > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += math.Round(float64(fileMeta.Size) / float64(cfg.MaxRegionSize))
+					if fileMeta.FileMeta.FileSize > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += math.Round(float64(fileMeta.FileMeta.FileSize) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -667,7 +667,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	manager, err := newChecksumManager(rc)
+	manager, err := newChecksumManager(ctx, rc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -892,7 +892,10 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		for engineID, engine := range cp.Engines {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				// Set engineErr and break this for loop to wait all the sub-routines done before return.
+				// Directly return may cause panic because caller will close the pebble db but some sub routines
+				// are still reading from or writing to the pebble db.
+				engineErr.Set(ctx.Err())
 			default:
 			}
 			if engineErr.Get() != nil {
@@ -1290,12 +1293,12 @@ func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.Swit
 	)
 }
 
-func (rc *RestoreController) checkRequirements(_ context.Context) error {
+func (rc *RestoreController) checkRequirements(ctx context.Context) error {
 	// skip requirement check if explicitly turned off
 	if !rc.cfg.App.CheckRequirements {
 		return nil
 	}
-	return rc.backend.CheckRequirements()
+	return rc.backend.CheckRequirements(ctx)
 }
 
 func (rc *RestoreController) setGlobalVariables(ctx context.Context) error {
@@ -1357,7 +1360,13 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := store.Open(ctx, chunk.Key.Path)
+	var reader storage.ReadSeekCloser
+	var err error
+	if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.FileSize)
+	} else {
+		reader, err = store.Open(ctx, chunk.FileMeta.Path)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1370,7 +1379,7 @@ func newChunkRestore(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.Key.Path)
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

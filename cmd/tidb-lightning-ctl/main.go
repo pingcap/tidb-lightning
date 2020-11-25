@@ -72,11 +72,13 @@ func run() error {
 		fsUsage = fs.Usage
 	}))
 
+	ctx := context.Background()
+
 	cfg := config.NewConfig()
 	if err := cfg.LoadFromGlobal(globalCfg); err != nil {
 		return err
 	}
-	if err := cfg.Adjust(); err != nil {
+	if err := cfg.Adjust(ctx); err != nil {
 		return err
 	}
 
@@ -87,8 +89,6 @@ func run() error {
 	if err = cfg.TiDB.Security.RegisterMySQL(); err != nil {
 		return err
 	}
-
-	ctx := context.Background()
 
 	if *compact {
 		return errors.Trace(compactCluster(ctx, cfg, tls))
