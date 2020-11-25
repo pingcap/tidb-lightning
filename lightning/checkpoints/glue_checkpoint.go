@@ -282,15 +282,16 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 				value.FileMeta.Type = mydump.SourceType(row.GetInt64(3))
 				value.FileMeta.Compression = mydump.Compression(row.GetInt64(4))
 				value.FileMeta.SortKey = row.GetString(5)
-				colPerm := row.GetBytes(6)
-				value.Chunk.Offset = row.GetInt64(7)
-				value.Chunk.EndOffset = row.GetInt64(8)
-				value.Chunk.PrevRowIDMax = row.GetInt64(9)
-				value.Chunk.RowIDMax = row.GetInt64(10)
-				kvcBytes := row.GetUint64(11)
-				kvcKVs := row.GetUint64(12)
-				kvcChecksum := row.GetUint64(13)
-				value.Timestamp = row.GetInt64(14)
+				value.FileMeta.FileSize = row.GetInt64(6)
+				colPerm := row.GetBytes(7)
+				value.Chunk.Offset = row.GetInt64(8)
+				value.Chunk.EndOffset = row.GetInt64(9)
+				value.Chunk.PrevRowIDMax = row.GetInt64(10)
+				value.Chunk.RowIDMax = row.GetInt64(11)
+				kvcBytes := row.GetUint64(12)
+				kvcKVs := row.GetUint64(13)
+				kvcChecksum := row.GetUint64(14)
+				value.Timestamp = row.GetInt64(15)
 
 				value.FileMeta.Path = value.Key.Path
 				value.Checksum = verify.MakeKVChecksum(kvcBytes, kvcKVs, kvcChecksum)
@@ -382,6 +383,7 @@ func (g GlueCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableNam
 					types.NewIntDatum(int64(value.FileMeta.Type)),
 					types.NewIntDatum(int64(value.FileMeta.Compression)),
 					types.NewStringDatum(value.FileMeta.SortKey),
+					types.NewIntDatum(value.FileMeta.FileSize),
 					types.NewBytesDatum(columnPerm),
 					types.NewIntDatum(value.Chunk.Offset),
 					types.NewIntDatum(value.Chunk.EndOffset),
