@@ -197,22 +197,29 @@ func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionI
 	if err != nil {
 		return nil, nil, err
 	}
-	failedCnt := 0
 	var failedErr error
-	for _, region := range newRegions {
-		// Wait for a while until the regions successfully splits.
-		local.waitForSplit(ctx, region.Region.Id)
-		if err = local.splitCli.ScatterRegion(ctx, region); err != nil {
-			failedCnt++
-			failedErr = err
+	retryRegions := make([]*split.RegionInfo, 0)
+	scatterRegions := newRegions
+	for i := 0; i < maxRetryTimes; i++ {
+		for _, region := range scatterRegions {
+			// Wait for a while until the regions successfully splits.
+			local.waitForSplit(ctx, region.Region.Id)
+			if err = local.splitCli.ScatterRegion(ctx, region); err != nil {
+				failedErr = err
+				retryRegions = append(retryRegions, region)
+			}
 		}
-	}
-	if failedCnt > 0 {
+		if len(retryRegions) == 0 {
+			break
+		}
 		// the scatter operation likely fails because region replicate not finish yet
 		// pack them to one log to avoid printing a lot warn logs.
 		log.L().Warn("scatter region failed", zap.Int("regionCount", len(newRegions)),
-			zap.Int("failedCount", failedCnt), zap.Error(failedErr))
+			zap.Int("failedCount", len(retryRegions)), zap.Error(failedErr), zap.Int("retry", i))
+		scatterRegions = retryRegions
+		retryRegions = make([]*split.RegionInfo, 0)
 	}
+
 	return region, newRegions, nil
 }
 
