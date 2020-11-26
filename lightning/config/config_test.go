@@ -144,9 +144,9 @@ func (s *configTestSuite) TestAdjustFileRoutePath(c *C) {
 	rule := &config.FileRouteRule{Path: invalidPath, Type: "sql", Schema: "test", Table: "tbl"}
 	cfg.Mydumper.FileRouters = []*config.FileRouteRule{rule}
 	err := cfg.Adjust(ctx)
-	c.Assert(err, ErrorMatches, fmt.Sprintf("file route path '%s' is not in source dir '%s'", invalidPath, tmpDir))
+	c.Assert(err, ErrorMatches, fmt.Sprintf("\\Qfile route path '%s' is not in source dir '%s'\\E", invalidPath, tmpDir))
 
-	relPath := "test_dir/1.sql"
+	relPath := filepath.FromSlash("test_dir/1.sql")
 	rule.Path = filepath.Join(tmpDir, relPath)
 	err = cfg.Adjust(ctx)
 	c.Assert(err, IsNil)
