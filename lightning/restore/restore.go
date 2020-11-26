@@ -572,22 +572,26 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 }
 
 func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}) {
-	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
-	defer logProgressTicker.Stop()
+	// a nil channel blocks forever.
+	// if the cron duration is zero we use the nil channel to skip the action.
+	var logProgressChan <-chan time.Time
+	if rc.cfg.Cron.LogProgress.Duration > 0 {
+		logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
+		defer logProgressTicker.Stop()
+		logProgressChan = logProgressTicker.C
+	}
 
 	glueProgressTicker := time.NewTicker(3 * time.Second)
 	defer glueProgressTicker.Stop()
 
 	var switchModeChan <-chan time.Time
 	// tide backend don't need to switch tikv to import mode
-	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+	if rc.cfg.TikvImporter.Backend != config.BackendTiDB && rc.cfg.Cron.SwitchMode.Duration > 0 {
 		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 		defer switchModeTicker.Stop()
 		switchModeChan = switchModeTicker.C
 
 		rc.switchToImportMode(ctx)
-	} else {
-		switchModeChan = make(chan time.Time)
 	}
 
 	start := time.Now()
@@ -605,7 +609,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			// periodically switch to import mode, as requested by TiKV 3.0
 			rc.switchToImportMode(ctx)
 
-		case <-logProgressTicker.C:
+		case <-logProgressChan:
 			// log the current progress periodically, so OPS will know that we're still working
 			nanoseconds := float64(time.Since(start).Nanoseconds())
 			estimated := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
