@@ -496,20 +496,8 @@ func (local *local) WriteToTiKV(
 	start, end []byte,
 ) ([]*sst.SSTMeta, *Range, error) {
 	begin := time.Now()
-	var startKey, endKey []byte
-	if len(region.Region.StartKey) > 0 {
-		_, startKey, _ = codec.DecodeBytes(region.Region.StartKey, []byte{})
-	}
-	if bytes.Compare(startKey, start) < 0 {
-		startKey = start
-	}
-	if len(region.Region.EndKey) > 0 {
-		_, endKey, _ = codec.DecodeBytes(region.Region.EndKey, []byte{})
-	}
-	if beforeEnd(end, endKey) {
-		endKey = end
-	}
-	opt := &pebble.IterOptions{LowerBound: startKey, UpperBound: endKey}
+	regionRange := intersectRange(region.Region, Range{start: start, end: end})
+	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
 	iter := engineFile.db.NewIter(opt)
 	defer iter.Close()
 
@@ -651,9 +639,9 @@ func (local *local) WriteToTiKV(
 	var remainRange *Range
 	if iter.Valid() && iter.Next() {
 		firstKey := append([]byte{}, iter.Key()...)
-		remainRange = &Range{start: firstKey, end: endKey}
+		remainRange = &Range{start: firstKey, end: regionRange.end}
 		log.L().Info("write to tikv partial finish", zap.Int("count", totalCount),
-			zap.Int64("size", size), zap.Binary("startKey", startKey), zap.Binary("endKey", endKey),
+			zap.Int64("size", size), zap.Binary("startKey", regionRange.start), zap.Binary("endKey", regionRange.end),
 			zap.Binary("remainStart", remainRange.start), zap.Binary("remainEnd", remainRange.end),
 			zap.Reflect("region", region))
 	}
@@ -880,7 +868,7 @@ func (local *local) writeAndIngestByRange(
 	defer cancel()
 
 WriteAndIngest:
-	for retry := 0; retry < maxRetryTimes; retry++ {
+	for retry := 0; retry < maxRetryTimes; {
 		if retry != 0 {
 			select {
 			case <-time.After(time.Second):
@@ -892,65 +880,41 @@ WriteAndIngest:
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
 		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, 128)
 		if err != nil || len(regions) == 0 {
-			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)))
+			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)), zap.Int("retry", retry))
+			retry++
 			continue WriteAndIngest
 		}
 
-		shouldWait := false
-		errChan := make(chan error, len(regions))
 		for _, region := range regions {
 			log.L().Debug("get region", zap.Int("retry", retry), zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey), zap.Uint64("id", region.Region.GetId()),
 				zap.Stringer("epoch", region.Region.GetRegionEpoch()), zap.Binary("start", region.Region.GetStartKey()),
 				zap.Binary("end", region.Region.GetEndKey()), zap.Reflect("peers", region.Region.GetPeers()))
 
-			// generate new uuid for concurrent write to tikv
-
-			if len(regions) == 1 {
-				w := local.ingestConcurrency.Apply()
-				rg, err1 := local.writeAndIngestPairs(ctx, engineFile, region, start, end)
-				local.ingestConcurrency.Recycle(w)
-				if err1 != nil {
-					err = err1
-					continue WriteAndIngest
+			w := local.ingestConcurrency.Apply()
+			var rg *Range
+			rg, err = local.writeAndIngestPairs(ctx, engineFile, region, pairStart, end)
+			local.ingestConcurrency.Recycle(w)
+			if err != nil {
+				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
+				// if we have at least succeeded one region, retry without increasing the retry count
+				if bytes.Compare(regionStart, pairStart) > 0 {
+					pairStart = regionStart
+				} else {
+					retry++
 				}
-				if rg != nil {
-					remainRanges.add(*rg)
-				}
-			} else {
-				shouldWait = true
-				go func(r *split.RegionInfo) {
-					w := local.ingestConcurrency.Apply()
-					rg, err := local.writeAndIngestPairs(ctx, engineFile, r, start, end)
-					local.ingestConcurrency.Recycle(w)
-					errChan <- err
-					if err == nil && rg != nil {
-						remainRanges.add(*rg)
-					}
-				}(region)
-			}
-		}
-		if shouldWait {
-			shouldRetry := false
-			for i := 0; i < len(regions); i++ {
-				err1 := <-errChan
-				if err1 != nil {
-					err = err1
-					log.L().Warn("should retry this range", zap.Int("retry", retry), log.ShortError(err))
-					shouldRetry = true
-				}
-			}
-			if !shouldRetry {
-				return nil
-			} else {
+				log.L().Info("retry write and ingest kv pairs", zap.Binary("startKey", pairStart),
+					zap.Binary("endKey", end), log.ShortError(err), zap.Int("retry", retry))
 				continue WriteAndIngest
 			}
+			if rg != nil {
+				remainRanges.add(*rg)
+			}
 		}
-		return nil
+
+		return err
 	}
-	if err == nil {
-		err = errors.New("all retry failed")
-	}
+
 	return err
 }
 
@@ -976,7 +940,7 @@ loopWrite:
 		metas, remainRange, err = local.WriteToTiKV(ctx, engineFile, region, start, end)
 		if err != nil {
 			log.L().Warn("write to tikv failed", log.ShortError(err))
-			return remainRange, err
+			return nil, err
 		}
 
 		for _, meta := range metas {

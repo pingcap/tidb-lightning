@@ -65,7 +65,7 @@ func (s *tidbSuite) TearDownTest(c *C) {
 
 func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 	dbName := "testdb"
-	createTableIfNotExistsStmt := func(createTable, tableName string) string {
+	createTableIfNotExistsStmt := func(createTable, tableName string) []string {
 		res, err := createTableIfNotExistsStmt(s.tiGlue.GetParser(), createTable, dbName, tableName)
 		c.Assert(err, IsNil)
 		return res
@@ -73,62 +73,62 @@ func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` TINYINT(1));", "foo"),
-		Equals,
-		"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));",
+		DeepEquals,
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));"},
 	)
 
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE IF NOT EXISTS `foo`(`bar` TINYINT(1));", "foo"),
-		Equals,
-		"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));",
+		DeepEquals,
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));"},
 	)
 
 	// case insensitive
 	c.Assert(
 		createTableIfNotExistsStmt("/* cOmmEnt */ creAte tablE `fOo`(`bar` TinyinT(1));", "fOo"),
-		Equals,
-		"CREATE TABLE IF NOT EXISTS `testdb`.`fOo` (`bar` TINYINT(1));",
+		DeepEquals,
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`fOo` (`bar` TINYINT(1));"},
 	)
 
 	c.Assert(
 		createTableIfNotExistsStmt("/* coMMenT */ crEatE tAble If not EXISts `FoO`(`bAR` tiNyInT(1));", "FoO"),
-		Equals,
-		"CREATE TABLE IF NOT EXISTS `testdb`.`FoO` (`bAR` TINYINT(1));",
+		DeepEquals,
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`FoO` (`bAR` TINYINT(1));"},
 	)
 
 	// only one "CREATE TABLE" is replaced
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE');", "foo"),
-		Equals,
-		"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE');",
+		DeepEquals,
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE');"},
 	)
 
 	// upper case becomes shorter
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `ſ`(`ı` TINYINT(1));", "ſ"),
-		Equals,
-		"CREATE TABLE IF NOT EXISTS `testdb`.`ſ` (`ı` TINYINT(1));",
+		DeepEquals,
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`ſ` (`ı` TINYINT(1));"},
 	)
 
 	// upper case becomes longer
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `ɑ`(`ȿ` TINYINT(1));", "ɑ"),
-		Equals,
-		"CREATE TABLE IF NOT EXISTS `testdb`.`ɑ` (`ȿ` TINYINT(1));",
+		DeepEquals,
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`ɑ` (`ȿ` TINYINT(1));"},
 	)
 
 	// non-utf-8
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `\xcc\xcc\xcc`(`\xdd\xdd\xdd` TINYINT(1));", "\xcc\xcc\xcc"),
-		Equals,
-		"CREATE TABLE IF NOT EXISTS `testdb`.`\xcc\xcc\xcc` (`ÝÝÝ` TINYINT(1));",
+		DeepEquals,
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`\xcc\xcc\xcc` (`ÝÝÝ` TINYINT(1));"},
 	)
 
 	// renaming a table
 	c.Assert(
 		createTableIfNotExistsStmt("create table foo(x int);", "ba`r"),
-		Equals,
-		"CREATE TABLE IF NOT EXISTS `testdb`.`ba``r` (`x` INT);",
+		DeepEquals,
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`ba``r` (`x` INT);"},
 	)
 
 	// conditional comments
@@ -138,8 +138,47 @@ func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 			/*!40014 SET FOREIGN_KEY_CHECKS=0*/;
 			CREATE TABLE x.y (z double) ENGINE=InnoDB AUTO_INCREMENT=8343230 DEFAULT CHARSET=utf8;
 		`, "m"),
-		Equals,
-		"SET NAMES 'binary';SET @@SESSION.`FOREIGN_KEY_CHECKS`=0;CREATE TABLE IF NOT EXISTS `testdb`.`m` (`z` DOUBLE) ENGINE = InnoDB AUTO_INCREMENT = 8343230 DEFAULT CHARACTER SET = UTF8;",
+		DeepEquals,
+		[]string{
+			"SET NAMES 'binary';",
+			"SET @@SESSION.`FOREIGN_KEY_CHECKS`=0;",
+			"CREATE TABLE IF NOT EXISTS `testdb`.`m` (`z` DOUBLE) ENGINE = InnoDB AUTO_INCREMENT = 8343230 DEFAULT CHARACTER SET = UTF8;",
+		},
+	)
+
+	// create view
+	c.Assert(
+		createTableIfNotExistsStmt(`
+			/*!40101 SET NAMES binary*/;
+			DROP TABLE IF EXISTS v2;
+			DROP VIEW IF EXISTS v2;
+			SET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;
+			SET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;
+			SET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;
+			SET character_set_client = utf8;
+			SET character_set_results = utf8;
+			SET collation_connection = utf8_general_ci;
+			CREATE ALGORITHM=UNDEFINED DEFINER=root@192.168.198.178 SQL SECURITY DEFINER VIEW v2 (s) AS SELECT s FROM db1.v1 WHERE i<2;
+			SET character_set_client = @PREV_CHARACTER_SET_CLIENT;
+			SET character_set_results = @PREV_CHARACTER_SET_RESULTS;
+			SET collation_connection = @PREV_COLLATION_CONNECTION;
+		`, "m"),
+		DeepEquals,
+		[]string{
+			"SET NAMES 'binary';",
+			"DROP TABLE IF EXISTS `testdb`.`m`;",
+			"DROP VIEW IF EXISTS `testdb`.`m`;",
+			"SET @`PREV_CHARACTER_SET_CLIENT`=@@`character_set_client`;",
+			"SET @`PREV_CHARACTER_SET_RESULTS`=@@`character_set_results`;",
+			"SET @`PREV_COLLATION_CONNECTION`=@@`collation_connection`;",
+			"SET @@SESSION.`character_set_client`=`utf8`;",
+			"SET @@SESSION.`character_set_results`=`utf8`;",
+			"SET @@SESSION.`collation_connection`=`utf8_general_ci`;",
+			"CREATE ALGORITHM = UNDEFINED DEFINER = `root`@`192.168.198.178` SQL SECURITY DEFINER VIEW `testdb`.`m` (`s`) AS SELECT `s` FROM `db1`.`v1` WHERE `i`<2;",
+			"SET @@SESSION.`character_set_client`=@`PREV_CHARACTER_SET_CLIENT`;",
+			"SET @@SESSION.`character_set_results`=@`PREV_CHARACTER_SET_RESULTS`;",
+			"SET @@SESSION.`collation_connection`=@`PREV_COLLATION_CONNECTION`;",
+		},
 	)
 }
 
@@ -153,7 +192,10 @@ func (s *tidbSuite) TestInitSchema(c *C) {
 		ExpectExec("\\QCREATE TABLE IF NOT EXISTS `db`.`t1` (`a` INT PRIMARY KEY,`b` VARCHAR(200));\\E").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	s.mockDB.
-		ExpectExec("\\QSET @@SESSION.`FOREIGN_KEY_CHECKS`=0;CREATE TABLE IF NOT EXISTS `db`.`t2` (`xx` TEXT) AUTO_INCREMENT = 11203;\\E").
+		ExpectExec("\\QSET @@SESSION.`FOREIGN_KEY_CHECKS`=0;\\E").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mockDB.
+		ExpectExec("\\QCREATE TABLE IF NOT EXISTS `db`.`t2` (`xx` TEXT) AUTO_INCREMENT = 11203;\\E").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	s.mockDB.
 		ExpectClose()
