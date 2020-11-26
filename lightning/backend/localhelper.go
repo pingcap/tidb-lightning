@@ -26,7 +26,7 @@ import (
 const (
 	SplitRetryTimes = 8
 	// the max keys count in a batch to split one region
-	maxBatchSplitKeys = 256
+	maxBatchSplitKeys = 2048
 )
 
 // TODO remove this file and use br internal functions
