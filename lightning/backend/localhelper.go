@@ -323,3 +323,21 @@ func insideRegion(region *metapb.Region, meta *sst.SSTMeta) bool {
 func keyInsideRegion(region *metapb.Region, key []byte) bool {
 	return bytes.Compare(key, region.GetStartKey()) >= 0 && (beforeEnd(key, region.GetEndKey()))
 }
+
+func intersectRange(region *metapb.Region, rg Range) Range {
+	var startKey, endKey []byte
+	if len(region.StartKey) > 0 {
+		_, startKey, _ = codec.DecodeBytes(region.StartKey, []byte{})
+	}
+	if bytes.Compare(startKey, rg.start) < 0 {
+		startKey = rg.start
+	}
+	if len(region.EndKey) > 0 {
+		_, endKey, _ = codec.DecodeBytes(region.EndKey, []byte{})
+	}
+	if beforeEnd(rg.end, endKey) {
+		endKey = rg.end
+	}
+
+	return Range{start: startKey, end: endKey}
+}
