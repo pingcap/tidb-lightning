@@ -896,13 +896,15 @@ WriteAndIngest:
 			rg, err = local.writeAndIngestPairs(ctx, engineFile, region, pairStart, end)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
-				regionRange := intersectRange(region.Region, Range{start: pairStart, end: end})
+				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
 				// if we have at least succeeded one region, retry without increasing the retry count
-				if bytes.Compare(regionRange.start, pairStart) > 0 {
-					pairStart = regionRange.start
+				if bytes.Compare(regionStart, pairStart) > 0 {
+					pairStart = regionStart
 				} else {
 					retry++
 				}
+				log.L().Info("retry write and ingest kv pairs", zap.Binary("startKey", pairStart),
+					zap.Binary("endKey", end), log.ShortError(err), zap.Int("retry", retry))
 				continue WriteAndIngest
 			}
 			if rg != nil {
