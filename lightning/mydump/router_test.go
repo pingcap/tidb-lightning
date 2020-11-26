@@ -129,7 +129,8 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	// multi rule don't intersect with each other
 	rules := []*config.FileRouteRule{
 		{Pattern: `(?:[^/]*/)*([^/.]+)-schema-create\.sql`, Schema: "$1", Type: SchemaSchema},
-		{Pattern: `(?:[^/]*/)*([^/.]+)\.([^/.]+)-schema\.sql`, Schema: "$1", Table: "$2", Type: TableSchema},
+		{Pattern: `(?:[^/]*/)*([^/.]+)\.([^/.]+)-schema\.sql$`, Schema: "$1", Table: "$2", Type: TableSchema},
+		{Pattern: `(?:[^/]*/)*([^/.]+)\.([^/.]+)-schema-view\.sql$`, Schema: "$1", Table: "$2", Type: ViewSchema},
 		{Pattern: `^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "$schema", Table: "$table", Type: "$type", Key: "$key", Compression: "$cp"},
 	}
 
@@ -139,6 +140,7 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	inputOutputMap := map[string][]string{
 		"test-schema-create.sql":           {"test", "", "", "", SchemaSchema},
 		"test.t-schema.sql":                {"test", "t", "", "", TableSchema},
+		"test.v1-schema-view.sql":          {"test", "v1", "", "", ViewSchema},
 		"my_schema.my_table.sql":           {"my_schema", "my_table", "", "", "sql"},
 		"/test/123/my_schema.my_table.sql": {"my_schema", "my_table", "", "", "sql"},
 		"my_dir/my_schema.my_table.csv":    {"my_schema", "my_table", "", "", "csv"},

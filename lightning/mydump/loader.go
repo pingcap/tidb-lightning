@@ -32,6 +32,7 @@ type MDDatabaseMeta struct {
 	Name       string
 	SchemaFile string
 	Tables     []*MDTableMeta
+	Views      []*MDTableMeta
 	charSet    string
 }
 
@@ -81,6 +82,7 @@ type mdLoaderSetup struct {
 	loader        *MDLoader
 	dbSchemas     []FileInfo
 	tableSchemas  []FileInfo
+	viewSchemas   []FileInfo
 	tableDatas    []FileInfo
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
@@ -234,6 +236,17 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 				return errors.Errorf("invalid table schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
+
+		// setup view schema
+		for _, fileInfo := range s.viewSchemas {
+			dbExists, tableExists := s.insertView(fileInfo)
+			if !dbExists {
+				return errors.Errorf("invalid table schema file, cannot find db '%s' - %s", fileInfo.TableName.Schema, fileInfo.FileMeta.Path)
+			} else if !tableExists {
+				// remove the last `-view.sql` from path as the relate table schema file path
+				return errors.Errorf("invalid view schema file, miss host table schema for view '%s'", fileInfo.TableName.Name)
+			}
+		}
 	}
 
 	// Sql file for restore data
@@ -302,6 +315,8 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 			s.dbSchemas = append(s.dbSchemas, info)
 		case SourceTypeTableSchema:
 			s.tableSchemas = append(s.tableSchemas, info)
+		case SourceTypeViewSchema:
+			s.viewSchemas = append(s.viewSchemas, info)
 		case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
 			s.tableDatas = append(s.tableDatas, info)
 		}
@@ -345,6 +360,10 @@ func (s *mdLoaderSetup) route() error {
 		dbInfo.count++
 		knownDBNames[info.TableName.Schema] = dbInfo
 	}
+	for _, info := range s.viewSchemas {
+		dbInfo := knownDBNames[info.TableName.Schema]
+		dbInfo.count++
+	}
 
 	run := func(arr []FileInfo) error {
 		for i, info := range arr {
@@ -374,6 +393,9 @@ func (s *mdLoaderSetup) route() error {
 	}
 
 	if err := run(s.tableSchemas); err != nil {
+		return errors.Trace(err)
+	}
+	if err := run(s.viewSchemas); err != nil {
 		return errors.Trace(err)
 	}
 	if err := run(s.tableDatas); err != nil {
@@ -426,6 +448,21 @@ func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool
 		dbMeta.Tables = append(dbMeta.Tables, ptr)
 		return ptr, dbExists, false
 	}
+}
+
+func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (bool, bool) {
+	dbMeta, dbExists := s.insertDB(fileInfo.TableName.Schema, "")
+	_, ok := s.tableIndexMap[fileInfo.TableName]
+	if ok {
+		meta := &MDTableMeta{
+			DB:         fileInfo.TableName.Schema,
+			Name:       fileInfo.TableName.Name,
+			SchemaFile: fileInfo,
+			charSet:    s.loader.charSet,
+		}
+		dbMeta.Views = append(dbMeta.Views, meta)
+	}
+	return dbExists, ok
 }
 
 func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {

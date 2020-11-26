@@ -318,6 +318,24 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 				return errors.Annotatef(err, "restore table schema %s failed", dbMeta.Name)
 			}
 		}
+
+		// restore views. Since views can cross database we must restore views after all table schemas are restored.
+		for _, dbMeta := range rc.dbMetas {
+			if len(dbMeta.Views) > 0 {
+				task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore view schema")
+				viewsSchema := make(map[string]string)
+				for _, viewMeta := range dbMeta.Views {
+					viewsSchema[viewMeta.Name] = viewMeta.GetSchema(ctx, rc.store)
+				}
+				err := InitSchema(ctx, rc.tidbGlue, dbMeta.Name, viewsSchema)
+
+				task.End(zap.ErrorLevel, err)
+				if err != nil {
+					return errors.Annotatef(err, "restore view schema %s failed", dbMeta.Name)
+				}
+			}
+
+		}
 	}
 	getTableFunc := rc.backend.FetchRemoteTableModels
 	if !rc.tidbGlue.OwnsSQLExecutor() {
@@ -1153,6 +1171,13 @@ func (t *TableRestore) importEngine(
 }
 
 func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
+	// there are no data in this table, no need to do post process
+	// this is important for tables that are just the dump table of views
+	// because at this stage, the table was already deleted and replaced by the related view
+	if len(cp.Engines) == 1 {
+		return nil
+	}
+
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
