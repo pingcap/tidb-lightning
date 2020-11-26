@@ -1,4 +1,4 @@
-CREATE TABLE `test` (
+CREATE TABLE `test_perm` (
 	`id` int(11) NOT NULL,
 	`contract_no` varchar(64) DEFAULT NULL,
 	`fund_seq_no` varchar(64) DEFAULT NULL,
@@ -8,7 +8,7 @@ CREATE TABLE `test` (
 	`prin_amt` int(11) DEFAULT NULL,
 	`start_date` varchar(8) DEFAULT NULL,
 	`end_date` varchar(8) DEFAULT NULL,
-	`batch_date` varchar(8) DEFAULT NULL,
+	`batch_date` varchar(32) DEFAULT NULL,
 	`crt_time` timestamp DEFAULT CURRENT_TIMESTAMP,
 	`region_code` varchar(8) DEFAULT NULL,
 	`credit_code` varchar(64) DEFAULT NULL
