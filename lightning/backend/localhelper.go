@@ -47,14 +47,28 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 		zap.Binary("maxKey", maxKey),
 	)
 
-	var errSplit error
+	var err error
 	scatterRegions := make([]*split.RegionInfo, 0)
 	var retryKeys [][]byte
 	waitTime := 1 * time.Second
 	for i := 0; i < SplitRetryTimes; i++ {
-		regions, err := paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
+		if i > 0 {
+			select {
+			case <-time.After(waitTime):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			waitTime *= 2
+			if waitTime > retrySplitMaxWaitTime {
+				waitTime = retrySplitMaxWaitTime
+			}
+		}
+		var regions []*split.RegionInfo
+		regions, err = paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
 		if err != nil {
-			return err
+			log.L().Warn("paginate scan region failed", zap.Binary("minKey", minKey), zap.Binary("maxKey", maxKey),
+				log.ShortError(err), zap.Int("retry", i))
+			continue
 		}
 
 		regionMap := make(map[uint64]*split.RegionInfo)
@@ -87,18 +101,18 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 						zap.Binary("regionStart", splitRegion.Region.StartKey), zap.Binary("regionEnd", splitRegion.Region.EndKey),
 						zap.Reflect("region", splitRegion))
 				}
-				splitRegion, newRegions, errSplit = local.BatchSplitRegions(ctx, splitRegion, keys[start:end])
-				if errSplit != nil {
-					if strings.Contains(errSplit.Error(), "no valid key") {
+				splitRegion, newRegions, err = local.BatchSplitRegions(ctx, splitRegion, keys[start:end])
+				if err != nil {
+					if strings.Contains(err.Error(), "no valid key") {
 						for _, key := range keys {
 							log.L().Warn("no valid key",
 								zap.Binary("startKey", region.Region.StartKey),
 								zap.Binary("endKey", region.Region.EndKey),
 								zap.Binary("key", codec.EncodeBytes([]byte{}, key)))
 						}
-						return errors.Trace(errSplit)
+						return errors.Trace(err)
 					}
-					log.L().Warn("split regions", log.ShortError(errSplit), zap.Int("retry time", i+1),
+					log.L().Warn("split regions", log.ShortError(err), zap.Int("retry time", i+1),
 						zap.Uint64("region_id", regionID))
 					retryKeys = append(retryKeys, keys[start:]...)
 					break
@@ -122,19 +136,10 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 			})
 			minKey = retryKeys[0]
 			maxKey = nextKey(retryKeys[len(retryKeys)-1])
-			select {
-			case <-time.After(waitTime):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			waitTime *= 2
-			if waitTime > retrySplitMaxWaitTime {
-				waitTime = retrySplitMaxWaitTime
-			}
 		}
 	}
-	if errSplit != nil {
-		return errors.Trace(errSplit)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	startTime := time.Now()

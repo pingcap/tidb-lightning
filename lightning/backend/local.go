@@ -1126,7 +1126,6 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 			zap.Int("ranges", len(ranges)))
 
 		// split region by given ranges
-		retryWaitTime := 5 * time.Second
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
 			if err == nil {
@@ -1135,14 +1134,6 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 			log.L().Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
 				log.ShortError(err), zap.Int("retry", i))
-			// in some case, split region failed due to tikv report region merge/split message to pd delay
-			// which cause region epoch not match, so we wait for some period to avoid retry too fast.
-			select {
-			case <-time.After(retryWaitTime):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			retryWaitTime *= 2
 		}
 		if err != nil {
 			log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
