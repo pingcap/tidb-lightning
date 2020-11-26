@@ -1128,6 +1128,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 			if err == nil {
 				break
 			}
+			log.L().Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+				log.ShortError(err), zap.Int("retry", i))
 		}
 		if err != nil {
 			log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
