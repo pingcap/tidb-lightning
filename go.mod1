@@ -23,7 +23,7 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6
 	github.com/juju/testing v0.0.0-20201030020617-7189b3728523 // indirect
 	github.com/pierrec/lz4 v2.6.0+incompatible // indirect
-	github.com/pingcap/br v4.0.0-beta.2.0.20201022162224-a1d616ce0744+incompatible
+	github.com/pingcap/br v4.0.0-beta.2.0.20201126081115-602ed18bf2c6+incompatible
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20200917111840-a15ef68f753d
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
@@ -41,7 +41,6 @@ require (
 	github.com/uber/jaeger-lib v2.4.0+incompatible // indirect
 	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
-	github.com/zhangjinpeng1987/raft v0.0.0-20200819064223-df31bb68a018 // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/net v0.0.0-20200904194848-62affa334b73
@@ -52,5 +51,3 @@ require (
 	google.golang.org/grpc v1.27.1
 	modernc.org/mathutil v1.0.0
 )
-
-replace github.com/pingcap/br => github.com/glorv/br v4.0.0-beta.0.20201124060904-a9b9471397f6+incompatible
