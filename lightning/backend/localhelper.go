@@ -24,9 +24,10 @@ import (
 )
 
 const (
-	SplitRetryTimes = 8
+	SplitRetryTimes       = 8
+	retrySplitMaxWaitTime = 4 * time.Second
 	// the max keys count in a batch to split one region
-	maxBatchSplitKeys = 2048
+	maxBatchSplitKeys = 4096
 )
 
 // TODO remove this file and use br internal functions
@@ -49,6 +50,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 	var errSplit error
 	scatterRegions := make([]*split.RegionInfo, 0)
 	var retryKeys [][]byte
+	waitTime := 1 * time.Second
 	for i := 0; i < SplitRetryTimes; i++ {
 		regions, err := paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
 		if err != nil {
@@ -121,9 +123,13 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 			minKey = retryKeys[0]
 			maxKey = nextKey(retryKeys[len(retryKeys)-1])
 			select {
-			case <-time.After(time.Second):
+			case <-time.After(waitTime):
 			case <-ctx.Done():
 				return ctx.Err()
+			}
+			waitTime *= 2
+			if waitTime > retrySplitMaxWaitTime {
+				waitTime = retrySplitMaxWaitTime
 			}
 		}
 	}
