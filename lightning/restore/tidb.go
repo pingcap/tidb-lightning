@@ -175,21 +175,18 @@ func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName s
 
 	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {
-		switch stmt.(type) {
+		switch node := stmt.(type) {
 		case *ast.CreateTableStmt:
-			createTableNode := stmt.(*ast.CreateTableStmt)
-			createTableNode.Table.Schema = model.NewCIStr(dbName)
-			createTableNode.Table.Name = model.NewCIStr(tblName)
-			createTableNode.IfNotExists = true
+			node.Table.Schema = model.NewCIStr(dbName)
+			node.Table.Name = model.NewCIStr(tblName)
+			node.IfNotExists = true
 		case *ast.CreateViewStmt:
-			createViewNode := stmt.(*ast.CreateViewStmt)
-			createViewNode.ViewName.Schema = model.NewCIStr(dbName)
-			createViewNode.ViewName.Name = model.NewCIStr(tblName)
+			node.ViewName.Schema = model.NewCIStr(dbName)
+			node.ViewName.Name = model.NewCIStr(tblName)
 		case *ast.DropTableStmt:
-			dropStmt := stmt.(*ast.DropTableStmt)
-			dropStmt.Tables[0].Schema = model.NewCIStr(dbName)
-			dropStmt.Tables[0].Name = model.NewCIStr(tblName)
-			dropStmt.IfExists = true
+			node.Tables[0].Schema = model.NewCIStr(dbName)
+			node.Tables[0].Name = model.NewCIStr(tblName)
+			node.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {
 			return []string{}, err
