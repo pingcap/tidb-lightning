@@ -19,6 +19,12 @@ table = "$2"
 type = "table-schema"
 
 [[mydumper.files]]
+pattern = "(?i)^(?:[^/]*/)*([a-z0-9]+)/([a-z0-9]+)-view\\.sql$"
+schema = "$1"
+table = "$2"
+type = "view-schema"
+
+[[mydumper.files]]
 path = "ff/test.SQL"
 schema = "fr"
 table = "tbl"

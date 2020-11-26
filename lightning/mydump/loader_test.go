@@ -193,6 +193,33 @@ func (s *testMydumpLoaderSuite) TestDataNoHostTable(c *C) {
 	c.Assert(err, ErrorMatches, `invalid data file, miss host table 'tbl' - .*[/\\]?db\.tbl\.sql`)
 }
 
+func (s *testMydumpLoaderSuite) TestViewNoHostDB(c *C) {
+	/*
+		Path/
+			notdb-schema-create.sql
+			db.tbl-schema-view.sql
+	*/
+	s.touch(c, "notdb-schema-create.sql")
+	s.touch(c, "db.tbl-schema-view.sql")
+
+	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	c.Assert(err, ErrorMatches, `invalid table schema file, cannot find db 'db' - .*[/\\]?db\.tbl-schema-view\.sql`)
+}
+
+func (s *testMydumpLoaderSuite) TestViewNoHostTable(c *C) {
+	/*
+		Path/
+			db-schema-create.sql
+			db.tbl-schema-view.sql
+	*/
+
+	s.touch(c, "db-schema-create.sql")
+	s.touch(c, "db.tbl-schema-view.sql")
+
+	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	c.Assert(err, ErrorMatches, `invalid view schema file, miss host table schema for view 'tbl'`)
+}
+
 func (s *testMydumpLoaderSuite) TestDataWithoutSchema(c *C) {
 	dir := s.sourceDir
 	p := filepath.Join(dir, "db.tbl.sql")
@@ -223,7 +250,6 @@ func (s *testMydumpLoaderSuite) TestTablesWithDots(c *C) {
 	s.touch(c, "db.0002.sql")
 
 	// insert some tables with file name structures which we're going to ignore.
-	s.touch(c, "db.v-schema-view.sql")
 	s.touch(c, "db.v-schema-trigger.sql")
 	s.touch(c, "db.v-schema-post.sql")
 	s.touch(c, "db.sql")
@@ -263,6 +289,12 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 			SchemaPattern: "c*",
 			TargetSchema:  "c",
 		},
+		{
+			SchemaPattern: "e*",
+			TablePattern:  "f*",
+			TargetSchema:  "v",
+			TargetTable:   "vv",
+		},
 	}
 
 	/*
@@ -277,10 +309,15 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 			a1.s1.1.schema.sql
 			a1.t2-schema.sql
 			a1.t2.1.sql
+			a1.v1-schema.sql
+			a1.v1-schema-view.sql
 			c0-schema-create.sql
 			c0.t3-schema.sql
 			c0.t3.1.sql
 			d0-schema-create.sql
+			e0-schema-create.sql
+			e0.f0-schema.sql
+			e0.f0-schema-view.sql
 	*/
 
 	s.touch(c, "a0-schema-create.sql")
@@ -294,12 +331,18 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 	s.touch(c, "a1.s1.1.sql")
 	s.touch(c, "a1.t2-schema.sql")
 	s.touch(c, "a1.t2.1.sql")
+	s.touch(c, "a1.v1-schema.sql")
+	s.touch(c, "a1.v1-schema-view.sql")
 
 	s.touch(c, "c0-schema-create.sql")
 	s.touch(c, "c0.t3-schema.sql")
 	s.touch(c, "c0.t3.1.sql")
 
 	s.touch(c, "d0-schema-create.sql")
+
+	s.touch(c, "e0-schema-create.sql")
+	s.touch(c, "e0.f0-schema.sql")
+	s.touch(c, "e0.f0-schema-view.sql")
 
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
 	c.Assert(err, IsNil)
@@ -313,6 +356,19 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 					Name:       "s1",
 					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: "a1.s1-schema.sql", Type: md.SourceTypeTableSchema}},
 					DataFiles:  []md.FileInfo{{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: "a1.s1.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
+				},
+				{
+					DB:         "a1",
+					Name:       "v1",
+					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema.sql", Type: md.SourceTypeTableSchema}},
+					DataFiles:  []md.FileInfo{},
+				},
+			},
+			Views: []*md.MDTableMeta{
+				{
+					DB:         "a1",
+					Name:       "v1",
+					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: md.SourceTypeViewSchema}},
 				},
 			},
 		},
@@ -348,6 +404,25 @@ func (s *testMydumpLoaderSuite) TestRouter(c *C) {
 				},
 			},
 		},
+		{
+			Name:       "v",
+			SchemaFile: "e0-schema-create.sql",
+			Tables: []*md.MDTableMeta{
+				{
+					DB:         "v",
+					Name:       "vv",
+					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema.sql", Type: md.SourceTypeTableSchema}},
+					DataFiles:  []md.FileInfo{},
+				},
+			},
+			Views: []*md.MDTableMeta{
+				{
+					DB:         "v",
+					Name:       "vv",
+					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema}},
+				},
+			},
+		},
 	})
 }
 
@@ -378,6 +453,12 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 			Type:    "table-schema",
 		},
 		{
+			Pattern: `(?i)^(?:[^./]*/)*([a-z0-9]+)/([a-z0-9_]+)-view\.sql$`,
+			Schema:  "$1",
+			Table:   "$2",
+			Type:    "view-schema",
+		},
+		{
 			Pattern: `(?i)^(?:[^./]*/)*([a-z][a-z0-9_]*)/([a-z]+)[0-9]*(?:\.([0-9]+))?\.(sql|csv)$`,
 			Schema:  "$1",
 			Table:   "$2",
@@ -398,6 +479,8 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 	s.touch(c, "d1/test0.sql")
 	s.touch(c, "d1/test1.sql")
 	s.touch(c, "d1/test2.001.sql")
+	s.touch(c, "d1/v1-table.sql")
+	s.touch(c, "d1/v1-view.sql")
 	_ = s.touch(c, "d1/t1-schema-create.sql")
 	s.touch(c, "d2/schema.sql")
 	s.touch(c, "d2/abc-table.sql")
@@ -431,6 +514,19 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 							FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/test2.001.sql"), Type: md.SourceTypeSQL},
 						},
 					},
+				},
+				{
+					DB:         "d1",
+					Name:       "v1",
+					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "d1/v1-table.sql", Type: md.SourceTypeTableSchema}},
+					DataFiles:  []md.FileInfo{},
+				},
+			},
+			Views: []*md.MDTableMeta{
+				{
+					DB:         "d1",
+					Name:       "v1",
+					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "d1/v1-view.sql", Type: md.SourceTypeViewSchema}},
 				},
 			},
 		},
