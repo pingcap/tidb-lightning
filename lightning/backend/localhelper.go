@@ -200,6 +200,7 @@ func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionI
 	var failedErr error
 	retryRegions := make([]*split.RegionInfo, 0)
 	scatterRegions := newRegions
+	waitTime := time.Second
 	for i := 0; i < maxRetryTimes; i++ {
 		for _, region := range scatterRegions {
 			// Wait for a while until the regions successfully splits.
@@ -218,6 +219,12 @@ func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionI
 			zap.Int("failedCount", len(retryRegions)), zap.Error(failedErr), zap.Int("retry", i))
 		scatterRegions = retryRegions
 		retryRegions = make([]*split.RegionInfo, 0)
+		select {
+		case <-time.After(waitTime):
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+		waitTime *= 2
 	}
 
 	return region, newRegions, nil
