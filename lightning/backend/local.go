@@ -1126,7 +1126,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 			zap.Int("ranges", len(ranges)))
 
 		// split region by given ranges
-		retryWaitTime := 2 * time.Second
+		retryWaitTime := 5 * time.Second
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
 			if err == nil {
