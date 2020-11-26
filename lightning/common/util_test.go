@@ -28,6 +28,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/errno"
+	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -119,6 +120,11 @@ func (s *utilSuite) TestIsRetryableError(c *C) {
 	// sqlmock errors
 	c.Assert(common.IsRetryableError(fmt.Errorf("call to database Close was not expected")), IsFalse)
 	c.Assert(common.IsRetryableError(errors.New("call to database Close was not expected")), IsTrue)
+
+	// multierr
+	c.Assert(common.IsRetryableError(multierr.Combine(context.Canceled, context.Canceled)), IsFalse)
+	c.Assert(common.IsRetryableError(multierr.Combine(&net.DNSError{IsTimeout: true}, &net.DNSError{IsTimeout: true})), IsTrue)
+	c.Assert(common.IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})), IsFalse)
 }
 
 func (s *utilSuite) TestToDSN(c *C) {
