@@ -22,9 +22,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/br/pkg/utils"
-
 	split "github.com/pingcap/br/pkg/restore"
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
