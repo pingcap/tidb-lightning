@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/pingcap/tidb/sessionctx"
-
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -101,6 +101,9 @@ func (s *kvUnionStore) GetIndexName(tableID, indexID int64) string {
 }
 
 func (s *kvUnionStore) CacheIndexName(tableID, indexID int64, name string) {
+}
+
+func (s *kvUnionStore) CacheTableInfo(id int64, info *model.TableInfo) {
 }
 
 // transaction is a trimmed down Transaction type which only supports adding a
