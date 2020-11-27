@@ -1232,6 +1232,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		if err != nil {
 			return false, err
 		}
+		cp.Status = CheckpointStatusAlteredAutoInc
 	}
 
 	// tidb backend don't need checksum & analyze
@@ -1268,6 +1269,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 				return false, errors.Trace(err)
 			}
 		}
+		cp.Status = CheckpointStatusChecksummed
 	}
 
 	// 5. do table analyze
@@ -1276,6 +1278,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		if rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
+			cp.Status = CheckpointStatusAnalyzed
 		} else if atEnd || !rc.cfg.PostRestore.AnalyzeAtLast {
 			err := t.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
@@ -1289,6 +1292,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			if err != nil {
 				return false, errors.Trace(err)
 			}
+			cp.Status = CheckpointStatusAnalyzed
 		} else {
 			doAnalyze = false
 		}
