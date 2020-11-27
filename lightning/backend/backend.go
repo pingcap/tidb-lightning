@@ -88,8 +88,8 @@ type EngineFileSize struct {
 	UUID uuid.UUID
 	// DiskSize is the estimated total file size on disk right now.
 	DiskSize int64
-	// MemSize is the estimated total memory size used by the engine. This is
-	// the upper bound of additional size saved onto disk after calling Flush().
+	// MemSize is the total memory size used by the engine. This is the
+	// estimated additional size saved onto disk after calling Flush().
 	MemSize int64
 	// IsImporting indicates whether the engine performing Import().
 	IsImporting bool

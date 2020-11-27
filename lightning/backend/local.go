@@ -118,7 +118,12 @@ type LocalFile struct {
 
 func (e *LocalFile) Close() error {
 	log.L().Debug("closing local engine", zap.Stringer("engine", e.Uuid), zap.Stack("stack"))
-	return errors.Trace(e.db.Close())
+	if e.db == nil {
+		return nil
+	}
+	err := errors.Trace(e.db.Close())
+	e.db = nil
+	return err
 }
 
 // Cleanup remove meta and db files
@@ -165,6 +170,17 @@ func (e *LocalFile) isImporting() bool {
 		e.importSemaphore.Release(1)
 	}
 	return !res
+}
+
+func (e *LocalFile) getEngineFileSize() EngineFileSize {
+	metrics := e.db.Metrics()
+	total := metrics.Total()
+	return EngineFileSize{
+		UUID:        e.Uuid,
+		DiskSize:    total.Size,
+		MemSize:     int64(metrics.MemTable.Size / 10),
+		IsImporting: e.isImporting(),
+	}
 }
 
 type gRPCConns struct {
@@ -1566,13 +1582,7 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 func (local *local) EngineFileSizes() (res []EngineFileSize) {
 	local.engines.Range(func(k, v interface{}) bool {
 		engine := v.(*LocalFile)
-		metrics := engine.db.Metrics()
-		res = append(res, EngineFileSize{
-			UUID:        engine.Uuid,
-			DiskSize:    metrics.Total().Size,
-			MemSize:     int64(metrics.MemTable.Size),
-			IsImporting: engine.isImporting(),
-		})
+		res = append(res, engine.getEngineFileSize())
 		return true
 	})
 	return

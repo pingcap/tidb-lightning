@@ -1370,12 +1370,11 @@ func (rc *RestoreController) enforceDiskQuota(ctx context.Context) {
 			logger := log.With(
 				zap.Int64("diskSize", totalDiskSize),
 				zap.Int64("memSize", totalMemSize),
-				zap.Int64("totalSize", totalDiskSize+totalMemSize),
 				zap.Int64("quota", quota),
 				zap.Int("largeEnginesCount", len(largeEngines)),
 				zap.Int("inProgressLargeEnginesCount", inProgressLargeEngines))
 
-			if totalDiskSize+totalMemSize <= quota {
+			if len(largeEngines) == 0 && inProgressLargeEngines == 0 {
 				logger.Debug("disk quota respected")
 				return
 			}
