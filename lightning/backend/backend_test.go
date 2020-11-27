@@ -342,27 +342,32 @@ func (s *backendSuite) TestCheckDiskQuota(c *C) {
 	fileSizes := []kv.EngineFileSize{
 		{
 			UUID:        uuid1,
-			Size:        1000,
+			DiskSize:    1000,
+			MemSize:     0,
 			IsImporting: false,
 		},
 		{
 			UUID:        uuid3,
-			Size:        3000,
+			DiskSize:    2000,
+			MemSize:     1000,
 			IsImporting: true,
 		},
 		{
 			UUID:        uuid5,
-			Size:        5000,
+			DiskSize:    1500,
+			MemSize:     3500,
 			IsImporting: false,
 		},
 		{
 			UUID:        uuid7,
-			Size:        7000,
+			DiskSize:    0,
+			MemSize:     7000,
 			IsImporting: true,
 		},
 		{
 			UUID:        uuid9,
-			Size:        9000,
+			DiskSize:    4500,
+			MemSize:     4500,
 			IsImporting: false,
 		},
 	}
@@ -370,26 +375,30 @@ func (s *backendSuite) TestCheckDiskQuota(c *C) {
 	s.mockBackend.EXPECT().EngineFileSizes().Return(fileSizes).Times(4)
 
 	// No quota exceeded
-	le, iple, ts := s.backend.CheckDiskQuota(30000)
+	le, iple, ds, ms := s.backend.CheckDiskQuota(30000)
 	c.Assert(le, HasLen, 0)
 	c.Assert(iple, Equals, 0)
-	c.Assert(ts, Equals, int64(25000))
+	c.Assert(ds, Equals, int64(9000))
+	c.Assert(ms, Equals, int64(16000))
 
 	// Quota exceeded, the largest one is out
-	le, iple, ts = s.backend.CheckDiskQuota(20000)
+	le, iple, ds, ms = s.backend.CheckDiskQuota(20000)
 	c.Assert(le, DeepEquals, []uuid.UUID{uuid9})
 	c.Assert(iple, Equals, 0)
-	c.Assert(ts, Equals, int64(25000))
+	c.Assert(ds, Equals, int64(9000))
+	c.Assert(ms, Equals, int64(16000))
 
 	// Quota exceeded, the importing one should be ranked least priority
-	le, iple, ts = s.backend.CheckDiskQuota(12000)
+	le, iple, ds, ms = s.backend.CheckDiskQuota(12000)
 	c.Assert(le, DeepEquals, []uuid.UUID{uuid5, uuid9})
 	c.Assert(iple, Equals, 0)
-	c.Assert(ts, Equals, int64(25000))
+	c.Assert(ds, Equals, int64(9000))
+	c.Assert(ms, Equals, int64(16000))
 
 	// Quota exceeded, the importing ones should not be visible
-	le, iple, ts = s.backend.CheckDiskQuota(5000)
+	le, iple, ds, ms = s.backend.CheckDiskQuota(5000)
 	c.Assert(le, DeepEquals, []uuid.UUID{uuid1, uuid5, uuid9})
 	c.Assert(iple, Equals, 1)
-	c.Assert(ts, Equals, int64(25000))
+	c.Assert(ds, Equals, int64(9000))
+	c.Assert(ms, Equals, int64(16000))
 }

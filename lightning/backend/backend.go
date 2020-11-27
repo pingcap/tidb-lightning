@@ -84,8 +84,14 @@ func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
 var engineNamespace = uuid.MustParse("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf")
 
 type EngineFileSize struct {
-	UUID        uuid.UUID
-	Size        int64
+	// UUID is the engine's UUID.
+	UUID uuid.UUID
+	// DiskSize is the estimated total file size on disk right now.
+	DiskSize int64
+	// MemSize is the estimated total memory size used by the engine. This is
+	// the upper bound of additional size saved onto disk after calling Flush().
+	MemSize int64
+	// IsImporting indicates whether the engine performing Import().
 	IsImporting bool
 }
 
@@ -247,18 +253,24 @@ func (be Backend) FlushAll() error {
 // CheckDiskQuota verifies if the total engine file size is below the given
 // quota. If the quota is exceeded, this method returns an array of engines,
 // which after importing can decrease the total size below quota.
-func (be Backend) CheckDiskQuota(quota int64) (largeEngines []uuid.UUID, inProgressLargeEngines int, totalSize int64) {
+func (be Backend) CheckDiskQuota(quota int64) (
+	largeEngines []uuid.UUID,
+	inProgressLargeEngines int,
+	totalDiskSize int64,
+	totalMemSize int64,
+) {
 	sizes := be.abstract.EngineFileSizes()
 	sort.Slice(sizes, func(i, j int) bool {
 		a, b := &sizes[i], &sizes[j]
 		if a.IsImporting != b.IsImporting {
 			return a.IsImporting
 		}
-		return a.Size < b.Size
+		return a.DiskSize+a.MemSize < b.DiskSize+b.MemSize
 	})
 	for _, size := range sizes {
-		totalSize += size.Size
-		if totalSize > quota {
+		totalDiskSize += size.DiskSize
+		totalMemSize += size.MemSize
+		if totalDiskSize+totalMemSize > quota {
 			if size.IsImporting {
 				inProgressLargeEngines++
 			} else {

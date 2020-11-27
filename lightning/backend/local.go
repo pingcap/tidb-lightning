@@ -1546,7 +1546,8 @@ func (local *local) EngineFileSizes() (res []EngineFileSize) {
 		metrics := engine.db.Metrics()
 		res = append(res, EngineFileSize{
 			UUID:        engine.Uuid,
-			Size:        metrics.Total().Size + int64(metrics.MemTable.Size),
+			DiskSize:    metrics.Total().Size,
+			MemSize:     int64(metrics.MemTable.Size),
 			IsImporting: atomic.LoadInt32(&engine.isImporting) != 0,
 		})
 		return true

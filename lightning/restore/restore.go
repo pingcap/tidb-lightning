@@ -1378,16 +1378,19 @@ func (rc *RestoreController) enforceDiskQuota(ctx context.Context) {
 			}
 
 			quota := int64(rc.cfg.TikvImporter.DiskQuota)
-			largeEngines, inProgressLargeEngines, totalSize := rc.backend.CheckDiskQuota(quota)
-			metric.DiskUsageBytesGauge.Set(float64(totalSize))
+			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := rc.backend.CheckDiskQuota(quota)
+			metric.LocalStorageUsageBytesGauge.WithLabelValues("disk").Set(float64(totalDiskSize))
+			metric.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
 
 			logger := log.With(
-				zap.Int64("usedDiskSize", totalSize),
-				zap.Int64("diskQuota", quota),
+				zap.Int64("diskSize", totalDiskSize),
+				zap.Int64("memSize", totalMemSize),
+				zap.Int64("totalSize", totalDiskSize+totalMemSize),
+				zap.Int64("quota", quota),
 				zap.Int("largeEnginesCount", len(largeEngines)),
 				zap.Int("inProgressLargeEnginesCount", inProgressLargeEngines))
 
-			if totalSize <= quota {
+			if totalDiskSize+totalMemSize <= quota {
 				logger.Debug("disk quota respected")
 				return
 			}

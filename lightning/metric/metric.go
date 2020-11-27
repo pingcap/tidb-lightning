@@ -182,12 +182,12 @@ var (
 		},
 	)
 
-	DiskUsageBytesGauge = prometheus.NewGauge(
+	LocalStorageUsageBytesGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "lightning",
-			Name:      "disk_usage_bytes",
-			Help:      "disk size currently occupied by intermediate files in local backend",
-		},
+			Name:      "local_storage_usage_bytes",
+			Help:      "disk/memory size currently occupied by intermediate files in local backend",
+		}, []string{"medium"},
 	)
 )
 
@@ -209,7 +209,7 @@ func init() {
 	prometheus.MustRegister(ChecksumSecondsHistogram)
 	prometheus.MustRegister(ChunkParserReadBlockSecondsHistogram)
 	prometheus.MustRegister(ApplyWorkerSecondsHistogram)
-	prometheus.MustRegister(DiskUsageBytesGauge)
+	prometheus.MustRegister(LocalStorageUsageBytesGauge)
 }
 
 func RecordTableCount(status string, err error) {
