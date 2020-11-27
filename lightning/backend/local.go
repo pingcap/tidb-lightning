@@ -880,7 +880,8 @@ WriteAndIngest:
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
 		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, 128)
 		if err != nil || len(regions) == 0 {
-			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)), zap.Int("retry", retry))
+			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
+				zap.Binary("startKey", startKey), zap.Binary("endKey", endKey), zap.Int("retry", retry))
 			retry++
 			continue WriteAndIngest
 		}
@@ -1095,6 +1096,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 			if err == nil {
 				break
 			}
+
+			log.L().Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+				log.ShortError(err), zap.Int("retry", i))
 		}
 		if err != nil {
 			log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))

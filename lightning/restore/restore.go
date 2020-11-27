@@ -49,6 +49,9 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	"github.com/pingcap/tidb-lightning/lightning/web"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
+
+	// TODO: remove this after https://github.com/pingcap/tidb/issues/21342 is fixed.
+	_ "github.com/pingcap/tidb/planner/core"
 )
 
 const (

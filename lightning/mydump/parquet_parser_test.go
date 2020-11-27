@@ -199,8 +199,10 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 		}
 		// because we always reuse the datums in reader.lastRow.Row, so we can't directly
 		// compare will `DeepEqual` here
-		eq, err := types.EqualDatums(nil, reader.lastRow.Row, vals)
-		c.Assert(err, IsNil)
-		c.Assert(eq, IsTrue)
+		c.Assert(len(reader.lastRow.Row), Equals, len(vals))
+		for i, val := range vals {
+			c.Assert(reader.lastRow.Row[i].Kind(), Equals, val.Kind())
+			c.Assert(reader.lastRow.Row[i].GetValue(), Equals, val.GetValue())
+		}
 	}
 }
