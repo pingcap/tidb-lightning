@@ -47,6 +47,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
@@ -109,12 +110,10 @@ type LocalFile struct {
 	db   *pebble.DB
 	Uuid uuid.UUID
 
-	// isImporting is an atomic variable recording whether an ImportEngine() is
-	// running for this *LocalFile. 0 = not importing, 1 = importing. This flag
-	// is mainly informational. It is used in disk quota to avoid ingesting an
-	// already running engine, and will not prevent the caller wrongly calling
-	// ImportEngine() twice in parallel.
-	isImporting int32
+	// importSemaphore ensures the engine can only be imported by a single
+	// thread. We use a semaphore instead of a sync.Mutex because we need the
+	// TryAcquire method.
+	importSemaphore *semaphore.Weighted
 }
 
 func (e *LocalFile) Close() error {
@@ -158,6 +157,14 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 	}
 
 	return sizeProps, nil
+}
+
+func (e *LocalFile) isImporting() bool {
+	res := e.importSemaphore.TryAcquire(1)
+	if res {
+		e.importSemaphore.Release(1)
+	}
+	return !res
 }
 
 type gRPCConns struct {
@@ -391,18 +398,18 @@ func (local *local) FlushAllEngines() (err error) {
 	// first, (asynchronously) flush all opened engines
 	local.engines.Range(func(k, v interface{}) bool {
 		engineFile := v.(*LocalFile)
-		if atomic.LoadInt32(&engineFile.isImporting) != 0 {
+		if engineFile.isImporting() {
 			// ignore closed engines.
 			return true
 		}
 
-		flushFinishedWg.Add(1)
 		flushFinishedCh, e := engineFile.db.AsyncFlush()
 		if e != nil {
 			err = e
 			return false
 		}
 		flushedEngines = append(flushedEngines, engineFile)
+		flushFinishedWg.Add(1)
 		go func() {
 			<-flushFinishedCh
 			flushFinishedWg.Done()
@@ -411,8 +418,8 @@ func (local *local) FlushAllEngines() (err error) {
 	})
 
 	// then, wait for all engines being flushed, and then save the metadata.
+	flushFinishedWg.Wait()
 	if err == nil {
-		flushFinishedWg.Wait()
 		for _, engineFile := range flushedEngines {
 			err = local.saveEngineMeta(engineFile)
 			if err != nil {
@@ -485,7 +492,12 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID})
+	local.engines.Store(engineUUID, &LocalFile{
+		localFileMeta:   meta,
+		db:              db,
+		Uuid:            engineUUID,
+		importSemaphore: semaphore.NewWeighted(1),
+	})
 	return nil
 }
 
@@ -511,9 +523,10 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 			return err
 		}
 		engineFile := &LocalFile{
-			localFileMeta: meta,
-			Uuid:          engineUUID,
-			db:            db,
+			localFileMeta:   meta,
+			Uuid:            engineUUID,
+			db:              db,
+			importSemaphore: semaphore.NewWeighted(1),
 		}
 		local.engines.Store(engineUUID, engineFile)
 		return nil
@@ -1126,13 +1139,16 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 	}
 
 	lf := engineFile.(*LocalFile)
+
+	if err := lf.importSemaphore.Acquire(ctx, 1); err != nil {
+		return errors.Trace(err)
+	}
+	defer lf.importSemaphore.Release(1)
+
 	if lf.TotalSize == 0 {
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-
-	atomic.StoreInt32(&lf.isImporting, 1)
-	defer atomic.StoreInt32(&lf.isImporting, 0)
 
 	// split sorted file into range by 96MB size per file
 	ranges, err := local.readAndSplitIntoRange(lf)
@@ -1194,12 +1210,17 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	// release this engine after import success
 	engineFile, ok := local.engines.Load(engineUUID)
 	if ok {
+		localEngine := engineFile.(*LocalFile)
+		if err := localEngine.importSemaphore.Acquire(ctx, 1); err != nil {
+			return errors.Trace(err)
+		}
+		defer localEngine.importSemaphore.Release(1)
+
 		// since closing the engine causes all subsequent operations on it panic,
 		// we make sure to delete it from the engine map before calling Close().
 		// (note that Close() returning error does _not_ mean the pebble DB
 		// remains open/usable.)
 		local.engines.Delete(engineUUID)
-		localEngine := engineFile.(*LocalFile)
 		err := localEngine.Close()
 		if err != nil {
 			return err
@@ -1208,6 +1229,8 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 		if err != nil {
 			return err
 		}
+		localEngine.TotalSize = 0
+		localEngine.Length = 0
 	} else {
 		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 	}
@@ -1548,7 +1571,7 @@ func (local *local) EngineFileSizes() (res []EngineFileSize) {
 			UUID:        engine.Uuid,
 			DiskSize:    metrics.Total().Size,
 			MemSize:     int64(metrics.MemTable.Size),
-			IsImporting: atomic.LoadInt32(&engine.isImporting) != 0,
+			IsImporting: engine.isImporting(),
 		})
 		return true
 	})

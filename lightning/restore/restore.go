@@ -139,21 +139,20 @@ const (
 )
 
 type RestoreController struct {
-	cfg             *config.Config
-	dbMetas         []*mydump.MDDatabaseMeta
-	dbInfos         map[string]*TidbDBInfo
-	tableWorkers    *worker.Pool
-	indexWorkers    *worker.Pool
-	regionWorkers   *worker.Pool
-	ioWorkers       *worker.Pool
-	pauser          *common.Pauser
-	backend         kv.Backend
-	tidbGlue        glue.Glue
-	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
-	alterTableLock  sync.Mutex
-	compactState    int32
-	rowFormatVer    string
-	tls             *common.TLS
+	cfg            *config.Config
+	dbMetas        []*mydump.MDDatabaseMeta
+	dbInfos        map[string]*TidbDBInfo
+	tableWorkers   *worker.Pool
+	indexWorkers   *worker.Pool
+	regionWorkers  *worker.Pool
+	ioWorkers      *worker.Pool
+	pauser         *common.Pauser
+	backend        kv.Backend
+	tidbGlue       glue.Glue
+	alterTableLock sync.Mutex
+	compactState   int32
+	rowFormatVer   string
+	tls            *common.TLS
 
 	errorSummaries errorSummaries
 
@@ -1012,14 +1011,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 	if cp.Status < CheckpointStatusIndexImported {
 		var err error
 		if indexEngineCp.Status < CheckpointStatusImported {
-			// the lock ensures the import() step will not be concurrent.
-			if !rc.isLocalBackend() {
-				rc.postProcessLock.Lock()
-			}
 			err = t.importKV(ctx, closedIndexEngine)
-			if !rc.isLocalBackend() {
-				rc.postProcessLock.Unlock()
-			}
 			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
 		}
 
@@ -1174,14 +1166,7 @@ func (t *TableRestore) importEngine(
 	// 1. close engine, then calling import
 	// FIXME: flush is an asynchronous operation, what if flush failed?
 
-	// the lock ensures the import() step will not be concurrent.
-	if !rc.isLocalBackend() {
-		rc.postProcessLock.Lock()
-	}
 	err := t.importKV(ctx, closedEngine)
-	if !rc.isLocalBackend() {
-		rc.postProcessLock.Unlock()
-	}
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
 		return errors.Trace(err)
