@@ -1,3 +1,16 @@
+// Copyright 2020 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package backend
 
 import (
@@ -26,6 +39,9 @@ import (
 const (
 	SplitRetryTimes       = 8
 	retrySplitMaxWaitTime = 4 * time.Second
+)
+
+var (
 	// the max keys count in a batch to split one region
 	maxBatchSplitKeys = 4096
 )
@@ -90,9 +106,9 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 				return bytes.Compare(keys[i], keys[j]) < 0
 			})
 			splitRegion := region
-			for i := 0; i < (len(keys)+maxBatchSplitKeys)/maxBatchSplitKeys; i++ {
-				start := i * maxBatchSplitKeys
-				end := utils.MinInt((i+1)*maxBatchSplitKeys, len(keys))
+			for j := 0; j < (len(keys)+maxBatchSplitKeys-1)/maxBatchSplitKeys; j++ {
+				start := j * maxBatchSplitKeys
+				end := utils.MinInt((j+1)*maxBatchSplitKeys, len(keys))
 				splitRegionStart := codec.EncodeBytes([]byte{}, keys[start])
 				splitRegionEnd := codec.EncodeBytes([]byte{}, keys[end-1])
 				if bytes.Compare(splitRegionStart, splitRegion.Region.StartKey) <= 0 || !beforeEnd(splitRegionEnd, splitRegion.Region.EndKey) {
@@ -112,7 +128,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 						}
 						return errors.Trace(err)
 					}
-					log.L().Warn("split regions", log.ShortError(err), zap.Int("retry time", i+1),
+					log.L().Warn("split regions", log.ShortError(err), zap.Int("retry time", j+1),
 						zap.Uint64("region_id", regionID))
 					retryKeys = append(retryKeys, keys[start:]...)
 					break
