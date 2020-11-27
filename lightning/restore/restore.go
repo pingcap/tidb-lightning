@@ -849,6 +849,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			wg.Done()
 		}()
 	}
+	wg.Wait()
 
 	err = restoreErr.Get()
 	logTask.End(zap.ErrorLevel, err)
@@ -906,7 +907,7 @@ func (t *TableRestore) restoreTable(
 	}
 
 	// 3. Post-process
-	return t.postProcess(ctx, rc, cp, true)
+	return t.postProcess(ctx, rc, cp, false)
 }
 
 func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
