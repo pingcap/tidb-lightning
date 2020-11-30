@@ -500,8 +500,12 @@ func (local *local) WriteToTiKV(
 	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
 	iter := engineFile.db.NewIter(opt)
 	defer iter.Close()
+	iter.First()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotatef(iter.Error(), "failed to read the first key")
+	}
 
-	if !iter.First() {
+	if !iter.Valid() {
 		log.L().Info("keys within region is empty, skip ingest", zap.Binary("start", start),
 			zap.Binary("regionStart", region.Region.StartKey), zap.Binary("end", end),
 			zap.Binary("regionEnd", region.Region.EndKey))
@@ -705,16 +709,24 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
 
+	iterError := func(e string) error {
+		err := iter.Error()
+		if err != nil {
+			return errors.Annotatef(err, e)
+		}
+		return errors.New(e)
+	}
+
 	var firstKey, lastKey []byte
 	if iter.First() {
 		firstKey = append([]byte{}, iter.Key()...)
 	} else {
-		return nil, errors.New("could not find first pair, this shouldn't happen")
+		return nil, iterError("could not find first pair, this shouldn't happen")
 	}
 	if iter.Last() {
 		lastKey = append([]byte{}, iter.Key()...)
 	} else {
-		return nil, errors.New("could not find last pair, this shouldn't happen")
+		return nil, iterError("could not find last pair, this shouldn't happen")
 	}
 	endKey := nextKey(lastKey)
 
@@ -851,6 +863,9 @@ func (local *local) writeAndIngestByRange(
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()
+	if iter.Error() != nil {
+		return errors.Annotatef(iter.Error(), "failed to read the first key")
+	}
 	if !hasKey {
 		log.L().Info("There is no pairs in iterator",
 			zap.Binary("start", start),
