@@ -157,6 +157,9 @@ type RestoreController struct {
 	closedEngineLimit *worker.Pool
 	store             storage.ExternalStorage
 	checksumManager   ChecksumManager
+
+	tableRestoreLock  sync.Mutex
+	engineRestoreLock sync.Mutex
 }
 
 func NewRestoreController(
@@ -693,19 +696,19 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	ctx2 := context.WithValue(ctx, &checksumManagerKey, manager)
-	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
+	for t := range taskCh {
+		rc.tableRestoreLock.Lock()
+		task := t
 		go func() {
-			for task := range taskCh {
-				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
-				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
-				err := task.tr.restoreTable(ctx2, rc, task.cp)
-				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
-				tableLogTask.End(zap.ErrorLevel, err)
-				web.BroadcastError(task.tr.tableName, err)
-				metric.RecordTableCount("completed", err)
-				restoreErr.Set(err)
-				wg.Done()
-			}
+			tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
+			web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
+			err := task.tr.restoreTable(ctx2, rc, task.cp)
+			err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
+			tableLogTask.End(zap.ErrorLevel, err)
+			web.BroadcastError(task.tr.tableName, err)
+			metric.RecordTableCount("completed", err)
+			restoreErr.Set(err)
+			wg.Done()
 		}()
 	}
 
@@ -876,6 +879,14 @@ func (t *TableRestore) restoreTable(
 }
 
 func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
+	tableLockUnlocked := false
+	unlockTableLock := func() {
+		if !tableLockUnlocked {
+			tableLockUnlocked = true
+			rc.tableRestoreLock.Unlock()
+		}
+	}
+	defer unlockTableLock()
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
 		return errors.Errorf("table %v index engine checkpoint not found", t.tableName)
@@ -934,15 +945,16 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 				// Note: We still need tableWorkers to control the concurrency of tables.
 				// In the future, we will investigate more about
 				// the difference between restoring tables concurrently and restoring tables one by one.
-				restoreWorker := rc.tableWorkers.Apply()
+				//restoreWorker := rc.tableWorkers.Apply()
+				rc.engineRestoreLock.Lock()
 
-				go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
+				go func(eid int32, ecp *EngineCheckpoint) {
 					defer wg.Done()
 
 					engineLogTask := t.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
 					dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
 					engineLogTask.End(zap.ErrorLevel, err)
-					rc.tableWorkers.Recycle(w)
+					//rc.tableWorkers.Recycle(w)
 					if err != nil {
 						engineErr.Set(err)
 						return
@@ -956,10 +968,11 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 					if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
 						engineErr.Set(err)
 					}
-				}(restoreWorker, engineID, engine)
+				}(engineID, engine)
 			}
 		}
-
+		// after all engines start running, unlock the table lock
+		unlockTableLock()
 		wg.Wait()
 
 		err = engineErr.Get()
@@ -980,6 +993,8 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 			return errors.Trace(err)
 		}
 	}
+
+	unlockTableLock()
 
 	if cp.Status < CheckpointStatusIndexImported {
 		var err error
@@ -1014,7 +1029,16 @@ func (t *TableRestore) restoreEngine(
 	engineID int32,
 	cp *EngineCheckpoint,
 ) (*kv.ClosedEngine, *worker.Worker, error) {
+	unLocked := false
+	unLockEngineLock := func() {
+		if !unLocked {
+			unLocked = true
+			rc.engineRestoreLock.Unlock()
+		}
+	}
+	defer unLockEngineLock()
 	if cp.Status >= CheckpointStatusClosed {
+		unLockEngineLock()
 		w := rc.closedEngineLimit.Apply()
 		closedEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
@@ -1081,7 +1105,8 @@ func (t *TableRestore) restoreEngine(
 			chunkErr.Set(err)
 		}(restoreWorker, cr)
 	}
-
+	// after the last chunk is started, release the engine lock to allow other engine start.
+	unLockEngineLock()
 	wg.Wait()
 
 	// Report some statistics into the log for debugging.
