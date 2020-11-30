@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/ddl"
 	tmock "github.com/pingcap/tidb/util/mock"
@@ -259,14 +260,14 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 		fakeDataPath := filepath.Join(fakeDataDir, fakeFileName)
 		err = ioutil.WriteFile(fakeDataPath, fakeDataFilesContent, 0644)
 		c.Assert(err, IsNil)
-		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeFileName, Type: mydump.SourceTypeSQL, SortKey: fmt.Sprintf("%d", i)}, Size: 37})
+		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeFileName, Type: mydump.SourceTypeSQL, SortKey: fmt.Sprintf("%d", i), FileSize: 37}})
 	}
 
 	fakeCsvContent := []byte("1,2,3\r\n4,5,6\r\n")
 	csvName := "db.table.99.csv"
 	err = ioutil.WriteFile(filepath.Join(fakeDataDir, csvName), fakeCsvContent, 0644)
 	c.Assert(err, IsNil)
-	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: "99"}, Size: 14})
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: "99", FileSize: 14}})
 
 	s.tableMeta = &mydump.MDTableMeta{
 		DB:         "db",
@@ -435,8 +436,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
 		c.Assert(err, IsNil)
 		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 			TableName: filter.Table{"db", "table"},
-			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i)},
-			Size:      int64(len(s)),
+			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i), FileSize: int64(len(s))},
 		})
 		total += len(s)
 	}
@@ -660,7 +660,7 @@ func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
 	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
-	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(1234567, 12345, 1234567890))
+	err = s.tr.compareChecksum(ctx, verification.MakeKVChecksum(1234567, 12345, 1234567890))
 	c.Assert(err, IsNil)
 
 	c.Assert(db.Close(), IsNil)
@@ -688,7 +688,7 @@ func (s *tableRestoreSuite) TestCompareChecksumFailure(c *C) {
 	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
-	err = s.tr.compareChecksum(ctx, db, verification.MakeKVChecksum(9876543, 54321, 1357924680))
+	err = s.tr.compareChecksum(ctx, verification.MakeKVChecksum(9876543, 54321, 1357924680))
 	c.Assert(err, ErrorMatches, "checksum mismatched.*")
 
 	c.Assert(db.Close(), IsNil)
@@ -704,7 +704,10 @@ func (s *tableRestoreSuite) TestAnalyzeTable(c *C) {
 	mock.ExpectClose()
 
 	ctx := context.Background()
-	err = s.tr.analyzeTable(ctx, db)
+	defaultSQLMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	c.Assert(err, IsNil)
+	g := glue.NewExternalTiDBGlue(db, defaultSQLMode)
+	err = s.tr.analyzeTable(ctx, g)
 	c.Assert(err, IsNil)
 
 	c.Assert(db.Close(), IsNil)

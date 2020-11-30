@@ -25,7 +25,8 @@ do_run_lightning() {
 
 mkdir -p $DBPATH
 echo 'CREATE DATABASE cppq_tsr;' > "$DBPATH/cppq_tsr-schema-create.sql"
-echo 'CREATE TABLE tbl(i INT, s VARCHAR(16));' > "$DBPATH/cppq_tsr.tbl-schema.sql"
+# column "iVal" use for testing column name with upper case is properly handled
+echo 'CREATE TABLE tbl(iVal INT, s VARCHAR(16));' > "$DBPATH/cppq_tsr.tbl-schema.sql"
 bin/parquet_gen --dir $DBPATH --schema cppq_tsr --table tbl --chunk 1 --rows $ROW_COUNT
 
 # Set the failpoint to kill the lightning instance as soon as one batch data is written
@@ -38,10 +39,10 @@ run_sql 'DROP DATABASE IF EXISTS checkpoint_test_parquet'
 set +e
 run_lightning -d "$DBPATH" --backend tidb --enable-checkpoint=1 2> /dev/null
 set -e
-run_sql 'SELECT count(*), sum(i) FROM `cppq_tsr`.tbl'
+run_sql 'SELECT count(*), sum(iVal) FROM `cppq_tsr`.tbl'
 check_contains "count(*): 32"
 # sum(0..31)
-check_contains "sum(i): 496"
+check_contains "sum(iVal): 496"
 
 # check chunk offset and update checkpoint current row id to a higher value so that
 # if parse read from start, the generated rows will be different
@@ -53,7 +54,7 @@ set +e
 run_lightning -d "$DBPATH" --backend tidb --enable-checkpoint=1 2> /dev/null
 set -e
 
-run_sql 'SELECT count(*), sum(i) FROM `cppq_tsr`.tbl'
+run_sql 'SELECT count(*), sum(iVal) FROM `cppq_tsr`.tbl'
 check_contains "count(*): 100"
 # sum(0..99)
-check_contains "sum(i): 4950"
+check_contains "sum(iVal): 4950"

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 
 	kv "github.com/pingcap/tidb-lightning/lightning/backend"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/restore"
@@ -71,11 +72,13 @@ func run() error {
 		fsUsage = fs.Usage
 	}))
 
+	ctx := context.Background()
+
 	cfg := config.NewConfig()
 	if err := cfg.LoadFromGlobal(globalCfg); err != nil {
 		return err
 	}
-	if err := cfg.Adjust(); err != nil {
+	if err := cfg.Adjust(ctx); err != nil {
 		return err
 	}
 
@@ -86,8 +89,6 @@ func run() error {
 	if err = cfg.TiDB.Security.RegisterMySQL(); err != nil {
 		return err
 	}
-
-	ctx := context.Background()
 
 	if *compact {
 		return errors.Trace(compactCluster(ctx, cfg, tls))
@@ -172,7 +173,7 @@ func fetchMode(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
 }
 
 func checkpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -182,7 +183,7 @@ func checkpointRemove(ctx context.Context, cfg *config.Config, tableName string)
 }
 
 func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -192,7 +193,7 @@ func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName st
 }
 
 func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common.TLS, tableName string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -264,7 +265,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 }
 
 func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) error {
-	cpdb, err := restore.OpenCheckpointsDB(ctx, cfg)
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
