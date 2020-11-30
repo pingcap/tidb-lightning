@@ -502,7 +502,7 @@ func (local *local) WriteToTiKV(
 	defer iter.Close()
 	iter.First()
 	if iter.Error() != nil {
-		return nil, nil, errors.Annotatef(iter.Error(), "failed to read the first key")
+		return nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
 	}
 
 	if !iter.Valid() {
@@ -712,7 +712,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 	iterError := func(e string) error {
 		err := iter.Error()
 		if err != nil {
-			return errors.Annotatef(err, e)
+			return errors.Annotate(err, e)
 		}
 		return errors.New(e)
 	}
@@ -864,7 +864,7 @@ func (local *local) writeAndIngestByRange(
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()
 	if iter.Error() != nil {
-		return errors.Annotatef(iter.Error(), "failed to read the first key")
+		return errors.Annotate(iter.Error(), "failed to read the first key")
 	}
 	if !hasKey {
 		log.L().Info("There is no pairs in iterator",
