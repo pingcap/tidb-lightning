@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	tmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type TiDBManager struct {
@@ -124,43 +126,74 @@ func (timgr *TiDBManager) Close() {
 	timgr.db.Close()
 }
 
-func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema map[string]string) error {
-	logger := log.With(zap.String("db", database))
-	sqlExecutor := g.GetSQLExecutor()
+type schemaJob struct {
+	sql string
+	log zapcore.Field
+}
 
+func InitSchema(ctx context.Context, concurrency int, parser *parser.Parser, exec glue.SQLExecutor, database string, tablesSchema map[string]string) error {
+	logger := log.With(zap.String("db", database))
 	var createDatabase strings.Builder
 	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
 	common.WriteMySQLIdentifier(&createDatabase, database)
-	err := sqlExecutor.ExecuteWithLog(ctx, createDatabase.String(), "create database", logger)
+	err := exec.ExecuteWithLog(ctx, createDatabase.String(), "create database", logger)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	task := logger.Begin(zap.InfoLevel, "create tables")
-	var sqlCreateStmts []string
-	for tbl, sqlCreateTable := range tablesSchema {
-		task.Debug("create table", zap.String("schema", sqlCreateTable))
-
-		sqlCreateStmts, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
-		if err != nil {
-			break
-		}
-
-		//TODO: maybe we should put these createStems into a transaction
-		for _, s := range sqlCreateStmts {
-			err = sqlExecutor.ExecuteWithLog(
-				ctx,
-				s,
-				"create table",
-				logger.With(zap.String("table", common.UniqueTable(database, tbl))),
-			)
-			if err != nil {
-				break
+	var wg sync.WaitGroup
+	fnCreateTable := func(ctx context.Context, exec glue.SQLExecutor, jobCh chan *schemaJob, logger log.Logger, errCh chan error) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case job := <-jobCh:
+				//TODO: maybe we should put these createStems into a transaction
+				err = exec.ExecuteWithLog(ctx, job.sql, "create table", logger.With(job.log))
+				wg.Done()
+				if err != nil {
+					errCh <- err
+				}
 			}
 		}
 	}
+	fnHandleError := func(ctx context.Context, err error, errCh chan error, quit context.CancelFunc) {
+		for {
+			select {
+			case err = <-errCh:
+				quit()
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+	var sqlCreateStmts []string
+	errCh := make(chan error)
+	queue := make(chan *schemaJob, concurrency)
+	task := logger.Begin(zap.InfoLevel, "create tables")
+	childCtx, cancel := context.WithCancel(ctx)
+	for i := 0; i < concurrency; i++ {
+		go fnCreateTable(childCtx, exec, queue, logger, errCh)
+	}
+	go fnHandleError(childCtx, err, errCh, cancel)
+	for tbl, sqlCreateTable := range tablesSchema {
+		task.Debug("create table", zap.String("schema", sqlCreateTable))
+		sqlCreateStmts, err = createTableIfNotExistsStmt(parser, sqlCreateTable, database, tbl)
+		if err != nil {
+			errCh <- err
+			break
+		}
+		log := zap.String("table", common.UniqueTable(database, tbl))
+		for _, stmt := range sqlCreateStmts {
+			wg.Add(1)
+			queue <- &schemaJob{
+				sql: stmt,
+				log: log,
+			}
+		}
+	}
+	wg.Wait()
 	task.End(zap.ErrorLevel, err)
-
 	return errors.Trace(err)
 }
 

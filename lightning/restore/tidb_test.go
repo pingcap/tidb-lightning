@@ -201,7 +201,7 @@ func (s *tidbSuite) TestInitSchema(c *C) {
 		ExpectClose()
 
 	s.mockDB.MatchExpectationsInOrder(false) // maps are unordered.
-	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
+	err := InitSchema(ctx, 1, s.tiGlue.GetParser(), s.tiGlue.GetSQLExecutor(), "db", map[string]string{
 		"t1": "create table t1 (a int primary key, b varchar(200));",
 		"t2": "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;CREATE TABLE `db`.`t2` (xx TEXT) AUTO_INCREMENT=11203;",
 	})
@@ -218,7 +218,7 @@ func (s *tidbSuite) TestInitSchemaSyntaxError(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
+	err := InitSchema(ctx, 1, s.tiGlue.GetParser(), s.tiGlue.GetSQLExecutor(), "db", map[string]string{
 		"t1": "create table `t1` with invalid syntax;",
 	})
 	c.Assert(err, NotNil)
@@ -239,7 +239,7 @@ func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
+	err := InitSchema(ctx, 1, s.tiGlue.GetParser(), s.tiGlue.GetSQLExecutor(), "db", map[string]string{
 		"t1": "create table `t1` (a VARCHAR(999999999));",
 	})
 	c.Assert(err, ErrorMatches, ".*Column length too big.*")
