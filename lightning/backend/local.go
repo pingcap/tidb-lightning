@@ -514,6 +514,9 @@ func (local *local) WriteToTiKV(
 
 	firstKey := codec.EncodeBytes([]byte{}, iter.Key())
 	iter.Last()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
 
 	u := uuid.New()
@@ -600,6 +603,10 @@ func (local *local) WriteToTiKV(
 		}
 	}
 
+	if iter.Error() != nil {
+		return nil, nil, errors.Trace(iter.Error())
+	}
+
 	if count > 0 {
 		for i := range clients {
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
@@ -607,10 +614,6 @@ func (local *local) WriteToTiKV(
 				return nil, nil, err
 			}
 		}
-	}
-
-	if iter.Error() != nil {
-		return nil, nil, errors.Trace(iter.Error())
 	}
 
 	var leaderPeerMetas []*sst.SSTMeta
