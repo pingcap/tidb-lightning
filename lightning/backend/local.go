@@ -724,12 +724,12 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 	if iter.First() {
 		firstKey = append([]byte{}, iter.Key()...)
 	} else {
-		return nil, iterError("could not find first pair, this shouldn't happen")
+		return nil, iterError("could not find first pair")
 	}
 	if iter.Last() {
 		lastKey = append([]byte{}, iter.Key()...)
 	} else {
-		return nil, iterError("could not find last pair, this shouldn't happen")
+		return nil, iterError("could not find last pair")
 	}
 	endKey := nextKey(lastKey)
 
@@ -878,6 +878,9 @@ func (local *local) writeAndIngestByRange(
 	}
 	pairStart := append([]byte{}, iter.Key()...)
 	iter.Last()
+	if iter.Error() != nil {
+		return errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
 	pairEnd := append([]byte{}, iter.Key()...)
 
 	var regions []*split.RegionInfo
