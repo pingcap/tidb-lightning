@@ -478,7 +478,8 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	err = failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue")
 	c.Assert(err, IsNil)
 
-	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(1025)")
+	// the min rlimit should be bigger than the default min value (16384)
+	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(16384)")
 	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue")
 	c.Assert(err, IsNil)
 	err = checkSystemRequirement(cfg, dbMetas)

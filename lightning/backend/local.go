@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"io"
 	"io/ioutil"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +33,7 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	split "github.com/pingcap/br/pkg/restore"
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -76,6 +76,8 @@ const (
 
 	defaultPropSizeIndexDistance = 4 * 1024 * 1024 // 4MB
 	defaultPropKeysIndexDistance = 40 * 1024
+
+	minOpenFilesCount = 128
 )
 
 var (
@@ -179,6 +181,7 @@ type local struct {
 	checkpointEnabled bool
 
 	tcpConcurrency int
+	maxOpenFiles   int
 }
 
 // connPool is a lazy pool of gRPC channels.
@@ -251,6 +254,7 @@ func NewLocalBackend(
 	sendKVPairs int,
 	enableCheckpoint bool,
 	g glue.Glue,
+	maxOpenFiles int,
 ) (Backend, error) {
 	pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
@@ -291,6 +295,7 @@ func NewLocalBackend(
 		tcpConcurrency:    rangeConcurrency,
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
+		maxOpenFiles:      utils.MaxInt(maxOpenFiles, minOpenFilesCount),
 	}
 	local.conns.conns = make(map[uint64]*connPool)
 	return MakeBackend(local), nil
@@ -387,13 +392,14 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize:             LocalMemoryTableSize,
-		MaxConcurrentCompactions: 16,
-		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
-		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
-		MaxOpenFiles:             10000,
-		DisableWAL:               true,
-		ReadOnly:                 readOnly,
+		MemTableSize:                LocalMemoryTableSize,
+		MemTableStopWritesThreshold: 8,
+		MaxConcurrentCompactions:    16,
+		L0CompactionThreshold:       local.maxOpenFiles / 2, // set to max try to disable compaction
+		L0StopWritesThreshold:       local.maxOpenFiles / 2, // set to max try to disable compaction
+		MaxOpenFiles:                local.maxOpenFiles,
+		DisableWAL:                  true,
+		ReadOnly:                    readOnly,
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			func() pebble.TablePropertyCollector {
 				return newRangePropertiesCollector()

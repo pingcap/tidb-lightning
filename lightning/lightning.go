@@ -668,7 +668,7 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 			topNTotalSize += tableTotalSizes[i]
 		}
 
-		estimateMaxFiles := uint64(topNTotalSize / backend.LocalMemoryTableSize)
+		estimateMaxFiles := uint64(topNTotalSize/backend.LocalMemoryTableSize) * 2
 		if err := backend.VerifyRLimit(estimateMaxFiles); err != nil {
 			return err
 		}
