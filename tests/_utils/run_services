@@ -4,6 +4,8 @@ stop_services() {
     killall -9 tidb-server || true
     killall -9 tikv-importer || true
     killall -9 tiflash || true
+    # the newest tiflash process name is "TiFlashMain"
+    killall -9 TiFlashMain || true
 
     find "$TEST_DIR" -maxdepth 1 -not -path "$TEST_DIR" -not -name "cov.*" -not -name "*.log" | xargs rm -rf || true
 }
