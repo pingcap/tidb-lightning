@@ -77,7 +77,8 @@ const (
 	defaultPropSizeIndexDistance = 4 * 1024 * 1024 // 4MB
 	defaultPropKeysIndexDistance = 40 * 1024
 
-	minOpenFilesCount = 128
+	// the lower threshold of max open files for pebble db.
+	openFilesLowerThreshold = 128
 )
 
 var (
@@ -295,7 +296,7 @@ func NewLocalBackend(
 		tcpConcurrency:    rangeConcurrency,
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
-		maxOpenFiles:      utils.MaxInt(maxOpenFiles, minOpenFilesCount),
+		maxOpenFiles:      utils.MaxInt(maxOpenFiles, openFilesLowerThreshold),
 	}
 	local.conns.conns = make(map[uint64]*connPool)
 	return MakeBackend(local), nil
@@ -392,14 +393,17 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize:                LocalMemoryTableSize,
+		MemTableSize: LocalMemoryTableSize,
+		// the default threshold value may cause write stall.
 		MemTableStopWritesThreshold: 8,
 		MaxConcurrentCompactions:    16,
-		L0CompactionThreshold:       local.maxOpenFiles / 2, // set to max try to disable compaction
-		L0StopWritesThreshold:       local.maxOpenFiles / 2, // set to max try to disable compaction
-		MaxOpenFiles:                local.maxOpenFiles,
-		DisableWAL:                  true,
-		ReadOnly:                    readOnly,
+		// set to half of the max open files so that if open files is more that estimation, trigger compaction
+		// to avoid failure due to open files exceeded limit
+		L0CompactionThreshold: local.maxOpenFiles / 2,
+		L0StopWritesThreshold: local.maxOpenFiles / 2,
+		MaxOpenFiles:          local.maxOpenFiles,
+		DisableWAL:            true,
+		ReadOnly:              readOnly,
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			func() pebble.TablePropertyCollector {
 				return newRangePropertiesCollector()
