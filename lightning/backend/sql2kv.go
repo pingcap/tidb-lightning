@@ -15,15 +15,19 @@ package backend
 
 import (
 	"math/rand"
+	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -35,37 +39,52 @@ import (
 
 var extraHandleColumnInfo = model.NewExtraHandleColInfo()
 
+type genCol struct {
+	index int
+	expr  expression.Expression
+}
+
 type tableKVEncoder struct {
 	tbl         table.Table
 	se          *session
 	recordCache []types.Datum
+	genCols     []genCol
 	// auto random bits value for this chunk
 	autoRandomHeaderBits int64
 }
 
-func NewTableKVEncoder(tbl table.Table, options *SessionOptions) Encoder {
+func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error) {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
+	meta := tbl.Meta()
+	cols := tbl.Cols()
 	se := newSession(options)
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
-	recordCtx := tables.NewCommonAddRecordCtx(len(tbl.Cols()))
+	recordCtx := tables.NewCommonAddRecordCtx(len(cols))
 	tables.SetAddRecordCtx(se, recordCtx)
 
 	var autoRandomBits int64
-	if tbl.Meta().PKIsHandle && tbl.Meta().ContainsAutoRandomBits() {
-		for _, col := range tbl.Cols() {
+	if meta.PKIsHandle && meta.ContainsAutoRandomBits() {
+		for _, col := range cols {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				incrementalBits := autoRandomIncrementBits(col, int(tbl.Meta().AutoRandomBits))
-				autoRandomBits = rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<tbl.Meta().AutoRandomBits) << incrementalBits
+				incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
+				autoRandomBits = rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits
 				break
 			}
 		}
 	}
 
+	// collect expressions for evaluating stored generated columns
+	genCols, err := collectGeneratedColumns(se, meta, cols)
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to parse generated column expressions")
+	}
+
 	return &tableKVEncoder{
 		tbl:                  tbl,
 		se:                   se,
+		genCols:              genCols,
 		autoRandomHeaderBits: autoRandomBits,
-	}
+	}, nil
 }
 
 func autoRandomIncrementBits(col *table.Column, randomBits int) int {
@@ -76,6 +95,71 @@ func autoRandomIncrementBits(col *table.Column, randomBits int) int {
 		incrementalBits -= 1
 	}
 	return incrementalBits
+}
+
+// collectGeneratedColumns collects all expressions required to evaluate the
+// results of all stored generated columns. The returning slice is in evaluation
+// order.
+func collectGeneratedColumns(se *session, meta *model.TableInfo, cols []*table.Column) ([]genCol, error) {
+	maxGenColOffset := -1
+	for _, col := range cols {
+		if col.GeneratedStored && col.Offset > maxGenColOffset {
+			maxGenColOffset = col.Offset
+		}
+	}
+
+	if maxGenColOffset < 0 {
+		return nil, nil
+	}
+
+	// the expression rewriter requires a non-nil TxnCtx.
+	se.vars.TxnCtx = new(variable.TransactionContext)
+	defer func() {
+		se.vars.TxnCtx = nil
+	}()
+
+	// not using TableInfo2SchemaAndNames to avoid parsing all virtual generated columns again.
+	exprColumns := make([]*expression.Column, 0, len(cols))
+	names := make(types.NameSlice, 0, len(cols))
+	for i, col := range cols {
+		names = append(names, &types.FieldName{
+			OrigTblName: meta.Name,
+			OrigColName: col.Name,
+			TblName:     meta.Name,
+			ColName:     col.Name,
+		})
+		exprColumns = append(exprColumns, &expression.Column{
+			RetType:  col.FieldType.Clone(),
+			ID:       col.ID,
+			UniqueID: int64(i),
+			Index:    col.Offset,
+			OrigName: names[i].String(),
+			IsHidden: col.Hidden,
+		})
+	}
+	schema := expression.NewSchema(exprColumns...)
+
+	// as long as we have a stored generated column, all columns it referred to must be evaluated as well.
+	// for simplicity we just evaluate all generated columns (virtual or not) before the last stored one.
+	var genCols []genCol
+	for i, col := range cols {
+		if col.GeneratedExpr != nil && col.Offset <= maxGenColOffset {
+			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr, schema, names)
+			if err != nil {
+				return nil, err
+			}
+			genCols = append(genCols, genCol{
+				index: i,
+				expr:  expr,
+			})
+		}
+	}
+
+	// order the result by column offset so they match the evaluation order.
+	sort.Slice(genCols, func(i, j int) bool {
+		return cols[i].Offset < cols[j].Offset
+	})
+	return genCols, nil
 }
 
 func (kvcodec *tableKVEncoder) Close() {
@@ -156,6 +240,20 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 	)
 }
 
+func logEvalGenExprFailed(logger log.Logger, row []types.Datum, colInfo *model.ColumnInfo, err error) error {
+	logger.Error("kv convert failed: cannot evaluate generated column expression",
+		zap.Array("original", rowArrayMarshaler(row)),
+		zap.String("colName", colInfo.Name.O),
+		log.ShortError(err),
+	)
+
+	return errors.Annotatef(
+		err,
+		"failed to evaluate generated column expression for column `%s`",
+		colInfo.Name.O,
+	)
+}
+
 type kvPairs []common.KvPair
 
 // MakeRowsFromKvPairs converts a KvPair slice into a Rows instance. This is
@@ -215,6 +313,10 @@ func (kvcodec *tableKVEncoder) Encode(
 				val = types.NewIntDatum(kvcodec.autoRandomHeaderBits | rowID)
 			}
 			value, err = table.CastValue(kvcodec.se, val, col.ToInfo(), false, false)
+		} else if col.IsGenerated() {
+			// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
+			// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
+			value = types.GetMinValue(&col.FieldType)
 		} else {
 			value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 		}
@@ -246,6 +348,24 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = append(record, value)
 		kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.RowIDAllocType)
 	}
+
+	if len(kvcodec.genCols) > 0 {
+		mutRow := chunk.MutRowFromDatums(record)
+		for _, gc := range kvcodec.genCols {
+			col := cols[gc.index].ToInfo()
+			evaluated, err := gc.expr.Eval(mutRow.ToRow())
+			if err != nil {
+				return nil, logEvalGenExprFailed(logger, row, col, err)
+			}
+			value, err := table.CastValue(kvcodec.se, evaluated, col, false, false)
+			if err != nil {
+				return nil, logEvalGenExprFailed(logger, row, col, err)
+			}
+			mutRow.SetDatum(gc.index, value)
+			record[gc.index] = value
+		}
+	}
+
 	_, err = kvcodec.tbl.AddRecord(kvcodec.se, record)
 	if err != nil {
 		logger.Error("kv encode failed",
@@ -255,7 +375,6 @@ func (kvcodec *tableKVEncoder) Encode(
 		)
 		return nil, errors.Trace(err)
 	}
-
 	pairs := kvcodec.se.takeKvPairs()
 	kvcodec.recordCache = record[:0]
 	return kvPairs(pairs), nil
