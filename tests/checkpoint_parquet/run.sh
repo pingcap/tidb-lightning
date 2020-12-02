@@ -30,7 +30,8 @@ echo 'CREATE TABLE tbl(iVal INT, s VARCHAR(16));' > "$DBPATH/cppq_tsr.tbl-schema
 bin/parquet_gen --dir $DBPATH --schema cppq_tsr --table tbl --chunk 1 --rows $ROW_COUNT
 
 # Set the failpoint to kill the lightning instance as soon as one batch data is written
-export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/FailAfterWriteRows=return;github.com/pingcap/tidb-lightning/lightning/restore/SetMinDeliverBytes=return(1)"
+PKG="github.com/pingcap/tidb-lightning/lightning/restore"
+export GO_FAILPOINTS="$PKG/SlowDownWriteRows=sleep(1000);$PKG/FailAfterWriteRows=panic;$PKG/SetMinDeliverBytes=return(1)"
 
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS cppq_tsr'
