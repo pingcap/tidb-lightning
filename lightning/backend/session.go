@@ -197,6 +197,8 @@ func newSession(options *SessionOptions) *session {
 	vars.StmtCtx.TimeZone = vars.Location()
 	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
 	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
+	// FIXME: read this from target just like RowFormatVersion (see #504). generalize this to all important system var.
+	vars.SetSystemVar(variable.BlockEncryptionMode, "aes-256-cbc")
 	vars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.MaxOfMaxAllowedPacket, 10))
 	vars.TxnCtx = nil
 
