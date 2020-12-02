@@ -18,12 +18,11 @@ package backend
 import (
 	"syscall"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb-lightning/lightning/log"
-
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 )
 
 const (
