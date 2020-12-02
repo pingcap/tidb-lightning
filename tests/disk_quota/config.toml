@@ -1,0 +1,6 @@
+[tikv-importer]
+backend = 'local'
+disk-quota = '75MB'
+
+[cron]
+check-disk-quota = '1s'
