@@ -209,6 +209,34 @@ func (s *tidbSuite) TestInitSchema(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *tidbSuite) TestAInitSchema(c *C) {
+	ctx := context.Background()
+
+	s.mockDB.
+		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
+		ExpectExec("\\QCREATE TABLE IF NOT EXISTS `db`.`t1` (`a` INT PRIMARY KEY,`b` VARCHAR(200));\\E").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	s.mockDB.
+		ExpectExec("\\QSET @@SESSION.`FOREIGN_KEY_CHECKS`=0;\\E").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mockDB.
+		ExpectExec("\\QCREATE TABLE IF NOT EXISTS `db`.`t2` (`xx` TEXT) AUTO_INCREMENT = 11203;\\E").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	s.mockDB.
+		ExpectClose()
+
+	s.mockDB.MatchExpectationsInOrder(false) // maps are unordered.
+	// "db", map[string]string{
+	// 	"t1": "create table t1 (a int primary key, b varchar(200));",
+	// 	"t2": "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;CREATE TABLE `db`.`t2` (xx TEXT) AUTO_INCREMENT=11203;",
+	// }
+	err := AInitSchema(ctx, 1, s.tiGlue.GetParser(), s.tiGlue.GetSQLExecutor(), nil, nil)
+	s.mockDB.MatchExpectationsInOrder(true)
+	c.Assert(err, IsNil)
+}
+
 func (s *tidbSuite) TestInitSchemaSyntaxError(c *C) {
 	ctx := context.Background()
 

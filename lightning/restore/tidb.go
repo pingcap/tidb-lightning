@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 type TiDBManager struct {
@@ -126,11 +125,6 @@ func (timgr *TiDBManager) Close() {
 	timgr.db.Close()
 }
 
-type schemaJob struct {
-	sql string
-	log zapcore.Field
-}
-
 func InitSchema(ctx context.Context, concurrency int, parser *parser.Parser, exec glue.SQLExecutor, database string, tablesSchema map[string]string) error {
 	logger := log.With(zap.String("db", database))
 	var createDatabase strings.Builder
@@ -187,14 +181,21 @@ func InitSchema(ctx context.Context, concurrency int, parser *parser.Parser, exe
 		for _, stmt := range sqlCreateStmts {
 			wg.Add(1)
 			queue <- &schemaJob{
-				sql: stmt,
-				log: log,
+				sql:    stmt,
+				logger: log,
 			}
 		}
 	}
 	wg.Wait()
 	task.End(zap.ErrorLevel, err)
 	return errors.Trace(err)
+}
+
+func createDatabaseIfNotExistStmt(dbName string) string {
+	var createDatabase strings.Builder
+	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
+	common.WriteMySQLIdentifier(&createDatabase, dbName)
+	return createDatabase.String()
 }
 
 func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
