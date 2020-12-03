@@ -309,12 +309,11 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			defer db.Close()
 			db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
 		}
-		db, err := rc.tidbGlue.GetDB()
+		conn, err := rc.tidbGlue.GetDB()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer db.SetMaxOpenConns(1)
-		db.SetMaxOpenConns(concurrency)
+		conn.SetMaxOpenConns(concurrency)
 		for _, dbMeta := range rc.dbMetas {
 			task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
 
