@@ -439,11 +439,11 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 
 			fileChunks := make(map[string]float64)
 			for engineId, eCp := range dbCp.Engines {
-				if engineId == indexEngineID {
-					continue
-				}
 				if eCp.Status < CheckpointStatusImported {
 					estimatedEngineCnt++
+				}
+				if engineId == indexEngineID {
+					continue
 				}
 				for _, c := range eCp.Chunks {
 					if _, ok := fileChunks[c.Key.Path]; !ok {
@@ -453,8 +453,8 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 					fileChunks[c.Key.Path] += remainChunkCnt
 				}
 			}
-			// data engine count + index engine count. < 2 means engines is not populated yet.
-			if len(dbCp.Engines) < 2 {
+			// estimate engines count if engine cp is empty
+			if len(dbCp.Engines) == 0 {
 				estimatedEngineCnt += ((tableMeta.TotalSize + batchSize - 1) / batchSize) + 1
 			}
 			for _, fileMeta := range tableMeta.DataFiles {
