@@ -15,7 +15,6 @@ package restore
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
 	"math"
@@ -299,7 +298,10 @@ outside:
 
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	if !rc.cfg.Mydumper.NoSchema {
+		// CONFUSED: how we control concurrency via configuration?
+		concurrency := 16
 		if rc.tidbGlue.OwnsSQLExecutor() {
+			// CONFUSED: why don't use rc.tidbGlue.GetDB()?
 			db, err := DBFromConfig(rc.cfg.TiDB)
 			if err != nil {
 				return errors.Trace(err)
@@ -307,28 +309,12 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			defer db.Close()
 			db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
 		}
-		// CONFUSED: how we control concurrency via configuration?
-		// OR do not implement glue.SQLExecutor inside ExternalTiDBGlue
-		// Maybe we can aggregate an instance of glue.SQLExecutor?
-		concurrency := 16
-		var sqlExec glue.SQLExecutor
-		var err error
-		if concurrency > 1 {
-			dbFactory := func(conf config.DBStore) (*sql.DB, error) {
-				db, err := DBFromConfig(conf)
-				if err == nil {
-					db.ExecContext(ctx, "SET SQL_MODE = ?", conf.StrSQLMode)
-				}
-				return db, err
-			}
-			sqlExec, err = glue.NewDBPool(concurrency, rc.cfg.TiDB, dbFactory)
-			defer sqlExec.Close()
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			sqlExec = rc.tidbGlue.GetSQLExecutor()
+		db, err := rc.tidbGlue.GetDB()
+		if err != nil {
+			return errors.Trace(err)
 		}
+		defer db.SetMaxOpenConns(1)
+		db.SetMaxOpenConns(concurrency)
 		for _, dbMeta := range rc.dbMetas {
 			task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
 
@@ -336,14 +322,13 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			for _, tblMeta := range dbMeta.Tables {
 				tablesSchema[tblMeta.Name] = tblMeta.GetSchema(ctx, rc.store)
 			}
-			err = InitSchema(ctx, concurrency, rc.tidbGlue.GetParser(), sqlExec, dbMeta.Name, tablesSchema)
+			err = InitSchema(ctx, concurrency, rc.tidbGlue.GetParser(), rc.tidbGlue.GetSQLExecutor(), dbMeta.Name, tablesSchema)
 
 			task.End(zap.ErrorLevel, err)
 			if err != nil {
 				return errors.Annotatef(err, "restore table schema %s failed", dbMeta.Name)
 			}
 		}
-
 		// restore views. Since views can cross database we must restore views after all table schemas are restored.
 		for _, dbMeta := range rc.dbMetas {
 			if len(dbMeta.Views) > 0 {
@@ -352,7 +337,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 				for _, viewMeta := range dbMeta.Views {
 					viewsSchema[viewMeta.Name] = viewMeta.GetSchema(ctx, rc.store)
 				}
-				err := InitSchema(ctx, concurrency, rc.tidbGlue.GetParser(), sqlExec, dbMeta.Name, viewsSchema)
+				err := InitSchema(ctx, concurrency, rc.tidbGlue.GetParser(), rc.tidbGlue.GetSQLExecutor(), dbMeta.Name, viewsSchema)
 
 				task.End(zap.ErrorLevel, err)
 				if err != nil {

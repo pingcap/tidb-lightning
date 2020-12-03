@@ -17,7 +17,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sync"
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -46,127 +45,6 @@ type SQLExecutor interface {
 	ExecuteWithLog(ctx context.Context, query string, purpose string, logger log.Logger) error
 	ObtainStringWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (string, error)
 	Close()
-}
-
-type dbConnector struct {
-	dbConf   config.DBStore
-	lazyConn func(dbConf config.DBStore) (*sql.DB, error)
-	conn     *sql.DB
-	err      error
-}
-
-func (connector *dbConnector) connect() error {
-	if connector.conn == nil {
-		connector.conn, connector.err = connector.lazyConn(connector.dbConf)
-	}
-	return connector.err
-}
-
-func (connector *dbConnector) close() error {
-	if connector.conn != nil {
-		return connector.conn.Close()
-	}
-	return nil
-}
-
-func (connector *dbConnector) getError() error {
-	return connector.err
-}
-
-func (connector *dbConnector) getDB() *sql.DB {
-	return connector.conn
-}
-
-// DBPool is multi-connection implementation of `SQLExecutor` interface
-// It will pick one of any idle connections to handle DB events
-// and put it back when events done
-type DBPool struct {
-	SQLExecutor
-	singleton *dbConnector
-	pool      sync.Pool
-}
-
-func (dbPool *DBPool) getConn() *dbConnector {
-	conn := dbPool.pool.Get()
-	if conn != nil {
-		return conn.(*dbConnector)
-	}
-	return dbPool.singleton
-}
-
-func (dbPool *DBPool) putConn(conn *dbConnector) *DBPool {
-	dbPool.pool.Put(conn)
-	return dbPool
-}
-
-// NewDBPool is constructor of DBPool
-func NewDBPool(size int, dbConf config.DBStore, lazyConn func(dbConf config.DBStore) (*sql.DB, error)) (*DBPool, error) {
-	// TODO: `size` validation
-	// NOTE: make sure we have one db connection at least
-	singleton, err := lazyConn(dbConf)
-	if err != nil {
-		return nil, err
-	}
-	dbPool := &DBPool{}
-	dbPool.singleton = &dbConnector{
-		dbConf:   dbConf,
-		lazyConn: lazyConn,
-		conn:     singleton,
-		err:      nil,
-	}
-	dbPool.putConn(dbPool.singleton)
-	for i := 0; i < size-1; i++ {
-		dbPool.putConn(&dbConnector{
-			dbConf:   dbConf,
-			lazyConn: lazyConn,
-			conn:     nil,
-			err:      nil,
-		})
-	}
-	return dbPool, nil
-}
-
-// ExecuteWithLog implement `SQLExecutor` interface
-func (dbPool *DBPool) ExecuteWithLog(ctx context.Context, query string, purpose string, logger log.Logger) error {
-	conn := dbPool.getConn()
-	defer func() {
-		dbPool.putConn(conn)
-	}()
-	if err := conn.connect(); err != nil {
-		return err
-	}
-	sql := common.SQLWithRetry{
-		DB:     conn.getDB(),
-		Logger: logger,
-	}
-	return sql.Exec(ctx, purpose, query)
-}
-
-// ObtainStringWithLog implement `SQLExecutor` interface
-func (dbPool *DBPool) ObtainStringWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (string, error) {
-	conn := dbPool.getConn()
-	defer func() {
-		dbPool.putConn(conn)
-	}()
-	var s string
-	var err error
-	if err = conn.connect(); err == nil {
-		err = common.SQLWithRetry{
-			DB:     conn.getDB(),
-			Logger: logger,
-		}.QueryRow(ctx, purpose, query, &s)
-	}
-	return s, err
-}
-
-// Close implement `SQLExecutor` interface
-func (dbPool *DBPool) Close() {
-	for conn := dbPool.getConn(); conn != nil; conn = dbPool.getConn() {
-		if conn.getError() == nil {
-			// CONFUSED: why we ignore error occurs via db connection close issue?
-			_ = conn.close()
-		}
-	}
 }
 
 type ExternalTiDBGlue struct {
