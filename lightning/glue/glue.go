@@ -63,7 +63,7 @@ func (connector *dbConnector) connect() error {
 }
 
 func (connector *dbConnector) close() error {
-	if connector.conn == nil {
+	if connector.conn != nil {
 		return connector.conn.Close()
 	}
 	return nil
