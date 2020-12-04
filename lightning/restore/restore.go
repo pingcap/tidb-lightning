@@ -49,6 +49,9 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	"github.com/pingcap/tidb-lightning/lightning/web"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
+
+	// TODO: remove this after https://github.com/pingcap/tidb/issues/21342 is fixed.
+	_ "github.com/pingcap/tidb/planner/core"
 )
 
 const (
@@ -322,6 +325,24 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 				return errors.Annotatef(err, "restore table schema %s failed", dbMeta.Name)
 			}
 		}
+
+		// restore views. Since views can cross database we must restore views after all table schemas are restored.
+		for _, dbMeta := range rc.dbMetas {
+			if len(dbMeta.Views) > 0 {
+				task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore view schema")
+				viewsSchema := make(map[string]string)
+				for _, viewMeta := range dbMeta.Views {
+					viewsSchema[viewMeta.Name] = viewMeta.GetSchema(ctx, rc.store)
+				}
+				err := InitSchema(ctx, rc.tidbGlue, dbMeta.Name, viewsSchema)
+
+				task.End(zap.ErrorLevel, err)
+				if err != nil {
+					return errors.Annotatef(err, "restore view schema %s failed", dbMeta.Name)
+				}
+			}
+
+		}
 	}
 	getTableFunc := rc.backend.FetchRemoteTableModels
 	if !rc.tidbGlue.OwnsSQLExecutor() {
@@ -456,8 +477,8 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if fileMeta.Size > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += math.Round(float64(fileMeta.Size) / float64(cfg.MaxRegionSize))
+					if fileMeta.FileMeta.FileSize > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += math.Round(float64(fileMeta.FileMeta.FileSize) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -915,7 +936,10 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		for engineID, engine := range cp.Engines {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				// Set engineErr and break this for loop to wait all the sub-routines done before return.
+				// Directly return may cause panic because caller will close the pebble db but some sub routines
+				// are still reading from or writing to the pebble db.
+				engineErr.Set(ctx.Err())
 			default:
 			}
 			if engineErr.Get() != nil {
@@ -1181,6 +1205,13 @@ func (t *TableRestore) importEngine(
 }
 
 func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
+	// there are no data in this table, no need to do post process
+	// this is important for tables that are just the dump table of views
+	// because at this stage, the table was already deleted and replaced by the related view
+	if len(cp.Engines) == 1 {
+		return nil
+	}
+
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
@@ -1388,7 +1419,13 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := store.Open(ctx, chunk.Key.Path)
+	var reader storage.ReadSeekCloser
+	var err error
+	if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.FileSize)
+	} else {
+		reader, err = store.Open(ctx, chunk.FileMeta.Path)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1401,7 +1438,7 @@ func newChunkRestore(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.Key.Path)
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

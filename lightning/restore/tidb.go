@@ -137,22 +137,26 @@ func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema 
 	}
 
 	task := logger.Begin(zap.InfoLevel, "create tables")
+	var sqlCreateStmts []string
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateTable, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
+		sqlCreateStmts, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
 		if err != nil {
 			break
 		}
 
-		err = sqlExecutor.ExecuteWithLog(
-			ctx,
-			sqlCreateTable,
-			"create table",
-			logger.With(zap.String("table", common.UniqueTable(database, tbl))),
-		)
-		if err != nil {
-			break
+		//TODO: maybe we should put these createStems into a transaction
+		for _, s := range sqlCreateStmts {
+			err = sqlExecutor.ExecuteWithLog(
+				ctx,
+				s,
+				"create table",
+				logger.With(zap.String("table", common.UniqueTable(database, tbl))),
+			)
+			if err != nil {
+				break
+			}
 		}
 	}
 	task.End(zap.ErrorLevel, err)
@@ -160,29 +164,39 @@ func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema 
 	return errors.Trace(err)
 }
 
-func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) (string, error) {
+func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.Parse(createTable, "", "")
 	if err != nil {
-		return "", err
+		return []string{}, err
 	}
 
 	var res strings.Builder
-	res.Grow(len(createTable))
 	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
 
+	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {
-		if createTableNode, ok := stmt.(*ast.CreateTableStmt); ok {
-			createTableNode.Table.Schema = model.NewCIStr(dbName)
-			createTableNode.Table.Name = model.NewCIStr(tblName)
-			createTableNode.IfNotExists = true
+		switch node := stmt.(type) {
+		case *ast.CreateTableStmt:
+			node.Table.Schema = model.NewCIStr(dbName)
+			node.Table.Name = model.NewCIStr(tblName)
+			node.IfNotExists = true
+		case *ast.CreateViewStmt:
+			node.ViewName.Schema = model.NewCIStr(dbName)
+			node.ViewName.Name = model.NewCIStr(tblName)
+		case *ast.DropTableStmt:
+			node.Tables[0].Schema = model.NewCIStr(dbName)
+			node.Tables[0].Name = model.NewCIStr(tblName)
+			node.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {
-			return "", err
+			return []string{}, err
 		}
 		ctx.WritePlain(";")
+		retStmts = append(retStmts, res.String())
+		res.Reset()
 	}
 
-	return res.String(), nil
+	return retStmts, nil
 }
 
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
