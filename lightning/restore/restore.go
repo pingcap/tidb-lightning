@@ -145,7 +145,7 @@ type RestoreController struct {
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 	alterTableLock  sync.Mutex
 	compactState    int32
-	rowFormatVer    string
+	sysVars         map[string]string
 	tls             *common.TLS
 
 	errorSummaries errorSummaries
@@ -230,7 +230,7 @@ func NewRestoreControllerWithPauser(
 		pauser:        pauser,
 		backend:       backend,
 		tidbGlue:      g,
-		rowFormatVer:  "1",
+		sysVars:       defaultImportantVariables,
 		tls:           tls,
 
 		errorSummaries:    makeErrorSummaries(log.L()),
@@ -362,7 +362,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 
 	go rc.listenCheckpointUpdates()
 
-	rc.rowFormatVer = ObtainRowFormatVersion(ctx, rc.tidbGlue.GetSQLExecutor())
+	rc.sysVars = ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor())
 
 	// Estimate the number of chunks for progress reporting
 	err = rc.estimateChunkCountIntoMetrics(ctx)
@@ -1926,9 +1926,9 @@ func (cr *chunkRestore) restore(
 ) error {
 	// Create the encoder.
 	kvEncoder := rc.backend.NewEncoder(t.encTable, &kv.SessionOptions{
-		SQLMode:          rc.cfg.TiDB.SQLMode,
-		Timestamp:        cr.chunk.Timestamp,
-		RowFormatVersion: rc.rowFormatVer,
+		SQLMode:   rc.cfg.TiDB.SQLMode,
+		Timestamp: cr.chunk.Timestamp,
+		SysVars:   rc.sysVars,
 		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
 		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 	})
