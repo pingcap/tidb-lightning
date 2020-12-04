@@ -213,6 +213,10 @@ func NewRestoreControllerWithPauser(
 		if err != nil {
 			return nil, err
 		}
+		err = verifyLocalFile(ctx, cpdb, cfg.TikvImporter.SortedKVDir)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
 	}
@@ -401,6 +405,25 @@ func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
 		}
 	}
 
+	return nil
+}
+
+// for local backend, we should check if local SST exists in disk, otherwise we'll lost data
+func verifyLocalFile(ctx context.Context, cpdb CheckpointsDB, dir string) error {
+	targetTables, err := cpdb.GetLocalStoringTables(ctx, "all")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, tableWithEngine := range targetTables {
+		for engineID := tableWithEngine.MinEngineID; engineID <= tableWithEngine.MaxEngineID; engineID++ {
+			_, eID := kv.MakeUUID(tableWithEngine.TableName, engineID)
+			file := kv.LocalFile{Uuid: eID}
+			err := file.Exist(dir)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -969,6 +992,10 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 				rc.postProcessLock.Unlock()
 			}
 			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
+			err = closedIndexEngine.Cleanup(ctx)
+			if err != nil {
+				t.logger.Warn("failed to cleanup index engine", zap.Error(err))
+			}
 		}
 
 		failpoint.Inject("FailBeforeIndexEngineImported", func() {
@@ -1133,6 +1160,10 @@ func (t *TableRestore) importEngine(
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	err = closedEngine.Cleanup(ctx)
+	if err != nil {
+		t.logger.Warn("failed to cleanup engine", zap.Int32("engine ID", engineID), zap.Error(err))
 	}
 
 	// 2. perform a level-1 compact if idling.
@@ -1591,9 +1622,6 @@ func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEng
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 
 	err := closedEngine.Import(ctx)
-	if err == nil {
-		closedEngine.Cleanup(ctx)
-	}
 
 	dur := task.End(zap.ErrorLevel, err)
 

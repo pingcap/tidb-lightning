@@ -321,9 +321,13 @@ func getLocalStoringTables(ctx context.Context, cfg *config.Config, tableName st
 	}
 	defer cpdb.Close()
 
-	tables, err := cpdb.GetLocalStoringTables(ctx, tableName)
+	tableWithEngine, err := cpdb.GetLocalStoringTables(ctx, tableName)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	tables := make([]string, len(tableWithEngine))
+	for i := range tableWithEngine {
+		tables[i] = tableWithEngine[i].TableName
 	}
 
 	fmt.Fprintln(os.Stderr, "Those tables should have intermediate files:", tables)
