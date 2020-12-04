@@ -1142,7 +1142,7 @@ func (*NullCheckpointsDB) MoveCheckpoints(context.Context, int64) error {
 	return errors.Trace(cannotManageNullDB)
 }
 func (*NullCheckpointsDB) GetLocalStoringTables(context.Context, string) ([]TableWithEngine, error) {
-	return nil, errors.Trace(cannotManageNullDB)
+	return nil, nil
 }
 func (*NullCheckpointsDB) IgnoreErrorCheckpoint(context.Context, string) error {
 	return errors.Trace(cannotManageNullDB)
