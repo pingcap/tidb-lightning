@@ -70,7 +70,7 @@ func run() error {
 		cpErrDestroy = fs.String("checkpoint-error-destroy", "", "deletes imported data with table which has an error before (value can be 'all' or '`db`.`table`')")
 		cpDump = fs.String("checkpoint-dump", "", "dump the checkpoint information as two CSV files in the given folder")
 
-		localStoringTables = fs.String("check-local-storing", "", "show tables that should have local intermediate files (value can be 'all' or '`db`.`table`')")
+		localStoringTables = fs.String("check-local-storing", "", "show tables that are missing local intermediate files (value can be 'all' or '`db`.`table`')")
 
 		fsUsage = fs.Usage
 	}))
@@ -330,7 +330,7 @@ func getLocalStoringTables(ctx context.Context, cfg *config.Config, tableName st
 		tables[i] = tableWithEngine[i].TableName
 	}
 
-	fmt.Fprintln(os.Stderr, "Those tables should have intermediate files:", tables)
+	fmt.Fprintln(os.Stderr, "These tables are missing intermediate files:", tables)
 	return nil
 }
 

@@ -92,7 +92,7 @@ for ckpt in mysql file; do
   bin/tidb-lightning-ctl.test DEVEL --check-local-storing=all \
     --config=tests/$TEST_NAME/$ckpt.toml \
     --tidb-port 4000 \
-    --pd-urls '127.0.0.1:2379' 2>&1 >/dev/null | grep -Fq "Those tables should have intermediate files: []"
+    --pd-urls '127.0.0.1:2379' 2>&1 >/dev/null | grep -Fq "These tables are missing intermediate files: []"
   
   # when position of chunk file doesn't equal to offset, intermediate file should exist
   set +e
@@ -102,7 +102,7 @@ for ckpt in mysql file; do
   bin/tidb-lightning-ctl.test DEVEL --check-local-storing=all \
     --config=tests/$TEST_NAME/$ckpt.toml \
     --tidb-port 4000 \
-    --pd-urls '127.0.0.1:2379' 2>&1 >/dev/null | grep -qE "Those tables should have intermediate files: \[.+\]"
+    --pd-urls '127.0.0.1:2379' 2>&1 >/dev/null | grep -qE "These tables are missing intermediate files: \[.+\]"
   # don't distinguish whole sort-kv directory missing and table's directory missing for now
   ls -lA $TEST_DIR/sorted
   
@@ -114,6 +114,6 @@ for ckpt in mysql file; do
   bin/tidb-lightning-ctl.test DEVEL --check-local-storing=all \
     --config=tests/$TEST_NAME/$ckpt.toml \
     --tidb-port 4000 \
-    --pd-urls '127.0.0.1:2379' 2>&1 >/dev/null | grep -Fq "Those tables should have intermediate files: []"
+    --pd-urls '127.0.0.1:2379' 2>&1 >/dev/null | grep -Fq "These tables are missing intermediate files: []"
 done
 rm -r $TEST_DIR/sorted

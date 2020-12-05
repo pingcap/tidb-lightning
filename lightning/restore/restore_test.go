@@ -729,9 +729,6 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	mockBackend.EXPECT().
 		ImportEngine(ctx, engineUUID).
 		Return(nil)
-	mockBackend.EXPECT().
-		CleanupEngine(ctx, engineUUID).
-		Return(nil)
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, "tag", engineUUID)
 	c.Assert(err, IsNil)
