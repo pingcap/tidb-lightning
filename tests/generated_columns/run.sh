@@ -13,9 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eu
+set -eux
 
-for BACKEND in 'tidb' 'importer' 'local'; do
+run_sql "SELECT CONCAT('SET GLOBAL time_zone=''', @@time_zone, ''', default_week_format=', @@default_week_format, ', block_encryption_mode=''', @@block_encryption_mode, ''';') cmd;"
+UNDO_CMD=$(read_result)
+undo_set_globals() {
+    run_sql "$UNDO_CMD"
+}
+trap undo_set_globals EXIT
+run_sql "SET GLOBAL time_zone='-08:00', default_week_format=4, block_encryption_mode='aes-256-cbc'"
+
+for BACKEND in 'local' 'tidb' 'importer'; do
     if [ "$BACKEND" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi
@@ -45,4 +53,7 @@ for BACKEND in 'tidb' 'importer' 'local'; do
     check_contains 'set: c'
     check_contains 'time: 1987-06-05 04:03:02.100'
     check_contains 'json: {"6ad8402ba6610f04d3ec5c9875489a7bc8e259c5": 0.5625}'
+    check_contains 'aes: 0xA876B03CFC8AF93D22D19E2220BD2375'
+    check_contains 'week: 6'
+    check_contains 'tz: 1969-12-31 16:00:01'
 done
