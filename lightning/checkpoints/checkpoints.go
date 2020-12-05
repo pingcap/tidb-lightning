@@ -472,7 +472,7 @@ type CheckpointsDB interface {
 	// MoveCheckpoints renames the checkpoint schema to include a suffix
 	// including the taskID (e.g. `tidb_lightning_checkpoints.1234567890.bak`).
 	MoveCheckpoints(ctx context.Context, taskID int64) error
-	// GetLocalStoringTables returns a list containing tables have files stored on local disk.
+	// GetLocalStoringTables returns a map containing tables have engine files stored on local disk.
 	// currently only meaningful for local backend
 	GetLocalStoringTables(ctx context.Context) (map[string][]int32, error)
 	IgnoreErrorCheckpoint(ctx context.Context, tableName string) error
