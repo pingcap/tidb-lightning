@@ -173,14 +173,6 @@ const (
 	UpdateEngineTemplate = `
 		UPDATE %s.%s SET status = ? WHERE (table_name, engine_id) = (?, ?);`
 	DeleteCheckpointRecordTemplate = "DELETE FROM %s.%s WHERE table_name = ?;"
-	ReadAllEngineOfTableTemplate   = `SELECT
-			t.table_name,
-			COALESCE(MIN(e.engine_id), 0),
-			COALESCE(MAX(e.engine_id), -1)
-		FROM %[1]s.%[4]s t
-		LEFT JOIN %[1]s.%[5]s e ON t.table_name = e.table_name
-		WHERE %[2]s = ? AND t.status <= %[3]d
-		GROUP BY t.table_name;`
 )
 
 func IsCheckpointTable(name string) bool {
@@ -447,7 +439,7 @@ func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.allocBase = mathutil.MaxInt64(cpd.allocBase, merger.AllocBase)
 }
 
-type TableWithEngine struct {
+type DestroyedTableCheckpoint struct {
 	TableName   string
 	MinEngineID int32
 	MaxEngineID int32
@@ -482,9 +474,9 @@ type CheckpointsDB interface {
 	MoveCheckpoints(ctx context.Context, taskID int64) error
 	// GetLocalStoringTables returns a list containing tables have files stored on local disk.
 	// currently only meaningful for local backend
-	GetLocalStoringTables(ctx context.Context, tableName string) ([]TableWithEngine, error)
+	GetLocalStoringTables(ctx context.Context) (map[string][]int32, error)
 	IgnoreErrorCheckpoint(ctx context.Context, tableName string) error
-	DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]TableWithEngine, error)
+	DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error)
 	DumpTables(ctx context.Context, csv io.Writer) error
 	DumpEngines(ctx context.Context, csv io.Writer) error
 	DumpChunks(ctx context.Context, csv io.Writer) error
@@ -1141,13 +1133,13 @@ func (*NullCheckpointsDB) RemoveCheckpoint(context.Context, string) error {
 func (*NullCheckpointsDB) MoveCheckpoints(context.Context, int64) error {
 	return errors.Trace(cannotManageNullDB)
 }
-func (*NullCheckpointsDB) GetLocalStoringTables(context.Context, string) ([]TableWithEngine, error) {
+func (*NullCheckpointsDB) GetLocalStoringTables(context.Context) (map[string][]int32, error) {
 	return nil, nil
 }
 func (*NullCheckpointsDB) IgnoreErrorCheckpoint(context.Context, string) error {
 	return errors.Trace(cannotManageNullDB)
 }
-func (*NullCheckpointsDB) DestroyErrorCheckpoint(context.Context, string) ([]TableWithEngine, error) {
+func (*NullCheckpointsDB) DestroyErrorCheckpoint(context.Context, string) ([]DestroyedTableCheckpoint, error) {
 	return nil, errors.Trace(cannotManageNullDB)
 }
 func (*NullCheckpointsDB) DumpTables(context.Context, io.Writer) error {
@@ -1213,98 +1205,44 @@ func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int6
 	return nil
 }
 
-func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context, tableName string) ([]TableWithEngine, error) {
-	s := common.SQLWithRetry{
-		DB:     cpdb.db,
-		Logger: log.With(zap.String("table", tableName)),
-	}
-	var targetTables []TableWithEngine
+func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[string][]int32, error) {
+	var targetTables map[string][]int32
 
-	// after CheckpointStatusLoaded data begin to write to local SST
-	// and after CheckpointStatusIndexImported all local SST are cleaned
-	beforeIndexImported := fmt.Sprintf(`
-		SELECT count(*) FROM %s.%s WHERE table_name = ? AND status < %d;
-	`, cpdb.schema, CheckpointTableNameTable, CheckpointStatusIndexImported)
-	hasWriteChunk := fmt.Sprintf(`
-		SELECT count(*) FROM %s.%s WHERE table_name = ? AND pos > offset;
-	`, cpdb.schema, CheckpointTableNameChunk)
+	// lightning didn't check CheckpointStatusMaxInvalid before this function is called, so we skip invalid ones
+	// engines should exist if
+	// 1. table status is earlier than CheckpointStatusIndexImported, and
+	// 2. engine status is earlier than CheckpointStatusImported, and
+	// 3. chunk has been read
+	query := fmt.Sprintf(`
+		SELECT t.table_name, c.engine_id 
+		FROM %s.%s t, %s.%s c, %s.%s e 
+		WHERE t.table_name = c.table_name AND t.table_name = e.table_name AND c.engine_id = e.engine_id 
+			AND %d < t.status AND t.status < %d 
+			AND %d < e.status AND e.status < %d
+			AND c.pos > c.offset;`,
+		cpdb.schema, CheckpointTableNameTable, cpdb.schema, CheckpointTableNameChunk, cpdb.schema, CheckpointTableNameEngine,
+		CheckpointStatusMaxInvalid, CheckpointStatusIndexImported,
+		CheckpointStatusMaxInvalid, CheckpointStatusImported)
 
-	aliasedColName := "t.table_name"
-	selectQuery := fmt.Sprintf(ReadAllEngineOfTableTemplate, cpdb.schema, aliasedColName, CheckpointStatusImported, CheckpointTableNameTable, CheckpointTableNameEngine)
-
-	err := s.Transact(ctx, "get local storing tables", func(ctx context.Context, tx *sql.Tx) error {
-		// 1. get table name for "all"
-		var table2Check []string
-		if tableName != "all" {
-			table2Check = append(table2Check, tableName)
-		} else {
-			tableQuery := fmt.Sprintf("SELECT table_name FROM %s.%s;", cpdb.schema, CheckpointTableNameTable)
-
-			rows, err := tx.QueryContext(ctx, tableQuery)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			for rows.Next() {
-				var table string
-				err := rows.Scan(&table)
-				if err != nil {
-					rows.Close()
-					return errors.Trace(err)
-				}
-				table2Check = append(table2Check, table)
-			}
-			if rows.Err() != nil {
-				rows.Close()
-				return errors.Trace(rows.Err())
-			}
-			rows.Close()
+	err := common.Retry("get local storing tables", log.L(), func() error {
+		targetTables = make(map[string][]int32)
+		rows, err := cpdb.db.QueryContext(ctx, query)
+		if err != nil {
+			return errors.Trace(err)
 		}
-
-		// 2. check tables having local storing files
-		var localStoringTable []string
-		for _, table := range table2Check {
+		defer rows.Close()
+		for rows.Next() {
 			var (
-				count  uint64
-				count2 uint64
+				tableName string
+				engineID  int32
 			)
-			row := tx.QueryRowContext(ctx, beforeIndexImported, table)
-			err := row.Scan(&count)
-			if err != nil {
+			if err := rows.Scan(&tableName, &engineID); err != nil {
 				return errors.Trace(err)
 			}
-			row = tx.QueryRowContext(ctx, hasWriteChunk, table)
-			err = row.Scan(&count2)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if count > 0 && count2 > 0 {
-				localStoringTable = append(localStoringTable, table)
-			}
+			targetTables[tableName] = append(targetTables[tableName], engineID)
 		}
-		if len(localStoringTable) == 0 {
-			return nil
-		}
-
-		// 3. get engines
-		targetTables = make([]TableWithEngine, 0, len(localStoringTable))
-		for _, tableName := range localStoringTable {
-			rows, e := tx.QueryContext(ctx, selectQuery, tableName)
-			if e != nil {
-				return errors.Trace(e)
-			}
-			for rows.Next() {
-				var t TableWithEngine
-				if e := rows.Scan(&t.TableName, &t.MinEngineID, &t.MaxEngineID); e != nil {
-					rows.Close()
-					return errors.Trace(e)
-				}
-				targetTables = append(targetTables, t)
-			}
-			if e := rows.Err(); e != nil {
-				rows.Close()
-				return errors.Trace(e)
-			}
-			rows.Close()
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
 		}
 		return nil
 	})
@@ -1348,7 +1286,7 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 	return errors.Trace(err)
 }
 
-func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]TableWithEngine, error) {
+func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error) {
 	var colName, aliasedColName string
 
 	if tableName == "all" {
@@ -1361,7 +1299,16 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		aliasedColName = "t.table_name"
 	}
 
-	selectQuery := fmt.Sprintf(ReadAllEngineOfTableTemplate, cpdb.schema, aliasedColName, CheckpointStatusMaxInvalid, CheckpointTableNameTable, CheckpointTableNameEngine)
+	selectQuery := fmt.Sprintf(`
+		SELECT
+			t.table_name,
+			COALESCE(MIN(e.engine_id), 0),
+			COALESCE(MAX(e.engine_id), -1)
+		FROM %[1]s.%[4]s t
+		LEFT JOIN %[1]s.%[5]s e ON t.table_name = e.table_name
+		WHERE %[2]s = ? AND t.status <= %[3]d
+		GROUP BY t.table_name;
+	`, cpdb.schema, aliasedColName, CheckpointStatusMaxInvalid, CheckpointTableNameTable, CheckpointTableNameEngine)
 	deleteChunkQuery := fmt.Sprintf(`
 		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
 	`, cpdb.schema, colName, CheckpointStatusMaxInvalid, CheckpointTableNameChunk, CheckpointTableNameTable)
@@ -1372,7 +1319,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		DELETE FROM %s.%s WHERE %s = ? AND status <= %d
 	`, cpdb.schema, CheckpointTableNameTable, colName, CheckpointStatusMaxInvalid)
 
-	var targetTables []TableWithEngine
+	var targetTables []DestroyedTableCheckpoint
 
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
@@ -1387,11 +1334,11 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var t TableWithEngine
-			if e := rows.Scan(&t.TableName, &t.MinEngineID, &t.MaxEngineID); e != nil {
+			var dtc DestroyedTableCheckpoint
+			if e := rows.Scan(&dtc.TableName, &dtc.MinEngineID, &dtc.MaxEngineID); e != nil {
 				return errors.Trace(e)
 			}
-			targetTables = append(targetTables, t)
+			targetTables = append(targetTables, dtc)
 		}
 		if e := rows.Err(); e != nil {
 			return errors.Trace(e)
@@ -1505,45 +1452,30 @@ func (cpdb *FileCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64
 	return errors.Trace(os.Rename(cpdb.path, newPath))
 }
 
-func (cpdb *FileCheckpointsDB) GetLocalStoringTables(_ context.Context, targetTableName string) ([]TableWithEngine, error) {
+func (cpdb *FileCheckpointsDB) GetLocalStoringTables(_ context.Context) (map[string][]int32, error) {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	var targetTables []TableWithEngine
+	targetTables := make(map[string][]int32)
+
 	for tableName, tableModel := range cpdb.checkpoints.Checkpoints {
-		if !(targetTableName == "all" || targetTableName == tableName) {
+		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) ||
+			tableModel.Status >= uint32(CheckpointStatusIndexImported) {
 			continue
 		}
-		if tableModel.Status >= uint32(CheckpointStatusIndexImported) {
-			continue
-		}
-		exist := false
-	engineLoop:
-		for _, engineModel := range tableModel.Engines {
+		for engineID, engineModel := range tableModel.Engines {
+			if engineModel.Status <= uint32(CheckpointStatusMaxInvalid) ||
+				engineModel.Status >= uint32(CheckpointStatusImported) {
+				continue
+			}
+
 			for _, chunkModel := range engineModel.Chunks {
 				if chunkModel.Pos > chunkModel.Offset {
-					exist = true
-					break engineLoop
+					targetTables[tableName] = append(targetTables[tableName], engineID)
+					break
 				}
 			}
 
-		}
-		if exist {
-			var minEngineID, maxEngineID int32 = math.MaxInt32, math.MinInt32
-			for engineID := range tableModel.Engines {
-				if engineID < minEngineID {
-					minEngineID = engineID
-				}
-				if engineID > maxEngineID {
-					maxEngineID = engineID
-				}
-			}
-
-			targetTables = append(targetTables, TableWithEngine{
-				TableName:   tableName,
-				MinEngineID: minEngineID,
-				MaxEngineID: maxEngineID,
-			})
 		}
 	}
 
@@ -1570,11 +1502,11 @@ func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTa
 	return errors.Trace(cpdb.save())
 }
 
-func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetTableName string) ([]TableWithEngine, error) {
+func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetTableName string) ([]DestroyedTableCheckpoint, error) {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	var targetTables []TableWithEngine
+	var targetTables []DestroyedTableCheckpoint
 
 	for tableName, tableModel := range cpdb.checkpoints.Checkpoints {
 		// Obtain the list of tables
@@ -1592,7 +1524,7 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 				}
 			}
 
-			targetTables = append(targetTables, TableWithEngine{
+			targetTables = append(targetTables, DestroyedTableCheckpoint{
 				TableName:   tableName,
 				MinEngineID: minEngineID,
 				MaxEngineID: maxEngineID,

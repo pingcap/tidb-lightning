@@ -89,7 +89,7 @@ for ckpt in mysql file; do
   export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/FailAfterWriteRows=return"
   run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/$ckpt.toml"
   set -e
-  bin/tidb-lightning-ctl.test DEVEL --check-local-storing=all \
+  bin/tidb-lightning-ctl.test DEVEL --check-local-storing \
     --config=tests/$TEST_NAME/$ckpt.toml \
     --tidb-port 4000 \
     --pd-urls '127.0.0.1:2379' 2>&1 >/dev/null | grep -Fq "These tables are missing intermediate files: []"
@@ -99,7 +99,7 @@ for ckpt in mysql file; do
   export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/LocalBackendSaveCheckpoint=return;github.com/pingcap/tidb-lightning/lightning/restore/FailIfImportedChunk=return(1)"
   run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/$ckpt.toml"
   set -e
-  bin/tidb-lightning-ctl.test DEVEL --check-local-storing=all \
+  bin/tidb-lightning-ctl.test DEVEL --check-local-storing \
     --config=tests/$TEST_NAME/$ckpt.toml \
     --tidb-port 4000 \
     --pd-urls '127.0.0.1:2379' 2>&1 >/dev/null | grep -qE "These tables are missing intermediate files: \[.+\]"
@@ -111,7 +111,7 @@ for ckpt in mysql file; do
   export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/FailIfIndexEngineImported=return(1)"
   run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/$ckpt.toml"
   set -e
-  bin/tidb-lightning-ctl.test DEVEL --check-local-storing=all \
+  bin/tidb-lightning-ctl.test DEVEL --check-local-storing \
     --config=tests/$TEST_NAME/$ckpt.toml \
     --tidb-port 4000 \
     --pd-urls '127.0.0.1:2379' 2>&1 >/dev/null | grep -Fq "These tables are missing intermediate files: []"

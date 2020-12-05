@@ -562,114 +562,46 @@ func (g GlueCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) er
 	return nil
 }
 
-func (g GlueCheckpointsDB) GetLocalStoringTables(ctx context.Context, tableName string) ([]TableWithEngine, error) {
+func (g GlueCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[string][]int32, error) {
 	se, err := g.getSessionFunc()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer se.Close()
 
-	var targetTables []TableWithEngine
-	// after CheckpointStatusLoaded data begin to write to local SST
-	// and after CheckpointStatusIndexImported all local SST are cleaned
-	beforeIndexImported := fmt.Sprintf(`
-		SELECT count(*) FROM %s.%s WHERE table_name = ? AND status < %d;
-	`, g.schema, CheckpointTableNameTable, CheckpointStatusIndexImported)
-	hasWriteChunk := fmt.Sprintf(`
-		SELECT count(*) FROM %s.%s WHERE table_name = ? AND pos > offset;
-	`, g.schema, CheckpointTableNameChunk)
+	var targetTables map[string][]int32
 
-	aliasedColName := "t.table_name"
-	selectQuery := fmt.Sprintf(ReadAllEngineOfTableTemplate, g.schema, aliasedColName, CheckpointStatusImported, CheckpointTableNameTable, CheckpointTableNameEngine)
+	// lightning didn't check CheckpointStatusMaxInvalid before this function is called, so we skip invalid ones
+	// engines should exist if
+	// 1. table status is earlier than CheckpointStatusIndexImported, and
+	// 2. engine status is earlier than CheckpointStatusImported, and
+	// 3. chunk has been read
+	query := fmt.Sprintf(`
+		SELECT t.table_name, c.engine_id 
+		FROM %s.%s t, %s.%s c, %s.%s e 
+		WHERE t.table_name = c.table_name AND t.table_name = e.table_name AND c.engine_id = e.engine_id 
+			AND %d < t.status AND t.status < %d 
+			AND %d < e.status AND e.status < %d
+			AND c.pos > c.offset;`,
+		g.schema, CheckpointTableNameTable, g.schema, CheckpointTableNameChunk, g.schema, CheckpointTableNameEngine,
+		CheckpointStatusMaxInvalid, CheckpointStatusIndexImported,
+		CheckpointStatusMaxInvalid, CheckpointStatusImported)
 
-	err = Transact(ctx, "destroy error checkpoints", se, log.With(zap.String("table", tableName)), func(c context.Context, s Session) error {
-		// 1. get table name for "all"
-		var table2Check []string
-		if tableName != "all" {
-			table2Check = append(table2Check, tableName)
-		} else {
-			tableQuery := fmt.Sprintf("SELECT table_name FROM %s.%s;", g.schema, CheckpointTableNameTable)
-
-			rs, err := s.Execute(c, tableQuery)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			rows, err := drainFirstRecordSet(c, rs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			for _, row := range rows {
-				table2Check = append(table2Check, row.GetString(0))
-			}
+	err = common.Retry("get local storing tables", log.L(), func() error {
+		targetTables = make(map[string][]int32)
+		rs, err := se.Execute(ctx, query)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rows, err := drainFirstRecordSet(ctx, rs)
+		if err != nil {
+			return errors.Trace(err)
 		}
 
-		// 2. check tables having local storing files
-		var localStoringTable []string
-		for _, table := range table2Check {
-			table = common.InterpolateMySQLString(table)
-			beforeIndexImported = strings.ReplaceAll(beforeIndexImported, "?", table)
-			hasWriteChunk = strings.ReplaceAll(hasWriteChunk, "?", table)
-
-			var (
-				count  uint64
-				count2 uint64
-			)
-			rs, err := s.Execute(ctx, beforeIndexImported)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			rows, err := drainFirstRecordSet(c, rs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if len(rows) != 1 {
-				return errors.New("return rows doesn't have length 1")
-			}
-			count = rows[0].GetUint64(0)
-
-			rs, err = s.Execute(ctx, hasWriteChunk)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			rows, err = drainFirstRecordSet(c, rs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if len(rows) != 1 {
-				return errors.New("return rows doesn't have length 1")
-			}
-			count2 = rows[0].GetUint64(0)
-			if count > 0 && count2 > 0 {
-				localStoringTable = append(localStoringTable, table)
-			}
-		}
-		if len(localStoringTable) == 0 {
-			return nil
-		}
-
-		// 3. get engines
-		targetTables = make([]TableWithEngine, 0, len(localStoringTable))
-		for _, tableName := range localStoringTable {
-			tableName = common.InterpolateMySQLString(tableName)
-			selectQuery = strings.ReplaceAll(selectQuery, "?", tableName)
-
-			rs, err := s.Execute(ctx, selectQuery)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			rows, err := drainFirstRecordSet(c, rs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			for _, row := range rows {
-				var t TableWithEngine
-				t.TableName = row.GetString(0)
-				t.MinEngineID = int32(row.GetInt64(1))
-				t.MaxEngineID = int32(row.GetInt64(2))
-				targetTables = append(targetTables, t)
-			}
+		for _, row := range rows {
+			tableName := row.GetString(0)
+			engineID := int32(row.GetInt64(1))
+			targetTables[tableName] = append(targetTables[tableName], engineID)
 		}
 		return nil
 	})
@@ -716,7 +648,7 @@ func (g GlueCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName 
 	}))
 }
 
-func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]TableWithEngine, error) {
+func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error) {
 	logger := log.With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
 	if err != nil {
@@ -738,8 +670,16 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 
 	tableName = common.InterpolateMySQLString(tableName)
 
-	selectQuery := fmt.Sprintf(ReadAllEngineOfTableTemplate, g.schema, aliasedColName, CheckpointStatusMaxInvalid, CheckpointTableNameTable, CheckpointTableNameEngine)
-	selectQuery = strings.ReplaceAll(selectQuery, "?", tableName)
+	selectQuery := fmt.Sprintf(`
+		SELECT
+			t.table_name,
+			COALESCE(MIN(e.engine_id), 0),
+			COALESCE(MAX(e.engine_id), -1)
+		FROM %[1]s.%[4]s t
+		LEFT JOIN %[1]s.%[5]s e ON t.table_name = e.table_name
+		WHERE %[2]s = %[6]s AND t.status <= %[3]d
+		GROUP BY t.table_name;
+	`, g.schema, aliasedColName, CheckpointStatusMaxInvalid, CheckpointTableNameTable, CheckpointTableNameEngine, tableName)
 	deleteChunkQuery := fmt.Sprintf(`
 		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = %[6]s AND status <= %[3]d)
 	`, g.schema, colName, CheckpointStatusMaxInvalid, CheckpointTableNameChunk, CheckpointTableNameTable, tableName)
@@ -750,7 +690,7 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 		DELETE FROM %s.%s WHERE %s = %s AND status <= %d
 	`, g.schema, CheckpointTableNameTable, colName, tableName, CheckpointStatusMaxInvalid)
 
-	var targetTables []TableWithEngine
+	var targetTables []DestroyedTableCheckpoint
 	err = Transact(ctx, "destroy error checkpoints", se, logger, func(c context.Context, s Session) error {
 		// clean because it's in a retry
 		targetTables = nil
@@ -772,7 +712,7 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 			}
 
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				var dtc TableWithEngine
+				var dtc DestroyedTableCheckpoint
 				dtc.TableName = row.GetString(0)
 				dtc.MinEngineID = int32(row.GetInt64(1))
 				dtc.MaxEngineID = int32(row.GetInt64(2))

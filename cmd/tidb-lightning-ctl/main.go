@@ -45,7 +45,7 @@ func run() error {
 		compact, flagFetchMode                      *bool
 		mode, flagImportEngine, flagCleanupEngine   *string
 		cpRemove, cpErrIgnore, cpErrDestroy, cpDump *string
-		localStoringTables                          *string
+		localStoringTables                          *bool
 
 		fsUsage func()
 	)
@@ -70,7 +70,7 @@ func run() error {
 		cpErrDestroy = fs.String("checkpoint-error-destroy", "", "deletes imported data with table which has an error before (value can be 'all' or '`db`.`table`')")
 		cpDump = fs.String("checkpoint-dump", "", "dump the checkpoint information as two CSV files in the given folder")
 
-		localStoringTables = fs.String("check-local-storing", "", "show tables that are missing local intermediate files (value can be 'all' or '`db`.`table`')")
+		localStoringTables = fs.Bool("check-local-storing", false, "show tables that are missing local intermediate files (value can be 'all' or '`db`.`table`')")
 
 		fsUsage = fs.Usage
 	}))
@@ -121,8 +121,8 @@ func run() error {
 	if len(*cpDump) != 0 {
 		return errors.Trace(checkpointDump(ctx, cfg, *cpDump))
 	}
-	if len(*localStoringTables) != 0 {
-		return errors.Trace(getLocalStoringTables(ctx, cfg, *localStoringTables))
+	if *localStoringTables {
+		return errors.Trace(getLocalStoringTables(ctx, cfg))
 	}
 
 	fsUsage()
@@ -314,20 +314,20 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	return nil
 }
 
-func getLocalStoringTables(ctx context.Context, cfg *config.Config, tableName string) error {
+func getLocalStoringTables(ctx context.Context, cfg *config.Config) error {
 	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer cpdb.Close()
 
-	tableWithEngine, err := cpdb.GetLocalStoringTables(ctx, tableName)
+	tableWithEngine, err := cpdb.GetLocalStoringTables(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	tables := make([]string, len(tableWithEngine))
-	for i := range tableWithEngine {
-		tables[i] = tableWithEngine[i].TableName
+	for tableName := range tableWithEngine {
+		tables = append(tables, tableName)
 	}
 
 	fmt.Fprintln(os.Stderr, "These tables are missing intermediate files:", tables)

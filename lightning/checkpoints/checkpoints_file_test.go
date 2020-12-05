@@ -280,7 +280,7 @@ func (s *cpFileSuite) TestDestroyAllErrorCheckpoints(c *C) {
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(ctx, "all")
 	c.Assert(err, IsNil)
 	sort.Slice(dtc, func(i, j int) bool { return dtc[i].TableName < dtc[j].TableName })
-	c.Assert(dtc, DeepEquals, []checkpoints.TableWithEngine{
+	c.Assert(dtc, DeepEquals, []checkpoints.DestroyedTableCheckpoint{
 		{
 			TableName:   "`db1`.`t2`",
 			MinEngineID: -1,
@@ -309,7 +309,7 @@ func (s *cpFileSuite) TestDestroyOneErrorCheckpoint(c *C) {
 
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(ctx, "`db1`.`t2`")
 	c.Assert(err, IsNil)
-	c.Assert(dtc, DeepEquals, []checkpoints.TableWithEngine{
+	c.Assert(dtc, DeepEquals, []checkpoints.DestroyedTableCheckpoint{
 		{
 			TableName:   "`db1`.`t2`",
 			MinEngineID: -1,

@@ -431,16 +431,19 @@ func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
 
 // for local backend, we should check if local SST exists in disk, otherwise we'll lost data
 func verifyLocalFile(ctx context.Context, cpdb CheckpointsDB, dir string) error {
-	targetTables, err := cpdb.GetLocalStoringTables(ctx, "all")
+	targetTables, err := cpdb.GetLocalStoringTables(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, tableWithEngine := range targetTables {
-		for engineID := tableWithEngine.MinEngineID; engineID <= tableWithEngine.MaxEngineID; engineID++ {
-			_, eID := kv.MakeUUID(tableWithEngine.TableName, engineID)
+	for tableName, engineIDs := range targetTables {
+		for _, engineID := range engineIDs {
+			_, eID := kv.MakeUUID(tableName, engineID)
 			file := kv.LocalFile{Uuid: eID}
 			err := file.Exist(dir)
 			if err != nil {
+				log.L().Error("can't find local file",
+					zap.String("table name", tableName),
+					zap.Int32("engine ID", engineID))
 				return errors.Trace(err)
 			}
 		}

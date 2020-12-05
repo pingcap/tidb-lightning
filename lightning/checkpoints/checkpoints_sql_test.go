@@ -369,7 +369,7 @@ func (s *cpSQLSuite) TestDestroyAllErrorCheckpoints(c *C) {
 
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(context.Background(), "all")
 	c.Assert(err, IsNil)
-	c.Assert(dtc, DeepEquals, []checkpoints.TableWithEngine{{
+	c.Assert(dtc, DeepEquals, []checkpoints.DestroyedTableCheckpoint{{
 		TableName:   "`db1`.`t2`",
 		MinEngineID: -1,
 		MaxEngineID: 0,
@@ -401,7 +401,7 @@ func (s *cpSQLSuite) TestDestroyOneErrorCheckpoints(c *C) {
 
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(context.Background(), "`db1`.`t2`")
 	c.Assert(err, IsNil)
-	c.Assert(dtc, DeepEquals, []checkpoints.TableWithEngine{{
+	c.Assert(dtc, DeepEquals, []checkpoints.DestroyedTableCheckpoint{{
 		TableName:   "`db1`.`t2`",
 		MinEngineID: -1,
 		MaxEngineID: 0,
