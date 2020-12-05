@@ -199,6 +199,7 @@ func newSession(options *SessionOptions) *session {
 			vars.SetSystemVar(k, v)
 		}
 	}
+	vars.StmtCtx.TimeZone = vars.Location()
 	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
 	vars.TxnCtx = nil
 
