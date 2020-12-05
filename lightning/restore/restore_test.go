@@ -926,13 +926,14 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567895,
 	})
+	c.Assert(err, IsNil)
 	cfg := config.NewConfig()
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, IsNil)
 	c.Assert(kvsCh, HasLen, 2)
 
@@ -950,15 +951,16 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan []deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567896,
 	})
+	c.Assert(err, IsNil)
 
 	go cancel()
 	cfg := config.NewConfig()
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 	c.Assert(kvsCh, HasLen, 0)
 }
@@ -967,17 +969,18 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567897,
 	})
+	c.Assert(err, IsNil)
 
 	// close the chunk so reading it will result in the "file already closed" error.
 	s.cr.parser.Close()
 
 	cfg := config.NewConfig()
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, ErrorMatches, `in file .*[/\\]?db\.table\.2\.sql:0 at offset 0:.*file already closed`)
 	c.Assert(kvsCh, HasLen, 0)
 }
@@ -986,10 +989,11 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan []deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
 		SQLMode:   s.cfg.TiDB.SQLMode,
 		Timestamp: 1234567898,
 	})
+	c.Assert(err, IsNil)
 
 	go func() {
 		deliverCompleteCh <- deliverResult{
@@ -998,7 +1002,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	}()
 	cfg := config.NewConfig()
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, ErrorMatches, "fake deliver error")
 	c.Assert(kvsCh, HasLen, 0)
 }
