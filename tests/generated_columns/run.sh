@@ -65,6 +65,7 @@ for BACKEND in 'local' 'tidb' 'importer'; do
     check_contains 'time: 1987-06-05 04:03:02.100'
     check_contains 'json: {"6ad8402ba6610f04d3ec5c9875489a7bc8e259c5": 0.5625}'
     check_contains 'aes: 0xA876B03CFC8AF93D22D19E2220BD2375'
-    check_contains 'week: 6'
+    # FIXME: test below disabled due to pingcap/tidb#21510
+    # check_contains 'week: 6'
     check_contains 'tz: 1969-12-31 16:00:01'
 done

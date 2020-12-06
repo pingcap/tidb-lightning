@@ -13,6 +13,7 @@ create table various_types (
     time timestamp(3) as ('1987-06-05 04:03:02.100') stored,
     json json as (json_object(string, float32)) stored,
     aes blob as (aes_encrypt(`decimal`, 'key', bytes)) stored, -- 0xA876B03CFC8AF93D22D19E2220BD2375, @@block_encryption_mode='aes-256-cbc'
-    week int as (week('2020-02-02')) stored, -- 6, @@default_week_format=4
+    -- FIXME: column below disabled due to pingcap/tidb#21510
+    -- week int as (week('2020-02-02')) stored, -- 6, @@default_week_format=4
     tz varchar(20) as (from_unixtime(1)) stored -- 1969-12-31 16:00:01, @@time_zone='-08:00'
 );
