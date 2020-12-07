@@ -1208,7 +1208,11 @@ func (t *TableRestore) importEngine(
 	return nil
 }
 
-func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, atEnd bool) (bool, error) {
+// postProcess execute rebase-auto-id/checksum/analyze according to the task config.
+//
+// if the parameter canDelay to true, postProcess will skip running some phase according to the config. And if some phase
+// are delayed, the first return value will be true.
+func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, canDelay bool) (bool, error) {
 	// there are no data in this table, no need to do post process
 	// this is important for tables that are just the dump table of views
 	// because at this stage, the table was already deleted and replaced by the related view
@@ -1279,7 +1283,7 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 			cp.Status = CheckpointStatusAnalyzed
-		} else if atEnd || !rc.cfg.PostRestore.AnalyzeAtLast {
+		} else if canDelay || !rc.cfg.PostRestore.AnalyzeAtLast {
 			err := t.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
