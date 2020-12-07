@@ -1014,14 +1014,9 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 			if !rc.isLocalBackend() {
 				rc.postProcessLock.Lock()
 			}
-			err = t.importKV(ctx, closedIndexEngine)
+			err = t.importKV(ctx, closedIndexEngine, rc, indexEngineID)
 			if !rc.isLocalBackend() {
 				rc.postProcessLock.Unlock()
-			}
-			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
-			err = closedIndexEngine.Cleanup(ctx)
-			if err != nil {
-				t.logger.Warn("failed to cleanup index engine", zap.Error(err))
 			}
 		}
 
@@ -1180,17 +1175,12 @@ func (t *TableRestore) importEngine(
 	if !rc.isLocalBackend() {
 		rc.postProcessLock.Lock()
 	}
-	err := t.importKV(ctx, closedEngine)
+	err := t.importKV(ctx, closedEngine, rc, engineID)
 	if !rc.isLocalBackend() {
 		rc.postProcessLock.Unlock()
 	}
-	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	err = closedEngine.Cleanup(ctx)
-	if err != nil {
-		t.logger.Warn("failed to cleanup engine", zap.Int32("engine ID", engineID), zap.Error(err))
 	}
 
 	// 2. perform a level-1 compact if idling.
@@ -1660,10 +1650,19 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 	return names
 }
 
-func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
+func (tr *TableRestore) importKV(
+	ctx context.Context,
+	closedEngine *kv.ClosedEngine,
+	rc *RestoreController,
+	engineID int32,
+) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 
 	err := closedEngine.Import(ctx)
+	rc.saveStatusCheckpoint(tr.tableName, engineID, err, CheckpointStatusImported)
+	if err == nil {
+		closedEngine.Cleanup(ctx)
+	}
 
 	dur := task.End(zap.ErrorLevel, err)
 
