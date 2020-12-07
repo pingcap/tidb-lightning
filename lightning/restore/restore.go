@@ -603,7 +603,6 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 	}
 
 	start := time.Now()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -637,24 +636,44 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 				engineEstimated = enginePending
 			}
 			engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues(metric.TableStateImported, metric.TableResultSuccess))
+			bytesWritten := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.TableStateWritten))
+			bytesImported := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.TableStateImported))
 
 			var state string
 			var remaining zap.Field
 			if finished >= estimated {
 				if engineFinished < engineEstimated {
 					state = "importing"
-					// TODO: how to estimate time remaining for importing
 				} else {
 					state = "post-processing"
 				}
 				remaining = zap.Skip()
 			} else if finished > 0 {
-				remainNanoseconds := (estimated/finished - 1) * nanoseconds
+
 				state = "writing"
-				remaining = zap.Duration("remaining", time.Duration(remainNanoseconds).Round(time.Second))
+
 			} else {
 				state = "writing"
-				remaining = zap.Skip()
+
+			}
+
+			// since we can't accurately estimate the extra time cost by import after all writing are finished,
+			// so here we use estimatedWritingProgress * 0.8 + estimatedImportingProgress * 0.2 as the total
+			// progress.
+			remaining = zap.Skip()
+			totalPercent := 0.0
+			if finished > 0 {
+				writePercent := math.Min(finished/estimated, 1.0)
+				importPercent := 1.0
+				if bytesWritten > 0 {
+					totalBytes := 1.0 / writePercent * bytesWritten
+					importPercent = math.Min(bytesImported/totalBytes, 1.0)
+				}
+				totalPercent = writePercent*0.8 + importPercent*0.2
+				if totalPercent < 1.0 {
+					remainNanoseconds := (1.0 - totalPercent) / totalPercent * nanoseconds
+					remaining = zap.Duration("remaining", time.Duration(remainNanoseconds).Round(time.Second))
+				}
 			}
 
 			formatPercent := func(finish, estimate float64) string {
@@ -673,6 +692,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 
 			// Note: a speed of 28 MiB/s roughly corresponds to 100 GiB/hour.
 			log.L().Info("progress",
+				zap.String("total", fmt.Sprintf("%.1f%%", totalPercent*100)),
 				//zap.String("files", fmt.Sprintf("%.0f/%.0f (%.1f%%)", finished, estimated, finished/estimated*100)),
 				zap.String("tables", fmt.Sprintf("%.0f/%.0f%s", completedTables, totalTables, formatPercent(completedTables, totalTables))),
 				zap.String("chunks", fmt.Sprintf("%.0f/%.0f%s", finished, estimated, formatPercent(finished, estimated))),
@@ -1119,6 +1139,7 @@ func (t *TableRestore) restoreEngine(
 			err := cr.restore(ctx, t, engineID, dataEngine, indexEngine, rc)
 			if err == nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
+				metric.BytesCounter.WithLabelValues(metric.TableStateWritten).Add(float64(cr.chunk.Checksum.SumSize()))
 				return
 			}
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Add(remainChunkCnt)
