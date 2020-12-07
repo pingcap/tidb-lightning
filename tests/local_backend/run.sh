@@ -23,7 +23,7 @@ ENGINE_COUNT=6
 rm -f "$TEST_DIR/lightning-local.log"
 rm -f "/tmp/tidb_lightning_checkpoint.pb"
 run_sql 'DROP DATABASE IF EXISTS cpeng;'
-export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/backend/local/FailIngestMeta=return("notleader")'
+export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/backend/FailIngestMeta=return("notleader")'
 
 run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/config.toml"
 
@@ -40,7 +40,7 @@ check_contains 'sum(c): 46'
 run_sql 'DROP DATABASE cpeng;'
 rm -f "/tmp/tidb_lightning_checkpoint.pb"
 
-export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/backend/local/FailIngestMeta=return("epochnotmatch")'
+export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/backend/FailIngestMeta=return("epochnotmatch")'
 
 run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/config.toml"
 

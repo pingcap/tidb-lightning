@@ -935,6 +935,7 @@ func (local *local) writeAndIngestPairs(
 ) (*Range, error) {
 	var err error
 	var remainRange *Range
+	retryCnt := 0
 loopWrite:
 	for i := 0; i < maxRetryTimes; i++ {
 		var metas []*sst.SSTMeta
@@ -949,23 +950,49 @@ loopWrite:
 			for errCnt < maxRetryTimes {
 				log.L().Debug("ingest meta", zap.Reflect("meta", meta))
 				var resp *sst.IngestResponse
-				resp, err = local.Ingest(ctx, meta, region)
+				doIngest := true
+				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
+					// only inject the error once
+					switch val.(string) {
+					case "notleader":
+						if errCnt == 0 {
+							resp = &sst.IngestResponse{
+								Error: &errorpb.Error{
+									NotLeader: &errorpb.NotLeader{
+										RegionId: region.Region.Id,
+										Leader:   region.Leader,
+									},
+								},
+							}
+							errCnt++
+						}
+					case "epochnotmatch":
+						if retryCnt == 0 {
+							resp = &sst.IngestResponse{
+								Error: &errorpb.Error{
+									EpochNotMatch: &errorpb.EpochNotMatch{
+										CurrentRegions: []*metapb.Region{region.Region},
+									},
+								},
+							}
+							retryCnt++
+						}
+					}
+					if resp != nil {
+						err = nil
+						doIngest = false
+					}
+				})
+				if doIngest {
+					resp, err = local.Ingest(ctx, meta, region)
+				}
 				if err != nil {
 					log.L().Warn("ingest failed", log.ShortError(err), zap.Reflect("meta", meta),
 						zap.Reflect("region", region))
 					errCnt++
 					continue
 				}
-				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
-					switch val.(string) {
-					case "notleader":
-						resp.Error.NotLeader = &errorpb.NotLeader{
-							RegionId: region.Region.Id, Leader: region.Leader}
-					case "epochnotmatch":
-						resp.Error.EpochNotMatch = &errorpb.EpochNotMatch{
-							CurrentRegions: []*metapb.Region{region.Region}}
-					}
-				})
+
 				var retryTy retryType
 				var newRegion *split.RegionInfo
 				retryTy, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
