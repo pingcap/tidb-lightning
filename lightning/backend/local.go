@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
@@ -28,6 +29,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/cockroachdb/pebble/sstable"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/coreos/go-semver/semver"
@@ -102,12 +105,29 @@ type localFileMeta struct {
 
 type LocalFile struct {
 	localFileMeta
-	db   *pebble.DB
-	Uuid uuid.UUID
+	db       *pebble.DB
+	Uuid     uuid.UUID
+	taskChan chan kvPairs
+	flushWg  sync.WaitGroup
+	writeErr common.OnceError
+	status   int32
+	sstDir   string
 }
 
+const (
+	localFileOpend int32 = iota
+	localFileFlushed
+	loclFileClosed
+)
+
 func (e *LocalFile) Close() error {
-	return e.db.Close()
+	if err := e.Flush(); err != nil {
+		return err
+	}
+	if atomic.CompareAndSwapInt32(&e.status, localFileFlushed, loclFileClosed) {
+		return e.db.Close()
+	}
+	return nil
 }
 
 // Cleanup remove meta and db files
@@ -146,6 +166,110 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 	}
 
 	return sizeProps, nil
+}
+
+func (e *LocalFile) Flush() error {
+	if !atomic.CompareAndSwapInt32(&e.status, localFileOpend, localFileFlushed) {
+		return nil
+	}
+	close(e.taskChan)
+	e.flushWg.Wait()
+	if err := e.writeErr.Get(); err != nil {
+		return err
+	}
+	return e.db.Flush()
+}
+
+func (e *LocalFile) writeRowsLoop() {
+	totalSize := int64(0)
+	flushLimit := 16
+	flushTickets := make(chan struct{}, flushLimit)
+	for i := 0; i < flushLimit; i++ {
+		flushTickets <- struct{}{}
+	}
+
+	doFlush := func(pairs kvPairs) {
+		defer func() {
+			e.flushWg.Done()
+			flushTickets <- struct{}{}
+		}()
+		p := filepath.Join(e.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
+		f, err := os.Create(p)
+		if err != nil {
+			e.writeErr.Set(err)
+			return
+		}
+		w := sstable.NewWriter(f, sstable.WriterOptions{
+			TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+				func() pebble.TablePropertyCollector {
+					return newRangePropertiesCollector()
+				},
+			},
+		})
+
+		sort.Slice(pairs, func(i, j int) bool {
+			return bytes.Compare(pairs[i].Key, pairs[j].Key) < 0
+		})
+
+		internalKey := sstable.InternalKey{
+			UserKey: []byte{},
+			Trailer: uint64((0 << 8) | sstable.InternalKeyKindSet),
+		}
+
+		for _, p := range pairs {
+			internalKey.UserKey = p.Key
+			err = w.Add(internalKey, p.Val)
+			if err != nil {
+				e.writeErr.Set(err)
+				return
+			}
+		}
+		err = w.Close()
+		if err != nil {
+			e.writeErr.Set(err)
+			return
+		}
+
+		err = e.db.Ingest([]string{p})
+		if err != nil {
+			e.writeErr.Set(err)
+			return
+		}
+	}
+
+	var paris kvPairs
+	estimatedCnt := 1024
+	for kvs := range e.taskChan {
+		if paris == nil {
+			e.flushWg.Add(1)
+			paris = make(kvPairs, 0, estimatedCnt)
+		}
+
+		paris = append(paris, kvs...)
+		for _, kv := range kvs {
+			totalSize += int64(len(kv.Key) + len(kv.Val))
+		}
+
+		atomic.AddInt64(&e.Length, int64(len(kvs)))
+		if totalSize >= LocalMemoryTableSize {
+			<-flushTickets
+			if err := e.writeErr.Get(); err != nil {
+				return
+			}
+
+			go doFlush(paris)
+			estimatedCnt = len(paris)
+			paris = nil
+			atomic.AddInt64(&e.TotalSize, totalSize)
+			totalSize = 0
+		}
+	}
+
+	if len(paris) > 0 {
+		atomic.AddInt64(&e.TotalSize, totalSize)
+		go doFlush(paris)
+	}
+	e.flushWg.Done()
 }
 
 type gRPCConns struct {
@@ -435,7 +559,24 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID})
+
+	tmpPath := filepath.Join(local.localStoreDir, engineUUID.String(), "lightning_tmp")
+	if err := os.Mkdir(tmpPath, 0755); err != nil {
+		return err
+	}
+
+	lf := &LocalFile{
+		localFileMeta: meta,
+		db:            db,
+		Uuid:          engineUUID,
+		taskChan:      make(chan kvPairs, 128),
+		sstDir:        tmpPath,
+	}
+
+	lf.flushWg.Add(1)
+	go lf.writeRowsLoop()
+
+	local.engines.Store(engineUUID, lf)
 	return nil
 }
 
@@ -469,7 +610,7 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 		return nil
 	}
 	engineFile := engine.(*LocalFile)
-	err := engineFile.db.Flush()
+	err := engineFile.Flush()
 	if err != nil {
 		return err
 	}
@@ -1169,7 +1310,7 @@ func (local *local) WriteRows(
 	columnNames []string,
 	ts uint64,
 	rows Rows,
-) (finalErr error) {
+) error {
 	kvs := rows.(kvPairs)
 	if len(kvs) == 0 {
 		return nil
@@ -1180,24 +1321,17 @@ func (local *local) WriteRows(
 		return errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engineFile := e.(*LocalFile)
+	engineFile.Ts = ts
 
-	// write to pebble to make them sorted
-	wb := engineFile.db.NewBatch()
-	defer wb.Close()
-	wo := &pebble.WriteOptions{Sync: false}
-
-	size := int64(0)
-	for _, pair := range kvs {
-		wb.Set(pair.Key, pair.Val, wo)
-		size += int64(len(pair.Key) + len(pair.Val))
-	}
-	if err := wb.Commit(wo); err != nil {
+	if err := engineFile.writeErr.Get(); err != nil {
 		return err
 	}
-	atomic.AddInt64(&engineFile.Length, int64(len(kvs)))
-	atomic.AddInt64(&engineFile.TotalSize, size)
-	engineFile.Ts = ts
-	return
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case engineFile.taskChan <- kvs:
+	}
+	return nil
 }
 
 func (local *local) MakeEmptyRows() Rows {
