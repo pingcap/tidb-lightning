@@ -387,13 +387,14 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize:             LocalMemoryTableSize,
-		MaxConcurrentCompactions: 16,
-		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
-		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
-		MaxOpenFiles:             10000,
-		DisableWAL:               true,
-		ReadOnly:                 readOnly,
+		MemTableSize:                LocalMemoryTableSize,
+		MemTableStopWritesThreshold: 16,
+		MaxConcurrentCompactions:    16,
+		L0CompactionThreshold:       math.MaxInt32, // set to max try to disable compaction
+		L0StopWritesThreshold:       math.MaxInt32, // set to max try to disable compaction
+		MaxOpenFiles:                10000,
+		DisableWAL:                  true,
+		ReadOnly:                    readOnly,
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			func() pebble.TablePropertyCollector {
 				return newRangePropertiesCollector()

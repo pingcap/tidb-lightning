@@ -265,10 +265,12 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 	}
 
 	for _, dbMeta := range s.loader.dbs {
-		// Put the small table in the front of the slice which can avoid large table
-		// take a long time to import and block small table to release index worker.
+		// ~Put the small table in the front of the slice which can avoid large table~
+		// ~take a long time to import and block small table to release index worker.~
+
+		// run large table at first to avoid the long tail import phase
 		sort.SliceStable(dbMeta.Tables, func(i, j int) bool {
-			return dbMeta.Tables[i].TotalSize < dbMeta.Tables[j].TotalSize
+			return dbMeta.Tables[i].TotalSize > dbMeta.Tables[j].TotalSize
 		})
 
 		// sort each table source files by sort-key
