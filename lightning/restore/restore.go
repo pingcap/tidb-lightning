@@ -1669,10 +1669,12 @@ func (t *TableRestore) parseColumnPermutations(columns []string) ([]int, error) 
 		if i, ok := columnMap[colInfo.Name.L]; ok {
 			colPerm = append(colPerm, i)
 		} else {
-			t.logger.Warn("column missing from data file, going to fill with default value",
-				zap.String("colName", colInfo.Name.O),
-				zap.Stringer("colType", &colInfo.FieldType),
-			)
+			if len(colInfo.GeneratedExprString) == 0 {
+				t.logger.Warn("column missing from data file, going to fill with default value",
+					zap.String("colName", colInfo.Name.O),
+					zap.Stringer("colType", &colInfo.FieldType),
+				)
+			}
 			colPerm = append(colPerm, -1)
 		}
 	}
@@ -2009,13 +2011,17 @@ func (cr *chunkRestore) restore(
 	rc *RestoreController,
 ) error {
 	// Create the encoder.
-	kvEncoder := rc.backend.NewEncoder(t.encTable, &kv.SessionOptions{
+	kvEncoder, err := rc.backend.NewEncoder(t.encTable, &kv.SessionOptions{
 		SQLMode:          rc.cfg.TiDB.SQLMode,
 		Timestamp:        cr.chunk.Timestamp,
 		RowFormatVersion: rc.rowFormatVer,
 		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
 		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 	})
+	if err != nil {
+		return err
+	}
+
 	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
 
