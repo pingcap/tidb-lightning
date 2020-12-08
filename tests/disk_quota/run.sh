@@ -19,6 +19,8 @@ check_cluster_version 4 0 0 'local backend' || exit 0
 
 # the default mode (aes-128-ecb) can be easily compressed, switch to cbc to reduce the compression effect.
 run_sql 'DROP DATABASE IF EXISTS disk_quota;'
+run_sql "SELECT @@block_encryption_mode"
+OLD_ENCRYPTION_MODE=$(read_result)
 run_sql "SET GLOBAL block_encryption_mode = 'aes-256-cbc';"
 
 DISK_QUOTA_DIR="$TEST_DIR/with-disk-quota"
@@ -28,15 +30,27 @@ mkdir -p "$DISK_QUOTA_DIR"
 rm -f "$FINISHED_FILE"
 cleanup() {
     touch "$FINISHED_FILE"
+    run_sql "SET GLOBAL block_encryption_mode = '$OLD_ENCRYPTION_MODE';"
 }
 trap cleanup EXIT
+
+# There is normally a 2 second delay between these SET GLOBAL statements returns
+# and the changes are actually effective. So we have this check-and-retry loop
+# below to ensure Lightning gets our desired global vars.
+for i in $(seq 3); do
+    sleep 1
+    run_sql "SELECT @@block_encryption_mode"
+    if [ "$(read_result)" = 'aes-256-cbc' ]; then
+        break
+    fi
+done
 
 while [ ! -e "$FINISHED_FILE" ]; do
     DISK_USAGE=$(du -s -B1 "$DISK_QUOTA_DIR" | cut -f 1)
     # the disk quota of 75 MiB is a just soft limit.
     # the reserved size we have is (512 MiB + 4 files × 1000ms × 1 KiB/ms) = 516 MiB,
     # which sums up to 591 MiB as the hard limit.
-    if [ "$DISK_USAGE" -gt 619610112 ]; then
+    if [ "0$DISK_USAGE" -gt 619610112 ]; then
         echo "hard disk quota exceeded, actual size = $DISK_USAGE" > "$FINISHED_FILE"
         break
     else
