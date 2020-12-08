@@ -16,7 +16,7 @@
 set -eu
 TEST_DIR=/tmp/lightning_test_result
 
-echo "[$(date)] Executing SQL: $1" > "$TEST_DIR/sql_res.$TEST_NAME.txt"
+echo "[$(date)] Executing SQL: ${*: -1:1}" > "$TEST_DIR/sql_res.$TEST_NAME.txt"
 mysql -uroot -h127.0.0.1 -P4000 \
     --ssl-ca="$TEST_DIR/tls/ca.pem" \
     --ssl-cert="$TEST_DIR/tls/curl.pem" \
