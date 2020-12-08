@@ -580,8 +580,12 @@ func (local *local) WriteToTiKV(
 	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
 	iter := engineFile.db.NewIter(opt)
 	defer iter.Close()
+	iter.First()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
+	}
 
-	if !iter.First() {
+	if !iter.Valid() {
 		log.L().Info("keys within region is empty, skip ingest", zap.Binary("start", start),
 			zap.Binary("regionStart", region.Region.StartKey), zap.Binary("end", end),
 			zap.Binary("regionEnd", region.Region.EndKey))
@@ -590,6 +594,9 @@ func (local *local) WriteToTiKV(
 
 	firstKey := codec.EncodeBytes([]byte{}, iter.Key())
 	iter.Last()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
 
 	u := uuid.New()
@@ -676,6 +683,10 @@ func (local *local) WriteToTiKV(
 		}
 	}
 
+	if iter.Error() != nil {
+		return nil, nil, errors.Trace(iter.Error())
+	}
+
 	if count > 0 {
 		for i := range clients {
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
@@ -683,10 +694,6 @@ func (local *local) WriteToTiKV(
 				return nil, nil, err
 			}
 		}
-	}
-
-	if iter.Error() != nil {
-		return nil, nil, errors.Trace(iter.Error())
 	}
 
 	var leaderPeerMetas []*sst.SSTMeta
@@ -785,16 +792,24 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
 
+	iterError := func(e string) error {
+		err := iter.Error()
+		if err != nil {
+			return errors.Annotate(err, e)
+		}
+		return errors.New(e)
+	}
+
 	var firstKey, lastKey []byte
 	if iter.First() {
 		firstKey = append([]byte{}, iter.Key()...)
 	} else {
-		return nil, errors.New("could not find first pair, this shouldn't happen")
+		return nil, iterError("could not find first pair")
 	}
 	if iter.Last() {
 		lastKey = append([]byte{}, iter.Key()...)
 	} else {
-		return nil, errors.New("could not find last pair, this shouldn't happen")
+		return nil, iterError("could not find last pair")
 	}
 	endKey := nextKey(lastKey)
 
@@ -931,6 +946,9 @@ func (local *local) writeAndIngestByRange(
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()
+	if iter.Error() != nil {
+		return errors.Annotate(iter.Error(), "failed to read the first key")
+	}
 	if !hasKey {
 		log.L().Info("There is no pairs in iterator",
 			zap.Binary("start", start),
@@ -940,6 +958,9 @@ func (local *local) writeAndIngestByRange(
 	}
 	pairStart := append([]byte{}, iter.Key()...)
 	iter.Last()
+	if iter.Error() != nil {
+		return errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
 	pairEnd := append([]byte{}, iter.Key()...)
 
 	var regions []*split.RegionInfo

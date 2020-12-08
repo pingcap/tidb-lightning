@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -84,9 +83,8 @@ func (s *kvSuite) TestEncode(c *C) {
 
 	// Strict mode
 	strictMode, err := NewTableKVEncoder(tbl, &SessionOptions{
-		SQLMode:          mysql.ModeStrictAllTables,
-		Timestamp:        1234567890,
-		RowFormatVersion: "1",
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
 	})
 	c.Assert(err, IsNil)
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1})
@@ -116,9 +114,8 @@ func (s *kvSuite) TestEncode(c *C) {
 	// Mock add record error
 	mockTbl := &mockTable{Table: tbl}
 	mockMode, err := NewTableKVEncoder(mockTbl, &SessionOptions{
-		SQLMode:          mysql.ModeStrictAllTables,
-		Timestamp:        1234567891,
-		RowFormatVersion: "1",
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567891,
 	})
 	c.Assert(err, IsNil)
 	pairs, err = mockMode.Encode(logger, rowsWithPk2, 2, []int{0, 1})
@@ -126,9 +123,9 @@ func (s *kvSuite) TestEncode(c *C) {
 
 	// Non-strict mode
 	noneMode, err := NewTableKVEncoder(tbl, &SessionOptions{
-		SQLMode:          mysql.ModeNone,
-		Timestamp:        1234567892,
-		RowFormatVersion: "1",
+		SQLMode:   mysql.ModeNone,
+		Timestamp: 1234567892,
+		SysVars:   map[string]string{"tidb_row_format_version": "1"},
 	})
 	c.Assert(err, IsNil)
 	pairs, err = noneMode.Encode(logger, rows, 1, []int{0, 1})
@@ -156,9 +153,9 @@ func (s *kvSuite) TestEncodeRowFormatV2(c *C) {
 	}
 
 	noneMode, err := NewTableKVEncoder(tbl, &SessionOptions{
-		SQLMode:          mysql.ModeNone,
-		Timestamp:        1234567892,
-		RowFormatVersion: "2",
+		SQLMode:   mysql.ModeNone,
+		Timestamp: 1234567892,
+		SysVars:   map[string]string{"tidb_row_format_version": "2"},
 	})
 	c.Assert(err, IsNil)
 	pairs, err := noneMode.Encode(logger, rows, 1, []int{0, 1})
@@ -199,11 +196,13 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 
 	logger := log.Logger{Logger: zap.NewNop()}
 
-	timeutil.SetSystemTZ("Etc/GMT-8") // force timezone to be UTC+08:00.
 	encoder, err := NewTableKVEncoder(tbl, &SessionOptions{
-		SQLMode:          mysql.ModeStrictAllTables,
-		Timestamp:        1234567893,
-		RowFormatVersion: "1",
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567893,
+		SysVars: map[string]string{
+			"tidb_row_format_version": "1",
+			"time_zone":               "+08:00",
+		},
 	})
 	c.Assert(err, IsNil)
 	pairs, err := encoder.Encode(logger, nil, 70, []int{-1, 1})
@@ -234,10 +233,10 @@ func (s *kvSuite) TestDefaultAutoRandoms(c *C) {
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
 	c.Assert(err, IsNil)
 	encoder, err := NewTableKVEncoder(tbl, &SessionOptions{
-		SQLMode:          mysql.ModeStrictAllTables,
-		Timestamp:        1234567893,
-		RowFormatVersion: "2",
-		AutoRandomSeed:   456,
+		SQLMode:        mysql.ModeStrictAllTables,
+		Timestamp:      1234567893,
+		SysVars:        map[string]string{"tidb_row_format_version": "2"},
+		AutoRandomSeed: 456,
 	})
 	c.Assert(err, IsNil)
 	logger := log.Logger{Logger: zap.NewNop()}
@@ -399,8 +398,7 @@ func (s *benchSQL2KVSuite) SetUpTest(c *C) {
 	// Construct the corresponding KV encoder.
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tableInfo)
 	c.Assert(err, IsNil)
-	s.encoder, err = NewTableKVEncoder(tbl, &SessionOptions{RowFormatVersion: "2"})
-	c.Assert(err, IsNil)
+	s.encoder, err = NewTableKVEncoder(tbl, &SessionOptions{SysVars: map[string]string{"tidb_row_format_version": "2"}})
 	s.logger = log.Logger{Logger: zap.NewNop()}
 
 	// Prepare the row to insert.

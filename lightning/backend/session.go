@@ -176,9 +176,9 @@ type session struct {
 
 // SessionOptions is the initial configuration of the session.
 type SessionOptions struct {
-	SQLMode          mysql.SQLMode
-	Timestamp        int64
-	RowFormatVersion string
+	SQLMode   mysql.SQLMode
+	Timestamp int64
+	SysVars   map[string]string
 	// a seed used for tableKvEncoder's auto random bits value
 	AutoRandomSeed int64
 }
@@ -194,12 +194,13 @@ func newSession(options *SessionOptions) *session {
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
+	if options.SysVars != nil {
+		for k, v := range options.SysVars {
+			vars.SetSystemVar(k, v)
+		}
+	}
 	vars.StmtCtx.TimeZone = vars.Location()
 	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
-	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
-	// FIXME: read this from target just like RowFormatVersion (see #504). generalize this to all important system var.
-	vars.SetSystemVar(variable.BlockEncryptionMode, "aes-256-cbc")
-	vars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.MaxOfMaxAllowedPacket, 10))
 	vars.TxnCtx = nil
 
 	s := &session{

@@ -927,9 +927,8 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567895,
-		RowFormatVersion: "1",
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567895,
 	})
 	c.Assert(err, IsNil)
 	cfg := config.NewConfig()
@@ -953,9 +952,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 	kvsCh := make(chan []deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567896,
-		RowFormatVersion: "1",
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567896,
 	})
 	c.Assert(err, IsNil)
 
@@ -972,9 +970,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567897,
-		RowFormatVersion: "1",
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567897,
 	})
 	c.Assert(err, IsNil)
 
@@ -993,9 +990,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	kvsCh := make(chan []deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567898,
-		RowFormatVersion: "1",
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567898,
 	})
 	c.Assert(err, IsNil)
 

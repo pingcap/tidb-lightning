@@ -321,7 +321,7 @@ func (s *backendSuite) TestNewEncoder(c *C) {
 	defer s.tearDownTest()
 
 	encoder := mock.NewMockEncoder(s.controller)
-	options := &kv.SessionOptions{SQLMode: mysql.ModeANSIQuotes, Timestamp: 1234567890, RowFormatVersion: "1"}
+	options := &kv.SessionOptions{SQLMode: mysql.ModeANSIQuotes, Timestamp: 1234567890}
 	s.mockBackend.EXPECT().NewEncoder(nil, options).Return(encoder, nil)
 
 	realEncoder, err := s.mockBackend.NewEncoder(nil, options)
