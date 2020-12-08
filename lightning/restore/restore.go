@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb-lightning/lightning/glue"
 	tidbcfg "github.com/pingcap/tidb/config"
@@ -296,10 +297,138 @@ outside:
 	return errors.Trace(err)
 }
 
+type schemaJobType int
+
+const (
+	schemaCreateDatabase = iota
+	schemaCreateTable
+	schemaCreateView
+)
+
+type schemaJob struct {
+	dbName  string
+	tblName string
+	jobType schemaJobType
+	sql     string
+}
+
+type restoreSchemaWorker struct {
+	ctx         context.Context
+	quit        context.CancelFunc
+	concurrency int
+	jobCh       chan *schemaJob
+	errCh       chan error
+	wg          sync.WaitGroup
+	parser      *parser.Parser
+	executor    glue.SQLExecutor
+	store       storage.ExternalStorage
+	purpose     []string
+}
+
+func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
+	go func() {
+		for _, dbMeta := range dbMetas {
+			// task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
+			var createDatabase strings.Builder
+			createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
+			common.WriteMySQLIdentifier(&createDatabase, dbMeta.Name)
+			worker.wg.Add(1)
+			worker.jobCh <- &schemaJob{
+				sql:     createDatabase.String(),
+				jobType: schemaCreateDatabase,
+			}
+		}
+		worker.wg.Wait()
+		for _, dbMeta := range dbMetas {
+			if len(dbMeta.Tables) > 0 {
+				for _, tblMeta := range dbMeta.Tables {
+					sql := tblMeta.GetSchema(worker.ctx, worker.store)
+					if sql != "" {
+						stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, tblMeta.Name)
+						if err != nil {
+							worker.errCh <- err
+							break
+						}
+						for _, stmt := range stmts {
+							worker.wg.Add(1)
+							worker.jobCh <- &schemaJob{
+								sql:     stmt,
+								jobType: schemaCreateTable,
+							}
+						}
+					}
+				}
+			}
+		}
+		worker.wg.Wait()
+		for _, dbMeta := range dbMetas {
+			if len(dbMeta.Views) > 0 {
+				for _, viewMeta := range dbMeta.Views {
+					sql := viewMeta.GetSchema(worker.ctx, worker.store)
+					if sql != "" {
+						stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, viewMeta.Name)
+						if err != nil {
+							worker.errCh <- err
+							break
+						}
+						for _, stmt := range stmts {
+							worker.wg.Add(1)
+							worker.jobCh <- &schemaJob{
+								sql:     stmt,
+								jobType: schemaCreateView,
+							}
+						}
+					}
+				}
+			}
+		}
+	}()
+}
+
+func (worker *restoreSchemaWorker) run() {
+	for i := 0; i < worker.concurrency; i++ {
+		go func() {
+			for {
+				select {
+				case <-worker.ctx.Done():
+					return
+				case job := <-worker.jobCh:
+					//TODO: maybe we should put these createStems into a transaction
+					var logger log.Logger
+					purposePicker := 0
+					if job.jobType == schemaCreateDatabase {
+						logger = log.With(zap.String("db", job.dbName))
+						purposePicker = 1
+					} else if job.jobType == schemaCreateTable {
+						logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
+						purposePicker = 2
+					} else if job.jobType == schemaCreateView {
+						logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
+						purposePicker = 3
+					}
+					err := worker.executor.ExecuteWithLog(worker.ctx, job.sql, worker.purpose[purposePicker], logger)
+					worker.wg.Done()
+					if err != nil {
+						worker.errCh <- err
+					}
+				}
+			}
+		}()
+	}
+}
+
+func (worker *restoreSchemaWorker) wait() error {
+	select {
+	case err := <-worker.errCh:
+		worker.quit()
+		return err
+	case <-worker.ctx.Done():
+		return nil
+	}
+}
+
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	if !rc.cfg.Mydumper.NoSchema {
-		// CONFUSED: how we control concurrency via configuration?
-		concurrency := 16
 		if rc.tidbGlue.OwnsSQLExecutor() {
 			// CONFUSED: why don't use rc.tidbGlue.GetDB()?
 			db, err := DBFromConfig(rc.cfg.TiDB)
@@ -313,38 +442,60 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		concurrency := 16
 		conn.SetMaxOpenConns(concurrency)
-		for _, dbMeta := range rc.dbMetas {
-			task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
-
-			tablesSchema := make(map[string]string)
-			for _, tblMeta := range dbMeta.Tables {
-				tablesSchema[tblMeta.Name] = tblMeta.GetSchema(ctx, rc.store)
-			}
-			err = InitSchema(ctx, concurrency, rc.tidbGlue.GetParser(), rc.tidbGlue.GetSQLExecutor(), dbMeta.Name, tablesSchema)
-
-			task.End(zap.ErrorLevel, err)
-			if err != nil {
-				return errors.Annotatef(err, "restore table schema %s failed", dbMeta.Name)
-			}
+		childCtx, cancel := context.WithCancel(ctx)
+		worker := restoreSchemaWorker{
+			ctx:         childCtx,
+			quit:        cancel,
+			wg:          sync.WaitGroup{},
+			concurrency: concurrency,
+			jobCh:       make(chan *schemaJob, concurrency),
+			errCh:       make(chan error),
+			parser:      rc.tidbGlue.GetParser(),
+			executor:    rc.tidbGlue.GetSQLExecutor(),
+			store:       rc.store,
+			purpose: []string{
+				"unknown",
+				"create database",
+				"create table",
+				"create view",
+			},
 		}
-		// restore views. Since views can cross database we must restore views after all table schemas are restored.
-		for _, dbMeta := range rc.dbMetas {
-			if len(dbMeta.Views) > 0 {
-				task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore view schema")
-				viewsSchema := make(map[string]string)
-				for _, viewMeta := range dbMeta.Views {
-					viewsSchema[viewMeta.Name] = viewMeta.GetSchema(ctx, rc.store)
-				}
-				err := InitSchema(ctx, concurrency, rc.tidbGlue.GetParser(), rc.tidbGlue.GetSQLExecutor(), dbMeta.Name, viewsSchema)
+		worker.makeJobs(rc.dbMetas)
+		worker.run()
+		worker.wait()
+		// for _, dbMeta := range rc.dbMetas {
+		// 	task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
 
-				task.End(zap.ErrorLevel, err)
-				if err != nil {
-					return errors.Annotatef(err, "restore view schema %s failed", dbMeta.Name)
-				}
-			}
+		// 	tablesSchema := make(map[string]string)
+		// 	for _, tblMeta := range dbMeta.Tables {
+		// 		tablesSchema[tblMeta.Name] = tblMeta.GetSchema(ctx, rc.store)
+		// 	}
+		// 	err = InitSchema(ctx, concurrency, rc.tidbGlue.GetParser(), rc.tidbGlue.GetSQLExecutor(), dbMeta.Name, tablesSchema)
 
-		}
+		// 	task.End(zap.ErrorLevel, err)
+		// 	if err != nil {
+		// 		return errors.Annotatef(err, "restore table schema %s failed", dbMeta.Name)
+		// 	}
+		// }
+		// // restore views. Since views can cross database we must restore views after all table schemas are restored.
+		// for _, dbMeta := range rc.dbMetas {
+		// 	if len(dbMeta.Views) > 0 {
+		// 		task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore view schema")
+		// 		viewsSchema := make(map[string]string)
+		// 		for _, viewMeta := range dbMeta.Views {
+		// 			viewsSchema[viewMeta.Name] = viewMeta.GetSchema(ctx, rc.store)
+		// 		}
+		// 		err := InitSchema(ctx, concurrency, rc.tidbGlue.GetParser(), rc.tidbGlue.GetSQLExecutor(), dbMeta.Name, viewsSchema)
+
+		// 		task.End(zap.ErrorLevel, err)
+		// 		if err != nil {
+		// 			return errors.Annotatef(err, "restore view schema %s failed", dbMeta.Name)
+		// 		}
+		// 	}
+
+		// }
 	}
 	getTableFunc := rc.backend.FetchRemoteTableModels
 	if !rc.tidbGlue.OwnsSQLExecutor() {
