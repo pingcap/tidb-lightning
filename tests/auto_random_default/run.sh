@@ -37,10 +37,12 @@ for backend in tidb importer local; do
       check_contains 'inc: 4'
       check_contains 'inc: 5'
       check_contains 'inc: 6'
+      NEXT_AUTO_RAND_VAL=7
     else
       check_contains 'inc: 25'
       check_contains 'inc: 26'
       check_contains 'inc: 27'
+      NEXT_AUTO_RAND_VAL=28
     fi
 
 
@@ -48,11 +50,9 @@ for backend in tidb importer local; do
     check_contains "count: 2"
 
     # auto random base is 4
+    run_sql "SELECT max(id & b'000001111111111111111111111111111111111111111111111111111111111') >= $NEXT_AUTO_RAND_VAL as ge FROM auto_random.t"
+    check_contains 'ge: 0'
     run_sql "INSERT INTO auto_random.t VALUES ();"
-    run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM auto_random.t"
-    if [ "$backend" = 'tidb' ]; then
-      check_contains 'inc: 2000001'
-    else
-      check_contains 'inc: 28'
-    fi
+    run_sql "SELECT max(id & b'000001111111111111111111111111111111111111111111111111111111111') >= $NEXT_AUTO_RAND_VAL as ge FROM auto_random.t"
+    check_contains 'ge: 1'
 done

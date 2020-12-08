@@ -91,7 +91,7 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 		perms = append(perms, i)
 	}
 	perms = append(perms, -1)
-	encoder, err := s.backend.NewEncoder(s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890, RowFormatVersion: "1"})
+	encoder, err := s.backend.NewEncoder(s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890})
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewUintDatum(18446744073709551615),
