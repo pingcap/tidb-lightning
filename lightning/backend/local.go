@@ -47,7 +47,6 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
@@ -110,10 +109,23 @@ type LocalFile struct {
 	db   *pebble.DB
 	Uuid uuid.UUID
 
-	// importSemaphore ensures the engine can only be imported by a single
-	// thread. We use a semaphore instead of a sync.Mutex because we need the
-	// TryAcquire method.
-	importSemaphore *semaphore.Weighted
+	// importMutex ensures the engine can only be imported by a single thread.
+	importMutex sync.Mutex
+	// isImportingAtomic is an atomic variable indicating whether the importMutex has been locked.
+	// This should not be used as a "spin lock" indicator.
+	isImportingAtomic int32
+}
+
+// lock locks the local file for importing.
+func (e *LocalFile) lock() {
+	e.importMutex.Lock()
+	atomic.StoreInt32(&e.isImportingAtomic, 1)
+}
+
+// unlock unlocks the local file from importing.
+func (e *LocalFile) unlock() {
+	atomic.StoreInt32(&e.isImportingAtomic, 0)
+	e.importMutex.Unlock()
 }
 
 func (e *LocalFile) Close() error {
@@ -165,11 +177,7 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 }
 
 func (e *LocalFile) isImporting() bool {
-	res := e.importSemaphore.TryAcquire(1)
-	if res {
-		e.importSemaphore.Release(1)
-	}
-	return !res
+	return atomic.LoadInt32(&e.isImportingAtomic) != 0
 }
 
 func (e *LocalFile) getEngineFileSize() EngineFileSize {
@@ -509,10 +517,9 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 		return err
 	}
 	local.engines.Store(engineUUID, &LocalFile{
-		localFileMeta:   meta,
-		db:              db,
-		Uuid:            engineUUID,
-		importSemaphore: semaphore.NewWeighted(1),
+		localFileMeta: meta,
+		db:            db,
+		Uuid:          engineUUID,
 	})
 	return nil
 }
@@ -539,10 +546,9 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 			return err
 		}
 		engineFile := &LocalFile{
-			localFileMeta:   meta,
-			Uuid:            engineUUID,
-			db:              db,
-			importSemaphore: semaphore.NewWeighted(1),
+			localFileMeta: meta,
+			Uuid:          engineUUID,
+			db:            db,
 		}
 		local.engines.Store(engineUUID, engineFile)
 		return nil
@@ -1177,10 +1183,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 	lf := engineFile.(*LocalFile)
 
-	if err := lf.importSemaphore.Acquire(ctx, 1); err != nil {
-		return errors.Trace(err)
-	}
-	defer lf.importSemaphore.Release(1)
+	lf.lock()
+	defer lf.unlock()
 
 	if lf.TotalSize == 0 {
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
@@ -1248,10 +1252,8 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	engineFile, ok := local.engines.Load(engineUUID)
 	if ok {
 		localEngine := engineFile.(*LocalFile)
-		if err := localEngine.importSemaphore.Acquire(ctx, 1); err != nil {
-			return errors.Trace(err)
-		}
-		defer localEngine.importSemaphore.Release(1)
+		localEngine.lock()
+		defer localEngine.unlock()
 
 		// since closing the engine causes all subsequent operations on it panic,
 		// we make sure to delete it from the engine map before calling Close().
