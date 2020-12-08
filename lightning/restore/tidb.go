@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 
 	tmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -126,69 +125,70 @@ func (timgr *TiDBManager) Close() {
 }
 
 func InitSchema(ctx context.Context, concurrency int, parser *parser.Parser, exec glue.SQLExecutor, database string, tablesSchema map[string]string) error {
-	logger := log.With(zap.String("db", database))
-	var createDatabase strings.Builder
-	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
-	common.WriteMySQLIdentifier(&createDatabase, database)
-	err := exec.ExecuteWithLog(ctx, createDatabase.String(), "create database", logger)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	var wg sync.WaitGroup
-	fnCreateTable := func(ctx context.Context, exec glue.SQLExecutor, jobCh chan *schemaJob, logger log.Logger, errCh chan error) {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case job := <-jobCh:
-				//TODO: maybe we should put these createStems into a transaction
-				err = exec.ExecuteWithLog(ctx, job.sql, "create table", logger.With(job.log))
-				wg.Done()
-				if err != nil {
-					errCh <- err
-				}
-			}
-		}
-	}
-	fnHandleError := func(ctx context.Context, err error, errCh chan error, quit context.CancelFunc) {
-		for {
-			select {
-			case err = <-errCh:
-				quit()
-				return
-			case <-ctx.Done():
-				return
-			}
-		}
-	}
-	var sqlCreateStmts []string
-	errCh := make(chan error)
-	queue := make(chan *schemaJob, concurrency)
-	task := logger.Begin(zap.InfoLevel, "create tables")
-	childCtx, cancel := context.WithCancel(ctx)
-	for i := 0; i < concurrency; i++ {
-		go fnCreateTable(childCtx, exec, queue, logger, errCh)
-	}
-	go fnHandleError(childCtx, err, errCh, cancel)
-	for tbl, sqlCreateTable := range tablesSchema {
-		task.Debug("create table", zap.String("schema", sqlCreateTable))
-		sqlCreateStmts, err = createTableIfNotExistsStmt(parser, sqlCreateTable, database, tbl)
-		if err != nil {
-			errCh <- err
-			break
-		}
-		log := zap.String("table", common.UniqueTable(database, tbl))
-		for _, stmt := range sqlCreateStmts {
-			wg.Add(1)
-			queue <- &schemaJob{
-				sql:    stmt,
-				logger: log,
-			}
-		}
-	}
-	wg.Wait()
-	task.End(zap.ErrorLevel, err)
-	return errors.Trace(err)
+	// logger := log.With(zap.String("db", database))
+	// var createDatabase strings.Builder
+	// createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
+	// common.WriteMySQLIdentifier(&createDatabase, database)
+	// err := exec.ExecuteWithLog(ctx, createDatabase.String(), "create database", logger)
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+	// var wg sync.WaitGroup
+	// fnCreateTable := func(ctx context.Context, exec glue.SQLExecutor, jobCh chan *schemaJob, logger log.Logger, errCh chan error) {
+	// 	for {
+	// 		select {
+	// 		case <-ctx.Done():
+	// 			return
+	// 		case job := <-jobCh:
+	// 			//TODO: maybe we should put these createStems into a transaction
+	// 			err = exec.ExecuteWithLog(ctx, job.sql, "create table", logger.With(job.log))
+	// 			wg.Done()
+	// 			if err != nil {
+	// 				errCh <- err
+	// 			}
+	// 		}
+	// 	}
+	// }
+	// fnHandleError := func(ctx context.Context, err error, errCh chan error, quit context.CancelFunc) {
+	// 	for {
+	// 		select {
+	// 		case err = <-errCh:
+	// 			quit()
+	// 			return
+	// 		case <-ctx.Done():
+	// 			return
+	// 		}
+	// 	}
+	// }
+	// var sqlCreateStmts []string
+	// errCh := make(chan error)
+	// queue := make(chan *schemaJob, concurrency)
+	// task := logger.Begin(zap.InfoLevel, "create tables")
+	// childCtx, cancel := context.WithCancel(ctx)
+	// for i := 0; i < concurrency; i++ {
+	// 	go fnCreateTable(childCtx, exec, queue, logger, errCh)
+	// }
+	// go fnHandleError(childCtx, err, errCh, cancel)
+	// for tbl, sqlCreateTable := range tablesSchema {
+	// 	task.Debug("create table", zap.String("schema", sqlCreateTable))
+	// 	sqlCreateStmts, err = createTableIfNotExistsStmt(parser, sqlCreateTable, database, tbl)
+	// 	if err != nil {
+	// 		errCh <- err
+	// 		break
+	// 	}
+	// 	log := zap.String("table", common.UniqueTable(database, tbl))
+	// 	for _, stmt := range sqlCreateStmts {
+	// 		wg.Add(1)
+	// 		queue <- &schemaJob{
+	// 			sql:    stmt,
+	// 			logger: log,
+	// 		}
+	// 	}
+	// }
+	// wg.Wait()
+	// task.End(zap.ErrorLevel, err)
+	// return errors.Trace(err)
+	return nil
 }
 
 func createDatabaseIfNotExistStmt(dbName string) string {

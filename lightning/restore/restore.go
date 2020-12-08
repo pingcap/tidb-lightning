@@ -310,7 +310,6 @@ type schemaJob struct {
 	tblName string
 	jobType schemaJobType
 	sql     string
-	task    *log.Task
 }
 
 type restoreSchemaWorker struct {
@@ -329,7 +328,7 @@ type restoreSchemaWorker struct {
 func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 	go func() {
 		for _, dbMeta := range dbMetas {
-			task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
+			// task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
 			var createDatabase strings.Builder
 			createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
 			common.WriteMySQLIdentifier(&createDatabase, dbMeta.Name)
@@ -337,7 +336,6 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 			worker.jobCh <- &schemaJob{
 				sql:     createDatabase.String(),
 				jobType: schemaCreateDatabase,
-				task:    task,
 			}
 		}
 		worker.wg.Wait()
@@ -396,15 +394,19 @@ func (worker *restoreSchemaWorker) run() {
 					return
 				case job := <-worker.jobCh:
 					//TODO: maybe we should put these createStems into a transaction
+					var logger log.Logger
 					purposePicker := 0
 					if job.jobType == schemaCreateDatabase {
+						logger = log.With(zap.String("db", job.dbName))
 						purposePicker = 1
 					} else if job.jobType == schemaCreateTable {
+						logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
 						purposePicker = 2
 					} else if job.jobType == schemaCreateView {
+						logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
 						purposePicker = 3
 					}
-					err := worker.executor.ExecuteWithLog(worker.ctx, job.sql, worker.purpose[purposePicker], job.task.Logger)
+					err := worker.executor.ExecuteWithLog(worker.ctx, job.sql, worker.purpose[purposePicker], logger)
 					worker.wg.Done()
 					if err != nil {
 						worker.errCh <- err
