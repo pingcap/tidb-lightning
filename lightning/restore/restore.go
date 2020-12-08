@@ -327,14 +327,12 @@ type restoreSchemaWorker struct {
 
 func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 	go func() {
+		//TODO: maybe we should put these create statements into a transaction
 		for _, dbMeta := range dbMetas {
-			// task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
-			var createDatabase strings.Builder
-			createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
-			common.WriteMySQLIdentifier(&createDatabase, dbMeta.Name)
 			worker.wg.Add(1)
 			worker.jobCh <- &schemaJob{
-				sql:     createDatabase.String(),
+				dbName:  dbMeta.Name,
+				sql:     createDatabaseIfNotExistStmt(dbMeta.Name),
 				jobType: schemaCreateDatabase,
 			}
 		}
@@ -347,11 +345,13 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 						stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, tblMeta.Name)
 						if err != nil {
 							worker.errCh <- err
-							break
+							return
 						}
 						for _, stmt := range stmts {
 							worker.wg.Add(1)
 							worker.jobCh <- &schemaJob{
+								dbName:  dbMeta.Name,
+								tblName: tblMeta.Name,
 								sql:     stmt,
 								jobType: schemaCreateTable,
 							}
@@ -361,6 +361,7 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 			}
 		}
 		worker.wg.Wait()
+		// restore views. Since views can cross database we must restore views after all table schemas are restored.
 		for _, dbMeta := range dbMetas {
 			if len(dbMeta.Views) > 0 {
 				for _, viewMeta := range dbMeta.Views {
@@ -369,11 +370,13 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 						stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, viewMeta.Name)
 						if err != nil {
 							worker.errCh <- err
-							break
+							return
 						}
 						for _, stmt := range stmts {
 							worker.wg.Add(1)
 							worker.jobCh <- &schemaJob{
+								dbName:  dbMeta.Name,
+								tblName: viewMeta.Name,
 								sql:     stmt,
 								jobType: schemaCreateView,
 							}
@@ -382,6 +385,8 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 				}
 			}
 		}
+		worker.wg.Wait()
+		worker.errCh <- nil
 	}()
 }
 
@@ -393,7 +398,6 @@ func (worker *restoreSchemaWorker) run() {
 				case <-worker.ctx.Done():
 					return
 				case job := <-worker.jobCh:
-					//TODO: maybe we should put these createStems into a transaction
 					var logger log.Logger
 					purposePicker := 0
 					if job.jobType == schemaCreateDatabase {
@@ -406,10 +410,21 @@ func (worker *restoreSchemaWorker) run() {
 						logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
 						purposePicker = 3
 					}
+					task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", job.sql))
 					err := worker.executor.ExecuteWithLog(worker.ctx, job.sql, worker.purpose[purposePicker], logger)
+					task.End(zap.ErrorLevel, err)
 					worker.wg.Done()
 					if err != nil {
+						switch job.jobType {
+						case schemaCreateDatabase:
+							err = errors.Annotatef(err, "restore database schema %s failed", job.dbName)
+						case schemaCreateTable:
+							err = errors.Annotatef(err, "restore table schema %s failed", job.tblName)
+						case schemaCreateView:
+							err = errors.Annotatef(err, "restore view schema %s failed", job.tblName)
+						}
 						worker.errCh <- err
+						return
 					}
 				}
 			}
@@ -418,9 +433,9 @@ func (worker *restoreSchemaWorker) run() {
 }
 
 func (worker *restoreSchemaWorker) wait() error {
+	defer worker.quit()
 	select {
 	case err := <-worker.errCh:
-		worker.quit()
 		return err
 	case <-worker.ctx.Done():
 		return nil
@@ -464,38 +479,10 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 		}
 		worker.makeJobs(rc.dbMetas)
 		worker.run()
-		worker.wait()
-		// for _, dbMeta := range rc.dbMetas {
-		// 	task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
-
-		// 	tablesSchema := make(map[string]string)
-		// 	for _, tblMeta := range dbMeta.Tables {
-		// 		tablesSchema[tblMeta.Name] = tblMeta.GetSchema(ctx, rc.store)
-		// 	}
-		// 	err = InitSchema(ctx, concurrency, rc.tidbGlue.GetParser(), rc.tidbGlue.GetSQLExecutor(), dbMeta.Name, tablesSchema)
-
-		// 	task.End(zap.ErrorLevel, err)
-		// 	if err != nil {
-		// 		return errors.Annotatef(err, "restore table schema %s failed", dbMeta.Name)
-		// 	}
-		// }
-		// // restore views. Since views can cross database we must restore views after all table schemas are restored.
-		// for _, dbMeta := range rc.dbMetas {
-		// 	if len(dbMeta.Views) > 0 {
-		// 		task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore view schema")
-		// 		viewsSchema := make(map[string]string)
-		// 		for _, viewMeta := range dbMeta.Views {
-		// 			viewsSchema[viewMeta.Name] = viewMeta.GetSchema(ctx, rc.store)
-		// 		}
-		// 		err := InitSchema(ctx, concurrency, rc.tidbGlue.GetParser(), rc.tidbGlue.GetSQLExecutor(), dbMeta.Name, viewsSchema)
-
-		// 		task.End(zap.ErrorLevel, err)
-		// 		if err != nil {
-		// 			return errors.Annotatef(err, "restore view schema %s failed", dbMeta.Name)
-		// 		}
-		// 	}
-
-		// }
+		err = worker.wait()
+		if err != nil {
+			return err
+		}
 	}
 	getTableFunc := rc.backend.FetchRemoteTableModels
 	if !rc.tidbGlue.OwnsSQLExecutor() {
