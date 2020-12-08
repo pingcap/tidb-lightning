@@ -21,7 +21,7 @@ ENGINE_COUNT=6
 
 # First, verify that inject with not leader error is fine.
 rm -f "$TEST_DIR/lightning-local.log"
-rm -f "/tmp/tidb_lightning_checkpoint.pb"
+rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
 run_sql 'DROP DATABASE IF EXISTS cpeng;'
 export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/backend/local/FailIngestMeta=return("notleader")'
 
@@ -38,7 +38,7 @@ check_contains 'sum(c): 46'
 
 # Now, verify it works with epoch not match as well.
 run_sql 'DROP DATABASE cpeng;'
-rm -f "/tmp/tidb_lightning_checkpoint.pb"
+rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
 
 export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/backend/local/FailIngestMeta=return("epochnotmatch")'
 
@@ -55,7 +55,7 @@ check_contains 'sum(c): 46'
 
 # Now, verify it works with checkpoints as well.
 run_sql 'DROP DATABASE cpeng;'
-rm -f "/tmp/tidb_lightning_checkpoint.pb"
+rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
 
 set +e
 export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/FailBeforeDataEngineImported=return'
@@ -82,7 +82,8 @@ check_contains 'sum(c): 46'
 # failpoint works for per table not task, so we limit this test to task that allow one table
 for ckpt in mysql file; do
   run_sql 'DROP DATABASE IF EXISTS cpeng;'
-  rm -f "/tmp/tidb_lightning_checkpoint.pb"
+  run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_local_backend_test'
+  rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
   
   # before chunk pos is updated, local files could handle lost
   set +e
