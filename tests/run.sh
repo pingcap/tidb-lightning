@@ -37,8 +37,6 @@ fi
 
 echo "selected test cases: $SELECTED_TEST_NAME"
 
-# disable cluster index by default
-run_sql 'set @@global.tidb_enable_clustered_index = 0' || echo "tidb does not support cluster index yet, skipped!"
 # wait for global variable cache invalid
 sleep 2
 
