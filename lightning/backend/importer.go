@@ -118,7 +118,7 @@ func isIgnorableOpenCloseEngineError(err error) bool {
 	return err == nil || strings.Contains(err.Error(), "FileExists")
 }
 
-func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID, _ int32) error {
 	req := &kv.OpenEngineRequest{
 		Uuid: engineUUID[:],
 	}
@@ -139,6 +139,10 @@ func (importer *importer) CloseEngine(ctx context.Context, engineUUID uuid.UUID)
 	if !isIgnorableOpenCloseEngineError(err) {
 		return errors.Trace(err)
 	}
+	return nil
+}
+
+func (importer *importer) Flush(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 

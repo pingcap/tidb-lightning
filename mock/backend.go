@@ -91,6 +91,11 @@ func (m *MockBackend) CloseEngine(arg0 context.Context, arg1 uuid.UUID) error {
 	return ret0
 }
 
+
+func (m *MockBackend) Flush(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+
 // CloseEngine indicates an expected call of CloseEngine
 func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
@@ -170,7 +175,7 @@ func (mr *MockBackendMockRecorder) NewEncoder(arg0, arg1 interface{}) *gomock.Ca
 }
 
 // OpenEngine mocks base method
-func (m *MockBackend) OpenEngine(arg0 context.Context, arg1 uuid.UUID) error {
+func (m *MockBackend) OpenEngine(arg0 context.Context, arg1 uuid.UUID, _ int32) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "OpenEngine", arg0, arg1)
 	ret0, _ := ret[0].(error)

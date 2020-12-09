@@ -76,6 +76,7 @@ const (
 
 	defaultPropSizeIndexDistance = 4 * 1024 * 1024 // 4MB
 	defaultPropKeysIndexDistance = 40 * 1024
+	IndexEngineID                = -1
 )
 
 var (
@@ -102,8 +103,11 @@ type localFileMeta struct {
 
 type LocalFile struct {
 	localFileMeta
-	db   *pebble.DB
-	Uuid uuid.UUID
+	db        *pebble.DB
+	Uuid      uuid.UUID
+	EngineID  int32
+	wb        *pebble.Batch
+	batchSize int64
 }
 
 func (e *LocalFile) Close() error {
@@ -364,6 +368,12 @@ func (local *local) Close() {
 func (local *local) Flush(engineId uuid.UUID) error {
 	if engine, ok := local.engines.Load(engineId); ok {
 		engineFile := engine.(*LocalFile)
+		if engineFile.EngineID == IndexEngineID && engineFile.wb != nil {
+			wo := &pebble.WriteOptions{Sync: false}
+			if err := engineFile.wb.Commit(wo); err != nil {
+				return nil
+			}
+		}
 		if err := engineFile.db.Flush(); err != nil {
 			return err
 		}
@@ -425,7 +435,7 @@ func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) 
 	return meta, err
 }
 
-func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID, engineID int32) error {
 	meta, err := local.LoadEngineMeta(engineUUID)
 	if err != nil {
 		meta = localFileMeta{}
@@ -434,7 +444,7 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID})
+	local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID, EngineID: engineID})
 	return nil
 }
 
@@ -1169,33 +1179,64 @@ func (local *local) WriteRows(
 	ts uint64,
 	rows Rows,
 ) (finalErr error) {
-	kvs := rows.(kvPairs)
-	if len(kvs) == 0 {
-		return nil
-	}
-
 	e, ok := local.engines.Load(engineUUID)
 	if !ok {
 		return errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engineFile := e.(*LocalFile)
+	var err error
+	for i := 0; i < maxRetryTimes; i++ {
+		err = engineFile.WriteRows(ts, rows)
+		if !common.IsRetryableError(err) {
+			return err
+		}
+	}
+	return errors.Annotatef(err, "[%s] write rows reach max retry %d and still failed", tableName, maxRetryTimes)
+}
 
-	// write to pebble to make them sorted
-	wb := engineFile.db.NewBatch()
-	defer wb.Close()
+func (f *LocalFile) WriteRows(
+	ts uint64,
+	rows Rows,
+) (finalErr error) {
+	kvs := rows.(kvPairs)
+	if len(kvs) == 0 {
+		return nil
+	}
+
 	wo := &pebble.WriteOptions{Sync: false}
-
 	size := int64(0)
-	for _, pair := range kvs {
-		wb.Set(pair.Key, pair.Val, wo)
-		size += int64(len(pair.Key) + len(pair.Val))
+	if f.wb == nil {
+		f.wb = f.db.NewBatch()
+		f.batchSize = 0
 	}
-	if err := wb.Commit(wo); err != nil {
-		return err
+	if f.EngineID == IndexEngineID {
+		for _, pair := range kvs {
+			f.wb.Set(pair.Key, pair.Val, wo)
+			size += int64(len(pair.Key) + len(pair.Val))
+		}
+		f.batchSize += size
+		if f.batchSize > LocalMemoryTableSize {
+			if err := f.wb.Commit(wo); err != nil {
+				return err
+			}
+			f.batchSize = 0
+			f.wb.Reset()
+		}
+	} else {
+		// write to pebble to make them sorted
+		for _, pair := range kvs {
+			f.wb.Set(pair.Key, pair.Val, wo)
+			size += int64(len(pair.Key) + len(pair.Val))
+		}
+		if err := f.wb.Commit(wo); err != nil {
+			return err
+		}
+		f.wb.Reset()
 	}
-	atomic.AddInt64(&engineFile.Length, int64(len(kvs)))
-	atomic.AddInt64(&engineFile.TotalSize, size)
-	engineFile.Ts = ts
+
+	atomic.AddInt64(&f.Length, int64(len(kvs)))
+	atomic.AddInt64(&f.TotalSize, size)
+	f.Ts = ts
 	return
 }
 
@@ -1291,6 +1332,11 @@ func (local *local) isIngestRetryable(
 		return retryIngest, newRegion, errors.New(errPb.GetMessage())
 	}
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
+}
+
+func (local *local) initIndexBatch (engineUUID uuid.UUID) error {
+// write to pebble to make them sorted
+	return nil
 }
 
 // return the smallest []byte that is bigger than current bytes.

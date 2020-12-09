@@ -106,7 +106,7 @@ type AbstractBackend interface {
 	// NewEncoder creates an encoder of a TiDB table.
 	NewEncoder(tbl table.Table, options *SessionOptions) (Encoder, error)
 
-	OpenEngine(ctx context.Context, engineUUID uuid.UUID) error
+	OpenEngine(ctx context.Context, engineUUID uuid.UUID, engineId int32) error
 
 	WriteRows(
 		ctx context.Context,
@@ -217,7 +217,7 @@ func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int
 	tag, engineUUID := MakeUUID(tableName, engineID)
 	logger := makeLogger(tag, engineUUID)
 
-	if err := be.abstract.OpenEngine(ctx, engineUUID); err != nil {
+	if err := be.abstract.OpenEngine(ctx, engineUUID, engineID); err != nil {
 		return nil, err
 	}
 
@@ -265,25 +265,7 @@ func (engine *OpenedEngine) Flush() error {
 
 // WriteRows writes a collection of encoded rows into the engine.
 func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
-	var err error
-
-outside:
-	for _, r := range rows.SplitIntoChunks(engine.backend.MaxChunkSize()) {
-		for i := 0; i < maxRetryTimes; i++ {
-			err = engine.backend.WriteRows(ctx, engine.uuid, engine.tableName, columnNames, engine.ts, r)
-			switch {
-			case err == nil:
-				continue outside
-			case common.IsRetryableError(err):
-				// retry next loop
-			default:
-				return err
-			}
-		}
-		return errors.Annotatef(err, "[%s] write rows reach max retry %d and still failed", engine.tableName, maxRetryTimes)
-	}
-
-	return nil
+	return engine.backend.WriteRows(ctx, engine.uuid, engine.tableName, columnNames, engine.ts, rows)
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.

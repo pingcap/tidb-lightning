@@ -64,10 +64,6 @@ const (
 )
 
 const (
-	indexEngineID = -1
-)
-
-const (
 	compactStateIdle int32 = iota
 	compactStateDoing
 )
@@ -436,7 +432,7 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 			}
 			fileChunks := make(map[string]float64)
 			for engineId, eCp := range dbCp.Engines {
-				if engineId == indexEngineID {
+				if engineId == kv.IndexEngineID {
 					continue
 				}
 				for _, c := range eCp.Chunks {
@@ -876,7 +872,7 @@ func (t *TableRestore) restoreTable(
 }
 
 func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
-	indexEngineCp := cp.Engines[indexEngineID]
+	indexEngineCp := cp.Engines[kv.IndexEngineID]
 	if indexEngineCp == nil {
 		return errors.Errorf("table %v index engine checkpoint not found", t.tableName)
 	}
@@ -893,7 +889,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
 
-		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, indexEngineID)
+		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, kv.IndexEngineID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -971,10 +967,10 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		// If index engine file has been closed but not imported only if context cancel occurred
 		// when `importKV()` execution, so `UnsafeCloseEngine` and continue import it.
 		if indexEngineCp.Status == CheckpointStatusClosed {
-			closedIndexEngine, err = rc.backend.UnsafeCloseEngine(ctx, t.tableName, indexEngineID)
+			closedIndexEngine, err = rc.backend.UnsafeCloseEngine(ctx, t.tableName, kv.IndexEngineID)
 		} else {
 			closedIndexEngine, err = indexEngine.Close(ctx)
-			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusClosed)
+			rc.saveStatusCheckpoint(t.tableName, kv.IndexEngineID, err, CheckpointStatusClosed)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -992,7 +988,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 			if !rc.isLocalBackend() {
 				rc.postProcessLock.Unlock()
 			}
-			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
+			rc.saveStatusCheckpoint(t.tableName, kv.IndexEngineID, err, CheckpointStatusImported)
 		}
 
 		failpoint.Inject("FailBeforeIndexEngineImported", func() {
@@ -1510,7 +1506,7 @@ func (t *TableRestore) populateChunks(ctx context.Context, rc *RestoreController
 		}
 
 		// Add index engine checkpoint
-		cp.Engines[indexEngineID] = &EngineCheckpoint{Status: CheckpointStatusLoaded}
+		cp.Engines[kv.IndexEngineID] = &EngineCheckpoint{Status: CheckpointStatusLoaded}
 	}
 	task.End(zap.ErrorLevel, err,
 		zap.Int("enginesCnt", len(cp.Engines)),

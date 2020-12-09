@@ -300,7 +300,7 @@ func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) (Enc
 	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}, nil
 }
 
-func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID) error {
+func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID, int32) error {
 	return nil
 }
 
@@ -316,7 +316,27 @@ func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, _ uint64, r Rows) error {
+func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, _ uint64, rows Rows) error {
+	var err error
+outside:
+	for _, r := range rows.SplitIntoChunks(be.MaxChunkSize()) {
+		for i := 0; i < maxRetryTimes; i++ {
+			err = be.WriteRowsToDB(ctx, tableName, columnNames, r)
+			switch {
+			case err == nil:
+				continue outside
+			case common.IsRetryableError(err):
+				// retry next loop
+			default:
+				return err
+			}
+		}
+		return errors.Annotatef(err, "[%s] write rows reach max retry %d and still failed", tableName, maxRetryTimes)
+	}
+	return nil
+}
+
+func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, r Rows) error {
 	rows := r.(tidbRows)
 	if len(rows) == 0 {
 		return nil
