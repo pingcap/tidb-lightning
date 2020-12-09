@@ -17,6 +17,11 @@
 
 set -eu
 
+# disable cluster index by default
+run_sql 'set @@global.tidb_enable_clustered_index = 0' || echo "tidb does not support cluster index yet, skipped!"
+# wait for global variable cache invalid
+sleep 2
+
 run_sql 'DROP DATABASE IF EXISTS rowid;'
 run_lightning
 echo 'Import finished'
