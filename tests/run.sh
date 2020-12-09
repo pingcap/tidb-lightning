@@ -37,9 +37,6 @@ fi
 
 echo "selected test cases: $SELECTED_TEST_NAME"
 
-# wait for global variable cache invalid
-sleep 2
-
 for casename in $SELECTED_TEST_NAME; do
     script=tests/$casename/run.sh
     echo "\x1b[32;1m@@@@@@@ Running test $script...\x1b[0m"
