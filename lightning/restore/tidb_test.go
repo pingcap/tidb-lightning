@@ -370,26 +370,60 @@ func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 	ctx := context.Background()
 
 	s.mockDB.
-		ExpectQuery("\\QSELECT @@tidb_row_format_version\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"@@tidb_row_format_version"}).AddRow("2"))
+		ExpectBegin()
+	s.mockDB.
+		ExpectQuery(`SHOW VARIABLES WHERE Variable_name IN \(.*'tidb_row_format_version'.*\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
+			AddRow("tidb_row_format_version", "2").
+			AddRow("max_allowed_packet", "1073741824").
+			AddRow("div_precision_increment", "10").
+			AddRow("time_zone", "-08:00").
+			AddRow("lc_time_names", "ja_JP").
+			AddRow("default_week_format", "1").
+			AddRow("block_encryption_mode", "aes-256-cbc").
+			AddRow("group_concat_max_len", "1073741824"))
+	s.mockDB.
+		ExpectCommit()
 	s.mockDB.
 		ExpectClose()
 
-	version := ObtainRowFormatVersion(ctx, s.tiGlue.GetSQLExecutor())
-	c.Assert(version, Equals, "2")
+	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor())
+	c.Assert(sysVars, DeepEquals, map[string]string{
+		"tidb_row_format_version": "2",
+		"max_allowed_packet":      "1073741824",
+		"div_precision_increment": "10",
+		"time_zone":               "-08:00",
+		"lc_time_names":           "ja_JP",
+		"default_week_format":     "1",
+		"block_encryption_mode":   "aes-256-cbc",
+		"group_concat_max_len":    "1073741824",
+	})
 }
 
 func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 	ctx := context.Background()
 
 	s.mockDB.
-		ExpectQuery("\\QSELECT @@tidb_row_format_version\\E").
-		WillReturnError(errors.New("ERROR 1193 (HY000): Unknown system variable 'tidb_row_format_version'"))
+		ExpectBegin()
+	s.mockDB.
+		ExpectQuery(`SHOW VARIABLES WHERE Variable_name IN \(.*'tidb_row_format_version'.*\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).AddRow("time_zone", "+00:00"))
+	s.mockDB.
+		ExpectCommit()
 	s.mockDB.
 		ExpectClose()
 
-	version := ObtainRowFormatVersion(ctx, s.tiGlue.GetSQLExecutor())
-	c.Assert(version, Equals, "1")
+	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor())
+	c.Assert(sysVars, DeepEquals, map[string]string{
+		"tidb_row_format_version": "1",
+		"max_allowed_packet":      "67108864",
+		"div_precision_increment": "4",
+		"time_zone":               "+00:00",
+		"lc_time_names":           "en_US",
+		"default_week_format":     "0",
+		"block_encryption_mode":   "aes-128-ecb",
+		"group_concat_max_len":    "1024",
+	})
 }
 
 func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
