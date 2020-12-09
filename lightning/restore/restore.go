@@ -413,7 +413,6 @@ func (worker *restoreSchemaWorker) run() {
 					task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", job.sql))
 					err := worker.executor.ExecuteWithLog(worker.ctx, job.sql, worker.purpose[purposePicker], logger)
 					task.End(zap.ErrorLevel, err)
-					worker.wg.Done()
 					if err != nil {
 						switch job.jobType {
 						case schemaCreateDatabase:
@@ -424,8 +423,10 @@ func (worker *restoreSchemaWorker) run() {
 							err = errors.Annotatef(err, "restore view schema %s failed", job.tblName)
 						}
 						worker.errCh <- err
+						worker.wg.Done()
 						return
 					}
+					worker.wg.Done()
 				}
 			}
 		}()
