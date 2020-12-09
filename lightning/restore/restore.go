@@ -453,12 +453,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			defer db.Close()
 			db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
 		}
-		conn, err := rc.tidbGlue.GetDB()
-		if err != nil {
-			return errors.Trace(err)
-		}
 		concurrency := 16
-		conn.SetMaxOpenConns(concurrency)
 		childCtx, cancel := context.WithCancel(ctx)
 		worker := restoreSchemaWorker{
 			ctx:         childCtx,
@@ -479,7 +474,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 		}
 		worker.makeJobs(rc.dbMetas)
 		worker.run()
-		err = worker.wait()
+		err := worker.wait()
 		if err != nil {
 			return err
 		}
