@@ -586,7 +586,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 			}
 			if storageSize.Available <= reservedSize {
 				return errors.Errorf(
-					"insufficient disk free space on `%s` (only %s, expecting >%s)",
+					"insufficient disk free space on `%s` (only %s, expecting >%s), please use a storage with enough free space, or specify `tikv-importer.disk-quota`",
 					cfg.TikvImporter.SortedKVDir,
 					units.BytesSize(float64(storageSize.Available)),
 					units.BytesSize(float64(reservedSize)))
