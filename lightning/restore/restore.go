@@ -594,7 +594,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 	defer glueProgressTicker.Stop()
 
 	var switchModeChan <-chan time.Time
-	// tide backend don't need to switch tikv to import mode
+	// tidb backend don't need to switch tikv to import mode
 	if rc.cfg.TikvImporter.Backend != config.BackendTiDB && rc.cfg.Cron.SwitchMode.Duration > 0 {
 		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 		defer switchModeTicker.Stop()
