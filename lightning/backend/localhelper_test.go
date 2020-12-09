@@ -18,17 +18,15 @@ import (
 	"context"
 	"sync"
 
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types"
-
-	"github.com/pingcap/tidb/tablecodec"
-
 	"github.com/pingcap/br/pkg/restore"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/pd/server/core"
 	"github.com/tikv/pd/server/schedule/placement"
@@ -332,9 +330,10 @@ func (s *localSuite) TestBatchSplitAndIngestWithClusteredIndex(c *C) {
 
 	// we batch generate a batch of row keys for table 1 with common handle
 	keys = make([][]byte, 0, 20+1)
+	stmtCtx := new(stmtctx.StatementContext)
 	for i := int64(0); i < 2; i++ {
 		for j := int64(0); j < 10; j++ {
-			keyBytes, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewIntDatum(i), types.NewIntDatum(j*10000))
+			keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(i), types.NewIntDatum(j*10000))
 			c.Assert(err, IsNil)
 			h, err := kv.NewCommonHandle(keyBytes)
 			c.Assert(err, IsNil)
