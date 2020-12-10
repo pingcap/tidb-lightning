@@ -173,6 +173,31 @@ func (importer *importer) WriteRows(
 	ts uint64,
 	rows Rows,
 ) (finalErr error) {
+	var err error
+outside:
+	for _, r := range rows.SplitIntoChunks(importer.MaxChunkSize()) {
+		for i := 0; i < maxRetryTimes; i++ {
+			err = importer.WriteRowsToImporter(ctx, engineUUID, ts, r)
+			switch {
+			case err == nil:
+				continue outside
+			case common.IsRetryableError(err):
+				// retry next loop
+			default:
+				return err
+			}
+		}
+		return errors.Annotatef(err, "[%s] write rows reach max retry %d and still failed", tableName, maxRetryTimes)
+	}
+	return nil
+}
+
+func (importer *importer) WriteRowsToImporter(
+	ctx context.Context,
+	engineUUID uuid.UUID,
+	ts uint64,
+	rows Rows,
+) (finalErr error) {
 	kvs := rows.(kvPairs)
 	if len(kvs) == 0 {
 		return nil

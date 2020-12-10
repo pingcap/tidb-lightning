@@ -360,7 +360,7 @@ func NewConfig() *Config {
 		TikvImporter: TikvImporter{
 			Backend:         BackendImporter,
 			OnDuplicate:     ReplaceOnDup,
-			MaxKVPairs:      32,
+			MaxKVPairs:      1024,
 			SendKVPairs:     32768,
 			RegionSplitSize: SplitRegionSize,
 		},

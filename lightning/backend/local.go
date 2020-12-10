@@ -1334,11 +1334,6 @@ func (local *local) isIngestRetryable(
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
 
-func (local *local) initIndexBatch (engineUUID uuid.UUID) error {
-// write to pebble to make them sorted
-	return nil
-}
-
 // return the smallest []byte that is bigger than current bytes.
 // special case when key is empty, empty bytes means infinity in our context, so directly return itself.
 func nextKey(key []byte) []byte {
