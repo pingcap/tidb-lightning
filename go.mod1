@@ -48,3 +48,5 @@ require (
 	google.golang.org/grpc v1.27.1
 	modernc.org/mathutil v1.1.1
 )
+
+replace github.com/pingcap/br => github.com/glorv/br v4.0.0-beta.0.20201209093343-ab430dff26ca+incompatible
