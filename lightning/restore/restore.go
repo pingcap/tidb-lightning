@@ -843,6 +843,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			for task := range postProcessTaskChan {
+				// force all the remain post-process tasks to be executed
 				_, err := task.tr.postProcess(ctx, rc, task.cp, true)
 				restoreErr.Set(err)
 			}
@@ -906,8 +907,8 @@ func (t *TableRestore) restoreTable(
 		return false, errors.Trace(err)
 	}
 
-	// 3. Post-process
-	return t.postProcess(ctx, rc, cp, false)
+	// 3. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
+	return t.postProcess(ctx, rc, cp, false /* force-analyze */)
 }
 
 func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
@@ -1210,9 +1211,9 @@ func (t *TableRestore) importEngine(
 
 // postProcess execute rebase-auto-id/checksum/analyze according to the task config.
 //
-// if the parameter canDelay to true, postProcess will skip running some phase according to the config. And if some phase
-// are delayed, the first return value will be true.
-func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, canDelay bool) (bool, error) {
+// if the parameter forceAnalyze to true, postProcess force run analyze even if the analyze-at-last config is true.
+// And if analyze phase is skipped, the first return value will be true.
+func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, forceAnalyze bool) (bool, error) {
 	// there are no data in this table, no need to do post process
 	// this is important for tables that are just the dump table of views
 	// because at this stage, the table was already deleted and replaced by the related view
@@ -1277,13 +1278,13 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 	}
 
 	// 5. do table analyze
-	doAnalyze := true
+	finished := true
 	if cp.Status < CheckpointStatusAnalyzed {
 		if rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 			cp.Status = CheckpointStatusAnalyzed
-		} else if canDelay || !rc.cfg.PostRestore.AnalyzeAtLast {
+		} else if forceAnalyze || !rc.cfg.PostRestore.AnalyzeAtLast {
 			err := t.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
@@ -1298,11 +1299,11 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			}
 			cp.Status = CheckpointStatusAnalyzed
 		} else {
-			doAnalyze = false
+			finished = false
 		}
 	}
 
-	return !doAnalyze, nil
+	return !finished, nil
 }
 
 // do full compaction for the whole data.
