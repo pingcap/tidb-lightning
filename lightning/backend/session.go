@@ -176,9 +176,9 @@ type session struct {
 
 // SessionOptions is the initial configuration of the session.
 type SessionOptions struct {
-	SQLMode          mysql.SQLMode
-	Timestamp        int64
-	RowFormatVersion string
+	SQLMode   mysql.SQLMode
+	Timestamp int64
+	SysVars   map[string]string
 	// a seed used for tableKvEncoder's auto random bits value
 	AutoRandomSeed int64
 }
@@ -194,9 +194,13 @@ func newSession(options *SessionOptions) *session {
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
+	if options.SysVars != nil {
+		for k, v := range options.SysVars {
+			vars.SetSystemVar(k, v)
+		}
+	}
 	vars.StmtCtx.TimeZone = vars.Location()
 	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
-	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
 	vars.TxnCtx = nil
 
 	s := &session{
