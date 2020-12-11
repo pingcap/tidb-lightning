@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	kv "github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb/table"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -236,39 +237,56 @@ func (*importer) MakeEmptyRows() Rows {
 	return kvPairs(nil)
 }
 
-func (*importer) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
+func (*importer) NewEncoder(tbl table.Table, options *SessionOptions) (Encoder, error) {
 	return NewTableKVEncoder(tbl, options)
 }
 
-func (importer *importer) CheckRequirements() error {
-	if err := checkTiDBVersion(importer.tls, requiredTiDBVersion); err != nil {
+func (importer *importer) CheckRequirements(ctx context.Context) error {
+	if err := checkTiDBVersionByTLS(ctx, importer.tls, requiredTiDBVersion); err != nil {
 		return err
 	}
-	if err := checkPDVersion(importer.tls, importer.pdAddr, requiredPDVersion); err != nil {
+	if err := checkPDVersion(ctx, importer.tls, importer.pdAddr, requiredPDVersion); err != nil {
 		return err
 	}
-	if err := checkTiKVVersion(importer.tls, importer.pdAddr, requiredTiKVVersion); err != nil {
+	if err := checkTiKVVersion(ctx, importer.tls, importer.pdAddr, requiredTiKVVersion); err != nil {
 		return err
 	}
 	return nil
 }
 
-func checkTiDBVersion(tls *common.TLS, requiredVersion semver.Version) error {
+func checkTiDBVersionByTLS(ctx context.Context, tls *common.TLS, requiredVersion semver.Version) error {
 	var status struct{ Version string }
-	err := tls.GetJSON("/status", &status)
+	err := tls.GetJSON(ctx, "/status", &status)
 	if err != nil {
 		return err
 	}
 
-	version, err := common.ExtractTiDBVersion(status.Version)
+	return checkTiDBVersion(status.Version, requiredVersion)
+}
+
+func checkTiDBVersion(versionStr string, requiredVersion semver.Version) error {
+	version, err := common.ExtractTiDBVersion(versionStr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return checkVersion("TiDB", requiredVersion, *version)
 }
 
-func checkPDVersion(tls *common.TLS, pdAddr string, requiredVersion semver.Version) error {
-	version, err := common.FetchPDVersion(tls, pdAddr)
+func checkTiDBVersionBySQL(ctx context.Context, g glue.Glue, requiredVersion semver.Version) error {
+	versionStr, err := g.GetSQLExecutor().ObtainStringWithLog(
+		ctx,
+		"SELECT version();",
+		"check TiDB version",
+		log.L())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return checkTiDBVersion(versionStr, requiredVersion)
+}
+
+func checkPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredVersion semver.Version) error {
+	version, err := common.FetchPDVersion(ctx, tls, pdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -276,9 +294,9 @@ func checkPDVersion(tls *common.TLS, pdAddr string, requiredVersion semver.Versi
 	return checkVersion("PD", requiredVersion, *version)
 }
 
-func checkTiKVVersion(tls *common.TLS, pdAddr string, requiredVersion semver.Version) error {
+func checkTiKVVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredVersion semver.Version) error {
 	return ForAllStores(
-		context.Background(),
+		ctx,
 		tls.WithHost(pdAddr),
 		StoreStateDown,
 		func(c context.Context, store *Store) error {
@@ -305,5 +323,5 @@ func checkVersion(component string, expected, actual semver.Version) error {
 }
 
 func (importer *importer) FetchRemoteTableModels(ctx context.Context, schema string) ([]*model.TableInfo, error) {
-	return fetchRemoteTableModelsFromTLS(importer.tls, schema)
+	return fetchRemoteTableModelsFromTLS(ctx, importer.tls, schema)
 }

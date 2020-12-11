@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/util/memory"
+
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/ddl"
@@ -362,7 +364,7 @@ type mockChecksumKVClient struct {
 }
 
 // a mock client for checksum request
-func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
 	data, _ := c.checksum.Marshal()
 	time.Sleep(c.respDur)
 	return &mockResponse{data: data}

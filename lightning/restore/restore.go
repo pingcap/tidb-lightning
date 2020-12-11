@@ -49,6 +49,9 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	"github.com/pingcap/tidb-lightning/lightning/web"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
+
+	// TODO: remove this after https://github.com/pingcap/tidb/issues/21342 is fixed.
+	_ "github.com/pingcap/tidb/planner/core"
 )
 
 const (
@@ -142,7 +145,7 @@ type RestoreController struct {
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 	alterTableLock  sync.Mutex
 	compactState    int32
-	rowFormatVer    string
+	sysVars         map[string]string
 	tls             *common.TLS
 
 	errorSummaries errorSummaries
@@ -209,7 +212,7 @@ func NewRestoreControllerWithPauser(
 	case config.BackendLocal:
 		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, int64(cfg.TikvImporter.RegionSplitSize),
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
-			cfg.Checkpoint.Enable)
+			cfg.Checkpoint.Enable, g)
 		if err != nil {
 			return nil, err
 		}
@@ -229,7 +232,7 @@ func NewRestoreControllerWithPauser(
 		pauser:        pauser,
 		backend:       backend,
 		tidbGlue:      g,
-		rowFormatVer:  "1",
+		sysVars:       defaultImportantVariables,
 		tls:           tls,
 
 		errorSummaries:    makeErrorSummaries(log.L()),
@@ -296,15 +299,14 @@ outside:
 }
 
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
-	tidbMgr, err := NewTiDBManager(rc.cfg.TiDB, rc.tls)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer tidbMgr.Close()
-
 	if !rc.cfg.Mydumper.NoSchema {
 		if rc.tidbGlue.OwnsSQLExecutor() {
-			tidbMgr.db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
+			db, err := DBFromConfig(rc.cfg.TiDB)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer db.Close()
+			db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
 		}
 
 		for _, dbMeta := range rc.dbMetas {
@@ -314,19 +316,37 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			for _, tblMeta := range dbMeta.Tables {
 				tablesSchema[tblMeta.Name] = tblMeta.GetSchema(ctx, rc.store)
 			}
-			err = tidbMgr.InitSchema(ctx, rc.tidbGlue, dbMeta.Name, tablesSchema)
+			err := InitSchema(ctx, rc.tidbGlue, dbMeta.Name, tablesSchema)
 
 			task.End(zap.ErrorLevel, err)
 			if err != nil {
 				return errors.Annotatef(err, "restore table schema %s failed", dbMeta.Name)
 			}
 		}
+
+		// restore views. Since views can cross database we must restore views after all table schemas are restored.
+		for _, dbMeta := range rc.dbMetas {
+			if len(dbMeta.Views) > 0 {
+				task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore view schema")
+				viewsSchema := make(map[string]string)
+				for _, viewMeta := range dbMeta.Views {
+					viewsSchema[viewMeta.Name] = viewMeta.GetSchema(ctx, rc.store)
+				}
+				err := InitSchema(ctx, rc.tidbGlue, dbMeta.Name, viewsSchema)
+
+				task.End(zap.ErrorLevel, err)
+				if err != nil {
+					return errors.Annotatef(err, "restore view schema %s failed", dbMeta.Name)
+				}
+			}
+
+		}
 	}
 	getTableFunc := rc.backend.FetchRemoteTableModels
 	if !rc.tidbGlue.OwnsSQLExecutor() {
 		getTableFunc = rc.tidbGlue.GetTables
 	}
-	dbInfos, err := tidbMgr.LoadSchemaInfo(ctx, rc.dbMetas, getTableFunc)
+	dbInfos, err := LoadSchemaInfo(ctx, rc.dbMetas, getTableFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -344,7 +364,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 
 	go rc.listenCheckpointUpdates()
 
-	rc.rowFormatVer = ObtainRowFormatVersion(ctx, rc.tidbGlue.GetSQLExecutor())
+	rc.sysVars = ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor())
 
 	// Estimate the number of chunks for progress reporting
 	err = rc.estimateChunkCountIntoMetrics(ctx)
@@ -436,8 +456,8 @@ func (rc *RestoreController) estimateChunkCountIntoMetrics(ctx context.Context) 
 				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if fileMeta.Size > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
-						estimatedChunkCount += math.Round(float64(fileMeta.Size) / float64(cfg.MaxRegionSize))
+					if fileMeta.FileMeta.FileSize > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
+						estimatedChunkCount += math.Round(float64(fileMeta.FileMeta.FileSize) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount += 1
 					}
@@ -670,7 +690,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	manager, err := newChecksumManager(rc)
+	manager, err := newChecksumManager(ctx, rc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -895,7 +915,10 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		for engineID, engine := range cp.Engines {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				// Set engineErr and break this for loop to wait all the sub-routines done before return.
+				// Directly return may cause panic because caller will close the pebble db but some sub routines
+				// are still reading from or writing to the pebble db.
+				engineErr.Set(ctx.Err())
 			default:
 			}
 			if engineErr.Get() != nil {
@@ -1153,6 +1176,13 @@ func (t *TableRestore) importEngine(
 }
 
 func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
+	// there are no data in this table, no need to do post process
+	// this is important for tables that are just the dump table of views
+	// because at this stage, the table was already deleted and replaced by the related view
+	if len(cp.Engines) == 1 {
+		return nil
+	}
+
 	// 3. alter table set auto_increment
 	if cp.Status < CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
@@ -1293,12 +1323,12 @@ func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.Swit
 	)
 }
 
-func (rc *RestoreController) checkRequirements(_ context.Context) error {
+func (rc *RestoreController) checkRequirements(ctx context.Context) error {
 	// skip requirement check if explicitly turned off
 	if !rc.cfg.App.CheckRequirements {
 		return nil
 	}
-	return rc.backend.CheckRequirements()
+	return rc.backend.CheckRequirements(ctx)
 }
 
 func (rc *RestoreController) setGlobalVariables(ctx context.Context) error {
@@ -1360,7 +1390,13 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := store.Open(ctx, chunk.Key.Path)
+	var reader storage.ReadSeekCloser
+	var err error
+	if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.FileSize)
+	} else {
+		reader, err = store.Open(ctx, chunk.FileMeta.Path)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1373,7 +1409,7 @@ func newChunkRestore(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.Key.Path)
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1551,10 +1587,12 @@ func (t *TableRestore) parseColumnPermutations(columns []string) ([]int, error) 
 		if i, ok := columnMap[colInfo.Name.L]; ok {
 			colPerm = append(colPerm, i)
 		} else {
-			t.logger.Warn("column missing from data file, going to fill with default value",
-				zap.String("colName", colInfo.Name.O),
-				zap.Stringer("colType", &colInfo.FieldType),
-			)
+			if len(colInfo.GeneratedExprString) == 0 {
+				t.logger.Warn("column missing from data file, going to fill with default value",
+					zap.String("colName", colInfo.Name.O),
+					zap.Stringer("colType", &colInfo.FieldType),
+				)
+			}
 			colPerm = append(colPerm, -1)
 		}
 	}
@@ -1634,7 +1672,7 @@ func (tr *TableRestore) compareChecksum(ctx context.Context, localChecksum verif
 
 func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) error {
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
-	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger.Logger)
+	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger)
 	task.End(zap.ErrorLevel, err)
 	return err
 }
@@ -1891,13 +1929,17 @@ func (cr *chunkRestore) restore(
 	rc *RestoreController,
 ) error {
 	// Create the encoder.
-	kvEncoder := rc.backend.NewEncoder(t.encTable, &kv.SessionOptions{
-		SQLMode:          rc.cfg.TiDB.SQLMode,
-		Timestamp:        cr.chunk.Timestamp,
-		RowFormatVersion: rc.rowFormatVer,
+	kvEncoder, err := rc.backend.NewEncoder(t.encTable, &kv.SessionOptions{
+		SQLMode:   rc.cfg.TiDB.SQLMode,
+		Timestamp: cr.chunk.Timestamp,
+		SysVars:   rc.sysVars,
 		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
 		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 	})
+	if err != nil {
+		return err
+	}
+
 	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
 

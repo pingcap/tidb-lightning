@@ -260,14 +260,14 @@ func (s *tableRestoreSuiteBase) SetUpSuite(c *C) {
 		fakeDataPath := filepath.Join(fakeDataDir, fakeFileName)
 		err = ioutil.WriteFile(fakeDataPath, fakeDataFilesContent, 0644)
 		c.Assert(err, IsNil)
-		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeFileName, Type: mydump.SourceTypeSQL, SortKey: fmt.Sprintf("%d", i)}, Size: 37})
+		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: fakeFileName, Type: mydump.SourceTypeSQL, SortKey: fmt.Sprintf("%d", i), FileSize: 37}})
 	}
 
 	fakeCsvContent := []byte("1,2,3\r\n4,5,6\r\n")
 	csvName := "db.table.99.csv"
 	err = ioutil.WriteFile(filepath.Join(fakeDataDir, csvName), fakeCsvContent, 0644)
 	c.Assert(err, IsNil)
-	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: "99"}, Size: 14})
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{TableName: filter.Table{"db", "table"}, FileMeta: mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: "99", FileSize: 14}})
 
 	s.tableMeta = &mydump.MDTableMeta{
 		DB:         "db",
@@ -436,8 +436,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
 		c.Assert(err, IsNil)
 		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 			TableName: filter.Table{"db", "table"},
-			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i)},
-			Size:      int64(len(s)),
+			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i), FileSize: int64(len(s))},
 		})
 		total += len(s)
 	}
@@ -927,14 +926,14 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567895,
-		RowFormatVersion: "1",
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567895,
 	})
+	c.Assert(err, IsNil)
 	cfg := config.NewConfig()
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, IsNil)
 	c.Assert(kvsCh, HasLen, 2)
 
@@ -952,16 +951,16 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 	ctx, cancel := context.WithCancel(context.Background())
 	kvsCh := make(chan []deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567896,
-		RowFormatVersion: "1",
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567896,
 	})
+	c.Assert(err, IsNil)
 
 	go cancel()
 	cfg := config.NewConfig()
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 	c.Assert(kvsCh, HasLen, 0)
 }
@@ -970,18 +969,18 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567897,
-		RowFormatVersion: "1",
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567897,
 	})
+	c.Assert(err, IsNil)
 
 	// close the chunk so reading it will result in the "file already closed" error.
 	s.cr.parser.Close()
 
 	cfg := config.NewConfig()
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, ErrorMatches, `in file .*[/\\]?db\.table\.2\.sql:0 at offset 0:.*file already closed`)
 	c.Assert(kvsCh, HasLen, 0)
 }
@@ -990,11 +989,11 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	ctx := context.Background()
 	kvsCh := make(chan []deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567898,
-		RowFormatVersion: "1",
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567898,
 	})
+	c.Assert(err, IsNil)
 
 	go func() {
 		deliverCompleteCh <- deliverResult{
@@ -1003,7 +1002,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	}()
 	cfg := config.NewConfig()
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
-	_, _, err := s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, ErrorMatches, "fake deliver error")
 	c.Assert(kvsCh, HasLen, 0)
 }

@@ -40,6 +40,22 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	// defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
+	// variables from downstream which may affect KV encode result. The values record the default
+	// values if missing.
+	defaultImportantVariables = map[string]string{
+		"tidb_row_format_version": "1",
+		"max_allowed_packet":      "67108864",
+		"div_precision_increment": "4",
+		"time_zone":               "SYSTEM",
+		"lc_time_names":           "en_US",
+		"default_week_format":     "0",
+		"block_encryption_mode":   "aes-128-ecb",
+		"group_concat_max_len":    "1024",
+	}
+)
+
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
@@ -124,42 +140,39 @@ func (timgr *TiDBManager) Close() {
 	timgr.db.Close()
 }
 
-func (timgr *TiDBManager) InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema map[string]string) error {
+func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema map[string]string) error {
 	logger := log.With(zap.String("db", database))
 	sqlExecutor := g.GetSQLExecutor()
 
 	var createDatabase strings.Builder
 	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
 	common.WriteMySQLIdentifier(&createDatabase, database)
-	err := sqlExecutor.ExecuteWithLog(ctx, createDatabase.String(), "create database", logger.Logger)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	var useDB strings.Builder
-	useDB.WriteString("USE ")
-	common.WriteMySQLIdentifier(&useDB, database)
-	err = sqlExecutor.ExecuteWithLog(ctx, useDB.String(), "use database", logger.Logger)
+	err := sqlExecutor.ExecuteWithLog(ctx, createDatabase.String(), "create database", logger)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	task := logger.Begin(zap.InfoLevel, "create tables")
+	var sqlCreateStmts []string
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateTable, err = timgr.createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, tbl)
+		sqlCreateStmts, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
 		if err != nil {
 			break
 		}
 
-		err = sqlExecutor.ExecuteWithLog(
-			ctx,
-			sqlCreateTable,
-			"create table",
-			logger.Logger.With(zap.String("table", common.UniqueTable(database, tbl))),
-		)
-		if err != nil {
-			break
+		//TODO: maybe we should put these createStems into a transaction
+		for _, s := range sqlCreateStmts {
+			err = sqlExecutor.ExecuteWithLog(
+				ctx,
+				s,
+				"create table",
+				logger.With(zap.String("table", common.UniqueTable(database, tbl))),
+			)
+			if err != nil {
+				break
+			}
 		}
 	}
 	task.End(zap.ErrorLevel, err)
@@ -167,29 +180,39 @@ func (timgr *TiDBManager) InitSchema(ctx context.Context, g glue.Glue, database 
 	return errors.Trace(err)
 }
 
-func (timgr *TiDBManager) createTableIfNotExistsStmt(p *parser.Parser, createTable, tblName string) (string, error) {
+func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.Parse(createTable, "", "")
 	if err != nil {
-		return "", err
+		return []string{}, err
 	}
 
 	var res strings.Builder
-	res.Grow(len(createTable))
 	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
 
+	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {
-		if createTableNode, ok := stmt.(*ast.CreateTableStmt); ok {
-			createTableNode.Table.Schema = model.NewCIStr("")
-			createTableNode.Table.Name = model.NewCIStr(tblName)
-			createTableNode.IfNotExists = true
+		switch node := stmt.(type) {
+		case *ast.CreateTableStmt:
+			node.Table.Schema = model.NewCIStr(dbName)
+			node.Table.Name = model.NewCIStr(tblName)
+			node.IfNotExists = true
+		case *ast.CreateViewStmt:
+			node.ViewName.Schema = model.NewCIStr(dbName)
+			node.ViewName.Name = model.NewCIStr(tblName)
+		case *ast.DropTableStmt:
+			node.Tables[0].Schema = model.NewCIStr(dbName)
+			node.Tables[0].Name = model.NewCIStr(tblName)
+			node.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {
-			return "", err
+			return []string{}, err
 		}
 		ctx.WritePlain(";")
+		retStmts = append(retStmts, res.String())
+		res.Reset()
 	}
 
-	return res.String(), nil
+	return retStmts, nil
 }
 
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
@@ -200,7 +223,7 @@ func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error
 	return sql.Exec(ctx, "drop table", "DROP TABLE "+tableName)
 }
 
-func (timgr *TiDBManager) LoadSchemaInfo(
+func LoadSchemaInfo(
 	ctx context.Context,
 	schemas []*mydump.MDDatabaseMeta,
 	getTables func(context.Context, string) ([]*model.TableInfo, error),
@@ -264,17 +287,37 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 	)
 }
 
-func ObtainRowFormatVersion(ctx context.Context, g glue.SQLExecutor) string {
-	rowFormatVersion, err := g.ObtainStringWithLog(
-		ctx,
-		"SELECT @@tidb_row_format_version",
-		"obtain row format version",
-		log.L().Logger,
-	)
-	if err != nil {
-		rowFormatVersion = "1"
+func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor) map[string]string {
+	var query strings.Builder
+	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
+	first := true
+	for k := range defaultImportantVariables {
+		if first {
+			first = false
+		} else {
+			query.WriteString("','")
+		}
+		query.WriteString(k)
 	}
-	return rowFormatVersion
+	query.WriteString("')")
+	kvs, err := g.QueryStringsWithLog(ctx, query.String(), "obtain system variables", log.L())
+	if err != nil {
+		// error is not fatal
+		log.L().Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
+	}
+
+	// convert result into a map. fill in any missing variables with default values.
+	result := make(map[string]string, len(defaultImportantVariables))
+	for _, kv := range kvs {
+		result[kv[0]] = kv[1]
+	}
+	for k, defV := range defaultImportantVariables {
+		if _, ok := result[k]; !ok {
+			result[k] = defV
+		}
+	}
+
+	return result
 }
 
 func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
@@ -283,7 +326,7 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
 		ctx,
 		"SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'",
 		"obtain new collation enabled",
-		log.L().Logger,
+		log.L(),
 	)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
@@ -301,7 +344,7 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 	logger := log.With(zap.String("table", tableName), zap.Int64("auto_increment", incr))
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
-	err := g.ExecuteWithLog(ctx, query, "alter table auto_increment", logger.Logger)
+	err := g.ExecuteWithLog(ctx, query, "alter table auto_increment", logger)
 	task.End(zap.ErrorLevel, err)
 	if err != nil {
 		task.Error(
@@ -316,7 +359,7 @@ func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, 
 	logger := log.With(zap.String("table", tableName), zap.Int64("auto_random", randomBase))
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
-	err := g.ExecuteWithLog(ctx, query, "alter table auto_random_base", logger.Logger)
+	err := g.ExecuteWithLog(ctx, query, "alter table auto_random_base", logger)
 	task.End(zap.ErrorLevel, err)
 	if err != nil {
 		task.Error(

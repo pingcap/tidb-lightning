@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/pingcap/tidb/sessionctx"
-
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
@@ -103,6 +103,9 @@ func (s *kvUnionStore) GetIndexName(tableID, indexID int64) string {
 func (s *kvUnionStore) CacheIndexName(tableID, indexID int64, name string) {
 }
 
+func (s *kvUnionStore) CacheTableInfo(id int64, info *model.TableInfo) {
+}
+
 // transaction is a trimmed down Transaction type which only supports adding a
 // new KV pair.
 type transaction struct {
@@ -173,9 +176,9 @@ type session struct {
 
 // SessionOptions is the initial configuration of the session.
 type SessionOptions struct {
-	SQLMode          mysql.SQLMode
-	Timestamp        int64
-	RowFormatVersion string
+	SQLMode   mysql.SQLMode
+	Timestamp int64
+	SysVars   map[string]string
 	// a seed used for tableKvEncoder's auto random bits value
 	AutoRandomSeed int64
 }
@@ -191,9 +194,13 @@ func newSession(options *SessionOptions) *session {
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
+	if options.SysVars != nil {
+		for k, v := range options.SysVars {
+			vars.SetSystemVar(k, v)
+		}
+	}
 	vars.StmtCtx.TimeZone = vars.Location()
 	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
-	vars.SetSystemVar(variable.TiDBRowFormatVersion, options.RowFormatVersion)
 	vars.TxnCtx = nil
 
 	s := &session{

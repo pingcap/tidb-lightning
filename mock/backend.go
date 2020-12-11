@@ -8,18 +8,16 @@ package mock
 
 import (
 	context "context"
-	reflect "reflect"
-	time "time"
-
 	gomock "github.com/golang/mock/gomock"
 	uuid "github.com/google/uuid"
 	model "github.com/pingcap/parser/model"
-	table "github.com/pingcap/tidb/table"
-	types "github.com/pingcap/tidb/types"
-
 	backend "github.com/pingcap/tidb-lightning/lightning/backend"
 	log "github.com/pingcap/tidb-lightning/lightning/log"
 	verification "github.com/pingcap/tidb-lightning/lightning/verification"
+	table "github.com/pingcap/tidb/table"
+	types "github.com/pingcap/tidb/types"
+	reflect "reflect"
+	time "time"
 )
 
 // MockBackend is a mock of AbstractBackend interface
@@ -46,17 +44,17 @@ func (m *MockBackend) EXPECT() *MockBackendMockRecorder {
 }
 
 // CheckRequirements mocks base method
-func (m *MockBackend) CheckRequirements() error {
+func (m *MockBackend) CheckRequirements(arg0 context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckRequirements")
+	ret := m.ctrl.Call(m, "CheckRequirements", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CheckRequirements indicates an expected call of CheckRequirements
-func (mr *MockBackendMockRecorder) CheckRequirements() *gomock.Call {
+func (mr *MockBackendMockRecorder) CheckRequirements(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockBackend)(nil).CheckRequirements))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockBackend)(nil).CheckRequirements), arg0)
 }
 
 // CleanupEngine mocks base method
@@ -157,11 +155,12 @@ func (mr *MockBackendMockRecorder) MaxChunkSize() *gomock.Call {
 }
 
 // NewEncoder mocks base method
-func (m *MockBackend) NewEncoder(arg0 table.Table, arg1 *backend.SessionOptions) backend.Encoder {
+func (m *MockBackend) NewEncoder(arg0 table.Table, arg1 *backend.SessionOptions) (backend.Encoder, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "NewEncoder", arg0, arg1)
 	ret0, _ := ret[0].(backend.Encoder)
-	return ret0
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // NewEncoder indicates an expected call of NewEncoder

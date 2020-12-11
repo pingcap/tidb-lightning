@@ -72,7 +72,7 @@ func (s *testMydumpRegionSuite) TestTableRegion(c *C) {
 		// check - region-size vs file-size
 		var tolFileSize int64 = 0
 		for _, file := range meta.DataFiles {
-			tolFileSize += file.Size
+			tolFileSize += file.FileMeta.FileSize
 		}
 		var tolRegionSize int64 = 0
 		for _, region := range regions {
@@ -212,7 +212,7 @@ func (s *testMydumpRegionSuite) TestSplitLargeFile(c *C) {
 		log.Fatal(err)
 	}
 	fileSize := dataFileInfo.Size()
-	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV}, Size: fileSize}
+	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV, FileSize: fileSize}}
 	colCnt := int64(3)
 	columns := []string{"a", "b", "c"}
 	for _, tc := range []struct {

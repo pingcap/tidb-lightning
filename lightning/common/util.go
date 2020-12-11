@@ -107,6 +107,11 @@ type SQLWithRetry struct {
 }
 
 func (t SQLWithRetry) perform(ctx context.Context, parentLogger log.Logger, purpose string, action func() error) error {
+	return Retry(purpose, parentLogger, action)
+}
+
+// Retry is shared by SQLWithRetry.perform, implementation of GlueCheckpointsDB and TiDB's glue implementation
+func Retry(purpose string, parentLogger log.Logger, action func() error) error {
 	var err error
 outside:
 	for i := 0; i < defaultMaxRetry; i++ {
@@ -264,6 +269,20 @@ func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
 	builder.WriteByte('`')
 }
 
+func EscapeMySQLSingleQuote(builder *strings.Builder, s string) {
+	builder.Grow(len(s) + 2)
+	builder.WriteByte('\'')
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b == '\'' {
+			builder.WriteString("''")
+		} else {
+			builder.WriteByte(b)
+		}
+	}
+	builder.WriteByte('\'')
+}
+
 // GetJSON fetches a page and parses it as JSON. The parsed result will be
 // stored into the `v`. The variable `v` must be a pointer to a type that can be
 // unmarshalled from JSON.
@@ -276,11 +295,17 @@ func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
 //		return errors.Trace(err)
 //	}
 //	fmt.Println(resp.IP)
-func GetJSON(client *http.Client, url string, v interface{}) error {
-	resp, err := client.Get(url)
+func GetJSON(ctx context.Context, client *http.Client, url string, v interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
