@@ -106,7 +106,7 @@ type AbstractBackend interface {
 	// NewEncoder creates an encoder of a TiDB table.
 	NewEncoder(tbl table.Table, options *SessionOptions) (Encoder, error)
 
-	OpenEngine(ctx context.Context, engineUUID uuid.UUID, engineId int32) error
+	OpenEngine(ctx context.Context, engineUUID uuid.UUID) error
 
 	WriteRows(
 		ctx context.Context,
@@ -140,6 +140,8 @@ type AbstractBackend interface {
 	//     * Offset (must be 0, 1, 2, ...)
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+
+	LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error)
 }
 
 func fetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {
@@ -184,6 +186,12 @@ type ClosedEngine struct {
 	engine
 }
 
+type LocalEngineWriter struct {
+	writer    EngineWriter
+	tableName string
+	ts        uint64
+}
+
 func MakeBackend(ab AbstractBackend) Backend {
 	return Backend{abstract: ab}
 }
@@ -217,7 +225,7 @@ func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int
 	tag, engineUUID := MakeUUID(tableName, engineID)
 	logger := makeLogger(tag, engineUUID)
 
-	if err := be.abstract.OpenEngine(ctx, engineUUID, engineID); err != nil {
+	if err := be.abstract.OpenEngine(ctx, engineUUID); err != nil {
 		return nil, err
 	}
 
@@ -266,6 +274,31 @@ func (engine *OpenedEngine) Flush() error {
 // WriteRows writes a collection of encoded rows into the engine.
 func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
 	return engine.backend.WriteRows(ctx, engine.uuid, engine.tableName, columnNames, engine.ts, rows)
+}
+
+func (engine *OpenedEngine) LocalWriter(ctx context.Context) (*LocalEngineWriter, error) {
+	w, err := engine.backend.LocalWriter(ctx, engine.uuid)
+	if err != nil {
+		return nil, err
+	}
+	return &LocalEngineWriter{writer: w, ts: engine.ts, tableName: engine.tableName}, nil
+}
+
+// WriteRows writes a collection of encoded rows into the engine.
+func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
+	return w.writer.AppendRows(ctx, w.tableName, columnNames, w.ts, rows)
+}
+
+func (w *LocalEngineWriter) Done() {
+	w.writer.Done()
+}
+
+func (w *LocalEngineWriter) WaitConsume() error {
+	return w.writer.Close()
+}
+
+func (w *LocalEngineWriter) AddProducer() {
+	w.writer.AddProducer()
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.
@@ -369,4 +402,17 @@ type Rows interface {
 	// Clear returns a new collection with empty content. It may share the
 	// capacity with the current instance. The typical usage is `x = x.Clear()`.
 	Clear() Rows
+}
+
+type EngineWriter interface {
+	AppendRows(
+		ctx context.Context,
+		tableName string,
+		columnNames []string,
+		commitTS uint64,
+		rows Rows,
+	) error
+	Close() error
+	AddProducer()
+	Done()
 }

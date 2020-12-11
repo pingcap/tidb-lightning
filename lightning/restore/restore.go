@@ -931,12 +931,11 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 				// In the future, we will investigate more about
 				// the difference between restoring tables concurrently and restoring tables one by one.
 				restoreWorker := rc.tableWorkers.Apply()
-
 				go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
 					defer wg.Done()
 
 					engineLogTask := t.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
-					dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
+					dataClosedEngine, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
 					engineLogTask.End(zap.ErrorLevel, err)
 					rc.tableWorkers.Recycle(w)
 					if err != nil {
@@ -948,7 +947,6 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 						panic("forcing failure due to FailBeforeDataEngineImported")
 					})
 
-					defer rc.closedEngineLimit.Recycle(dataWorker)
 					if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
 						engineErr.Set(err)
 					}
@@ -1009,23 +1007,26 @@ func (t *TableRestore) restoreEngine(
 	indexEngine *kv.OpenedEngine,
 	engineID int32,
 	cp *EngineCheckpoint,
-) (*kv.ClosedEngine, *worker.Worker, error) {
+) (*kv.ClosedEngine, error) {
 	if cp.Status >= CheckpointStatusClosed {
-		w := rc.closedEngineLimit.Apply()
 		closedEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
-			rc.closedEngineLimit.Recycle(w)
-			return closedEngine, nil, errors.Trace(err)
+			return closedEngine, errors.Trace(err)
 		}
-		return closedEngine, w, nil
+		return closedEngine, nil
+	}
+
+	indexWriter, err := indexEngine.LocalWriter(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 
 	dataEngine, err := rc.backend.OpenEngine(ctx, t.tableName, engineID)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	var wg sync.WaitGroup
@@ -1039,7 +1040,7 @@ func (t *TableRestore) restoreEngine(
 
 		select {
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+			return nil, ctx.Err()
 		default:
 		}
 
@@ -1054,21 +1055,29 @@ func (t *TableRestore) restoreEngine(
 		// 	4. flush kvs data (into tikv node)
 		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, t.tableInfo)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Inc()
 
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
+		dataWriter, err := dataEngine.LocalWriter(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		indexWriter.AddProducer()
 		go func(w *worker.Worker, cr *chunkRestore) {
 			// Restore a chunk.
 			defer func() {
 				cr.close()
 				wg.Done()
 				rc.regionWorkers.Recycle(w)
+				indexWriter.Done()
 			}()
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
-			err := cr.restore(ctx, t, engineID, dataEngine, indexEngine, rc)
+			if err == nil {
+				err = cr.restore(ctx, t, engineID, dataWriter, indexWriter, rc)
+			}
 			if err == nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
 				return
@@ -1079,6 +1088,9 @@ func (t *TableRestore) restoreEngine(
 	}
 
 	wg.Wait()
+	if err := indexWriter.WaitConsume(); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
@@ -1101,19 +1113,11 @@ func (t *TableRestore) restoreEngine(
 		rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusAllWritten)
 	}
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
-	dataWorker := rc.closedEngineLimit.Apply()
 	closedDataEngine, err := dataEngine.Close(ctx)
-	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
-	// this flush action impact up to 10% of the performance, so we only do it if necessary.
 	if err == nil && rc.cfg.Checkpoint.Enable && rc.isLocalBackend() {
-		if err = indexEngine.Flush(); err != nil {
-			// If any error occurred, recycle worker immediately
-			rc.closedEngineLimit.Recycle(dataWorker)
-			return nil, nil, errors.Trace(err)
-		}
 		// Currently we write all the checkpoints after data&index engine are flushed.
 		for _, chunk := range cp.Chunks {
 			saveCheckpoint(rc, t, engineID, chunk)
@@ -1122,10 +1126,9 @@ func (t *TableRestore) restoreEngine(
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
 	if err != nil {
 		// If any error occurred, recycle worker immediately
-		rc.closedEngineLimit.Recycle(dataWorker)
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return closedDataEngine, dataWorker, nil
+	return closedDataEngine, nil
 }
 
 func (t *TableRestore) importEngine(
@@ -1695,12 +1698,10 @@ func (cr *chunkRestore) deliverLoop(
 	kvsCh <-chan []deliveredKVs,
 	t *TableRestore,
 	engineID int32,
-	dataEngine, indexEngine *kv.OpenedEngine,
+	dataEngine, indexEngine *kv.LocalEngineWriter,
 	rc *RestoreController,
 ) (deliverTotalDur time.Duration, err error) {
 	var channelClosed bool
-	dataKVs := rc.backend.MakeEmptyRows()
-	indexKVs := rc.backend.MakeEmptyRows()
 
 	deliverLogger := t.logger.With(
 		zap.Int32("engineNumber", engineID),
@@ -1718,8 +1719,11 @@ func (cr *chunkRestore) deliverLoop(
 		offset := cr.chunk.Chunk.Offset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
 		// Fetch enough KV pairs from the source.
+		dataKVs := rc.backend.MakeEmptyRows()
+		indexKVs := rc.backend.MakeEmptyRows()
+
 	populate:
-		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
+		for dataChecksum.SumSize() < minDeliverBytes {
 			select {
 			case kvPacket = <-kvsCh:
 				if len(kvPacket) == 0 {
@@ -1757,9 +1761,6 @@ func (cr *chunkRestore) deliverLoop(
 		metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumSize()))
 		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
 		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
-
-		dataKVs = dataKVs.Clear()
-		indexKVs = indexKVs.Clear()
 
 		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)
@@ -1919,7 +1920,7 @@ func (cr *chunkRestore) restore(
 	ctx context.Context,
 	t *TableRestore,
 	engineID int32,
-	dataEngine, indexEngine *kv.OpenedEngine,
+	dataEngine, indexEngine *kv.LocalEngineWriter,
 	rc *RestoreController,
 ) error {
 	// Create the encoder.
@@ -1943,15 +1944,6 @@ func (cr *chunkRestore) restore(
 		close(kvsCh)
 	}()
 
-	go func() {
-		defer close(deliverCompleteCh)
-		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
-		select {
-		case <-ctx.Done():
-		case deliverCompleteCh <- deliverResult{dur, err}:
-		}
-	}()
-
 	logTask := t.logger.With(
 		zap.Int32("engineNumber", engineID),
 		zap.Int("fileIndex", cr.index),
@@ -1962,17 +1954,13 @@ func (cr *chunkRestore) restore(
 	if err != nil {
 		return err
 	}
-
-	select {
-	case deliverResult := <-deliverCompleteCh:
-		logTask.End(zap.ErrorLevel, deliverResult.err,
-			zap.Duration("readDur", readTotalDur),
-			zap.Duration("encodeDur", encodeTotalDur),
-			zap.Duration("deliverDur", deliverResult.totalDur),
-			zap.Object("checksum", &cr.chunk.Checksum),
-		)
-		return errors.Trace(deliverResult.err)
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	defer close(deliverCompleteCh)
+	dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
+	logTask.End(zap.ErrorLevel, err,
+		zap.Duration("readDur", readTotalDur),
+		zap.Duration("encodeDur", encodeTotalDur),
+		zap.Duration("deliverDur", dur),
+		zap.Object("checksum", &cr.chunk.Checksum),
+	)
+	return errors.Trace(err)
 }

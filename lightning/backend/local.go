@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
@@ -30,6 +31,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/sstable"
 	"github.com/coreos/go-semver/semver"
 	"github.com/google/btree"
 	"github.com/google/uuid"
@@ -67,7 +69,7 @@ const (
 	gRPCKeepAliveTimeout = 3 * time.Second
 	gRPCBackOffMaxDelay  = 3 * time.Second
 
-	LocalMemoryTableSize = 512 << 20
+	LocalMemoryTableSize = 128 << 20
 
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
 	regionMaxKeyCount = 1_440_000
@@ -103,11 +105,8 @@ type localFileMeta struct {
 
 type LocalFile struct {
 	localFileMeta
-	db        *pebble.DB
-	Uuid      uuid.UUID
-	EngineID  int32
-	wb        *pebble.Batch
-	batchSize int64
+	db   *pebble.DB
+	Uuid uuid.UUID
 }
 
 func (e *LocalFile) Close() error {
@@ -368,12 +367,6 @@ func (local *local) Close() {
 func (local *local) Flush(engineId uuid.UUID) error {
 	if engine, ok := local.engines.Load(engineId); ok {
 		engineFile := engine.(*LocalFile)
-		if engineFile.EngineID == IndexEngineID && engineFile.wb != nil {
-			wo := &pebble.WriteOptions{Sync: false}
-			if err := engineFile.wb.Commit(wo); err != nil {
-				return nil
-			}
-		}
 		if err := engineFile.db.Flush(); err != nil {
 			return err
 		}
@@ -435,7 +428,7 @@ func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) 
 	return meta, err
 }
 
-func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID, engineID int32) error {
+func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	meta, err := local.LoadEngineMeta(engineUUID)
 	if err != nil {
 		meta = localFileMeta{}
@@ -444,7 +437,7 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID, engine
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID, EngineID: engineID})
+	local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID})
 	return nil
 }
 
@@ -1205,34 +1198,17 @@ func (f *LocalFile) WriteRows(
 
 	wo := &pebble.WriteOptions{Sync: false}
 	size := int64(0)
-	if f.wb == nil {
-		f.wb = f.db.NewBatch()
-		f.batchSize = 0
+	wb := f.db.NewBatch()
+
+	// write to pebble to make them sorted
+	for _, pair := range kvs {
+		wb.Set(pair.Key, pair.Val, wo)
+		size += int64(len(pair.Key) + len(pair.Val))
 	}
-	if f.EngineID == IndexEngineID {
-		for _, pair := range kvs {
-			f.wb.Set(pair.Key, pair.Val, wo)
-			size += int64(len(pair.Key) + len(pair.Val))
-		}
-		f.batchSize += size
-		if f.batchSize > LocalMemoryTableSize {
-			if err := f.wb.Commit(wo); err != nil {
-				return err
-			}
-			f.batchSize = 0
-			f.wb.Reset()
-		}
-	} else {
-		// write to pebble to make them sorted
-		for _, pair := range kvs {
-			f.wb.Set(pair.Key, pair.Val, wo)
-			size += int64(len(pair.Key) + len(pair.Val))
-		}
-		if err := f.wb.Commit(wo); err != nil {
-			return err
-		}
-		f.wb.Reset()
+	if err := wb.Commit(wo); err != nil {
+		return err
 	}
+	wb.Reset()
 
 	atomic.AddInt64(&f.Length, int64(len(kvs)))
 	atomic.AddInt64(&f.TotalSize, size)
@@ -1246,6 +1222,27 @@ func (local *local) MakeEmptyRows() Rows {
 
 func (local *local) NewEncoder(tbl table.Table, options *SessionOptions) (Encoder, error) {
 	return NewTableKVEncoder(tbl, options)
+}
+
+func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+	e, ok := local.engines.Load(engineUUID)
+	if !ok {
+		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
+	}
+	engineFile := e.(*LocalFile)
+	kvsChan := make(chan []common.KvPair, 1024)
+	tmpPath := filepath.Join(local.localStoreDir, engineUUID.String(), "lightning_tmp")
+	if err := os.Mkdir(tmpPath, 0755); err != nil {
+		return nil, err
+	}
+	var consumeWg sync.WaitGroup
+	var produceWg sync.WaitGroup
+	consumeWg.Add(1)
+	w := &LocalWriter{db: engineFile.db, sstDir: tmpPath, kvsChan: kvsChan,
+		local:     engineFile,
+		produceWg: produceWg, consumeWg: consumeWg}
+	go w.writeRowsLoop()
+	return w, nil
 }
 
 func (local *local) isIngestRetryable(
@@ -1509,4 +1506,125 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 		prop := i.(*rangeProperty)
 		return f(prop)
 	})
+}
+
+type LocalWriter struct {
+	db        *pebble.DB
+	writeErr  common.OnceError
+	local     *LocalFile
+	lastKey   []byte
+	produceWg sync.WaitGroup
+	consumeWg sync.WaitGroup
+	kvsChan   chan []common.KvPair
+	sstDir    string
+}
+
+func (w *LocalWriter) isSorted(kvs []common.KvPair) bool {
+	for _, pair := range kvs {
+		if len(w.lastKey) > 0 && bytes.Compare(w.lastKey, pair.Key) >= 0 {
+			return false
+		}
+		w.lastKey = pair.Key
+	}
+	return true
+}
+
+func (w *LocalWriter) AppendRows(ctx context.Context, tableName string, columnNames []string, ts uint64, rows Rows) error {
+	kvs := rows.(kvPairs)
+	if len(kvs) == 0 {
+		return nil
+	}
+	w.kvsChan <- kvs
+	w.local.Ts = ts
+	return nil
+}
+
+func (w *LocalWriter) Close() error {
+	w.WaitConsume()
+	return w.writeErr.Get()
+}
+
+func (w *LocalWriter) writeRowsLoop() {
+	batchSize := int64(0)
+	var writer *sstable.Writer = nil
+	var wb *pebble.Batch = nil
+	var filePath string
+	defer w.consumeWg.Done()
+	for kvs := range w.kvsChan {
+		if w.isSorted(kvs) {
+			if writer == nil {
+				filePath = filepath.Join(w.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
+				f, err := os.Create(filePath)
+				if err != nil {
+					if err != nil {
+						w.writeErr.Set(err)
+						return
+					}
+				}
+				writer = sstable.NewWriter(f, sstable.WriterOptions{
+					TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+						func() pebble.TablePropertyCollector {
+							return newRangePropertiesCollector()
+						},
+					},
+				})
+			}
+			internalKey := sstable.InternalKey{
+				UserKey: []byte{},
+				Trailer: uint64((0 << 8) | sstable.InternalKeyKindSet),
+			}
+			for _, p := range kvs {
+				internalKey.UserKey = p.Key
+				if err := writer.Add(internalKey, p.Val); err != nil {
+					w.writeErr.Set(err)
+					return
+				}
+			}
+		} else {
+			if wb == nil {
+				wb = w.db.NewBatch()
+			}
+			wo := &pebble.WriteOptions{Sync: false}
+			for _, pair := range kvs {
+				wb.Set(pair.Key, pair.Val, wo)
+				batchSize += int64(len(pair.Key) + len(pair.Val))
+			}
+			if batchSize > LocalMemoryTableSize {
+				wb.Commit(wo)
+				wb.Reset()
+			}
+		}
+	}
+
+	if wb != nil {
+		wo := &pebble.WriteOptions{Sync: false}
+		if err := wb.Commit(wo); err != nil {
+			w.writeErr.Set(err)
+			return
+		}
+	}
+	if writer != nil {
+		if err := writer.Close(); err != nil {
+			w.writeErr.Set(err)
+			return
+		}
+		if err := w.db.Ingest([]string{filePath}); err != nil {
+			w.writeErr.Set(err)
+			return
+		}
+	}
+}
+
+func (w *LocalWriter) Done() {
+	w.produceWg.Done()
+}
+
+func (w *LocalWriter) WaitConsume() {
+	w.produceWg.Wait()
+	close(w.kvsChan)
+	w.consumeWg.Wait()
+}
+
+func (w *LocalWriter) AddProducer() {
+	w.produceWg.Add(1)
 }

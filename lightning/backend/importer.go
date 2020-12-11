@@ -118,7 +118,7 @@ func isIgnorableOpenCloseEngineError(err error) bool {
 	return err == nil || strings.Contains(err.Error(), "FileExists")
 }
 
-func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID, _ int32) error {
+func (importer *importer) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	req := &kv.OpenEngineRequest{
 		Uuid: engineUUID[:],
 	}
@@ -353,4 +353,31 @@ func checkVersion(component string, expected, actual semver.Version) error {
 
 func (importer *importer) FetchRemoteTableModels(ctx context.Context, schema string) ([]*model.TableInfo, error) {
 	return fetchRemoteTableModelsFromTLS(ctx, importer.tls, schema)
+}
+
+func (importer *importer) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+	return &ImporterWriter{importer: importer, engineUUID: engineUUID}, nil
+}
+
+type ImporterWriter struct {
+	importer   *importer
+	engineUUID uuid.UUID
+	wg         sync.WaitGroup
+}
+
+func (w *ImporterWriter) AddProducer() {
+	w.wg.Add(1)
+}
+
+func (w *ImporterWriter) Done() {
+	w.wg.Done()
+}
+
+func (w *ImporterWriter) Close() error {
+	w.wg.Wait()
+	return nil
+}
+
+func (w *ImporterWriter) AppendRows(ctx context.Context, tableName string, columnNames []string, ts uint64, rows Rows) error {
+	return w.importer.WriteRows(ctx, w.engineUUID, tableName, columnNames, ts, rows)
 }

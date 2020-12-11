@@ -300,7 +300,7 @@ func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) (Enc
 	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}, nil
 }
 
-func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID, int32) error {
+func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
@@ -517,4 +517,27 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		return nil
 	})
 	return
+}
+
+func (be *tidbBackend) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+	return &TiDBWriter{be: be, engineUUID: engineUUID}, nil
+}
+
+type TiDBWriter struct {
+	be         *tidbBackend
+	engineUUID uuid.UUID
+}
+
+func (w *TiDBWriter) AddProducer() {
+}
+
+func (w *TiDBWriter) Done() {
+}
+
+func (w *TiDBWriter) Close() error {
+	return nil
+}
+
+func (w *TiDBWriter) AppendRows(ctx context.Context, tableName string, columnNames []string, arg1 uint64, rows Rows) error {
+	return w.be.WriteRows(ctx, w.engineUUID, tableName, columnNames, arg1, rows)
 }
