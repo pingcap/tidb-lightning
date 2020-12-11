@@ -427,6 +427,7 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	}
 
 	cfg := config.NewConfig()
+	cfg.App.CheckRequirements = true
 	cfg.App.TableConcurrency = 4
 	cfg.TikvImporter.Backend = config.BackendLocal
 
@@ -475,6 +476,13 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	// with this dbMetas, the estimated fds will be 2050, so should return error
 	err = checkSystemRequirement(cfg, dbMetas)
 	c.Assert(err, NotNil)
+
+	//disable check-requirement, should return nil
+	cfg.App.CheckRequirements = false
+	err = checkSystemRequirement(cfg, dbMetas)
+	c.Assert(err, IsNil)
+	cfg.App.CheckRequirements = true
+
 	err = failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue")
 	c.Assert(err, IsNil)
 

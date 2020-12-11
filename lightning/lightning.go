@@ -651,6 +651,11 @@ func handleLogLevel(w http.ResponseWriter, req *http.Request) {
 }
 
 func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) error {
+	if !cfg.App.CheckRequirements {
+		log.L().Info("check-requirement is disabled, skip check system rlimit")
+		return nil
+	}
+
 	// in local mode, we need to read&write a lot of L0 sst files, so we need to check system max open files limit
 	if cfg.TikvImporter.Backend == config.BackendLocal {
 		// estimate max open files = {top N(TableConcurrency) table sizes} / {MemoryTableSize}
