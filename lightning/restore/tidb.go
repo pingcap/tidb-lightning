@@ -40,6 +40,22 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	// defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
+	// variables from downstream which may affect KV encode result. The values record the default
+	// values if missing.
+	defaultImportantVariables = map[string]string{
+		"tidb_row_format_version": "1",
+		"max_allowed_packet":      "67108864",
+		"div_precision_increment": "4",
+		"time_zone":               "SYSTEM",
+		"lc_time_names":           "en_US",
+		"default_week_format":     "0",
+		"block_encryption_mode":   "aes-128-ecb",
+		"group_concat_max_len":    "1024",
+	}
+)
+
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
@@ -238,17 +254,37 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 	)
 }
 
-func ObtainRowFormatVersion(ctx context.Context, g glue.SQLExecutor) string {
-	rowFormatVersion, err := g.ObtainStringWithLog(
-		ctx,
-		"SELECT @@tidb_row_format_version",
-		"obtain row format version",
-		log.L(),
-	)
-	if err != nil {
-		rowFormatVersion = "1"
+func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor) map[string]string {
+	var query strings.Builder
+	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
+	first := true
+	for k := range defaultImportantVariables {
+		if first {
+			first = false
+		} else {
+			query.WriteString("','")
+		}
+		query.WriteString(k)
 	}
-	return rowFormatVersion
+	query.WriteString("')")
+	kvs, err := g.QueryStringsWithLog(ctx, query.String(), "obtain system variables", log.L())
+	if err != nil {
+		// error is not fatal
+		log.L().Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
+	}
+
+	// convert result into a map. fill in any missing variables with default values.
+	result := make(map[string]string, len(defaultImportantVariables))
+	for _, kv := range kvs {
+		result[kv[0]] = kv[1]
+	}
+	for k, defV := range defaultImportantVariables {
+		if _, ok := result[k]; !ok {
+			result[k] = defV
+		}
+	}
+
+	return result
 }
 
 func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
