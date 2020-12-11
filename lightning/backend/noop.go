@@ -64,7 +64,7 @@ func (b *noopBackend) ShouldPostProcess() bool {
 }
 
 // NewEncoder creates an encoder of a TiDB table.
-func (b *noopBackend) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
+func (b *noopBackend) NewEncoder(tbl table.Table, options *SessionOptions) (Encoder, error) {
 	return NewTableKVEncoder(tbl, options)
 }
 
@@ -97,7 +97,7 @@ func (b *noopBackend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) e
 
 // CheckRequirements performs the check whether the backend satisfies the
 // version requirements
-func (b *noopBackend) CheckRequirements() error {
+func (b *noopBackend) CheckRequirements(ctx context.Context) error {
 	return nil
 }
 
@@ -114,5 +114,5 @@ func (b *noopBackend) CheckRequirements() error {
 //     * Offset (must be 0, 1, 2, ...)
 //  - PKIsHandle (true = do not generate _tidb_rowid)
 func (b *noopBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return fetchRemoteTableModelsFromTLS(b.tls, schemaName)
+	return fetchRemoteTableModelsFromTLS(ctx, b.tls, schemaName)
 }
