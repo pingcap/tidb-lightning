@@ -309,7 +309,7 @@ type schemaJob struct {
 	dbName  string
 	tblName string
 	jobType schemaJobType
-	sql     string
+	stmts   []string
 }
 
 type restoreSchemaWorker struct {
@@ -332,30 +332,26 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 			worker.wg.Add(1)
 			worker.jobCh <- &schemaJob{
 				dbName:  dbMeta.Name,
-				sql:     createDatabaseIfNotExistStmt(dbMeta.Name),
+				stmts:   []string{createDatabaseIfNotExistStmt(dbMeta.Name)},
 				jobType: schemaCreateDatabase,
 			}
 		}
 		worker.wg.Wait()
 		for _, dbMeta := range dbMetas {
-			if len(dbMeta.Tables) > 0 {
-				for _, tblMeta := range dbMeta.Tables {
-					sql := tblMeta.GetSchema(worker.ctx, worker.store)
-					if sql != "" {
-						stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, tblMeta.Name)
-						if err != nil {
-							worker.errCh <- err
-							return
-						}
-						for _, stmt := range stmts {
-							worker.wg.Add(1)
-							worker.jobCh <- &schemaJob{
-								dbName:  dbMeta.Name,
-								tblName: tblMeta.Name,
-								sql:     stmt,
-								jobType: schemaCreateTable,
-							}
-						}
+			for _, tblMeta := range dbMeta.Tables {
+				sql := tblMeta.GetSchema(worker.ctx, worker.store)
+				if sql != "" {
+					stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, tblMeta.Name)
+					if err != nil {
+						worker.errCh <- err
+						return
+					}
+					worker.wg.Add(1)
+					worker.jobCh <- &schemaJob{
+						dbName:  dbMeta.Name,
+						tblName: tblMeta.Name,
+						stmts:   stmts,
+						jobType: schemaCreateTable,
 					}
 				}
 			}
@@ -363,24 +359,20 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 		worker.wg.Wait()
 		// restore views. Since views can cross database we must restore views after all table schemas are restored.
 		for _, dbMeta := range dbMetas {
-			if len(dbMeta.Views) > 0 {
-				for _, viewMeta := range dbMeta.Views {
-					sql := viewMeta.GetSchema(worker.ctx, worker.store)
-					if sql != "" {
-						stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, viewMeta.Name)
-						if err != nil {
-							worker.errCh <- err
-							return
-						}
-						for _, stmt := range stmts {
-							worker.wg.Add(1)
-							worker.jobCh <- &schemaJob{
-								dbName:  dbMeta.Name,
-								tblName: viewMeta.Name,
-								sql:     stmt,
-								jobType: schemaCreateView,
-							}
-						}
+			for _, viewMeta := range dbMeta.Views {
+				sql := viewMeta.GetSchema(worker.ctx, worker.store)
+				if sql != "" {
+					stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, viewMeta.Name)
+					if err != nil {
+						worker.errCh <- err
+						return
+					}
+					worker.wg.Add(1)
+					worker.jobCh <- &schemaJob{
+						dbName:  dbMeta.Name,
+						tblName: viewMeta.Name,
+						stmts:   stmts,
+						jobType: schemaCreateView,
 					}
 				}
 			}
@@ -410,21 +402,23 @@ func (worker *restoreSchemaWorker) run() {
 						logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
 						purposePicker = 3
 					}
-					task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", job.sql))
-					err := worker.executor.ExecuteWithLog(worker.ctx, job.sql, worker.purpose[purposePicker], logger)
-					task.End(zap.ErrorLevel, err)
-					if err != nil {
-						switch job.jobType {
-						case schemaCreateDatabase:
-							err = errors.Annotatef(err, "restore database schema %s failed", job.dbName)
-						case schemaCreateTable:
-							err = errors.Annotatef(err, "restore table schema %s failed", job.tblName)
-						case schemaCreateView:
-							err = errors.Annotatef(err, "restore view schema %s failed", job.tblName)
+					for _, sql := range job.stmts {
+						task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", sql))
+						err := worker.executor.ExecuteWithLog(worker.ctx, sql, worker.purpose[purposePicker], logger)
+						task.End(zap.ErrorLevel, err)
+						if err != nil {
+							switch job.jobType {
+							case schemaCreateDatabase:
+								err = errors.Annotatef(err, "restore database schema %s failed", job.dbName)
+							case schemaCreateTable:
+								err = errors.Annotatef(err, "restore table schema %s failed", job.tblName)
+							case schemaCreateView:
+								err = errors.Annotatef(err, "restore view schema %s failed", job.tblName)
+							}
+							worker.errCh <- err
+							worker.wg.Done()
+							return
 						}
-						worker.errCh <- err
-						worker.wg.Done()
-						return
 					}
 					worker.wg.Done()
 				}
