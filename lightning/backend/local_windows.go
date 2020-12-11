@@ -16,8 +16,15 @@
 package backend
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 )
+
+// return a big value as unlimited, since rlimit verify is skipped in windows.
+func GetSystemRLimit() (uint64, error) {
+	return math.MaxInt32, nil
+}
 
 func VerifyRLimit(estimateMaxFiles uint64) error {
 	return errors.New("Local-backend is not tested on Windows. Run with --check-requirements=false to disable this check, but you are on your own risk.")
