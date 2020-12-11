@@ -22,4 +22,4 @@ run_sql "SELECT b FROM issue519.t WHERE a = '''';"
 check_contains 'b: "'
 # following use hex to avoid the escaping mess. 22 = `"`, 27 = `'`.
 run_sql 'SELECT hex(a) FROM issue519.t WHERE b = 0x222722272727272722;'
-check_contains 'a: 2227272727222722'
+check_contains 'hex(a): 2227272727222722'
