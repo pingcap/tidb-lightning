@@ -211,9 +211,20 @@ func NewRestoreControllerWithPauser(
 		}
 		backend = kv.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate)
 	case config.BackendLocal:
+		var rLimit uint64
+		rLimit, err = kv.GetSystemRLimit()
+		if err != nil {
+			return nil, err
+		}
+		maxOpenFiles := int(rLimit / uint64(cfg.App.TableConcurrency))
+		// check overflow
+		if maxOpenFiles < 0 {
+			maxOpenFiles = math.MaxInt32
+		}
+
 		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, int64(cfg.TikvImporter.RegionSplitSize),
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
-			cfg.Checkpoint.Enable, g)
+			cfg.Checkpoint.Enable, g, maxOpenFiles)
 		if err != nil {
 			return nil, err
 		}

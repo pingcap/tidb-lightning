@@ -23,6 +23,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/pd/server/core"
 	"github.com/tikv/pd/server/schedule/placement"
@@ -215,20 +219,19 @@ func (c *testClient) SetStoresLabel(ctx context.Context, stores []uint64, labelK
 }
 
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-func initTestClient() *testClient {
+func initTestClient(keys [][]byte) *testClient {
 	peers := make([]*metapb.Peer, 1)
 	peers[0] = &metapb.Peer{
 		Id:      1,
 		StoreId: 1,
 	}
-	keys := [6]string{"", "aay", "bba", "bbh", "cca", ""}
 	regions := make(map[uint64]*restore.RegionInfo)
-	for i := uint64(1); i < 6; i++ {
-		startKey := []byte(keys[i-1])
+	for i := uint64(1); i < uint64(len(keys)); i++ {
+		startKey := keys[i-1]
 		if len(startKey) != 0 {
 			startKey = codec.EncodeBytes([]byte{}, startKey)
 		}
-		endKey := []byte(keys[i])
+		endKey := keys[i]
 		if len(endKey) != 0 {
 			endKey = codec.EncodeBytes([]byte{}, endKey)
 		}
@@ -245,7 +248,7 @@ func initTestClient() *testClient {
 	stores[1] = &metapb.Store{
 		Id: 1,
 	}
-	return newTestClient(stores, regions, 6)
+	return newTestClient(stores, regions, uint64(len(keys)))
 }
 
 func checkRegionRanges(c *C, regions []*restore.RegionInfo, keys [][]byte) {
@@ -265,7 +268,8 @@ func (s *localSuite) TestBatchSplitAndIngestRegion(c *C) {
 		maxBatchSplitKeys = oldLimit
 	}()
 
-	client := initTestClient()
+	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
+	client := initTestClient(keys)
 	local := &local{
 		splitCli: client,
 	}
@@ -274,7 +278,7 @@ func (s *localSuite) TestBatchSplitAndIngestRegion(c *C) {
 	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	rangeStart := codec.EncodeBytes([]byte{}, []byte("b"))
 	rangeEnd := codec.EncodeBytes([]byte{}, []byte("c"))
-	regions, err := paginateScanRegion(ctx, client, rangeStart, rangeEnd, 1)
+	regions, err := paginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
 	c.Assert(err, IsNil)
 	// regions is: [aay, bba), [bba, bbh), [bbh, cca)
 	checkRegionRanges(c, regions, [][]byte{[]byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca")})
@@ -303,7 +307,7 @@ func (s *localSuite) TestBatchSplitAndIngestRegion(c *C) {
 	c.Assert(client.splitCount, Equals, 7)
 
 	// check split ranges
-	regions, err = paginateScanRegion(ctx, client, rangeStart, rangeEnd, 1)
+	regions, err = paginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
 	c.Assert(err, IsNil)
 	result := [][]byte{[]byte("b"), []byte("ba"), []byte("bb"), []byte("bba"), []byte("bbh"), []byte("bc"),
 		[]byte("bd"), []byte("be"), []byte("bf"), []byte("bg"), []byte("bh"), []byte("bi"), []byte("bj"),
@@ -311,4 +315,48 @@ func (s *localSuite) TestBatchSplitAndIngestRegion(c *C) {
 		[]byte("br"), []byte("bs"), []byte("bt"), []byte("bu"), []byte("bv"), []byte("bw"), []byte("bx"),
 		[]byte("by"), []byte("bz"), []byte("cca")}
 	checkRegionRanges(c, regions, result)
+}
+
+func (s *localSuite) TestBatchSplitAndIngestWithClusteredIndex(c *C) {
+	tableId := int64(1)
+	tableStartKey := tablecodec.EncodeTablePrefix(tableId)
+	tableEndKey := tablecodec.EncodeTablePrefix(tableId + 1)
+	keys := [][]byte{[]byte(""), tableStartKey, tableEndKey, []byte("")}
+	client := initTestClient(keys)
+	local := &local{
+		splitCli: client,
+	}
+	ctx := context.Background()
+
+	// we batch generate a batch of row keys for table 1 with common handle
+	keys = make([][]byte, 0, 20+1)
+	stmtCtx := new(stmtctx.StatementContext)
+	for i := int64(0); i < 2; i++ {
+		for j := int64(0); j < 10; j++ {
+			keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(i), types.NewIntDatum(j*10000))
+			c.Assert(err, IsNil)
+			h, err := kv.NewCommonHandle(keyBytes)
+			c.Assert(err, IsNil)
+			key := tablecodec.EncodeRowKeyWithHandle(tableId, h)
+			keys = append(keys, key)
+		}
+	}
+
+	start := keys[0]
+	ranges := make([]Range, 0, len(keys)-1)
+	for _, e := range keys[1:] {
+		ranges = append(ranges, Range{start: start, end: e})
+		start = e
+	}
+
+	err := local.SplitAndScatterRegionByRanges(ctx, ranges)
+	c.Assert(err, IsNil)
+
+	startKey := codec.EncodeBytes([]byte{}, keys[0])
+	endKey := codec.EncodeBytes([]byte{}, keys[len(keys)-1])
+	// check split ranges
+	regions, err := paginateScanRegion(ctx, client, startKey, endKey, 5)
+	c.Assert(err, IsNil)
+	c.Assert(len(regions), Equals, len(ranges))
+	checkRegionRanges(c, regions, keys)
 }
