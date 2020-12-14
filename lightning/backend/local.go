@@ -1122,19 +1122,27 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		log.L().Info("start import engine", zap.Stringer("uuid", engineUUID),
 			zap.Int("ranges", len(ranges)))
 
-		// split region by given ranges
-		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
-			if err == nil {
-				break
-			}
+		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
+		// the table when table is created.
+		if lf.TotalSize > local.regionSplitSize || lf.Length > regionMaxKeyCount {
+			// split region by given ranges
+			for i := 0; i < maxRetryTimes; i++ {
+				err = local.SplitAndScatterRegionByRanges(ctx, ranges)
+				if err == nil {
+					break
+				}
 
-			log.L().Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
-				log.ShortError(err), zap.Int("retry", i))
-		}
-		if err != nil {
-			log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
-			return err
+				log.L().Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+					log.ShortError(err), zap.Int("retry", i))
+			}
+			if err != nil {
+				log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
+				return err
+			}
+		} else {
+			log.L().Info("engine total size is smaller than region split size, skip split regions",
+				zap.Stringer("uuid", engineUUID), zap.Int64("size", lf.TotalSize),
+				zap.Int64("count", lf.Length))
 		}
 
 		// start to write to kv and ingest
