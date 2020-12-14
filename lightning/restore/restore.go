@@ -1342,10 +1342,15 @@ func (rc *RestoreController) enforceDiskQuota(ctx context.Context) {
 	}
 
 	go func() {
-		rc.diskQuotaLock.Lock()
+		// locker is assigned when we detect the disk quota is exceeded.
+		// before the disk quota is confirmed exceeded, we keep the diskQuotaLock
+		// unlocked to avoid periodically interrupting the writer threads.
+		var locker sync.Locker
 		defer func() {
 			atomic.StoreInt32(&rc.diskQuotaState, diskQuotaStateIdle)
-			rc.diskQuotaLock.Unlock()
+			if locker != nil {
+				locker.Unlock()
+			}
 		}()
 
 		isRetrying := false
@@ -1377,6 +1382,12 @@ func (rc *RestoreController) enforceDiskQuota(ctx context.Context) {
 			if len(largeEngines) == 0 && inProgressLargeEngines == 0 {
 				logger.Debug("disk quota respected")
 				return
+			}
+
+			if locker == nil {
+				// blocks all writers when we detected disk quota being exceeded.
+				rc.diskQuotaLock.Lock()
+				locker = &rc.diskQuotaLock
 			}
 
 			logger.Warn("disk quota exceeded")
@@ -1829,10 +1840,11 @@ func (cr *chunkRestore) deliverLoop(
 			}
 		}
 
-		// in local mode, we should write these checkpoint after engine flushed
 		// we are allowed to save checkpoint when the disk quota state moved to "importing"
 		// since all engines are flushed.
-		canSaveCheckpoint := !rc.isLocalBackend() || atomic.LoadInt32(&rc.diskQuotaState) == diskQuotaStateImporting
+		if atomic.LoadInt32(&rc.diskQuotaState) == diskQuotaStateImporting {
+			saveCheckpoint(rc, t, engineID, cr.chunk)
+		}
 
 		func() {
 			rc.diskQuotaLock.RLock()
@@ -1865,11 +1877,12 @@ func (cr *chunkRestore) deliverLoop(
 		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)
 		// No need to apply a lock since this is the only thread updating `cr.chunk.**`.
+		// In local mode, we should write these checkpoint after engine flushed.
 		cr.chunk.Checksum.Add(&dataChecksum)
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = offset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
-		if canSaveCheckpoint && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
+		if !rc.isLocalBackend() && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
 			// No need to save checkpoint if nothing was delivered.
 			saveCheckpoint(rc, t, engineID, cr.chunk)
 		}
