@@ -1215,12 +1215,9 @@ func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (Engi
 	if err := os.Mkdir(tmpPath, 0755); err != nil {
 		return nil, err
 	}
-	var consumeWg sync.WaitGroup
-	var produceWg sync.WaitGroup
-	consumeWg.Add(1)
 	w := &LocalWriter{db: engineFile.db, sstDir: tmpPath, kvsChan: kvsChan,
-		local:     engineFile,
-		produceWg: produceWg, consumeWg: consumeWg}
+		local: engineFile}
+	w.consumeWg.Add(1)
 	go w.writeRowsLoop()
 	return w, nil
 }

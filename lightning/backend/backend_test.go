@@ -215,7 +215,6 @@ func (s *backendSuite) TestWriteBatchSendFailedWithRetry(c *C) {
 	c.Assert(err, ErrorMatches, ".*fake recoverable write batch error")
 }
 
-
 func (s *backendSuite) TestImportFailedNoRetry(c *C) {
 	s.setUpTest(c)
 	defer s.tearDownTest()
