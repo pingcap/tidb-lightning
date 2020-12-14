@@ -308,7 +308,7 @@ outside:
 	return errors.Trace(err)
 }
 
-type schemaJobType int
+type schemaStmtType int
 
 const (
 	schemaCreateDatabase = iota
@@ -317,10 +317,14 @@ const (
 )
 
 type schemaJob struct {
-	dbName  string
-	tblName string
-	jobType schemaJobType
-	stmts   []string
+	dbName string
+	stmts  []*schemaStmt
+}
+
+type schemaStmt struct {
+	tblName  string
+	stmtType schemaStmtType
+	sql      string
 }
 
 type restoreSchemaWorker struct {
@@ -339,10 +343,13 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 	//TODO: maybe we should put these create statements into a transaction
 	for _, dbMeta := range dbMetas {
 		restoreSchemaJob := &schemaJob{
-			dbName:  dbMeta.Name,
-			stmts:   []string{createDatabaseIfNotExistStmt(dbMeta.Name)},
-			jobType: schemaCreateDatabase,
+			dbName: dbMeta.Name,
+			stmts:  make([]*schemaStmt, 0), // sadly, we can't pre-alloc precise value of cap
 		}
+		restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+			stmtType: schemaCreateDatabase,
+			sql:      createDatabaseIfNotExistStmt(dbMeta.Name),
+		})
 		for _, tblMeta := range dbMeta.Tables {
 			sql := tblMeta.GetSchema(worker.ctx, worker.store)
 			if sql != "" {
@@ -351,7 +358,13 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 					worker.errCh <- err
 					return
 				}
-				restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, stmts...)
+				for _, sql := range stmts {
+					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+						tblName:  tblMeta.Name,
+						stmtType: schemaCreateTable,
+						sql:      sql,
+					})
+				}
 			}
 		}
 		// restore views. Since views can cross database we must restore views after all table schemas are restored.
@@ -363,7 +376,13 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 					worker.errCh <- err
 					return
 				}
-				restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, stmts...)
+				for _, sql := range stmts {
+					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+						tblName:  viewMeta.Name,
+						stmtType: schemaCreateView,
+						sql:      sql,
+					})
+				}
 			}
 		}
 		worker.wg.Add(1)
@@ -384,28 +403,28 @@ func (worker *restoreSchemaWorker) doJob() {
 			}
 			var logger log.Logger
 			purposePicker := 0
-			if job.jobType == schemaCreateDatabase {
-				logger = log.With(zap.String("db", job.dbName))
-				purposePicker = 1
-			} else if job.jobType == schemaCreateTable {
-				logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
-				purposePicker = 2
-			} else if job.jobType == schemaCreateView {
-				logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
-				purposePicker = 3
-			}
-			for _, sql := range job.stmts {
-				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", sql))
-				err := worker.executor.ExecuteWithLog(worker.ctx, sql, worker.purpose[purposePicker], logger)
+			for _, stmt := range job.stmts {
+				if stmt.stmtType == schemaCreateDatabase {
+					logger = log.With(zap.String("db", job.dbName))
+					purposePicker = 1
+				} else if stmt.stmtType == schemaCreateTable {
+					logger = log.With(zap.String("table", common.UniqueTable(job.dbName, stmt.tblName)))
+					purposePicker = 2
+				} else if stmt.stmtType == schemaCreateView {
+					logger = log.With(zap.String("table", common.UniqueTable(job.dbName, stmt.tblName)))
+					purposePicker = 3
+				}
+				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
+				err := worker.executor.ExecuteWithLog(worker.ctx, stmt.sql, worker.purpose[purposePicker], logger)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
-					switch job.jobType {
+					switch stmt.stmtType {
 					case schemaCreateDatabase:
 						err = errors.Annotatef(err, "restore database schema %s failed", job.dbName)
 					case schemaCreateTable:
-						err = errors.Annotatef(err, "restore table schema %s failed", job.tblName)
+						err = errors.Annotatef(err, "restore table schema %s failed", stmt.tblName)
 					case schemaCreateView:
-						err = errors.Annotatef(err, "restore view schema %s failed", job.tblName)
+						err = errors.Annotatef(err, "restore view schema %s failed", stmt.tblName)
 					}
 					worker.errCh <- err
 					worker.wg.Done()
