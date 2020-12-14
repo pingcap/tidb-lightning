@@ -44,6 +44,7 @@ type SQLExecutor interface {
 	// same underlying connection
 	ExecuteWithLog(ctx context.Context, query string, purpose string, logger log.Logger) error
 	ObtainStringWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (string, error)
+	QueryStringsWithLog(ctx context.Context, query string, purpose string, logger log.Logger) ([][]string, error)
 	Close()
 }
 
@@ -78,6 +79,38 @@ func (e *ExternalTiDBGlue) ObtainStringWithLog(ctx context.Context, query string
 		Logger: logger,
 	}.QueryRow(ctx, purpose, query, &s)
 	return s, err
+}
+
+func (e *ExternalTiDBGlue) QueryStringsWithLog(ctx context.Context, query string, purpose string, logger log.Logger) (result [][]string, finalErr error) {
+	finalErr = common.SQLWithRetry{
+		DB:     e.db,
+		Logger: logger,
+	}.Transact(ctx, purpose, func(c context.Context, tx *sql.Tx) (txErr error) {
+		rows, err := tx.QueryContext(c, query)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		colNames, err := rows.Columns()
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			row := make([]string, len(colNames))
+			refs := make([]interface{}, 0, len(row))
+			for i := range row {
+				refs = append(refs, &row[i])
+			}
+			if err := rows.Scan(refs...); err != nil {
+				return err
+			}
+			result = append(result, row)
+		}
+
+		return rows.Err()
+	})
+	return
 }
 
 func (e *ExternalTiDBGlue) GetDB() (*sql.DB, error) {

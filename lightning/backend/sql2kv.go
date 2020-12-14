@@ -157,7 +157,7 @@ func collectGeneratedColumns(se *session, meta *model.TableInfo, cols []*table.C
 
 	// order the result by column offset so they match the evaluation order.
 	sort.Slice(genCols, func(i, j int) bool {
-		return cols[i].Offset < cols[j].Offset
+		return cols[genCols[i].index].Offset < cols[genCols[j].index].Offset
 	})
 	return genCols, nil
 }
