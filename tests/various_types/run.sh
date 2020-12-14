@@ -108,6 +108,6 @@ for BACKEND in importer tidb local; do
   check_contains 'a: 18446744073709551614'
   check_contains 'b: -9223372036854775806'
   check_contains 'c: 99999999999999999999.0'
-  check_contains 'd: 18446744073709551616.0'
+  check_contains 'd: 1.8446744073709552e19'
 
 done
