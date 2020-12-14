@@ -1211,7 +1211,7 @@ func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (Engi
 	}
 	engineFile := e.(*LocalFile)
 	kvsChan := make(chan []common.KvPair, 1024)
-	tmpPath := filepath.Join(local.localStoreDir, engineUUID.String(), "lightning_tmp")
+	tmpPath := filepath.Join(local.localStoreDir, engineUUID.String(), fmt.Sprintf("tmp_%s.sst", uuid.New()))
 	if err := os.Mkdir(tmpPath, 0755); err != nil {
 		return nil, err
 	}
