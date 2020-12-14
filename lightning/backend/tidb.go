@@ -108,6 +108,10 @@ func (rows tidbRows) Clear() Rows {
 	return rows[:0]
 }
 
+func (rows tidbRows) Len() int {
+	return len(rows)
+}
+
 func (enc *tidbEncoder) appendSQLBytes(sb *strings.Builder, value []byte) {
 	sb.Grow(2 + len(value))
 	sb.WriteByte('\'')

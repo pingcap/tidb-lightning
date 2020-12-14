@@ -1164,58 +1164,6 @@ func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName strin
 	return fetchRemoteTableModelsFromTLS(ctx, local.tls, schemaName)
 }
 
-func (local *local) WriteRows(
-	ctx context.Context,
-	engineUUID uuid.UUID,
-	tableName string,
-	columnNames []string,
-	ts uint64,
-	rows Rows,
-) (finalErr error) {
-	e, ok := local.engines.Load(engineUUID)
-	if !ok {
-		return errors.Errorf("could not find engine for %s", engineUUID.String())
-	}
-	engineFile := e.(*LocalFile)
-	var err error
-	for i := 0; i < maxRetryTimes; i++ {
-		err = engineFile.WriteRows(ts, rows)
-		if !common.IsRetryableError(err) {
-			return err
-		}
-	}
-	return errors.Annotatef(err, "[%s] write rows reach max retry %d and still failed", tableName, maxRetryTimes)
-}
-
-func (f *LocalFile) WriteRows(
-	ts uint64,
-	rows Rows,
-) (finalErr error) {
-	kvs := rows.(kvPairs)
-	if len(kvs) == 0 {
-		return nil
-	}
-
-	wo := &pebble.WriteOptions{Sync: false}
-	size := int64(0)
-	wb := f.db.NewBatch()
-
-	// write to pebble to make them sorted
-	for _, pair := range kvs {
-		wb.Set(pair.Key, pair.Val, wo)
-		size += int64(len(pair.Key) + len(pair.Val))
-	}
-	if err := wb.Commit(wo); err != nil {
-		return err
-	}
-	wb.Reset()
-
-	atomic.AddInt64(&f.Length, int64(len(kvs)))
-	atomic.AddInt64(&f.TotalSize, size)
-	f.Ts = ts
-	return
-}
-
 func (local *local) MakeEmptyRows() Rows {
 	return kvPairs(nil)
 }
@@ -1573,13 +1521,16 @@ func (w *LocalWriter) writeRowsLoop() {
 				UserKey: []byte{},
 				Trailer: uint64((0 << 8) | sstable.InternalKeyKindSet),
 			}
+			size := int64(0)
 			for _, p := range kvs {
 				internalKey.UserKey = p.Key
+				size += int64(len(p.Key) + len(p.Val))
 				if err := writer.Add(internalKey, p.Val); err != nil {
 					w.writeErr.Set(err)
 					return
 				}
 			}
+			atomic.AddInt64(&w.local.TotalSize, size)
 		} else {
 			if wb == nil {
 				wb = w.db.NewBatch()
@@ -1590,17 +1541,26 @@ func (w *LocalWriter) writeRowsLoop() {
 				batchSize += int64(len(pair.Key) + len(pair.Val))
 			}
 			if batchSize > LocalMemoryTableSize {
-				wb.Commit(wo)
+				atomic.AddInt64(&w.local.TotalSize, batchSize)
+				if err := wb.Commit(wo); err != nil {
+					w.writeErr.Set(err)
+					return
+				}
 				wb.Reset()
+				batchSize = 0
 			}
 		}
+		atomic.AddInt64(&w.local.Length, int64(len(kvs)))
 	}
 
 	if wb != nil {
 		wo := &pebble.WriteOptions{Sync: false}
-		if err := wb.Commit(wo); err != nil {
-			w.writeErr.Set(err)
-			return
+		if batchSize > 0 {
+			if err := wb.Commit(wo); err != nil {
+				w.writeErr.Set(err)
+				return
+			}
+			atomic.AddInt64(&w.local.TotalSize, batchSize)
 		}
 	}
 	if writer != nil {

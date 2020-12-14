@@ -108,15 +108,6 @@ type AbstractBackend interface {
 
 	OpenEngine(ctx context.Context, engineUUID uuid.UUID) error
 
-	WriteRows(
-		ctx context.Context,
-		engineUUID uuid.UUID,
-		tableName string,
-		columnNames []string,
-		commitTS uint64,
-		rows Rows,
-	) error
-
 	CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 
 	ImportEngine(ctx context.Context, engineUUID uuid.UUID) error
@@ -273,7 +264,17 @@ func (engine *OpenedEngine) Flush() error {
 
 // WriteRows writes a collection of encoded rows into the engine.
 func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
-	return engine.backend.WriteRows(ctx, engine.uuid, engine.tableName, columnNames, engine.ts, rows)
+	if rows.Len() == 0 {
+		return nil
+	}
+	writer, err := engine.backend.LocalWriter(ctx, engine.uuid)
+	if err != nil {
+		return err
+	}
+	if err = writer.AppendRows(ctx, engine.tableName, columnNames, engine.ts, rows); err != nil {
+		return err
+	}
+	return writer.Close()
 }
 
 func (engine *OpenedEngine) LocalWriter(ctx context.Context) (*LocalEngineWriter, error) {
@@ -402,6 +403,8 @@ type Rows interface {
 	// Clear returns a new collection with empty content. It may share the
 	// capacity with the current instance. The typical usage is `x = x.Clear()`.
 	Clear() Rows
+
+	Len() int
 }
 
 type EngineWriter interface {

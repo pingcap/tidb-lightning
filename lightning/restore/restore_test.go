@@ -817,10 +817,19 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData(c *C) {
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil).Times(2)
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 	mockBackend.EXPECT().MaxChunkSize().Return(10000).AnyTimes()
+	mockWriter := mock.NewMockEngineWriter(controller)
+	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	mockWriter.EXPECT().
+		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0)
 	c.Assert(err, IsNil)
+	dataWriter, err := dataEngine.LocalWriter(ctx)
+	c.Assert(err, IsNil)
 	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1)
+	c.Assert(err, IsNil)
+	indexWriter, err := indexEngine.LocalWriter(ctx)
 	c.Assert(err, IsNil)
 
 	// Deliver nothing.
@@ -830,7 +839,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData(c *C) {
 
 	kvsCh := make(chan []deliveredKVs, 1)
 	kvsCh <- []deliveredKVs{}
-	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataEngine, indexEngine, rc)
+	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	c.Assert(err, IsNil)
 }
 
@@ -849,16 +858,23 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil).Times(2)
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 	mockBackend.EXPECT().MaxChunkSize().Return(10000).AnyTimes()
+	mockWriter := mock.NewMockEngineWriter(controller)
+	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0)
 	c.Assert(err, IsNil)
 	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1)
 	c.Assert(err, IsNil)
 
+	dataWriter, err := dataEngine.LocalWriter(ctx)
+	c.Assert(err, IsNil)
+	indexWriter, err := indexEngine.LocalWriter(ctx)
+	c.Assert(err, IsNil)
+
 	// Set up the expected API calls to the data engine...
 
-	mockBackend.EXPECT().
-		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]common.KvPair{
+	mockWriter.EXPECT().
+		AppendRows(ctx, s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]common.KvPair{
 			{
 				Key: []byte("txxxxxxxx_ryyyyyyyy"),
 				Val: []byte("value1"),
@@ -874,8 +890,8 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	//
 	// Note: This test assumes data engine is written before the index engine.
 
-	mockBackend.EXPECT().
-		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]common.KvPair{
+	mockWriter.EXPECT().
+		AppendRows(ctx, s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]common.KvPair{
 			{
 				Key: []byte("txxxxxxxx_izzzzzzzz"),
 				Val: []byte("index1"),
@@ -914,7 +930,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	cfg := &config.Config{}
 	rc := &RestoreController{cfg: cfg, saveCpCh: saveCpCh, backend: importer}
 
-	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataEngine, indexEngine, rc)
+	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	c.Assert(err, IsNil)
 	c.Assert(saveCpCh, HasLen, 2)
 	c.Assert(s.cr.chunk.Chunk.Offset, Equals, int64(12))
@@ -1030,6 +1046,10 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 	c.Assert(err, IsNil)
 	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1)
 	c.Assert(err, IsNil)
+	dataWriter, err := dataEngine.LocalWriter(ctx)
+	c.Assert(err, IsNil)
+	indexWriter, err := indexEngine.LocalWriter(ctx)
+	c.Assert(err, IsNil)
 
 	// Expected API sequence
 	// (we don't care about the actual content, this would be checked in the integrated tests)
@@ -1053,7 +1073,7 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 	// Now actually start the restore loop.
 
 	saveCpCh := make(chan saveCp, 2)
-	err = s.cr.restore(ctx, s.tr, 0, dataEngine, indexEngine, &RestoreController{
+	err = s.cr.restore(ctx, s.tr, 0, dataWriter, indexWriter, &RestoreController{
 		cfg:      s.cfg,
 		saveCpCh: saveCpCh,
 		backend:  importer,

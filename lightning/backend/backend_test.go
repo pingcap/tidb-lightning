@@ -117,29 +117,30 @@ func (s *backendSuite) TestWriteEngine(c *C) {
 	ctx := context.Background()
 	engineUUID := uuid.MustParse("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
 
-	rows0 := mock.NewMockRows(s.controller)
 	rows1 := mock.NewMockRows(s.controller)
 	rows2 := mock.NewMockRows(s.controller)
 
 	s.mockBackend.EXPECT().
 		OpenEngine(ctx, engineUUID).
 		Return(nil)
-	s.mockBackend.EXPECT().
-		MaxChunkSize().
-		Return(654321)
-	rows0.EXPECT().
-		SplitIntoChunks(654321).
-		Return([]kv.Rows{rows1, rows2})
-	s.mockBackend.EXPECT().
-		WriteRows(ctx, engineUUID, "`db`.`table`", []string{"c1", "c2"}, gomock.Any(), rows1).
+
+	rows1.EXPECT().Len().Return(1)
+	rows2.EXPECT().Len().Return(1)
+	mockWriter := mock.NewMockEngineWriter(s.controller)
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	mockWriter.EXPECT().
+		AppendRows(ctx, "`db`.`table`", []string{"c1", "c2"}, gomock.Any(), rows1).
 		Return(nil)
-	s.mockBackend.EXPECT().
-		WriteRows(ctx, engineUUID, "`db`.`table`", []string{"c1", "c2"}, gomock.Any(), rows2).
+	mockWriter.EXPECT().Close().Return(nil).AnyTimes()
+	mockWriter.EXPECT().
+		AppendRows(ctx, "`db`.`table`", []string{"c1", "c2"}, gomock.Any(), rows2).
 		Return(nil)
 
 	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
-	err = engine.WriteRows(ctx, []string{"c1", "c2"}, rows0)
+	err = engine.WriteRows(ctx, []string{"c1", "c2"}, rows1)
+	c.Assert(err, IsNil)
+	err = engine.WriteRows(ctx, []string{"c1", "c2"}, rows2)
 	c.Assert(err, IsNil)
 }
 
@@ -150,9 +151,8 @@ func (s *backendSuite) TestWriteToEngineWithNothing(c *C) {
 	ctx := context.Background()
 	emptyRows := mock.NewMockRows(s.controller)
 
+	emptyRows.EXPECT().Len().Return(0)
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
-	s.mockBackend.EXPECT().MaxChunkSize().Return(654321)
-	emptyRows.EXPECT().SplitIntoChunks(654321).Return([]kv.Rows{})
 
 	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
@@ -179,13 +179,13 @@ func (s *backendSuite) TestWriteEngineFailed(c *C) {
 
 	ctx := context.Background()
 	rows := mock.NewMockRows(s.controller)
+	rows.EXPECT().Len().Return(1)
 
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
-	s.mockBackend.EXPECT().MaxChunkSize().Return(123)
-	rows.EXPECT().SplitIntoChunks(123).Return([]kv.Rows{rows})
-
-	s.mockBackend.EXPECT().
-		WriteRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), rows).
+	mockWriter := mock.NewMockEngineWriter(s.controller)
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	mockWriter.EXPECT().
+		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable write error"))
 
 	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
@@ -202,13 +202,12 @@ func (s *backendSuite) TestWriteBatchSendFailedWithRetry(c *C) {
 	rows := mock.NewMockRows(s.controller)
 
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
-	s.mockBackend.EXPECT().MaxChunkSize().Return(123)
-	rows.EXPECT().SplitIntoChunks(123).Return([]kv.Rows{rows})
-
-	s.mockBackend.EXPECT().
-		WriteRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), rows).
+	rows.EXPECT().Len().Return(1)
+	mockWriter := mock.NewMockEngineWriter(s.controller)
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	mockWriter.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.New("fake recoverable write batch error")).
-		MinTimes(2)
+		MinTimes(1)
 
 	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
@@ -216,29 +215,6 @@ func (s *backendSuite) TestWriteBatchSendFailedWithRetry(c *C) {
 	c.Assert(err, ErrorMatches, ".*fake recoverable write batch error")
 }
 
-func (s *backendSuite) TestWriteBatchSendRecovered(c *C) {
-	s.setUpTest(c)
-	defer s.tearDownTest()
-
-	ctx := context.Background()
-	rows := mock.NewMockRows(s.controller)
-
-	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
-	s.mockBackend.EXPECT().MaxChunkSize().Return(123)
-	rows.EXPECT().SplitIntoChunks(123).Return([]kv.Rows{rows})
-
-	s.mockBackend.EXPECT().
-		WriteRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), rows).
-		Return(errors.New("fake recoverable write batch error"))
-	s.mockBackend.EXPECT().
-		WriteRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), rows).
-		Return(nil)
-
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
-	c.Assert(err, IsNil)
-	err = engine.WriteRows(ctx, nil, rows)
-	c.Assert(err, IsNil)
-}
 
 func (s *backendSuite) TestImportFailedNoRetry(c *C) {
 	s.setUpTest(c)
