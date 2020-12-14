@@ -1084,6 +1084,7 @@ func (t *TableRestore) restoreEngine(
 				wg.Done()
 				rc.regionWorkers.Recycle(w)
 				indexWriter.Done()
+				dataWriter.WaitConsume()
 			}()
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
 			if err == nil {
