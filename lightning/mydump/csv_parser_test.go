@@ -115,11 +115,17 @@ func tpchDatums() [][]types.Datum {
 
 func datumsToString(datums [][]types.Datum, delimitor string, quote string, lastSep bool) string {
 	var b strings.Builder
+	doubleQuote := quote + quote
 	for _, ds := range datums {
 		for i, d := range ds {
-			b.WriteString(quote)
-			b.WriteString(d.GetString())
-			b.WriteString(quote)
+			text := d.GetString()
+			if len(quote) > 0 {
+				b.WriteString(quote)
+				b.WriteString(strings.ReplaceAll(text, quote, doubleQuote))
+				b.WriteString(quote)
+			} else {
+				b.WriteString(text)
+			}
 			if lastSep || i < len(ds)-1 {
 				b.WriteString(delimitor)
 			}
@@ -168,7 +174,7 @@ func (s *testMydumpCSVParserSuite) TestTPCH(c *C) {
 
 func (s *testMydumpCSVParserSuite) TestTPCHMultiBytes(c *C) {
 	datums := tpchDatums()
-	deliAndSeps := [][2]string{
+	sepsAndQuotes := [][2]string{
 		{",", ""},
 		{"\000", ""},
 		{"，", ""},
@@ -185,9 +191,29 @@ func (s *testMydumpCSVParserSuite) TestTPCHMultiBytes(c *C) {
 		{"🤔", "🌚"}, // this two emoji have same prefix bytes
 		{"##", "#-"},
 		{"\\s", "\\q"},
+		{",", "1"},
+		{",", "ac"},
 	}
-	for _, SepAndQuote := range deliAndSeps {
+	for _, SepAndQuote := range sepsAndQuotes {
 		inputStr := datumsToString(datums, SepAndQuote[0], SepAndQuote[1], false)
+
+		// extract all index in the middle of '\r\n' from the inputStr.
+		// they indicate where the parser stops after reading one row.
+		// should be equals to the number of datums.
+		var allExpectedParserPos []int
+		for {
+			last := 0
+			if len(allExpectedParserPos) > 0 {
+				last = allExpectedParserPos[len(allExpectedParserPos)-1]
+			}
+			pos := strings.IndexByte(inputStr[last:], '\r')
+			if pos < 0 {
+				break
+			}
+			allExpectedParserPos = append(allExpectedParserPos, last+pos+1)
+		}
+		c.Assert(allExpectedParserPos, HasLen, len(datums))
+
 		cfg := config.CSVConfig{
 			Separator:   SepAndQuote[0],
 			Delimiter:   SepAndQuote[1],
@@ -196,27 +222,15 @@ func (s *testMydumpCSVParserSuite) TestTPCHMultiBytes(c *C) {
 
 		reader := mydump.NewStringReader(inputStr)
 		parser := mydump.NewCSVParser(&cfg, reader, int64(config.ReadBlockSize), s.ioWorkers, false)
-		c.Assert(parser.ReadRow(), IsNil)
-		c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-			RowID: 1,
-			Row:   datums[0],
-		})
 
-		c.Assert(parser, posEq, 117+8*len(SepAndQuote[0])+18*len(SepAndQuote[1]), 1)
-
-		c.Assert(parser.ReadRow(), IsNil)
-		c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-			RowID: 2,
-			Row:   datums[1],
-		})
-		c.Assert(parser, posEq, 223+8*2*len(SepAndQuote[0])+18*2*len(SepAndQuote[1]), 2)
-
-		c.Assert(parser.ReadRow(), IsNil)
-		c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-			RowID: 3,
-			Row:   datums[2],
-		})
-		c.Assert(parser, posEq, 342+8*3*len(SepAndQuote[0])+18*3*len(SepAndQuote[1]), 3)
+		for i, expectedParserPos := range allExpectedParserPos {
+			c.Assert(parser.ReadRow(), IsNil)
+			c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+				RowID: int64(i + 1),
+				Row:   datums[i],
+			})
+			c.Assert(parser, posEq, expectedParserPos, i+1)
+		}
 
 		c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
 	}

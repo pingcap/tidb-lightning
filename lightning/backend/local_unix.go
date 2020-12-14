@@ -20,12 +20,29 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb-lightning/lightning/log"
 )
+
+const (
+	// mininum max open files value
+	minRLimit = 1024
+)
+
+func GetSystemRLimit() (uint64, error) {
+	var rLimit syscall.Rlimit
+	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	return rLimit.Cur, err
+}
 
 // VerifyRLimit checks whether the open-file limit is large enough.
 // In Local-backend, we need to read and write a lot of L0 SST files, so we need
 // to check system max open files limit.
 func VerifyRLimit(estimateMaxFiles uint64) error {
+	if estimateMaxFiles < minRLimit {
+		estimateMaxFiles = minRLimit
+	}
 	var rLimit syscall.Rlimit
 	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
 	failpoint.Inject("GetRlimitValue", func(v failpoint.Value) {
@@ -57,5 +74,19 @@ func VerifyRLimit(estimateMaxFiles uint64) error {
 	if err != nil {
 		return errors.Annotatef(err, "the maximum number of open file descriptors is too small, got %d, expect greater or equal to %d", prevLimit, estimateMaxFiles)
 	}
+
+	// fetch the rlimit again to make sure our setting has taken effect
+	err = syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if rLimit.Cur < estimateMaxFiles {
+		helper := "Please manually execute `ulimit -n %d` to increase the open files limit."
+		return errors.Errorf("cannot update the maximum number of open file descriptors, expected: %d, got: %d. %s",
+			estimateMaxFiles, rLimit.Cur, helper)
+	}
+
+	log.L().Info("Set the maximum number of open file descriptors(rlimit)",
+		zap.Uint64("old", prevLimit), zap.Uint64("new", estimateMaxFiles))
 	return nil
 }

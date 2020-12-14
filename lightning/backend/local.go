@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"io"
 	"io/ioutil"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +33,7 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	split "github.com/pingcap/br/pkg/restore"
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	pd "github.com/tikv/pd/client"
@@ -78,6 +79,9 @@ const (
 
 	defaultPropSizeIndexDistance = 4 * 1024 * 1024 // 4MB
 	defaultPropKeysIndexDistance = 40 * 1024
+
+	// the lower threshold of max open files for pebble db.
+	openFilesLowerThreshold = 128
 )
 
 var (
@@ -222,6 +226,7 @@ type local struct {
 	checkpointEnabled bool
 
 	tcpConcurrency int
+	maxOpenFiles   int
 }
 
 // connPool is a lazy pool of gRPC channels.
@@ -294,6 +299,7 @@ func NewLocalBackend(
 	sendKVPairs int,
 	enableCheckpoint bool,
 	g glue.Glue,
+	maxOpenFiles int,
 ) (Backend, error) {
 	pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
@@ -334,6 +340,7 @@ func NewLocalBackend(
 		tcpConcurrency:    rangeConcurrency,
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
+		maxOpenFiles:      utils.MaxInt(maxOpenFiles, openFilesLowerThreshold),
 	}
 	local.conns.conns = make(map[uint64]*connPool)
 	return MakeBackend(local), nil
@@ -469,13 +476,17 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize:             LocalMemoryTableSize,
-		MaxConcurrentCompactions: 16,
-		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
-		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
-		MaxOpenFiles:             10000,
-		DisableWAL:               true,
-		ReadOnly:                 readOnly,
+		MemTableSize: LocalMemoryTableSize,
+		// the default threshold value may cause write stall.
+		MemTableStopWritesThreshold: 8,
+		MaxConcurrentCompactions:    16,
+		// set to half of the max open files so that if open files is more that estimation, trigger compaction
+		// to avoid failure due to open files exceeded limit
+		L0CompactionThreshold: local.maxOpenFiles / 2,
+		L0StopWritesThreshold: local.maxOpenFiles / 2,
+		MaxOpenFiles:          local.maxOpenFiles,
+		DisableWAL:            true,
+		ReadOnly:              readOnly,
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			func() pebble.TablePropertyCollector {
 				return newRangePropertiesCollector()
@@ -1431,6 +1442,15 @@ func nextKey(key []byte) []byte {
 	if len(key) == 0 {
 		return []byte{}
 	}
+
+	// in tikv <= 4.x, tikv will truncate the row key, so we should fetch the next valid row key
+	// See: https://github.com/tikv/tikv/blob/f7f22f70e1585d7ca38a59ea30e774949160c3e8/components/raftstore/src/coprocessor/split_observer.rs#L36-L41
+	if tablecodec.IsRecordKey(key) {
+		tableId, handle, _ := tablecodec.DecodeRecordKey(key)
+		return tablecodec.EncodeRowKeyWithHandle(tableId, handle.Next())
+	}
+
+	// if key is an index, directly append a 0x00 to the key.
 	res := make([]byte, 0, len(key)+1)
 	res = append(res, key...)
 	res = append(res, 0)
