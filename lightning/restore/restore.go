@@ -145,7 +145,7 @@ type RestoreController struct {
 	postProcessLock sync.Mutex // a simple way to ensure post-processing is not concurrent without using complicated goroutines
 	alterTableLock  sync.Mutex
 	compactState    int32
-	rowFormatVer    string
+	sysVars         map[string]string
 	tls             *common.TLS
 
 	errorSummaries errorSummaries
@@ -213,9 +213,20 @@ func NewRestoreControllerWithPauser(
 		}
 		backend = kv.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate)
 	case config.BackendLocal:
+		var rLimit uint64
+		rLimit, err = kv.GetSystemRLimit()
+		if err != nil {
+			return nil, err
+		}
+		maxOpenFiles := int(rLimit / uint64(cfg.App.TableConcurrency))
+		// check overflow
+		if maxOpenFiles < 0 {
+			maxOpenFiles = math.MaxInt32
+		}
+
 		backend, err = kv.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, int64(cfg.TikvImporter.RegionSplitSize),
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
-			cfg.Checkpoint.Enable, g)
+			cfg.Checkpoint.Enable, g, maxOpenFiles)
 		if err != nil {
 			return nil, err
 		}
@@ -233,7 +244,7 @@ func NewRestoreControllerWithPauser(
 		pauser:        pauser,
 		backend:       backend,
 		tidbGlue:      g,
-		rowFormatVer:  "1",
+		sysVars:       defaultImportantVariables,
 		tls:           tls,
 
 		errorSummaries:    makeErrorSummaries(log.L()),
@@ -365,7 +376,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 
 	go rc.listenCheckpointUpdates()
 
-	rc.rowFormatVer = ObtainRowFormatVersion(ctx, rc.tidbGlue.GetSQLExecutor())
+	rc.sysVars = ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor())
 
 	// Estimate the number of chunks for progress reporting
 	err = rc.estimateChunkCountIntoMetrics(ctx)
@@ -1669,10 +1680,12 @@ func (t *TableRestore) parseColumnPermutations(columns []string) ([]int, error) 
 		if i, ok := columnMap[colInfo.Name.L]; ok {
 			colPerm = append(colPerm, i)
 		} else {
-			t.logger.Warn("column missing from data file, going to fill with default value",
-				zap.String("colName", colInfo.Name.O),
-				zap.Stringer("colType", &colInfo.FieldType),
-			)
+			if len(colInfo.GeneratedExprString) == 0 {
+				t.logger.Warn("column missing from data file, going to fill with default value",
+					zap.String("colName", colInfo.Name.O),
+					zap.Stringer("colType", &colInfo.FieldType),
+				)
+			}
 			colPerm = append(colPerm, -1)
 		}
 	}
@@ -2009,13 +2022,17 @@ func (cr *chunkRestore) restore(
 	rc *RestoreController,
 ) error {
 	// Create the encoder.
-	kvEncoder := rc.backend.NewEncoder(t.encTable, &kv.SessionOptions{
-		SQLMode:          rc.cfg.TiDB.SQLMode,
-		Timestamp:        cr.chunk.Timestamp,
-		RowFormatVersion: rc.rowFormatVer,
+	kvEncoder, err := rc.backend.NewEncoder(t.encTable, &kv.SessionOptions{
+		SQLMode:   rc.cfg.TiDB.SQLMode,
+		Timestamp: cr.chunk.Timestamp,
+		SysVars:   rc.sysVars,
 		// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
 		AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 	})
+	if err != nil {
+		return err
+	}
+
 	kvsCh := make(chan []deliveredKVs, maxKVQueueSize)
 	deliverCompleteCh := make(chan deliverResult)
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright 2019 PingCAP, Inc.
+# Copyright 2020 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,13 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eu
-TEST_DIR=/tmp/lightning_test_result
+set -eux
 
-echo "[$(date)] Executing SQL: ${*: -1:1}" > "$TEST_DIR/sql_res.$TEST_NAME.txt"
-mysql -uroot -h127.0.0.1 -P4000 \
-    --ssl-ca="$TEST_DIR/tls/ca.pem" \
-    --ssl-cert="$TEST_DIR/tls/curl.pem" \
-    --ssl-key="$TEST_DIR/tls/curl.key" \
-    ${@:1:$#-1} \
-    --default-character-set utf8 -E -e "${*: -1:1}" >> "$TEST_DIR/sql_res.$TEST_NAME.txt"
+run_sql 'DROP DATABASE IF EXISTS issue519;'
+run_lightning --backend tidb
+
+run_sql "SELECT b FROM issue519.t WHERE a = '''';"
+check_contains 'b: "'
+# following use hex to avoid the escaping mess. 22 = `"`, 27 = `'`.
+run_sql 'SELECT hex(a) FROM issue519.t WHERE b = 0x222722272727272722;'
+check_contains 'hex(a): 2227272727222722'

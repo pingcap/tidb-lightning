@@ -290,14 +290,14 @@ func (be *tidbBackend) CheckRequirements(ctx context.Context) error {
 	return nil
 }
 
-func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
+func (be *tidbBackend) NewEncoder(tbl table.Table, options *SessionOptions) (Encoder, error) {
 	se := newSession(options)
 	if options.SQLMode.HasStrictMode() {
 		se.vars.SkipUTF8Check = false
 		se.vars.SkipASCIICheck = false
 	}
 
-	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}
+	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}, nil
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, uuid.UUID) error {

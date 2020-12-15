@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"io"
 	"io/ioutil"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +33,7 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	split "github.com/pingcap/br/pkg/restore"
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -41,8 +41,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	pd "github.com/tikv/pd/client"
@@ -53,6 +53,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/manual"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
@@ -76,6 +77,9 @@ const (
 
 	defaultPropSizeIndexDistance = 4 * 1024 * 1024 // 4MB
 	defaultPropKeysIndexDistance = 40 * 1024
+
+	// the lower threshold of max open files for pebble db.
+	openFilesLowerThreshold = 128
 )
 
 var (
@@ -179,6 +183,7 @@ type local struct {
 	checkpointEnabled bool
 
 	tcpConcurrency int
+	maxOpenFiles   int
 }
 
 // connPool is a lazy pool of gRPC channels.
@@ -251,6 +256,7 @@ func NewLocalBackend(
 	sendKVPairs int,
 	enableCheckpoint bool,
 	g glue.Glue,
+	maxOpenFiles int,
 ) (Backend, error) {
 	pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tls.ToPDSecurityOption())
 	if err != nil {
@@ -291,6 +297,7 @@ func NewLocalBackend(
 		tcpConcurrency:    rangeConcurrency,
 		batchWriteKVPairs: sendKVPairs,
 		checkpointEnabled: enableCheckpoint,
+		maxOpenFiles:      utils.MaxInt(maxOpenFiles, openFilesLowerThreshold),
 	}
 	local.conns.conns = make(map[uint64]*connPool)
 	return MakeBackend(local), nil
@@ -387,14 +394,17 @@ func (local *local) ShouldPostProcess() bool {
 
 func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize:                LocalMemoryTableSize,
-		MemTableStopWritesThreshold: 16,
+		MemTableSize: LocalMemoryTableSize,
+		// the default threshold value may cause write stall.
+		MemTableStopWritesThreshold: 8,
 		MaxConcurrentCompactions:    16,
-		L0CompactionThreshold:       math.MaxInt32, // set to max try to disable compaction
-		L0StopWritesThreshold:       math.MaxInt32, // set to max try to disable compaction
-		MaxOpenFiles:                10000,
-		DisableWAL:                  true,
-		ReadOnly:                    readOnly,
+		// set to half of the max open files so that if open files is more that estimation, trigger compaction
+		// to avoid failure due to open files exceeded limit
+		L0CompactionThreshold: local.maxOpenFiles / 2,
+		L0StopWritesThreshold: local.maxOpenFiles / 2,
+		MaxOpenFiles:          local.maxOpenFiles,
+		DisableWAL:            true,
+		ReadOnly:              readOnly,
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			func() pebble.TablePropertyCollector {
 				return newRangePropertiesCollector()
@@ -501,8 +511,12 @@ func (local *local) WriteToTiKV(
 	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
 	iter := engineFile.db.NewIter(opt)
 	defer iter.Close()
+	iter.First()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
+	}
 
-	if !iter.First() {
+	if !iter.Valid() {
 		log.L().Info("keys within region is empty, skip ingest", zap.Binary("start", start),
 			zap.Binary("regionStart", region.Region.StartKey), zap.Binary("end", end),
 			zap.Binary("regionEnd", region.Region.EndKey))
@@ -511,6 +525,9 @@ func (local *local) WriteToTiKV(
 
 	firstKey := codec.EncodeBytes([]byte{}, iter.Key())
 	iter.Last()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
 	lastKey := codec.EncodeBytes([]byte{}, iter.Key())
 
 	u := uuid.New()
@@ -597,6 +614,10 @@ func (local *local) WriteToTiKV(
 		}
 	}
 
+	if iter.Error() != nil {
+		return nil, nil, errors.Trace(iter.Error())
+	}
+
 	if count > 0 {
 		for i := range clients {
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
@@ -604,10 +625,6 @@ func (local *local) WriteToTiKV(
 				return nil, nil, err
 			}
 		}
-	}
-
-	if iter.Error() != nil {
-		return nil, nil, errors.Trace(iter.Error())
 	}
 
 	var leaderPeerMetas []*sst.SSTMeta
@@ -706,16 +723,24 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
 
+	iterError := func(e string) error {
+		err := iter.Error()
+		if err != nil {
+			return errors.Annotate(err, e)
+		}
+		return errors.New(e)
+	}
+
 	var firstKey, lastKey []byte
 	if iter.First() {
 		firstKey = append([]byte{}, iter.Key()...)
 	} else {
-		return nil, errors.New("could not find first pair, this shouldn't happen")
+		return nil, iterError("could not find first pair")
 	}
 	if iter.Last() {
 		lastKey = append([]byte{}, iter.Key()...)
 	} else {
-		return nil, errors.New("could not find last pair, this shouldn't happen")
+		return nil, iterError("could not find last pair")
 	}
 	endKey := nextKey(lastKey)
 
@@ -852,6 +877,9 @@ func (local *local) writeAndIngestByRange(
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()
+	if iter.Error() != nil {
+		return errors.Annotate(iter.Error(), "failed to read the first key")
+	}
 	if !hasKey {
 		log.L().Info("There is no pairs in iterator",
 			zap.Binary("start", start),
@@ -861,6 +889,9 @@ func (local *local) writeAndIngestByRange(
 	}
 	pairStart := append([]byte{}, iter.Key()...)
 	iter.Last()
+	if iter.Error() != nil {
+		return errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
 	pairEnd := append([]byte{}, iter.Key()...)
 
 	var regions []*split.RegionInfo
@@ -1204,7 +1235,7 @@ func (local *local) MakeEmptyRows() Rows {
 	return kvPairs(nil)
 }
 
-func (local *local) NewEncoder(tbl table.Table, options *SessionOptions) Encoder {
+func (local *local) NewEncoder(tbl table.Table, options *SessionOptions) (Encoder, error) {
 	return NewTableKVEncoder(tbl, options)
 }
 
@@ -1300,6 +1331,15 @@ func nextKey(key []byte) []byte {
 	if len(key) == 0 {
 		return []byte{}
 	}
+
+	// in tikv <= 4.x, tikv will truncate the row key, so we should fetch the next valid row key
+	// See: https://github.com/tikv/tikv/blob/f7f22f70e1585d7ca38a59ea30e774949160c3e8/components/raftstore/src/coprocessor/split_observer.rs#L36-L41
+	if tablecodec.IsRecordKey(key) {
+		tableId, handle, _ := tablecodec.DecodeRecordKey(key)
+		return tablecodec.EncodeRowKeyWithHandle(tableId, handle.Next())
+	}
+
+	// if key is an index, directly append a 0x00 to the key.
 	res := make([]byte, 0, len(key)+1)
 	res = append(res, key...)
 	res = append(res, 0)
