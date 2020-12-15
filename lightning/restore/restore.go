@@ -447,15 +447,6 @@ func (worker *restoreSchemaWorker) wait() error {
 
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	if !rc.cfg.Mydumper.NoSchema {
-		if rc.tidbGlue.OwnsSQLExecutor() {
-			// CONFUSED: why don't use rc.tidbGlue.GetDB()?
-			db, err := DBFromConfig(rc.cfg.TiDB)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			defer db.Close()
-			db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
-		}
 		concurrency := 16
 		childCtx, cancel := context.WithCancel(ctx)
 		worker := restoreSchemaWorker{
