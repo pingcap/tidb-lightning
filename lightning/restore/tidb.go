@@ -140,6 +140,46 @@ func (timgr *TiDBManager) Close() {
 	timgr.db.Close()
 }
 
+func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema map[string]string) error {
+	logger := log.With(zap.String("db", database))
+	sqlExecutor := g.GetSQLExecutor()
+
+	var createDatabase strings.Builder
+	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
+	common.WriteMySQLIdentifier(&createDatabase, database)
+	err := sqlExecutor.ExecuteWithLog(ctx, createDatabase.String(), "create database", logger)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	task := logger.Begin(zap.InfoLevel, "create tables")
+	var sqlCreateStmts []string
+	for tbl, sqlCreateTable := range tablesSchema {
+		task.Debug("create table", zap.String("schema", sqlCreateTable))
+
+		sqlCreateStmts, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
+		if err != nil {
+			break
+		}
+
+		//TODO: maybe we should put these createStems into a transaction
+		for _, s := range sqlCreateStmts {
+			err = sqlExecutor.ExecuteWithLog(
+				ctx,
+				s,
+				"create table",
+				logger.With(zap.String("table", common.UniqueTable(database, tbl))),
+			)
+			if err != nil {
+				break
+			}
+		}
+	}
+	task.End(zap.ErrorLevel, err)
+
+	return errors.Trace(err)
+}
+
 func createDatabaseIfNotExistStmt(dbName string) string {
 	var createDatabase strings.Builder
 	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
