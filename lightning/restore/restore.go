@@ -1132,6 +1132,11 @@ func (t *TableRestore) restoreEngine(
 
 	closedDataEngine, err := dataEngine.Close(ctx)
 	if err == nil && rc.cfg.Checkpoint.Enable && rc.isLocalBackend() {
+		if err = indexEngine.Flush(); err != nil {
+			// If any error occurred, recycle worker immediately
+			return nil, errors.Trace(err)
+		}
+
 		// Currently we write all the checkpoints after data&index engine are flushed.
 		for _, chunk := range cp.Chunks {
 			saveCheckpoint(rc, t, engineID, chunk)

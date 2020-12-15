@@ -1508,7 +1508,7 @@ type LocalWriter struct {
 }
 
 func (w *LocalWriter) isSorted(kvs []common.KvPair) bool {
-	if len(kvs) <= 3 {
+	if len(kvs) <= 1 {
 		return false
 	}
 	for _, pair := range kvs {
@@ -1541,8 +1541,10 @@ func (w *LocalWriter) writeRowsLoop() {
 	var wb *pebble.Batch = nil
 	var filePath string
 	defer w.consumeWg.Done()
+	totalCount := 0
 	for kvs := range w.kvsChan {
-		if w.isSorted(kvs) {
+		totalCount += len(kvs)
+		if wb == nil && w.isSorted(kvs) {
 			if writer == nil {
 				filePath = filepath.Join(w.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
 				f, err := os.Create(filePath)
@@ -1560,7 +1562,7 @@ func (w *LocalWriter) writeRowsLoop() {
 			}
 			internalKey := sstable.InternalKey{
 				UserKey: []byte{},
-				Trailer: uint64((0 << 8) | sstable.InternalKeyKindSet),
+				Trailer: uint64(sstable.InternalKeyKindSet),
 			}
 			size := int64(0)
 			for _, p := range kvs {
