@@ -366,7 +366,16 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 				}
 			}
 		}
-		// restore views. Since views can cross database we must restore views after all table schemas are restored.
+		worker.wg.Add(1)
+		worker.jobCh <- restoreSchemaJob
+	}
+	worker.wg.Wait()
+	// restore views. Since views can cross database we must restore views after all table schemas are restored.
+	for _, dbMeta := range dbMetas {
+		restoreSchemaJob := &schemaJob{
+			dbName: dbMeta.Name,
+			stmts:  make([]*schemaStmt, 0),
+		}
 		for _, viewMeta := range dbMeta.Views {
 			sql := viewMeta.GetSchema(worker.ctx, worker.store)
 			if sql != "" {
