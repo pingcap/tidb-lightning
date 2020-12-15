@@ -1211,9 +1211,11 @@ func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (Engi
 	}
 	engineFile := e.(*LocalFile)
 	kvsChan := make(chan []common.KvPair, 1024)
-	tmpPath := filepath.Join(local.localStoreDir, engineUUID.String(), fmt.Sprintf("tmp_%s.sst", uuid.New()))
+	tmpPath := filepath.Join(local.localStoreDir, engineUUID.String())
 	if err := os.Mkdir(tmpPath, 0755); err != nil {
-		return nil, err
+		if !os.IsExist(err) {
+			return nil, err
+		}
 	}
 	w := &LocalWriter{db: engineFile.db, sstDir: tmpPath, kvsChan: kvsChan,
 		local: engineFile}
@@ -1506,6 +1508,9 @@ type LocalWriter struct {
 }
 
 func (w *LocalWriter) isSorted(kvs []common.KvPair) bool {
+	if len(kvs) <= 3 {
+		return false
+	}
 	for _, pair := range kvs {
 		if len(w.lastKey) > 0 && bytes.Compare(w.lastKey, pair.Key) >= 0 {
 			return false
@@ -1542,10 +1547,8 @@ func (w *LocalWriter) writeRowsLoop() {
 				filePath = filepath.Join(w.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
 				f, err := os.Create(filePath)
 				if err != nil {
-					if err != nil {
-						w.writeErr.Set(err)
-						return
-					}
+					w.writeErr.Set(err)
+					return
 				}
 				writer = sstable.NewWriter(f, sstable.WriterOptions{
 					TablePropertyCollectors: []func() pebble.TablePropertyCollector{

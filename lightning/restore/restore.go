@@ -1084,18 +1084,20 @@ func (t *TableRestore) restoreEngine(
 				wg.Done()
 				rc.regionWorkers.Recycle(w)
 				indexWriter.Done()
-				dataWriter.WaitConsume()
 			}()
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
 			if err == nil {
 				err = cr.restore(ctx, t, engineID, dataWriter, indexWriter, rc)
 			}
 			if err == nil {
-				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
-				return
+				err = dataWriter.WaitConsume()
 			}
-			metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
-			chunkErr.Set(err)
+			if err == nil {
+				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
+			} else {
+				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
+				chunkErr.Set(err)
+			}
 		}(restoreWorker, cr)
 	}
 
