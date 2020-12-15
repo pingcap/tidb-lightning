@@ -31,6 +31,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	// Import tidb/planner/core to initialize expression.RewriteAstExpr
+	_ "github.com/pingcap/tidb/planner/core"
+
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/metric"
