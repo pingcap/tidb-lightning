@@ -340,64 +340,69 @@ type restoreSchemaWorker struct {
 
 func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 	//TODO: maybe we should put these create statements into a transaction
-	for _, dbMeta := range dbMetas {
-		restoreSchemaJob := &schemaJob{
-			dbName: dbMeta.Name,
-			stmts:  make([]*schemaStmt, 0), // sadly, we can't pre-alloc precise value of cap
-		}
-		restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-			stmtType: schemaCreateDatabase,
-			sql:      createDatabaseIfNotExistStmt(dbMeta.Name),
-		})
-		for _, tblMeta := range dbMeta.Tables {
-			sql := tblMeta.GetSchema(worker.ctx, worker.store)
-			if sql != "" {
-				stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, tblMeta.Name)
-				if err != nil {
-					worker.errCh <- err
-					return
-				}
-				for _, sql := range stmts {
-					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-						tblName:  tblMeta.Name,
-						stmtType: schemaCreateTable,
-						sql:      sql,
-					})
+	select {
+	case <-worker.ctx.Done():
+		return
+	default:
+		for _, dbMeta := range dbMetas {
+			restoreSchemaJob := &schemaJob{
+				dbName: dbMeta.Name,
+				stmts:  make([]*schemaStmt, 0), // sadly, we can't pre-alloc precise value of cap
+			}
+			restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+				stmtType: schemaCreateDatabase,
+				sql:      createDatabaseIfNotExistStmt(dbMeta.Name),
+			})
+			for _, tblMeta := range dbMeta.Tables {
+				sql := tblMeta.GetSchema(worker.ctx, worker.store)
+				if sql != "" {
+					stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, tblMeta.Name)
+					if err != nil {
+						worker.errCh <- err
+						return
+					}
+					for _, sql := range stmts {
+						restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+							tblName:  tblMeta.Name,
+							stmtType: schemaCreateTable,
+							sql:      sql,
+						})
+					}
 				}
 			}
+			worker.wg.Add(1)
+			worker.jobCh <- restoreSchemaJob
 		}
-		worker.wg.Add(1)
-		worker.jobCh <- restoreSchemaJob
-	}
-	worker.wg.Wait()
-	// restore views. Since views can cross database we must restore views after all table schemas are restored.
-	for _, dbMeta := range dbMetas {
-		restoreSchemaJob := &schemaJob{
-			dbName: dbMeta.Name,
-			stmts:  make([]*schemaStmt, 0),
-		}
-		for _, viewMeta := range dbMeta.Views {
-			sql := viewMeta.GetSchema(worker.ctx, worker.store)
-			if sql != "" {
-				stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, viewMeta.Name)
-				if err != nil {
-					worker.errCh <- err
-					return
-				}
-				for _, sql := range stmts {
-					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-						tblName:  viewMeta.Name,
-						stmtType: schemaCreateView,
-						sql:      sql,
-					})
+		worker.wg.Wait()
+		// restore views. Since views can cross database we must restore views after all table schemas are restored.
+		for _, dbMeta := range dbMetas {
+			restoreSchemaJob := &schemaJob{
+				dbName: dbMeta.Name,
+				stmts:  make([]*schemaStmt, 0),
+			}
+			for _, viewMeta := range dbMeta.Views {
+				sql := viewMeta.GetSchema(worker.ctx, worker.store)
+				if sql != "" {
+					stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, viewMeta.Name)
+					if err != nil {
+						worker.errCh <- err
+						return
+					}
+					for _, sql := range stmts {
+						restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+							tblName:  viewMeta.Name,
+							stmtType: schemaCreateView,
+							sql:      sql,
+						})
+					}
 				}
 			}
+			worker.wg.Add(1)
+			worker.jobCh <- restoreSchemaJob
 		}
-		worker.wg.Add(1)
-		worker.jobCh <- restoreSchemaJob
+		worker.wg.Wait()
+		worker.errCh <- nil
 	}
-	worker.wg.Wait()
-	worker.errCh <- nil
 }
 
 func (worker *restoreSchemaWorker) doJob() {
