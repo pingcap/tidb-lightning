@@ -336,7 +336,6 @@ type restoreSchemaWorker struct {
 	parser   *parser.Parser
 	executor glue.SQLExecutor
 	store    storage.ExternalStorage
-	purpose  []string
 }
 
 func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
@@ -402,20 +401,20 @@ func (worker *restoreSchemaWorker) doJob() {
 				return
 			}
 			var logger log.Logger
-			purposePicker := 0
+			var purpose string
 			for _, stmt := range job.stmts {
 				if stmt.stmtType == schemaCreateDatabase {
 					logger = log.With(zap.String("db", job.dbName))
-					purposePicker = 1
+					purpose = "create database"
 				} else if stmt.stmtType == schemaCreateTable {
 					logger = log.With(zap.String("table", common.UniqueTable(job.dbName, stmt.tblName)))
-					purposePicker = 2
+					purpose = "create table"
 				} else if stmt.stmtType == schemaCreateView {
 					logger = log.With(zap.String("table", common.UniqueTable(job.dbName, stmt.tblName)))
-					purposePicker = 3
+					purpose = "create view"
 				}
 				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
-				err := worker.executor.ExecuteWithLog(worker.ctx, stmt.sql, worker.purpose[purposePicker], logger)
+				err := worker.executor.ExecuteWithLog(worker.ctx, stmt.sql, purpose, logger)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
 					switch stmt.stmtType {
@@ -468,12 +467,6 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			parser:   rc.tidbGlue.GetParser(),
 			executor: rc.tidbGlue.GetSQLExecutor(),
 			store:    rc.store,
-			purpose: []string{
-				"unknown",
-				"create database",
-				"create table",
-				"create view",
-			},
 		}
 		go worker.makeJobs(rc.dbMetas)
 		for i := 0; i < concurrency; i++ {
