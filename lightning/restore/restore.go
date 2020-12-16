@@ -15,6 +15,7 @@ package restore
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"math"
@@ -333,6 +334,8 @@ type restoreSchemaWorker struct {
 	jobCh    chan *schemaJob
 	errCh    chan error
 	wg       sync.WaitGroup
+	db       *sql.DB
+	sessions map[string]*sql.Conn
 	parser   *parser.Parser
 	executor glue.SQLExecutor
 	store    storage.ExternalStorage
@@ -358,8 +361,7 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 				if sql != "" {
 					stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, tblMeta.Name)
 					if err != nil {
-						worker.errCh <- err
-						return
+						worker.throw(err)
 					}
 					for _, sql := range stmts {
 						restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
@@ -385,8 +387,7 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 				if sql != "" {
 					stmts, err := createTableIfNotExistsStmt(worker.parser, sql, dbMeta.Name, viewMeta.Name)
 					if err != nil {
-						worker.errCh <- err
-						return
+						worker.throw(err)
 					}
 					for _, sql := range stmts {
 						restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
@@ -401,7 +402,8 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 			worker.jobCh <- restoreSchemaJob
 		}
 		worker.wg.Wait()
-		worker.errCh <- nil
+		// for quit
+		worker.throw(nil)
 	}
 }
 
@@ -428,7 +430,17 @@ func (worker *restoreSchemaWorker) doJob() {
 					purpose = "create view"
 				}
 				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
-				err := worker.executor.ExecuteWithLog(worker.ctx, stmt.sql, purpose, logger)
+				// err := worker.executor.ExecuteWithLog(worker.ctx, stmt.sql, purpose, logger)
+				session, err := worker.getSession(job.dbName)
+				if err != nil {
+					worker.throw(err)
+					break
+				}
+				retrySQL := common.SQLWithRetry{
+					DB:     session,
+					Logger: logger,
+				}
+				err = retrySQL.Exec(worker.ctx, purpose, stmt.sql)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
 					switch stmt.stmtType {
@@ -439,9 +451,8 @@ func (worker *restoreSchemaWorker) doJob() {
 					case schemaCreateView:
 						err = errors.Annotatef(err, "restore view schema %s failed", stmt.tblName)
 					}
-					worker.errCh <- err
-					worker.wg.Done()
-					return
+					worker.throw(err)
+					break
 				}
 			}
 			worker.wg.Done()
@@ -459,8 +470,27 @@ func (worker *restoreSchemaWorker) wait() error {
 	}
 }
 
+func (worker *restoreSchemaWorker) throw(err error) {
+	worker.errCh <- err
+}
+
+func (worker *restoreSchemaWorker) getSession(sessionID string) (*sql.Conn, error) {
+	if _, opened := worker.sessions[sessionID]; !opened {
+		var err error
+		worker.sessions[sessionID], err = worker.db.Conn(worker.ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return worker.sessions[sessionID], nil
+}
+
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	if !rc.cfg.Mydumper.NoSchema {
+		db, err := rc.tidbGlue.GetDB()
+		if err != nil {
+			return err
+		}
 		concurrency := 16
 		childCtx, cancel := context.WithCancel(ctx)
 		worker := restoreSchemaWorker{
@@ -470,14 +500,16 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			jobCh:    make(chan *schemaJob, concurrency),
 			errCh:    make(chan error),
 			parser:   rc.tidbGlue.GetParser(),
-			executor: rc.tidbGlue.GetSQLExecutor(),
-			store:    rc.store,
+			db:       db,
+			sessions: make(map[string]*sql.Conn),
+			// executor: rc.tidbGlue.GetSQLExecutor(),
+			store: rc.store,
 		}
 		go worker.makeJobs(rc.dbMetas)
 		for i := 0; i < concurrency; i++ {
 			go worker.doJob()
 		}
-		err := worker.wait()
+		err = worker.wait()
 		if err != nil {
 			return err
 		}
