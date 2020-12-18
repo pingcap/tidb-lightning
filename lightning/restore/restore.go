@@ -1888,6 +1888,13 @@ func (cr *chunkRestore) encodeLoop(
 						}
 					}
 					initializedColumns = true
+					// check the private column '_tidb_row_id',
+					for _, c := range columnNames {
+						if strings.ToLower(c) == model.ExtraHandleName.L {
+							columnCnt++
+							break
+						}
+					}
 				}
 			case io.EOF:
 				reachEOF = true
@@ -1901,7 +1908,7 @@ func (cr *chunkRestore) encodeLoop(
 			lastRow := cr.parser.LastRow()
 			if columnCnt < len(lastRow.Row) {
 				log.L().Error("row fields is more than table fields", zap.Int("tableFields", columnCnt),
-					zap.Int("rowFields", len(lastRow.Row)), zap.Array("row", lastRow))
+					zap.Int("rowFields", len(lastRow.Row)), zap.Int64("position", newOffset), zap.Array("row", lastRow))
 				err = errors.Errorf("row field count %d is bigger than table fields count %d", len(lastRow.Row), columnCnt)
 				return
 			}
