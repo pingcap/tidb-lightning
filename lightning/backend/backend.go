@@ -95,10 +95,6 @@ type AbstractBackend interface {
 	// RetryImportDelay returns the duration to sleep when retrying an import
 	RetryImportDelay() time.Duration
 
-	// MaxChunkSize returns the maximum size acceptable by the backend. The
-	// value will be used in `Rows.SplitIntoChunks`.
-	MaxChunkSize() int
-
 	// ShouldPostProcess returns whether KV-specific post-processing should be
 	// performed for this backend. Post-processing includes checksum and analyze.
 	ShouldPostProcess() bool

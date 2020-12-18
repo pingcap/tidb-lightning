@@ -1517,6 +1517,10 @@ func (w *LocalWriter) isSorted(kvs []common.KvPair) bool {
 		}
 		w.lastKey = pair.Key
 	}
+	l := len(w.lastKey)
+	lastKey := make([]byte, l)
+	copy(lastKey, w.lastKey)
+	w.lastKey = lastKey
 	return true
 }
 
@@ -1537,6 +1541,7 @@ func (w *LocalWriter) Close() error {
 
 func (w *LocalWriter) writeRowsLoop() {
 	batchSize := int64(0)
+	totalSize := int64(0)
 	var writer *sstable.Writer = nil
 	var wb *pebble.Batch = nil
 	var filePath string
@@ -1553,11 +1558,7 @@ func (w *LocalWriter) writeRowsLoop() {
 					return
 				}
 				writer = sstable.NewWriter(f, sstable.WriterOptions{
-					TablePropertyCollectors: []func() pebble.TablePropertyCollector{
-						func() pebble.TablePropertyCollector {
-							return newRangePropertiesCollector()
-						},
-					},
+					BlockSize: 16 * 1024,
 				})
 			}
 			internalKey := sstable.InternalKey{
@@ -1574,6 +1575,7 @@ func (w *LocalWriter) writeRowsLoop() {
 				}
 			}
 			atomic.AddInt64(&w.local.TotalSize, size)
+			totalSize += size
 		} else {
 			if wb == nil {
 				wb = w.db.NewBatch()
@@ -1589,6 +1591,7 @@ func (w *LocalWriter) writeRowsLoop() {
 					w.writeErr.Set(err)
 					return
 				}
+				totalSize += batchSize
 				wb.Reset()
 				batchSize = 0
 			}
@@ -1604,7 +1607,9 @@ func (w *LocalWriter) writeRowsLoop() {
 				return
 			}
 			atomic.AddInt64(&w.local.TotalSize, batchSize)
+			totalSize += batchSize
 		}
+		log.L().Info("write data by write batch", zap.Int64("bytes", totalSize))
 	}
 	if writer != nil {
 		if err := writer.Close(); err != nil {
@@ -1615,6 +1620,7 @@ func (w *LocalWriter) writeRowsLoop() {
 			w.writeErr.Set(err)
 			return
 		}
+		log.L().Info("write data by sst writer", zap.Int64("bytes", totalSize))
 	}
 }
 
