@@ -1963,6 +1963,15 @@ func (cr *chunkRestore) restore(
 		close(kvsCh)
 	}()
 
+	go func() {
+		defer close(deliverCompleteCh)
+		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
+		select {
+		case <-ctx.Done():
+		case deliverCompleteCh <- deliverResult{dur, err}:
+		}
+	}()
+
 	logTask := t.logger.With(
 		zap.Int32("engineNumber", engineID),
 		zap.Int("fileIndex", cr.index),
@@ -1973,13 +1982,19 @@ func (cr *chunkRestore) restore(
 	if err != nil {
 		return err
 	}
-	defer close(deliverCompleteCh)
-	dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
-	logTask.End(zap.ErrorLevel, err,
-		zap.Duration("readDur", readTotalDur),
-		zap.Duration("encodeDur", encodeTotalDur),
-		zap.Duration("deliverDur", dur),
-		zap.Object("checksum", &cr.chunk.Checksum),
-	)
+
+	select {
+	case deliverResult := <-deliverCompleteCh:
+		logTask.End(zap.ErrorLevel, deliverResult.err,
+			zap.Duration("readDur", readTotalDur),
+			zap.Duration("encodeDur", encodeTotalDur),
+			zap.Duration("deliverDur", deliverResult.totalDur),
+			zap.Object("checksum", &cr.chunk.Checksum),
+		)
+		return errors.Trace(deliverResult.err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	return errors.Trace(err)
 }
