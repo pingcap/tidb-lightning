@@ -1558,6 +1558,11 @@ func (w *LocalWriter) writeRowsLoop() {
 					return
 				}
 				writer = sstable.NewWriter(f, sstable.WriterOptions{
+					TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+						func() pebble.TablePropertyCollector {
+							return newRangePropertiesCollector()
+						},
+					},
 					BlockSize: 16 * 1024,
 				})
 			}
