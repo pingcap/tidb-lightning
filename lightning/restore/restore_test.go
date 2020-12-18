@@ -1007,6 +1007,41 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	c.Assert(kvsCh, HasLen, 0)
 }
 
+func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
+	dir := c.MkDir()
+	fileName := "db.table.000.csv"
+	err := ioutil.WriteFile(filepath.Join(dir, fileName), []byte("1,2,3,4\r\n4,5,6,7\r\n"), 0644)
+	c.Assert(err, IsNil)
+
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	cfg := config.NewConfig()
+	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
+
+	reader, err := store.Open(ctx, fileName)
+	c.Assert(err, IsNil)
+	w := worker.NewPool(ctx, 5, "io")
+	p := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false)
+
+	err = s.cr.parser.Close()
+	c.Assert(err, IsNil)
+	s.cr.parser = p
+
+	kvsCh := make(chan []deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567895,
+	})
+	c.Assert(err, IsNil)
+
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	c.Assert(err, ErrorMatches, "row field count 4 is bigger than table fields count 3")
+	c.Assert(kvsCh, HasLen, 0)
+}
+
 func (s *chunkRestoreSuite) TestRestore(c *C) {
 	ctx := context.Background()
 
