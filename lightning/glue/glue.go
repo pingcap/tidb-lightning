@@ -67,7 +67,7 @@ func (session *sqlConnSession) Execute(ctx context.Context, sql string) ([]sqlex
 }
 
 func (session *sqlConnSession) CommitTxn(context.Context) error {
-	return nil
+	return errors.New("sqlConnSession doesn't have a valid CommitTxn implementation")
 }
 
 func (session *sqlConnSession) RollbackTxn(context.Context) {}
