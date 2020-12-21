@@ -99,20 +99,9 @@ func IsEmptyDir(name string) bool {
 	return len(entries) == 0
 }
 
-// SQLDriver is the interface that represent database basic commands
-type SQLDriver interface {
-	// BeginTx starts a transaction.
-	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
-	// QueryRowContext executes a query that is expected to return at most one row.
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
-	// ExecContext executes a query without returning any rows.
-	// The args are for any placeholder parameters in the query.
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-}
-
 // SQLWithRetry constructs a retryable transaction.
 type SQLWithRetry struct {
-	DB           SQLDriver
+	DB           *sql.DB
 	Logger       log.Logger
 	HideQueryLog bool
 }
