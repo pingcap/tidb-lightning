@@ -56,6 +56,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
 	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
 
+	// TODO: REDACT
 	log.L().Info("split and scatter region",
 		zap.Binary("minKey", minKey),
 		zap.Binary("maxKey", maxKey),
@@ -80,6 +81,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 		var regions []*split.RegionInfo
 		regions, err = paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
 		if err != nil {
+			// TODO: REDACT
 			log.L().Warn("paginate scan region failed", zap.Binary("minKey", minKey), zap.Binary("maxKey", maxKey),
 				log.ShortError(err), zap.Int("retry", i))
 			continue
@@ -110,6 +112,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 				splitRegionStart := codec.EncodeBytes([]byte{}, keys[start])
 				splitRegionEnd := codec.EncodeBytes([]byte{}, keys[end-1])
 				if bytes.Compare(splitRegionStart, splitRegion.Region.StartKey) <= 0 || !beforeEnd(splitRegionEnd, splitRegion.Region.EndKey) {
+					// TODO: REDACT
 					log.L().Fatal("no valid key in region",
 						zap.Binary("startKey", splitRegionStart), zap.Binary("endKey", splitRegionEnd),
 						zap.Binary("regionStart", splitRegion.Region.StartKey), zap.Binary("regionEnd", splitRegion.Region.EndKey),
@@ -119,6 +122,7 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 				if err != nil {
 					if strings.Contains(err.Error(), "no valid key") {
 						for _, key := range keys {
+							// TODO: REDACT
 							log.L().Warn("no valid key",
 								zap.Binary("startKey", region.Region.StartKey),
 								zap.Binary("endKey", region.Region.EndKey),
@@ -275,6 +279,7 @@ func (local *local) waitForScatterRegion(ctx context.Context, regionInfo *split.
 	for i := 0; i < split.ScatterWaitMaxRetryTimes; i++ {
 		ok, err := local.isScatterRegionFinished(ctx, regionID)
 		if err != nil {
+			// TODO: REDACT
 			log.L().Warn("scatter region failed: do not have the region",
 				zap.Stringer("region", regionInfo.Region))
 			return

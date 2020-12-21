@@ -517,6 +517,7 @@ func (local *local) WriteToTiKV(
 	}
 
 	if !iter.Valid() {
+		// TODO: REDACT
 		log.L().Info("keys within region is empty, skip ingest", zap.Binary("start", start),
 			zap.Binary("regionStart", region.Region.StartKey), zap.Binary("end", end),
 			zap.Binary("regionEnd", region.Region.EndKey))
@@ -641,6 +642,7 @@ func (local *local) WriteToTiKV(
 
 	// if there is not leader currently, we should directly return an error
 	if leaderPeerMetas == nil {
+		// TODO: REDACT
 		log.L().Warn("write to tikv no leader", zap.Reflect("region", region),
 			zap.Uint64("leader_id", leaderID), zap.Reflect("meta", meta),
 			zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size))
@@ -658,6 +660,7 @@ func (local *local) WriteToTiKV(
 	if iter.Valid() && iter.Next() {
 		firstKey := append([]byte{}, iter.Key()...)
 		remainRange = &Range{start: firstKey, end: regionRange.end}
+		// TODO: REDACT
 		log.L().Info("write to tikv partial finish", zap.Int("count", totalCount),
 			zap.Int64("size", size), zap.Binary("startKey", regionRange.start), zap.Binary("endKey", regionRange.end),
 			zap.Binary("remainStart", remainRange.start), zap.Binary("remainEnd", remainRange.end),
@@ -758,6 +761,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
 		local.regionSplitSize, regionMaxKeyCount*2/3)
 
+	// TODO: REDACT
 	log.L().Info("split engine key ranges", zap.Stringer("engine", engineFile.Uuid),
 		zap.Int64("totalSize", engineFile.TotalSize), zap.Int64("totalCount", engineFile.Length),
 		zap.Binary("firstKey", firstKey), zap.Binary("lastKey", lastKey),
@@ -881,6 +885,7 @@ func (local *local) writeAndIngestByRange(
 		return errors.Annotate(iter.Error(), "failed to read the first key")
 	}
 	if !hasKey {
+		// TODO: REDACT
 		log.L().Info("There is no pairs in iterator",
 			zap.Binary("start", start),
 			zap.Binary("end", end),
@@ -912,6 +917,7 @@ WriteAndIngest:
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
 		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, 128)
 		if err != nil || len(regions) == 0 {
+			// TODO: REDACT
 			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
 				zap.Binary("startKey", startKey), zap.Binary("endKey", endKey), zap.Int("retry", retry))
 			retry++
@@ -936,6 +942,7 @@ WriteAndIngest:
 				} else {
 					retry++
 				}
+				// TODO: REDACT
 				log.L().Info("retry write and ingest kv pairs", zap.Binary("startKey", pairStart),
 					zap.Binary("endKey", end), log.ShortError(err), zap.Int("retry", retry))
 				continue WriteAndIngest
@@ -986,6 +993,7 @@ loopWrite:
 					if errors.Cause(err) == context.Canceled {
 						return nil, err
 					}
+					// TODO: REDACT
 					log.L().Warn("ingest failed", log.ShortError(err), zap.Reflect("meta", meta),
 						zap.Reflect("region", region))
 					errCnt++
@@ -1010,6 +1018,7 @@ loopWrite:
 				}
 				switch retryTy {
 				case retryNone:
+					// TODO: REDACT
 					log.L().Warn("ingest failed noretry", log.ShortError(err), zap.Reflect("meta", meta),
 						zap.Reflect("region", region))
 					// met non-retryable error retry whole Write procedure
@@ -1025,6 +1034,7 @@ loopWrite:
 		}
 
 		if err != nil {
+			// TODO: REDACT
 			log.L().Warn("write and ingest region, will retry import full range", log.ShortError(err),
 				zap.Stringer("region", region.Region), zap.Binary("start", start), zap.Binary("end", end))
 		}
@@ -1261,6 +1271,7 @@ func (local *local) isIngestRetryable(
 			if newRegion != nil {
 				return newRegion, nil
 			}
+			// TODO: REDACT
 			log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
 				zap.Int("retry", i))
 			select {

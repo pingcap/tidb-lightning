@@ -358,6 +358,7 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	// Retry will be done externally, so we're not going to retry here.
 	_, err := be.db.ExecContext(ctx, insertStmt.String())
 	if err != nil {
+		// TODO: REDACT
 		log.L().Error("execute statement failed", zap.String("stmt", insertStmt.String()),
 			zap.Array("rows", rows), zap.Error(err))
 	}
