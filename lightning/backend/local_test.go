@@ -318,7 +318,7 @@ func testLocalWriter(c *C, needSort bool) {
 		binary.BigEndian.PutUint64(value[i*8:], uint64(i))
 	}
 	var keys [][]byte
-	for i := 1; i <= 10000; i++ {
+	for i := 1; i <= 20000; i++ {
 		var kv common.KvPair
 		kv.Key = make([]byte, 16)
 		kv.Val = make([]byte, 128)
@@ -334,7 +334,9 @@ func testLocalWriter(c *C, needSort bool) {
 			return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
 		})
 	}
-	err = w.AppendRows(ctx, "", []string{}, 1, kvs)
+	err = w.AppendRows(ctx, "", []string{}, 1, kvs[:6000])
+	err = w.AppendRows(ctx, "", []string{}, 1, kvs[6000:12000])
+	err = w.AppendRows(ctx, "", []string{}, 1, kvs[12000:])
 	c.Assert(err, IsNil)
 	err = w.Close()
 	c.Assert(err, IsNil)
@@ -352,8 +354,8 @@ func testLocalWriter(c *C, needSort bool) {
 		c.Assert(it.Key(), DeepEquals, k)
 		it.Next()
 	}
-	c.Assert(int(f.TotalSize), Equals, 144*10000)
-	c.Assert(int(f.Length), Equals, 10000)
+	c.Assert(int(f.TotalSize), Equals, 144*20000)
+	c.Assert(int(f.Length), Equals, 20000)
 }
 
 func (s *localSuite) TestLocalWriterWithSort(c *C) {

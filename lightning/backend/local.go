@@ -1543,78 +1543,118 @@ func (w *LocalWriter) Close() error {
 	return w.writeErr.Get()
 }
 
+func writeKVs(writer *sstable.Writer, kvs []common.KvPair) (int64, error) {
+	internalKey := sstable.InternalKey{
+		UserKey: []byte{},
+		Trailer: uint64(sstable.InternalKeyKindSet),
+	}
+	totalSize := int64(0)
+	for _, p := range kvs {
+		internalKey.UserKey = p.Key
+		totalSize += int64(len(p.Key) + len(p.Val))
+		if err := writer.Add(internalKey, p.Val); err != nil {
+			return 0, err
+		}
+	}
+	return totalSize, nil
+}
+func (w *LocalWriter) createWriter() (*sstable.Writer, string, error) {
+	filePath := filepath.Join(w.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
+	f, err := os.Create(filePath)
+	if err != nil {
+		return nil, filePath, err
+	}
+	writer := sstable.NewWriter(f, sstable.WriterOptions{
+		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+			func() pebble.TablePropertyCollector {
+				return newRangePropertiesCollector()
+			},
+		},
+		BlockSize: 16 * 1024,
+	})
+	return writer, filePath, nil
+}
+
+func (w *LocalWriter) flushKVs(kvs []common.KvPair) error {
+	writer, filePath, err := w.createWriter()
+	if err != nil {
+		return err
+	}
+	sort.Slice(kvs, func(i, j int) bool {
+		return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
+	})
+	internalKey := sstable.InternalKey{
+		UserKey: []byte{},
+		Trailer: uint64(sstable.InternalKeyKindSet),
+	}
+
+	for _, p := range kvs {
+		internalKey.UserKey = p.Key
+		if err := writer.Add(internalKey, p.Val); err != nil {
+			return err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil
+	}
+	return w.db.Ingest([]string{filePath})
+}
+
 func (w *LocalWriter) writeRowsLoop() {
 	batchSize := int64(0)
 	totalSize := int64(0)
 	var writer *sstable.Writer = nil
-	var wb *pebble.Batch = nil
+	//var wb *pebble.Batch = nil
+	var wb []common.KvPair
 	var filePath string
 	defer w.consumeWg.Done()
-	totalCount := 0
+	var err error
 	for kvs := range w.kvsChan {
-		totalCount += len(kvs)
-		if wb == nil && w.isSorted(kvs) {
+		atomic.AddInt64(&w.local.Length, int64(len(kvs)))
+		if len(wb) == 0 && w.isSorted(kvs) {
 			if writer == nil {
-				filePath = filepath.Join(w.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
-				f, err := os.Create(filePath)
+				writer, filePath, err = w.createWriter()
 				if err != nil {
 					w.writeErr.Set(err)
 					return
 				}
-				writer = sstable.NewWriter(f, sstable.WriterOptions{
-					TablePropertyCollectors: []func() pebble.TablePropertyCollector{
-						func() pebble.TablePropertyCollector {
-							return newRangePropertiesCollector()
-						},
-					},
-					BlockSize: 16 * 1024,
-				})
 			}
-			internalKey := sstable.InternalKey{
-				UserKey: []byte{},
-				Trailer: uint64(sstable.InternalKeyKindSet),
+			sz, err := writeKVs(writer, kvs)
+			if err != nil {
+				w.writeErr.Set(err)
+				return
 			}
-			for _, p := range kvs {
-				internalKey.UserKey = p.Key
-				totalSize += int64(len(p.Key) + len(p.Val))
-				if err := writer.Add(internalKey, p.Val); err != nil {
-					w.writeErr.Set(err)
-					return
-				}
-			}
+			totalSize += sz
 		} else {
-			if wb == nil {
-				wb = w.db.NewBatch()
-			}
-			wo := &pebble.WriteOptions{Sync: false}
 			for _, pair := range kvs {
-				wb.Set(pair.Key, pair.Val, wo)
 				batchSize += int64(len(pair.Key) + len(pair.Val))
 			}
+			if len(wb) == 0 {
+				wb = kvs
+			} else {
+				wb = append(wb, kvs...)
+			}
+
 			if batchSize > w.memtableSizeLimit {
-				if err := wb.Commit(wo); err != nil {
+				if err := w.flushKVs(wb); err != nil {
 					w.writeErr.Set(err)
 					return
 				}
 				totalSize += batchSize
-				wb.Reset()
 				batchSize = 0
 			}
 		}
-		atomic.AddInt64(&w.local.Length, int64(len(kvs)))
 	}
 
 	if wb != nil {
-		wo := &pebble.WriteOptions{Sync: false}
 		if batchSize > 0 {
-			if err := wb.Commit(wo); err != nil {
+			if err := w.flushKVs(wb); err != nil {
 				w.writeErr.Set(err)
 				return
 			}
-			wb.Close()
 			totalSize += batchSize
 		}
-		log.L().Info("write data by write batch", zap.Int64("bytes", totalSize))
+		log.L().Info("write data by sort index", zap.Int64("bytes", totalSize))
 	}
 	if writer != nil {
 		if err := writer.Close(); err != nil {
