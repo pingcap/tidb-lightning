@@ -36,7 +36,7 @@ type Glue interface {
 	GetDB() (*sql.DB, error)
 	GetParser() *parser.Parser
 	GetTables(context.Context, string) ([]*model.TableInfo, error)
-	GetSession() (checkpoints.Session, error)
+	GetSession(context.Context) (checkpoints.Session, error)
 	OpenCheckpointsDB(context.Context, *config.Config) (checkpoints.CheckpointsDB, error)
 	// Record is used to report some information (key, value) to host TiDB, including progress, stage currently
 	Record(string, uint64)
@@ -161,8 +161,8 @@ func (e ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo
 	return nil, errors.New("ExternalTiDBGlue doesn't have a valid GetTables function")
 }
 
-func (e ExternalTiDBGlue) GetSession() (checkpoints.Session, error) {
-	conn, err := e.db.Conn(context.Background())
+func (e ExternalTiDBGlue) GetSession(ctx context.Context) (checkpoints.Session, error) {
+	conn, err := e.db.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}

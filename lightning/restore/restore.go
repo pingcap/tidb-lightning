@@ -481,7 +481,7 @@ func (worker *restoreSchemaWorker) throw(err error) {
 
 func (worker *restoreSchemaWorker) getSession(sessionID string) checkpoints.Session {
 	if _, opened := worker.sessions[sessionID]; !opened {
-		session, err := worker.glue.GetSession()
+		session, err := worker.glue.GetSession(worker.ctx)
 		if err != nil {
 			worker.throw(err)
 		}
