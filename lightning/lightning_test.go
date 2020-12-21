@@ -81,7 +81,7 @@ func (s *lightningSuite) TestRun(c *C) {
 			Driver: "invalid",
 		},
 	}, invalidGlue)
-	c.Assert(err, ErrorMatches, "Unknown checkpoint driver invalid")
+	c.Assert(err, ErrorMatches, "open checkpoint db failed: Unknown checkpoint driver invalid")
 
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{

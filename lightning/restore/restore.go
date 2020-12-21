@@ -182,12 +182,12 @@ func NewRestoreControllerWithPauser(
 
 	cpdb, err := g.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotate(err, "open checkpoint db failed")
 	}
 
 	taskCp, err := cpdb.TaskCheckpoint(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotate(err, "get task checkpoint failed")
 	}
 	if err := verifyCheckpoint(cfg, taskCp); err != nil {
 		return nil, errors.Trace(err)
@@ -199,12 +199,12 @@ func NewRestoreControllerWithPauser(
 		var err error
 		backend, err = kv.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 		if err != nil {
-			return nil, err
+			return nil, errors.Annotate(err, "open importer backend failed")
 		}
 	case config.BackendTiDB:
 		db, err := DBFromConfig(cfg.TiDB)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.Annotate(err, "open tidb backend failed")
 		}
 		backend = kv.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate)
 	case config.BackendLocal:
@@ -223,7 +223,7 @@ func NewRestoreControllerWithPauser(
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
 			cfg.Checkpoint.Enable, g, maxOpenFiles)
 		if err != nil {
-			return nil, err
+			return nil, errors.Annotate(err, "build local backend failed")
 		}
 	default:
 		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
