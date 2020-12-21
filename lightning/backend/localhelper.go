@@ -209,7 +209,7 @@ func paginateScanRegion(
 func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionInfo, keys [][]byte) (*split.RegionInfo, []*split.RegionInfo, error) {
 	region, newRegions, err := local.splitCli.BatchSplitRegionsWithOrigin(ctx, region, keys)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Annotatef(err, "batch split regions failed")
 	}
 	var failedErr error
 	retryRegions := make([]*split.RegionInfo, 0)
