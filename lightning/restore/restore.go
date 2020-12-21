@@ -412,8 +412,7 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 			// we don't support restore views concurrency, cauz it maybe will raise a error
 			worker.wg.Wait()
 		}
-		// for quit
-		worker.throw(nil)
+		worker.quit()
 	}
 }
 
@@ -458,14 +457,13 @@ func (worker *restoreSchemaWorker) doJob() {
 
 func (worker *restoreSchemaWorker) wait() error {
 	defer func() {
-		// cancel whole jobs first, then close connectinos
-		worker.quit()
 		for _, session := range worker.sessions {
 			session.Close()
 		}
 	}()
 	select {
 	case err := <-worker.errCh:
+		defer worker.quit()
 		return err
 	case <-worker.ctx.Done():
 		return nil
