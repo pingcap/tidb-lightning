@@ -349,11 +349,11 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 				session: worker.getSession(dbMeta.Name),
 				stmts:   make([]*schemaStmt, 0, 1),
 			}
+			worker.wg.Add(1)
 			restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
 				stmtType: schemaCreateDatabase,
 				sql:      createDatabaseIfNotExistStmt(dbMeta.Name),
 			})
-			worker.wg.Add(1)
 			worker.jobCh <- restoreSchemaJob
 		}
 		worker.wg.Wait()
@@ -372,12 +372,12 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 							session: worker.getSession(dbMeta.Name),
 							stmts:   make([]*schemaStmt, 0, 1),
 						}
+						worker.wg.Add(1)
 						restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
 							tblName:  tblMeta.Name,
 							stmtType: schemaCreateTable,
 							sql:      sql,
 						})
-						worker.wg.Add(1)
 						worker.jobCh <- restoreSchemaJob
 					}
 				}
@@ -494,7 +494,6 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 		worker := restoreSchemaWorker{
 			ctx:      childCtx,
 			quit:     cancel,
-			wg:       sync.WaitGroup{},
 			jobCh:    make(chan *schemaJob, concurrency),
 			errCh:    make(chan error),
 			glue:     rc.tidbGlue,
