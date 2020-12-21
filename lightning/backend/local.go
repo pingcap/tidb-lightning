@@ -1543,61 +1543,18 @@ func (w *LocalWriter) Close() error {
 	return w.writeErr.Get()
 }
 
-func writeKVs(writer *sstable.Writer, kvs []common.KvPair) (int64, error) {
-	internalKey := sstable.InternalKey{
-		UserKey: []byte{},
-		Trailer: uint64(sstable.InternalKeyKindSet),
-	}
-	totalSize := int64(0)
-	for _, p := range kvs {
-		internalKey.UserKey = p.Key
-		totalSize += int64(len(p.Key) + len(p.Val))
-		if err := writer.Add(internalKey, p.Val); err != nil {
-			return 0, err
-		}
-	}
-	return totalSize, nil
-}
-func (w *LocalWriter) createWriter() (*sstable.Writer, string, error) {
-	filePath := filepath.Join(w.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
-	f, err := os.Create(filePath)
-	if err != nil {
-		return nil, filePath, err
-	}
-	writer := sstable.NewWriter(f, sstable.WriterOptions{
-		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
-			func() pebble.TablePropertyCollector {
-				return newRangePropertiesCollector()
-			},
-		},
-		BlockSize: 16 * 1024,
-	})
-	return writer, filePath, nil
+func (w *LocalWriter) Done() {
+	w.produceWg.Done()
 }
 
-func (w *LocalWriter) flushKVs(kvs []common.KvPair) error {
-	writer, filePath, err := w.createWriter()
-	if err != nil {
-		return err
-	}
-	sort.Slice(kvs, func(i, j int) bool {
-		return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
-	})
-	internalKey := sstable.InternalKey{
-		UserKey: []byte{},
-		Trailer: uint64(sstable.InternalKeyKindSet),
-	}
+func (w *LocalWriter) WaitConsume() {
+	w.produceWg.Wait()
+	close(w.kvsChan)
+	w.consumeWg.Wait()
+}
 
-	for _, p := range kvs {
-		internalKey.UserKey = p.Key
-		if err := writer.Add(internalKey, p.Val); err != nil {
-			return err
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return nil
-	}
-	return w.db.Ingest([]string{filePath})
+func (w *LocalWriter) AddProducer() {
+	w.produceWg.Add(1)
 }
 
 func (w *LocalWriter) writeRowsLoop() {
@@ -1670,16 +1627,52 @@ func (w *LocalWriter) writeRowsLoop() {
 	atomic.AddInt64(&w.local.TotalSize, totalSize)
 }
 
-func (w *LocalWriter) Done() {
-	w.produceWg.Done()
+func (w *LocalWriter) flushKVs(kvs []common.KvPair) error {
+	writer, filePath, err := w.createWriter()
+	if err != nil {
+		return err
+	}
+	sort.Slice(kvs, func(i, j int) bool {
+		return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
+	})
+	if _, err := writeKVs(writer, kvs); err != nil {
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return nil
+	}
+	return w.db.Ingest([]string{filePath})
 }
 
-func (w *LocalWriter) WaitConsume() {
-	w.produceWg.Wait()
-	close(w.kvsChan)
-	w.consumeWg.Wait()
+func (w *LocalWriter) createWriter() (*sstable.Writer, string, error) {
+	filePath := filepath.Join(w.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
+	f, err := os.Create(filePath)
+	if err != nil {
+		return nil, filePath, err
+	}
+	writer := sstable.NewWriter(f, sstable.WriterOptions{
+		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+			func() pebble.TablePropertyCollector {
+				return newRangePropertiesCollector()
+			},
+		},
+		BlockSize: 16 * 1024,
+	})
+	return writer, filePath, nil
 }
 
-func (w *LocalWriter) AddProducer() {
-	w.produceWg.Add(1)
+func writeKVs(writer *sstable.Writer, kvs []common.KvPair) (int64, error) {
+	internalKey := sstable.InternalKey{
+		UserKey: []byte{},
+		Trailer: uint64(sstable.InternalKeyKindSet),
+	}
+	totalSize := int64(0)
+	for _, p := range kvs {
+		internalKey.UserKey = p.Key
+		totalSize += int64(len(p.Key) + len(p.Val))
+		if err := writer.Add(internalKey, p.Val); err != nil {
+			return 0, err
+		}
+	}
+	return totalSize, nil
 }
