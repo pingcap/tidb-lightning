@@ -73,15 +73,15 @@ func (session *sqlConnSession) CommitTxn(context.Context) error {
 func (session *sqlConnSession) RollbackTxn(context.Context) {}
 
 func (session *sqlConnSession) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
-	return 0, 0, nil, nil
+	return 0, 0, nil, errors.New("sqlConnSession doesn't have a valid PrepareStmt implementation")
 }
 
 func (session *sqlConnSession) ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error) {
-	return nil, nil
+	return nil, errors.New("sqlConnSession doesn't have a valid ExecutePreparedStmt implementation")
 }
 
 func (session *sqlConnSession) DropPreparedStmt(stmtID uint32) error {
-	return nil
+	return errors.New("sqlConnSession doesn't have a valid DropPreparedStmt implementation")
 }
 
 type ExternalTiDBGlue struct {
