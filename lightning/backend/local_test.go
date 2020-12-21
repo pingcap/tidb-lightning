@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"math"
 	"math/rand"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -300,7 +301,9 @@ func testLocalWriter(c *C, needSort bool) {
 		ReadOnly:                 false,
 	}
 	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
+	c.Assert(err, IsNil)
 	tmpPath := filepath.Join(dir, "tmp")
+	err = os.Mkdir(tmpPath, 0755)
 	c.Assert(err, IsNil)
 	meta := localFileMeta{}
 	_, engineUUID := MakeUUID("ww", 0)
