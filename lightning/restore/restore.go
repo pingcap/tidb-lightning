@@ -1995,6 +1995,4 @@ func (cr *chunkRestore) restore(
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-
-	return errors.Trace(err)
 }

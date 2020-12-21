@@ -15,10 +15,13 @@ package backend
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	"math"
 	"math/rand"
 	"path/filepath"
+	"sort"
 
 	"github.com/cockroachdb/pebble"
 	. "github.com/pingcap/check"
@@ -284,4 +287,76 @@ func (s *localSuite) TestRangePropertiesWithPebble(c *C) {
 	}
 
 	c.Assert(sstMetas[0][0].Properties.UserProperties, DeepEquals, props)
+}
+
+func testLocalWriter(c *C, needSort bool) {
+	dir := c.MkDir()
+	opt := &pebble.Options{
+		MemTableSize:             1024 * 1024,
+		MaxConcurrentCompactions: 16,
+		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
+		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
+		DisableWAL:               true,
+		ReadOnly:                 false,
+	}
+	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
+	tmpPath := filepath.Join(dir, "tmp")
+	c.Assert(err, IsNil)
+	meta := localFileMeta{}
+	_, engineUUID := MakeUUID("ww", 0)
+	f := LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID}
+	w := openLocalWriter(&f, tmpPath, 1024*1024)
+
+	ctx := context.Background()
+	//kvs := make(kvPairs, 1000)
+	var kvs kvPairs
+	value := make([]byte, 128)
+	for i := 0; i < 16; i++ {
+		binary.BigEndian.PutUint64(value[i*8:], uint64(i))
+	}
+	var keys [][]byte
+	for i := 1; i <= 10000; i++ {
+		var kv common.KvPair
+		kv.Key = make([]byte, 16)
+		kv.Val = make([]byte, 128)
+		copy(kv.Val, value)
+		key := rand.Intn(1000)
+		binary.BigEndian.PutUint64(kv.Key, uint64(key))
+		binary.BigEndian.PutUint64(kv.Key[8:], uint64(i))
+		kvs = append(kvs, kv)
+		keys = append(keys, kv.Key)
+	}
+	if needSort {
+		sort.Slice(kvs, func(i, j int) bool {
+			return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
+		})
+	}
+	err = w.AppendRows(ctx, "", []string{}, 1, kvs)
+	c.Assert(err, IsNil)
+	err = w.Close()
+	c.Assert(err, IsNil)
+	err = db.Flush()
+	c.Assert(err, IsNil)
+	o := &pebble.IterOptions{}
+	it := db.NewIter(o)
+
+	sort.Slice(keys, func(i, j int) bool {
+		return bytes.Compare(keys[i], keys[j]) < 0
+	})
+	valid := it.SeekGE(keys[0])
+	c.Assert(valid, IsTrue)
+	for _, k := range keys {
+		c.Assert(it.Key(), DeepEquals, k)
+		it.Next()
+	}
+	c.Assert(int(f.TotalSize), Equals, 144*10000)
+	c.Assert(int(f.Length), Equals, 10000)
+}
+
+func (s *localSuite) TestLocalWriterWithSort(c *C) {
+	testLocalWriter(c, false)
+}
+
+func (s *localSuite) TestLocalWriterWithIngest(c *C) {
+	testLocalWriter(c, true)
 }

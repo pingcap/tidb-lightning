@@ -1210,18 +1210,21 @@ func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (Engi
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engineFile := e.(*LocalFile)
-	kvsChan := make(chan []common.KvPair, 1024)
 	tmpPath := filepath.Join(local.localStoreDir, engineUUID.String())
 	if err := os.Mkdir(tmpPath, 0755); err != nil {
 		if !os.IsExist(err) {
 			return nil, err
 		}
 	}
-	w := &LocalWriter{db: engineFile.db, sstDir: tmpPath, kvsChan: kvsChan,
-		local: engineFile}
+	return openLocalWriter(engineFile, tmpPath, LocalMemoryTableSize), nil
+}
+
+func openLocalWriter(f *LocalFile, sstDir string, memtableSizeLimit int64) *LocalWriter {
+	kvsChan := make(chan []common.KvPair, 1024)
+	w := &LocalWriter{db: f.db, sstDir: sstDir, kvsChan: kvsChan, local: f, memtableSizeLimit: memtableSizeLimit}
 	w.consumeWg.Add(1)
 	go w.writeRowsLoop()
-	return w, nil
+	return w
 }
 
 func (local *local) isIngestRetryable(
@@ -1497,14 +1500,15 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 }
 
 type LocalWriter struct {
-	db        *pebble.DB
-	writeErr  common.OnceError
-	local     *LocalFile
-	lastKey   []byte
-	produceWg sync.WaitGroup
-	consumeWg sync.WaitGroup
-	kvsChan   chan []common.KvPair
-	sstDir    string
+	db                *pebble.DB
+	writeErr          common.OnceError
+	local             *LocalFile
+	lastKey           []byte
+	produceWg         sync.WaitGroup
+	consumeWg         sync.WaitGroup
+	kvsChan           chan []common.KvPair
+	sstDir            string
+	memtableSizeLimit int64
 }
 
 func (w *LocalWriter) isSorted(kvs []common.KvPair) bool {
@@ -1570,17 +1574,14 @@ func (w *LocalWriter) writeRowsLoop() {
 				UserKey: []byte{},
 				Trailer: uint64(sstable.InternalKeyKindSet),
 			}
-			size := int64(0)
 			for _, p := range kvs {
 				internalKey.UserKey = p.Key
-				size += int64(len(p.Key) + len(p.Val))
+				totalSize += int64(len(p.Key) + len(p.Val))
 				if err := writer.Add(internalKey, p.Val); err != nil {
 					w.writeErr.Set(err)
 					return
 				}
 			}
-			atomic.AddInt64(&w.local.TotalSize, size)
-			totalSize += size
 		} else {
 			if wb == nil {
 				wb = w.db.NewBatch()
@@ -1590,8 +1591,7 @@ func (w *LocalWriter) writeRowsLoop() {
 				wb.Set(pair.Key, pair.Val, wo)
 				batchSize += int64(len(pair.Key) + len(pair.Val))
 			}
-			if batchSize > LocalMemoryTableSize {
-				atomic.AddInt64(&w.local.TotalSize, batchSize)
+			if batchSize > w.memtableSizeLimit {
 				if err := wb.Commit(wo); err != nil {
 					w.writeErr.Set(err)
 					return
@@ -1611,7 +1611,7 @@ func (w *LocalWriter) writeRowsLoop() {
 				w.writeErr.Set(err)
 				return
 			}
-			atomic.AddInt64(&w.local.TotalSize, batchSize)
+			wb.Close()
 			totalSize += batchSize
 		}
 		log.L().Info("write data by write batch", zap.Int64("bytes", totalSize))
@@ -1627,6 +1627,7 @@ func (w *LocalWriter) writeRowsLoop() {
 		}
 		log.L().Info("write data by sst writer", zap.Int64("bytes", totalSize))
 	}
+	atomic.AddInt64(&w.local.TotalSize, totalSize)
 }
 
 func (w *LocalWriter) Done() {
