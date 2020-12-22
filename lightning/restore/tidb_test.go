@@ -22,6 +22,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
@@ -222,6 +223,24 @@ func (s *tidbSuite) TestInitSchemaSyntaxError(c *C) {
 		"t1": "create table `t1` with invalid syntax;",
 	})
 	c.Assert(err, NotNil)
+}
+
+func (s *tidbSuite) TestInitSchemaErrorLost(c *C) {
+	ctx := context.Background()
+
+	s.mockDB.
+		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
+		ExpectClose()
+
+	failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/restore/sqlCreateStmts", "return")
+	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
+		"t1": "create table `t1` (a int);",
+		"t2": "create table t2 (a int primary key, b varchar(200));",
+	})
+	failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/restore/sqlCreateStmts")
+	c.Assert(err, ErrorMatches, "create t1 failed")
 }
 
 func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {
