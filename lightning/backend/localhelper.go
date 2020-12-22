@@ -28,7 +28,6 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
 
@@ -210,7 +209,7 @@ func paginateScanRegion(
 func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionInfo, keys [][]byte) (*split.RegionInfo, []*split.RegionInfo, error) {
 	region, newRegions, err := local.splitCli.BatchSplitRegionsWithOrigin(ctx, region, keys)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Annotatef(err, "batch split regions failed")
 	}
 	var failedErr error
 	retryRegions := make([]*split.RegionInfo, 0)
@@ -320,9 +319,9 @@ func getSplitKeysByRanges(ranges []Range, regions []*split.RegionInfo) map[uint6
 	var lastEnd []byte
 	for _, rg := range ranges {
 		if !bytes.Equal(lastEnd, rg.start) {
-			checkKeys = append(checkKeys, truncateRowKey(rg.start))
+			checkKeys = append(checkKeys, rg.start)
 		}
-		checkKeys = append(checkKeys, truncateRowKey(rg.end))
+		checkKeys = append(checkKeys, rg.end)
 		lastEnd = rg.end
 	}
 	return getSplitKeys(checkKeys, regions)
@@ -371,21 +370,6 @@ func needSplit(key []byte, regions []*split.RegionInfo) *split.RegionInfo {
 		}
 	}
 	return nil
-}
-
-var (
-	tablePrefix  = tablecodec.TablePrefix()
-	idLen        = 8
-	recordPrefix = []byte("_r")
-)
-
-func truncateRowKey(key []byte) []byte {
-	if bytes.HasPrefix(key, tablePrefix) &&
-		len(key) > tablecodec.RecordRowKeyLen &&
-		bytes.HasPrefix(key[len(tablePrefix)+idLen:], recordPrefix) {
-		return key[:tablecodec.RecordRowKeyLen]
-	}
-	return key
 }
 
 func beforeEnd(key []byte, end []byte) bool {
