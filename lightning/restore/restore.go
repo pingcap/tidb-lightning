@@ -364,19 +364,19 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 					if err != nil {
 						worker.throw(err)
 					}
+					restoreSchemaJob := &schemaJob{
+						dbName: dbMeta.Name,
+						stmts:  make([]*schemaStmt, 0, len(stmts)),
+					}
 					for _, sql := range stmts {
-						restoreSchemaJob := &schemaJob{
-							dbName: dbMeta.Name,
-							stmts:  make([]*schemaStmt, 0, 1),
-						}
-						worker.wg.Add(1)
 						restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
 							tblName:  tblMeta.Name,
 							stmtType: schemaCreateTable,
 							sql:      sql,
 						})
-						worker.jobCh <- restoreSchemaJob
 					}
+					worker.wg.Add(1)
+					worker.jobCh <- restoreSchemaJob
 				}
 			}
 		}
