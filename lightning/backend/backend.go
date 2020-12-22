@@ -260,9 +260,6 @@ func (engine *OpenedEngine) Flush() error {
 
 // WriteRows writes a collection of encoded rows into the engine.
 func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
-	if rows.Len() == 0 {
-		return nil
-	}
 	writer, err := engine.backend.LocalWriter(ctx, engine.uuid)
 	if err != nil {
 		return err
@@ -399,8 +396,6 @@ type Rows interface {
 	// Clear returns a new collection with empty content. It may share the
 	// capacity with the current instance. The typical usage is `x = x.Clear()`.
 	Clear() Rows
-
-	Len() int
 }
 
 type EngineWriter interface {

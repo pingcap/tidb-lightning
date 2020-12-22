@@ -1515,16 +1515,14 @@ func (w *LocalWriter) isSorted(kvs []common.KvPair) bool {
 	if len(kvs) <= 1 {
 		return false
 	}
+	lastKey := w.lastKey
 	for _, pair := range kvs {
-		if len(w.lastKey) > 0 && bytes.Compare(w.lastKey, pair.Key) >= 0 {
+		if len(lastKey) > 0 && bytes.Compare(lastKey, pair.Key) >= 0 {
 			return false
 		}
-		w.lastKey = pair.Key
+		lastKey = pair.Key
 	}
-	l := len(w.lastKey)
-	lastKey := make([]byte, l)
-	copy(lastKey, w.lastKey)
-	w.lastKey = lastKey
+	w.lastKey = append(w.lastKey[:0], lastKey...)
 	return true
 }
 

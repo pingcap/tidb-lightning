@@ -428,7 +428,3 @@ func (totalKVs kvPairs) SplitIntoChunks(splitSize int) []Rows {
 func (kvs kvPairs) Clear() Rows {
 	return kvPairs(kvs[:0])
 }
-
-func (kvs kvPairs) Len() int {
-	return len(kvs)
-}

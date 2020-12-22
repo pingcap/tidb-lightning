@@ -124,8 +124,6 @@ func (s *backendSuite) TestWriteEngine(c *C) {
 		OpenEngine(ctx, engineUUID).
 		Return(nil)
 
-	rows1.EXPECT().Len().Return(1)
-	rows2.EXPECT().Len().Return(1)
 	mockWriter := mock.NewMockEngineWriter(s.controller)
 	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
@@ -150,9 +148,12 @@ func (s *backendSuite) TestWriteToEngineWithNothing(c *C) {
 
 	ctx := context.Background()
 	emptyRows := mock.NewMockRows(s.controller)
+	writer := mock.NewMockEngineWriter(s.controller)
 
-	emptyRows.EXPECT().Len().Return(0)
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
+	writer.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), emptyRows).Return(nil)
+	writer.EXPECT().Close().Return(nil)
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(writer, nil)
 
 	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
@@ -179,7 +180,6 @@ func (s *backendSuite) TestWriteEngineFailed(c *C) {
 
 	ctx := context.Background()
 	rows := mock.NewMockRows(s.controller)
-	rows.EXPECT().Len().Return(1)
 
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
 	mockWriter := mock.NewMockEngineWriter(s.controller)
@@ -202,7 +202,6 @@ func (s *backendSuite) TestWriteBatchSendFailedWithRetry(c *C) {
 	rows := mock.NewMockRows(s.controller)
 
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
-	rows.EXPECT().Len().Return(1)
 	mockWriter := mock.NewMockEngineWriter(s.controller)
 	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
