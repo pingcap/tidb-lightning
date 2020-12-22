@@ -270,11 +270,11 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 
 	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, &storage.BackendOptions{})
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotate(err, "parse backend failed")
 	}
 	s, err := storage.Create(ctx, u, true)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotate(err, "create storage failed")
 	}
 
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
