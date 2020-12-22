@@ -1907,7 +1907,7 @@ func (cr *chunkRestore) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			if columnCnt < len(lastRow.Row) {
-				log.L().Error("row fields is more than table fields", zap.Int("tableFields", columnCnt),
+				logger.Error("row fields is more than table fields", zap.Int("tableFields", columnCnt),
 					zap.Int("rowFields", len(lastRow.Row)), zap.Int64("position", newOffset), zap.Array("row", lastRow))
 				err = errors.Errorf("row field count %d is bigger than table fields count %d", len(lastRow.Row), columnCnt)
 				return
