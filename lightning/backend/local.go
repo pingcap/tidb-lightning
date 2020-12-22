@@ -1210,18 +1210,12 @@ func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (Engi
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engineFile := e.(*LocalFile)
-	tmpPath := filepath.Join(local.localStoreDir, engineUUID.String())
-	if err := os.Mkdir(tmpPath, 0755); err != nil {
-		if !os.IsExist(err) {
-			return nil, err
-		}
-	}
-	return openLocalWriter(engineFile, tmpPath, LocalMemoryTableSize), nil
+	return openLocalWriter(engineFile, local.localStoreDir, LocalMemoryTableSize), nil
 }
 
 func openLocalWriter(f *LocalFile, sstDir string, memtableSizeLimit int64) *LocalWriter {
 	kvsChan := make(chan []common.KvPair, 1024)
-	w := &LocalWriter{db: f.db, sstDir: sstDir, kvsChan: kvsChan, local: f, memtableSizeLimit: memtableSizeLimit}
+	w := &LocalWriter{sstDir: sstDir, kvsChan: kvsChan, local: f, memtableSizeLimit: memtableSizeLimit}
 	w.consumeWg.Add(1)
 	go w.writeRowsLoop()
 	return w
@@ -1500,7 +1494,6 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 }
 
 type LocalWriter struct {
-	db                *pebble.DB
 	writeErr          common.OnceError
 	local             *LocalFile
 	lastKey           []byte
@@ -1616,7 +1609,7 @@ func (w *LocalWriter) writeRowsLoop() {
 			w.writeErr.Set(err)
 			return
 		}
-		if err := w.db.Ingest([]string{filePath}); err != nil {
+		if err := w.local.db.Ingest([]string{filePath}); err != nil {
 			w.writeErr.Set(err)
 			return
 		}
@@ -1639,7 +1632,7 @@ func (w *LocalWriter) flushKVs(kvs []common.KvPair) error {
 	if err := writer.Close(); err != nil {
 		return nil
 	}
-	return w.db.Ingest([]string{filePath})
+	return w.local.db.Ingest([]string{filePath})
 }
 
 func (w *LocalWriter) createWriter() (*sstable.Writer, string, error) {
