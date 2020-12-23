@@ -22,7 +22,6 @@ import (
 
 	tmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
@@ -173,9 +172,6 @@ loopCreate:
 				"create table",
 				logger.With(zap.String("table", common.UniqueTable(database, tbl))),
 			)
-			failpoint.Inject("sqlCreateStmts", func() {
-				err = errors.Errorf("create %s failed", tbl)
-			})
 			if err != nil {
 				break loopCreate
 			}

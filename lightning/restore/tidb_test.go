@@ -22,13 +22,13 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/util/mock"
+
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
@@ -231,17 +231,22 @@ func (s *tidbSuite) TestInitSchemaErrorLost(c *C) {
 	s.mockDB.
 		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	s.mockDB.
+		ExpectExec("CREATE TABLE IF NOT EXISTS.*").
+		WillReturnError(&mysql.MySQLError{
+			Number:  tmysql.ErrTooBigFieldlength,
+			Message: "Column length too big",
+		})
+
 	s.mockDB.
 		ExpectClose()
 
-	failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/restore/sqlCreateStmts", "1*return")
 	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
 		"t1": "create table `t1` (a int);",
 		"t2": "create table t2 (a int primary key, b varchar(200));",
 	})
-	failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/restore/sqlCreateStmts")
-	// cannot predict which table will failed since map is unorder.
-	c.Assert(err, ErrorMatches, "create (.*) failed")
+	c.Assert(err, ErrorMatches, ".*Column length too big.*")
 }
 
 func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {
