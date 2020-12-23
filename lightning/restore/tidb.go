@@ -175,7 +175,6 @@ loopCreate:
 			)
 			failpoint.Inject("sqlCreateStmts", func() {
 				err = errors.Errorf("create %s failed", tbl)
-				failpoint.Return()
 			})
 			if err != nil {
 				break loopCreate

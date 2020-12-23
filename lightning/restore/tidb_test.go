@@ -240,7 +240,8 @@ func (s *tidbSuite) TestInitSchemaErrorLost(c *C) {
 		"t2": "create table t2 (a int primary key, b varchar(200));",
 	})
 	failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/restore/sqlCreateStmts")
-	c.Assert(err, ErrorMatches, "create  failed")
+	// cannot predict which table will failed since map is unorder.
+	c.Assert(err, ErrorMatches, "create (.*) failed")
 }
 
 func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {
