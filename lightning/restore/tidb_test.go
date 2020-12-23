@@ -234,13 +234,13 @@ func (s *tidbSuite) TestInitSchemaErrorLost(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/restore/sqlCreateStmts", "return")
+	failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/restore/sqlCreateStmts", "1*return")
 	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
 		"t1": "create table `t1` (a int);",
 		"t2": "create table t2 (a int primary key, b varchar(200));",
 	})
 	failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/restore/sqlCreateStmts")
-	c.Assert(err, ErrorMatches, "create t1 failed")
+	c.Assert(err, ErrorMatches, "create  failed")
 }
 
 func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {

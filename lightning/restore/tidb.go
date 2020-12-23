@@ -17,7 +17,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+
 	"github.com/pingcap/tidb-lightning/lightning/glue"
 
 	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
@@ -156,15 +156,8 @@ func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema 
 
 	task := logger.Begin(zap.InfoLevel, "create tables")
 	var sqlCreateStmts []string
-	tables := make([]string, 0, len(tablesSchema))
-	for tbl := range tablesSchema {
-		tables = append(tables, tbl)
-	}
-	// sort tables for failpoint test
-	sort.Strings(tables)
 loopCreate:
-	for i, tbl := range tables {
-		sqlCreateTable := tablesSchema[tbl]
+	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
 		sqlCreateStmts, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
@@ -181,11 +174,8 @@ loopCreate:
 				logger.With(zap.String("table", common.UniqueTable(database, tbl))),
 			)
 			failpoint.Inject("sqlCreateStmts", func() {
-				if i == 0 {
-					err = errors.Errorf("create %s failed", tbl)
-				} else {
-					err = nil
-				}
+				err = errors.Errorf("create %s failed", tbl)
+				failpoint.Return()
 			})
 			if err != nil {
 				break loopCreate
