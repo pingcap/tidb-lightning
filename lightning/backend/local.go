@@ -1577,7 +1577,8 @@ func (w *LocalWriter) writeRowsLoop() {
 			for _, pair := range kvs {
 				batchSize += int64(len(pair.Key) + len(pair.Val))
 			}
-			if len(wb) == 0 {
+			// If this is the first kv array reach, we can use it directly to reduce memory copy.
+			if len(wb) == 0 && totalSize == 0 {
 				wb = kvs
 			} else {
 				wb = append(wb, kvs...)
@@ -1588,6 +1589,7 @@ func (w *LocalWriter) writeRowsLoop() {
 					w.writeErr.Set(err)
 					return
 				}
+				wb = wb[:0]
 				totalSize += batchSize
 				batchSize = 0
 			}
