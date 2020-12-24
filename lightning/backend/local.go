@@ -985,6 +985,9 @@ loopWrite:
 				var resp *sst.IngestResponse
 				resp, err = local.Ingest(ctx, meta, region)
 				if err != nil {
+					if errors.Cause(err) == context.Canceled {
+						return nil, err
+					}
 					log.L().Warn("ingest failed", log.ShortError(err), zap.Reflect("meta", meta),
 						zap.Reflect("region", region))
 					errCnt++
@@ -1053,12 +1056,12 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *Loca
 			defer local.rangeConcurrency.Recycle(w)
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
-				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainRanges); err != nil {
-					log.L().Warn("write and ingest by range failed",
-						zap.Int("retry time", i+1), log.ShortError(err))
-				} else {
+				err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainRanges)
+				if err == nil || errors.Cause(err) == context.Canceled {
 					break
 				}
+				log.L().Warn("write and ingest by range failed",
+					zap.Int("retry time", i+1), log.ShortError(err))
 			}
 			errCh <- err
 		}(w)
@@ -1127,7 +1130,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
-			if err == nil {
+			if err == nil || errors.Cause(err) == context.Canceled {
 				break
 			}
 
