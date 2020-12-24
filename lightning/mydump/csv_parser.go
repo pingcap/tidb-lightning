@@ -397,7 +397,7 @@ func (parser *CSVParser) readQuotedField() error {
 					}
 				}
 				parser.skipBytes(len(parser.quote))
-				parser.recordBuffer = append(parser.recordBuffer, '"')
+				parser.recordBuffer = append(parser.recordBuffer, parser.quote...)
 			case '\r', '\n':
 				// end the field if the next is a separator
 				return nil
