@@ -79,7 +79,6 @@ const (
 
 	defaultPropSizeIndexDistance = 4 * 1024 * 1024 // 4MB
 	defaultPropKeysIndexDistance = 40 * 1024
-	IndexEngineID                = -1
 
 	// the lower threshold of max open files for pebble db.
 	openFilesLowerThreshold = 128
