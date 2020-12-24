@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	"math"
 	"math/rand"
@@ -290,7 +291,7 @@ func (s *localSuite) TestRangePropertiesWithPebble(c *C) {
 	c.Assert(sstMetas[0][0].Properties.UserProperties, DeepEquals, props)
 }
 
-func testLocalWriter(c *C, needSort bool) {
+func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	dir := c.MkDir()
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
@@ -329,14 +330,32 @@ func testLocalWriter(c *C, needSort bool) {
 		kvs = append(kvs, kv)
 		keys = append(keys, kv.Key)
 	}
-	if needSort {
-		sort.Slice(kvs, func(i, j int) bool {
-			return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
+	var rows1 kvPairs
+	var rows2 kvPairs
+	var rows3 kvPairs
+	rows4 := kvs[:12000]
+	if partitialSort {
+		sort.Slice(rows4, func(i, j int) bool {
+			return bytes.Compare(rows4[i].Key, rows4[j].Key) < 0
 		})
+		rows1 = rows4[:6000]
+		rows3 = rows4[6000:]
+		rows2 = kvs[12000:]
+	} else {
+		if needSort {
+			sort.Slice(kvs, func(i, j int) bool {
+				return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
+			})
+		}
+		rows1 = kvs[:6000]
+		rows2 = kvs[6000:12000]
+		rows3 = kvs[12000:]
 	}
-	err = w.AppendRows(ctx, "", []string{}, 1, kvs[:6000])
-	err = w.AppendRows(ctx, "", []string{}, 1, kvs[6000:12000])
-	err = w.AppendRows(ctx, "", []string{}, 1, kvs[12000:])
+	err = w.AppendRows(ctx, "", []string{}, 1, rows1)
+	c.Assert(err, IsNil)
+	err = w.AppendRows(ctx, "", []string{}, 1, rows2)
+	c.Assert(err, IsNil)
+	err = w.AppendRows(ctx, "", []string{}, 1, rows3)
 	c.Assert(err, IsNil)
 	err = w.Close()
 	c.Assert(err, IsNil)
@@ -348,20 +367,27 @@ func testLocalWriter(c *C, needSort bool) {
 	sort.Slice(keys, func(i, j int) bool {
 		return bytes.Compare(keys[i], keys[j]) < 0
 	})
+	c.Assert(int(f.Length), Equals, 20000)
+	c.Assert(int(f.TotalSize), Equals, 144*20000)
 	valid := it.SeekGE(keys[0])
 	c.Assert(valid, IsTrue)
 	for _, k := range keys {
 		c.Assert(it.Key(), DeepEquals, k)
 		it.Next()
 	}
-	c.Assert(int(f.TotalSize), Equals, 144*20000)
-	c.Assert(int(f.Length), Equals, 20000)
 }
 
 func (s *localSuite) TestLocalWriterWithSort(c *C) {
-	testLocalWriter(c, false)
+	fmt.Println("TestLocalWriterWithSort")
+	testLocalWriter(c, false, false)
 }
 
 func (s *localSuite) TestLocalWriterWithIngest(c *C) {
-	testLocalWriter(c, true)
+	fmt.Println("TestLocalWriterWithIngest")
+	testLocalWriter(c, true, false)
+}
+
+func (s *localSuite) TestLocalWriterWithIngestUnsort(c *C) {
+	fmt.Println("TestLocalWriterWithIngestUnsort")
+	testLocalWriter(c, true, true)
 }

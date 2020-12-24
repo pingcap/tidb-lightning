@@ -1494,20 +1494,20 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 }
 
 type LocalWriter struct {
-	writeErr          common.OnceError
-	local             *LocalFile
-	lastKey           []byte
-	produceWg         sync.WaitGroup
-	consumeWg         sync.WaitGroup
-	kvsChan           chan []common.KvPair
-	sstDir            string
-	memtableSizeLimit int64
+	writeErr           common.OnceError
+	local              *LocalFile
+	lastKey            []byte
+	produceWg          sync.WaitGroup
+	consumeWg          sync.WaitGroup
+	kvsChan            chan []common.KvPair
+	sstDir             string
+	memtableSizeLimit  int64
+	writeBatch         []common.KvPair
+	isWriteBatchSorted bool
 }
 
+// If this method return false, it would not change `w.lastKey`
 func (w *LocalWriter) isSorted(kvs []common.KvPair) bool {
-	if len(kvs) <= 1 {
-		return false
-	}
 	lastKey := w.lastKey
 	for _, pair := range kvs {
 		if len(lastKey) > 0 && bytes.Compare(lastKey, pair.Key) >= 0 {
@@ -1551,59 +1551,72 @@ func (w *LocalWriter) AddProducer() {
 func (w *LocalWriter) writeRowsLoop() {
 	batchSize := int64(0)
 	totalSize := int64(0)
+	totalCount := int64(0)
+	w.isWriteBatchSorted = true
 	var writer *sstable.Writer = nil
 	//var wb *pebble.Batch = nil
-	var wb []common.KvPair
 	var filePath string
 	defer w.consumeWg.Done()
 	var err error
 	for kvs := range w.kvsChan {
-		atomic.AddInt64(&w.local.Length, int64(len(kvs)))
-		if len(wb) == 0 && w.isSorted(kvs) {
+		hasSort := w.isSorted(kvs)
+		if totalCount > 1000 && hasSort {
+			for _, pair := range kvs {
+				totalSize += int64(len(pair.Key) + len(pair.Val))
+			}
 			if writer == nil {
 				writer, filePath, err = w.createWriter()
 				if err != nil {
 					w.writeErr.Set(err)
 					return
 				}
+				if len(w.writeBatch) > 0 && w.isWriteBatchSorted {
+					if err := writeKVs(writer, w.writeBatch); err != nil {
+						w.writeErr.Set(err)
+						return
+					}
+					w.isWriteBatchSorted = true
+					w.writeBatch = w.writeBatch[:0]
+					totalSize += batchSize
+					batchSize = 0
+				}
 			}
-			sz, err := writeKVs(writer, kvs)
-			if err != nil {
+			if err := writeKVs(writer, kvs); err != nil {
 				w.writeErr.Set(err)
 				return
 			}
-			totalSize += sz
 		} else {
 			for _, pair := range kvs {
 				batchSize += int64(len(pair.Key) + len(pair.Val))
 			}
-			// If this is the first kv array reach, we can use it directly to reduce memory copy.
-			if len(wb) == 0 && totalSize == 0 {
-				wb = kvs
-			} else {
-				wb = append(wb, kvs...)
+			if !hasSort {
+				w.isWriteBatchSorted = false
 			}
+			w.writeBatch = append(w.writeBatch, kvs...)
 
 			if batchSize > w.memtableSizeLimit {
-				if err := w.flushKVs(wb); err != nil {
+				if err := w.flushKVs(); err != nil {
 					w.writeErr.Set(err)
 					return
 				}
-				wb = wb[:0]
+				if writer == nil {
+					w.lastKey = w.lastKey[:0]
+				}
 				totalSize += batchSize
 				batchSize = 0
+				w.isWriteBatchSorted = true
 			}
 		}
+		totalCount += int64(len(kvs))
 	}
 
-	if wb != nil {
-		if batchSize > 0 {
-			if err := w.flushKVs(wb); err != nil {
-				w.writeErr.Set(err)
-				return
-			}
-			totalSize += batchSize
+	atomic.AddInt64(&w.local.Length, totalCount)
+	if batchSize > 0 {
+		if err := w.flushKVs(); err != nil {
+			w.writeErr.Set(err)
+			return
 		}
+		totalSize += batchSize
 		log.L().Info("write data by sort index", zap.Int64("bytes", totalSize))
 	}
 	if writer != nil {
@@ -1620,20 +1633,23 @@ func (w *LocalWriter) writeRowsLoop() {
 	atomic.AddInt64(&w.local.TotalSize, totalSize)
 }
 
-func (w *LocalWriter) flushKVs(kvs []common.KvPair) error {
+func (w *LocalWriter) flushKVs() error {
 	writer, filePath, err := w.createWriter()
 	if err != nil {
 		return err
 	}
-	sort.Slice(kvs, func(i, j int) bool {
-		return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
-	})
-	if _, err := writeKVs(writer, kvs); err != nil {
+	if !w.isWriteBatchSorted {
+		sort.Slice(w.writeBatch, func(i, j int) bool {
+			return bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0
+		})
+	}
+	if err := writeKVs(writer, w.writeBatch); err != nil {
 		return err
 	}
 	if err := writer.Close(); err != nil {
-		return nil
+		return err
 	}
+	w.writeBatch = w.writeBatch[:0]
 	return w.local.db.Ingest([]string{filePath})
 }
 
@@ -1654,18 +1670,16 @@ func (w *LocalWriter) createWriter() (*sstable.Writer, string, error) {
 	return writer, filePath, nil
 }
 
-func writeKVs(writer *sstable.Writer, kvs []common.KvPair) (int64, error) {
+func writeKVs(writer *sstable.Writer, kvs []common.KvPair) error {
 	internalKey := sstable.InternalKey{
 		UserKey: []byte{},
 		Trailer: uint64(sstable.InternalKeyKindSet),
 	}
-	totalSize := int64(0)
 	for _, p := range kvs {
 		internalKey.UserKey = p.Key
-		totalSize += int64(len(p.Key) + len(p.Val))
 		if err := writer.Add(internalKey, p.Val); err != nil {
-			return 0, err
+			return err
 		}
 	}
-	return totalSize, nil
+	return nil
 }
