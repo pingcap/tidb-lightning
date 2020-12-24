@@ -54,6 +54,8 @@ var (
 		"default_week_format":     "0",
 		"block_encryption_mode":   "aes-128-ecb",
 		"group_concat_max_len":    "1024",
+		// allow use _tidb_rowid in sql statement
+		"tidb_opt_write_row_id": "1",
 	}
 )
 
