@@ -1675,7 +1675,12 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 	for _, idx := range colIndexes {
 		// skip columns with index -1
 		if idx >= 0 {
-			names = append(names, tableInfo.Columns[idx].Name.O)
+			// original fiels contains _tidb_rowid field
+			if idx == len(tableInfo.Columns) {
+				names = append(names, model.ExtraHandleName.O)
+			} else {
+				names = append(names, tableInfo.Columns[idx].Name.O)
+			}
 		}
 	}
 	return names
@@ -1903,7 +1908,6 @@ func (cr *chunkRestore) encodeLoop(
 
 	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.TikvImporter.MaxKVPairs
 	initializedColumns, reachEOF := false, false
-	columnCnt := len(t.tableInfo.Core.Columns)
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
 			return
@@ -1932,13 +1936,6 @@ func (cr *chunkRestore) encodeLoop(
 						}
 					}
 					initializedColumns = true
-					// check the private column '_tidb_row_id',
-					for _, c := range columnNames {
-						if strings.ToLower(c) == model.ExtraHandleName.L {
-							columnCnt++
-							break
-						}
-					}
 				}
 			case io.EOF:
 				reachEOF = true
@@ -1950,12 +1947,6 @@ func (cr *chunkRestore) encodeLoop(
 			readDur += time.Since(readDurStart)
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
-			if columnCnt < len(lastRow.Row) {
-				logger.Error("row fields is more than table fields", zap.Int("tableFields", columnCnt),
-					zap.Int("rowFields", len(lastRow.Row)), zap.Int64("position", newOffset), zap.Array("row", lastRow))
-				err = errors.Errorf("row field count %d is bigger than table fields count %d", len(lastRow.Row), columnCnt)
-				return
-			}
 			// sql -> kv
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation)
 			encodeDur += time.Since(encodeDurStart)
