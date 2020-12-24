@@ -263,7 +263,10 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 		enc.columnCnt = columnCount
 	}
 
-	if len(row) != enc.columnCnt {
+	// TODO: since the column count doesn't exactly reflect the real column names, we only check the upper bound currently.
+	// See: tests/generated_columns/data/gencol.various_types.0.sql this sql has no columns, so encodeLoop will fill the
+	// column permutation with default, thus enc.columnCnt > len(row).
+	if len(row) > enc.columnCnt {
 		log.L().Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
 			zap.Array("data", rowArrayMarshaler(row)))
 		return nil, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
