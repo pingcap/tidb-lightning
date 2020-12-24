@@ -69,3 +69,9 @@ check_contains 'b > 80000: 1'
 run_sql 'SELECT _tidb_rowid > 80000, b > 80000 FROM rowid.specific_auto_inc WHERE a = "gggggg"'
 check_contains '_tidb_rowid > 80000: 1'
 check_contains 'b > 80000: 1'
+
+
+# enable cluster index by default
+run_sql 'set @@global.tidb_enable_clustered_index = 1' || echo "tidb does not support cluster index yet, skipped!"
+# wait for global variable cache invalid
+sleep 2
