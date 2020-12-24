@@ -256,6 +256,8 @@ level-1-compact = false
 # if set true, compact will do full compaction to tikv data.
 # if this setting is missing, the default value is false.
 compact = false
+# if set to true, lightning will analyze all table together at last
+analyze-at-last = false
 
 # cron performs some periodic actions in background
 [cron]

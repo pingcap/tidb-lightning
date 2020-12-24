@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+
 	"github.com/pingcap/tidb-lightning/lightning/glue"
 
 	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
@@ -154,6 +155,7 @@ func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema 
 
 	task := logger.Begin(zap.InfoLevel, "create tables")
 	var sqlCreateStmts []string
+loopCreate:
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
@@ -171,7 +173,7 @@ func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema 
 				logger.With(zap.String("table", common.UniqueTable(database, tbl))),
 			)
 			if err != nil {
-				break
+				break loopCreate
 			}
 		}
 	}

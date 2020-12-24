@@ -232,6 +232,7 @@ type PostRestore struct {
 	Compact       bool        `toml:"compact" json:"compact"`
 	Checksum      PostOpLevel `toml:"checksum" json:"checksum"`
 	Analyze       PostOpLevel `toml:"analyze" json:"analyze"`
+	AnalyzeAtLast bool        `toml:"analyze-at-last" json:"analyze-at-last"`
 }
 
 type CSVConfig struct {
