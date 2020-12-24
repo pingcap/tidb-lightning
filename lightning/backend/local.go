@@ -1253,42 +1253,48 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
-	if err := local.CleanupEngine(ctx, engineUUID); err != nil {
+	exists, err := local.cleanupEngineIfExists(ctx, engineUUID)
+	if err != nil || !exists {
 		return err
 	}
-	if err := local.OpenEngine(ctx, engineUUID); err != nil {
-		return err
+	return local.OpenEngine(ctx, engineUUID)
+}
+
+// cleanupEngineIfExists returns if the engine with given UUID exists. If the
+// engine already exists, it will be deleted.
+func (local *local) cleanupEngineIfExists(ctx context.Context, engineUUID uuid.UUID) (exists bool, err error) {
+	// release this engine after import success
+	engineFile, ok := local.engines.Load(engineUUID)
+	if !ok {
+		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		return false, nil
 	}
-	return nil
+
+	localEngine := engineFile.(*LocalFile)
+	localEngine.lock()
+	defer localEngine.unlock()
+
+	// since closing the engine causes all subsequent operations on it panic,
+	// we make sure to delete it from the engine map before calling Close().
+	// (note that Close() returning error does _not_ mean the pebble DB
+	// remains open/usable.)
+	local.engines.Delete(engineUUID)
+	err = localEngine.Close()
+	if err != nil {
+		return true, err
+	}
+	err = localEngine.Cleanup(local.localStoreDir)
+	if err != nil {
+		return true, err
+	}
+	localEngine.TotalSize = 0
+	localEngine.Length = 0
+	return true, nil
 }
 
 func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	// release this engine after import success
-	engineFile, ok := local.engines.Load(engineUUID)
-	if ok {
-		localEngine := engineFile.(*LocalFile)
-		localEngine.lock()
-		defer localEngine.unlock()
-
-		// since closing the engine causes all subsequent operations on it panic,
-		// we make sure to delete it from the engine map before calling Close().
-		// (note that Close() returning error does _not_ mean the pebble DB
-		// remains open/usable.)
-		local.engines.Delete(engineUUID)
-		err := localEngine.Close()
-		if err != nil {
-			return err
-		}
-		err = localEngine.Cleanup(local.localStoreDir)
-		if err != nil {
-			return err
-		}
-		localEngine.TotalSize = 0
-		localEngine.Length = 0
-	} else {
-		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
-	}
-	return nil
+	_, err := local.cleanupEngineIfExists(ctx, engineUUID)
+	return err
 }
 
 func (local *local) CheckRequirements(ctx context.Context) error {
