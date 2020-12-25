@@ -683,16 +683,24 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		}
 	}
 
+	type task struct {
+		tr *TableRestore
+		cp *TableCheckpoint
+	}
+
+	totalTables := 0
+	for _, dbMeta := range rc.dbMetas {
+		totalTables += len(dbMeta.Tables)
+	}
+	postProcessTaskChan := make(chan task, totalTables)
+
 	var wg sync.WaitGroup
 	var restoreErr common.OnceError
 
 	stopPeriodicActions := make(chan struct{})
 	go rc.runPeriodicActions(ctx, stopPeriodicActions)
+	defer close(stopPeriodicActions)
 
-	type task struct {
-		tr *TableRestore
-		cp *TableCheckpoint
-	}
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
@@ -706,12 +714,15 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
-				err := task.tr.restoreTable(ctx2, rc, task.cp)
+				needPostProcess, err := task.tr.restoreTable(ctx2, rc, task.cp)
 				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
 				restoreErr.Set(err)
+				if needPostProcess {
+					postProcessTaskChan <- task
+				}
 				wg.Done()
 			}
 		}()
@@ -822,7 +833,32 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	}
 
 	wg.Wait()
-	close(stopPeriodicActions)
+	// if context is done, should return directly
+	select {
+	case <-ctx.Done():
+		err = restoreErr.Get()
+		if err == nil {
+			err = ctx.Err()
+		}
+		logTask.End(zap.ErrorLevel, err)
+		return err
+	default:
+	}
+
+	close(postProcessTaskChan)
+	// otherwise, we should run all tasks in the post-process task chan
+	for i := 0; i < rc.cfg.App.TableConcurrency; i++ {
+		wg.Add(1)
+		go func() {
+			for task := range postProcessTaskChan {
+				// force all the remain post-process tasks to be executed
+				_, err := task.tr.postProcess(ctx, rc, task.cp, true)
+				restoreErr.Set(err)
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 
 	err = restoreErr.Get()
 	logTask.End(zap.ErrorLevel, err)
@@ -833,12 +869,12 @@ func (t *TableRestore) restoreTable(
 	ctx context.Context,
 	rc *RestoreController,
 	cp *TableCheckpoint,
-) error {
+) (bool, error) {
 	// 1. Load the table info.
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return false, ctx.Err()
 	default:
 	}
 
@@ -850,10 +886,10 @@ func (t *TableRestore) restoreTable(
 		)
 	} else if cp.Status < CheckpointStatusAllWritten {
 		if err := t.populateChunks(ctx, rc, cp); err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, t.tableName, cp.Engines); err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		web.BroadcastTableCheckpoint(t.tableName, cp)
 
@@ -876,11 +912,11 @@ func (t *TableRestore) restoreTable(
 	// 2. Restore engines (if still needed)
 	err := t.restoreEngines(ctx, rc, cp)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
-	// 3. Post-process
-	return errors.Trace(t.postProcess(ctx, rc, cp))
+	// 3. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
+	return t.postProcess(ctx, rc, cp, false /* force-analyze */)
 }
 
 func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
@@ -1181,12 +1217,16 @@ func (t *TableRestore) importEngine(
 	return nil
 }
 
-func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
+// postProcess execute rebase-auto-id/checksum/analyze according to the task config.
+//
+// if the parameter forceAnalyze to true, postProcess force run analyze even if the analyze-at-last config is true.
+// And if analyze phase is skipped, the first return value will be true.
+func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, forceAnalyze bool) (bool, error) {
 	// there are no data in this table, no need to do post process
 	// this is important for tables that are just the dump table of views
 	// because at this stage, the table was already deleted and replaced by the related view
 	if len(cp.Engines) == 1 {
-		return nil
+		return false, nil
 	}
 
 	// 3. alter table set auto_increment
@@ -1203,15 +1243,16 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
-			return err
+			return false, err
 		}
+		cp.Status = CheckpointStatusAlteredAutoInc
 	}
 
 	// tidb backend don't need checksum & analyze
 	if !rc.backend.ShouldPostProcess() {
 		t.logger.Debug("skip checksum & analyze, not supported by this backend")
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
-		return nil
+		return false, nil
 	}
 
 	// 4. do table checksum
@@ -1238,17 +1279,20 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			}
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
 			if err != nil {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 		}
+		cp.Status = CheckpointStatusChecksummed
 	}
 
 	// 5. do table analyze
+	finished := true
 	if cp.Status < CheckpointStatusAnalyzed {
 		if rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
-		} else {
+			cp.Status = CheckpointStatusAnalyzed
+		} else if forceAnalyze || !rc.cfg.PostRestore.AnalyzeAtLast {
 			err := t.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
@@ -1259,12 +1303,15 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			}
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAnalyzed)
 			if err != nil {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
+			cp.Status = CheckpointStatusAnalyzed
+		} else {
+			finished = false
 		}
 	}
 
-	return nil
+	return !finished, nil
 }
 
 // do full compaction for the whole data.
