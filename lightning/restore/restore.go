@@ -979,6 +979,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 				// In the future, we will investigate more about
 				// the difference between restoring tables concurrently and restoring tables one by one.
 				restoreWorker := rc.tableWorkers.Apply()
+
 				go func(w *worker.Worker, eid int32, ecp *EngineCheckpoint) {
 					defer wg.Done()
 
@@ -1169,6 +1170,8 @@ func (t *TableRestore) restoreEngine(
 
 	dataWorker := rc.closedEngineLimit.Apply()
 	closedDataEngine, err := dataEngine.Close(ctx)
+	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
+	// this flush action impact up to 10% of the performance, so we only do it if necessary.
 	if err == nil && rc.cfg.Checkpoint.Enable && rc.isLocalBackend() {
 		if err = indexEngine.Flush(); err != nil {
 			// If any error occurred, recycle worker immediately
@@ -1184,6 +1187,7 @@ func (t *TableRestore) restoreEngine(
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
 	if err != nil {
 		// If any error occurred, recycle worker immediately
+		rc.closedEngineLimit.Recycle(dataWorker)
 		return nil, nil, errors.Trace(err)
 	}
 	return closedDataEngine, dataWorker, nil
