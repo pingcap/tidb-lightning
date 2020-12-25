@@ -10,14 +10,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/pingcap/br/pkg/checksum"
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tipb/go-tipb"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 
@@ -34,6 +35,8 @@ const (
 
 var (
 	serviceSafePointTTL int64 = 10 * 60 // 10 min in seconds
+
+	minDistSQLScanConcurrency = 4
 )
 
 // RemoteChecksum represents a checksum result got from tidb.
@@ -267,18 +270,33 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *TidbTab
 		return nil, errors.Trace(err)
 	}
 
-	res, err := executor.Execute(ctx, e.client, func() {})
-	if err != nil {
-		return nil, errors.Trace(err)
+	distSQLScanConcurrency := int(e.distSQLScanConcurrency)
+	for i := 0; i < 3; i++ {
+		_ = executor.Each(func(request *kv.Request) error {
+			request.Concurrency = distSQLScanConcurrency
+			return nil
+		})
+		var execRes *tipb.ChecksumResponse
+		execRes, err = executor.Execute(ctx, e.client, func() {})
+		if err == nil {
+			return &RemoteChecksum{
+				Schema:     tableInfo.DB,
+				Table:      tableInfo.Name,
+				Checksum:   execRes.Checksum,
+				TotalBytes: execRes.TotalBytes,
+				TotalKVs:   execRes.TotalKvs,
+			}, nil
+		}
+
+		log.L().Warn("remote checksum failed", zap.String("db", tableInfo.DB),
+			zap.String("table", tableInfo.Name), zap.Error(err),
+			zap.Int("concurrency", distSQLScanConcurrency), zap.Int("retry", i))
+		if distSQLScanConcurrency > minDistSQLScanConcurrency {
+			distSQLScanConcurrency = utils.MaxInt(distSQLScanConcurrency/2, minDistSQLScanConcurrency)
+		}
 	}
 
-	return &RemoteChecksum{
-		Schema:     tableInfo.DB,
-		Table:      tableInfo.Name,
-		Checksum:   res.Checksum,
-		TotalBytes: res.TotalBytes,
-		TotalKVs:   res.TotalKvs,
-	}, nil
+	return nil, err
 }
 
 func (e *tikvChecksumManager) Checksum(ctx context.Context, tableInfo *TidbTableInfo) (*RemoteChecksum, error) {
