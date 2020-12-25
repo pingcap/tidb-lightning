@@ -172,15 +172,15 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 999)
 	c.Assert(err, IsNil)
 
-	for i := 0; i < 4; i++ {
+	for i := 0; i <= maxErrorRetryCount; i++ {
 		kvClient.maxErrCount = i
 		kvClient.curErrCount = 0
 		checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
 		startTs := oracle.ComposeTS(time.Now().Unix()*1000, 0)
 		ctx := context.WithValue(context.Background(), &checksumManagerKey, checksumExec)
 		_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
-		// with max error retry < 3, the checksum can success
-		if i >= 3 {
+		// with max error retry < maxErrorRetryCount, the checksum can success
+		if i >= maxErrorRetryCount {
 			c.Assert(err, ErrorMatches, "tikv timeout")
 			continue
 		} else {

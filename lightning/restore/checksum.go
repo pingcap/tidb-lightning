@@ -31,6 +31,8 @@ import (
 
 const (
 	preUpdateServiceSafePointFactor = 3
+
+	maxErrorRetryCount = 3
 )
 
 var (
@@ -271,7 +273,7 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *TidbTab
 	}
 
 	distSQLScanConcurrency := int(e.distSQLScanConcurrency)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < maxErrorRetryCount; i++ {
 		_ = executor.Each(func(request *kv.Request) error {
 			request.Concurrency = distSQLScanConcurrency
 			return nil
