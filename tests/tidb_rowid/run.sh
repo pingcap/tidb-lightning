@@ -18,19 +18,26 @@
 set -eu
 
 for BACKEND in local importer tidb; do
+  if [ "$BACKEND" = 'local' ]; then
+      check_cluster_version 4 0 0 'local backend' || continue
+  fi
+
   run_sql 'DROP DATABASE IF EXISTS rowid;'
   run_lightning -backend $BACKEND
   echo 'Import finished'
 
-  run_sql 'SELECT count(*), max(id), min(_tidb_rowid), max(_tidb_rowid) FROM rowid.`non_pk_auto_inc`'
-  check_contains 'count(*): 22'
-  check_contains 'max(id): 37'
-  check_contains 'min(_tidb_rowid): 1'
-  check_contains 'max(_tidb_rowid): 22'
-  run_sql 'INSERT INTO rowid.`non_pk_auto_inc` (`pk`) VALUES ("?")'
-  run_sql 'SELECT id > 37, _tidb_rowid > 22 FROM rowid.`non_pk_auto_inc` WHERE `pk` = "?"'
-  check_contains 'id > 37: 1'
-  check_contains '_tidb_rowid > 22: 1'
+  # we can't determine the exact `_tidb_row_id` alloc logic, so just skip this check with tidb backend.
+  if [ "$BACKEND" != 'tidb' ]; then
+    run_sql 'SELECT count(*), max(id), min(_tidb_rowid), max(_tidb_rowid) FROM rowid.`non_pk_auto_inc`'
+    check_contains 'count(*): 22'
+    check_contains 'max(id): 37'
+    check_contains 'min(_tidb_rowid): 1'
+    check_contains 'max(_tidb_rowid): 22'
+    run_sql 'INSERT INTO rowid.`non_pk_auto_inc` (`pk`) VALUES ("?")'
+    run_sql 'SELECT id > 37, _tidb_rowid > 22 FROM rowid.`non_pk_auto_inc` WHERE `pk` = "?"'
+    check_contains 'id > 37: 1'
+    check_contains '_tidb_rowid > 22: 1'
+  fi
 
   for table_name in non_pk explicit_tidb_rowid; do
       run_sql "SELECT count(*), min(_tidb_rowid), max(_tidb_rowid) FROM rowid.${table_name}"

@@ -242,9 +242,8 @@ func (*tidbEncoder) Close() {}
 func getColumnByIndex(cols []*table.Column, index int) *table.Column {
 	if index == len(cols) {
 		return extraHandleTableColumn
-	} else {
-		return cols[index]
 	}
+	return cols[index]
 }
 
 func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, columnPermutation []int) (Row, error) {
@@ -267,7 +266,7 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	// See: tests/generated_columns/data/gencol.various_types.0.sql this sql has no columns, so encodeLoop will fill the
 	// column permutation with default, thus enc.columnCnt > len(row).
 	if len(row) > enc.columnCnt {
-		log.L().Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
+		logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
 			zap.Array("data", rowArrayMarshaler(row)))
 		return nil, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
 	}
