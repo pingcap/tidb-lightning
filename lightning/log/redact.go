@@ -60,6 +60,11 @@ func ZapRedactStringer(key string, arg fmt.Stringer) zap.Field {
 	return zap.Stringer(key, RedactStringer(arg))
 }
 
+// ZapRedactString receives stringer argument and return omitted information in zap.Field  if redact log enabled
+func ZapRedactString(key string, arg string) zap.Field {
+	return zap.String(key, RedactString(arg))
+}
+
 // RedactString receives string argument and return omitted information if redact log enabled
 func RedactString(arg string) string {
 	if NeedRedact() {

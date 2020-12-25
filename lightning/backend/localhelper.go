@@ -205,8 +205,10 @@ func paginateScanRegion(
 	ctx context.Context, client split.SplitClient, startKey, endKey []byte, limit int,
 ) ([]*split.RegionInfo, error) {
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
-		return nil, errors.Errorf("startKey > endKey, startKey %s, endkey %s",
-			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		log.L().Error("startKey > endKey when paginating scan region",
+			log.ZapRedactString("startKey", hex.EncodeToString(startKey)),
+			log.ZapRedactString("endKey", hex.EncodeToString(endKey)))
+		return nil, errors.Errorf("startKey > endKey when paginating scan region")
 	}
 
 	var regions []*split.RegionInfo
