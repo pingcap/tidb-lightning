@@ -1499,7 +1499,6 @@ type LocalWriter struct {
 	writeErr           common.OnceError
 	local              *LocalFile
 	lastKey            []byte
-	produceWg          sync.WaitGroup
 	consumeWg          sync.WaitGroup
 	kvsChan            chan []common.KvPair
 	sstDir             string
@@ -1532,22 +1531,9 @@ func (w *LocalWriter) AppendRows(ctx context.Context, tableName string, columnNa
 }
 
 func (w *LocalWriter) Close() error {
-	w.WaitConsume()
-	return w.writeErr.Get()
-}
-
-func (w *LocalWriter) Done() {
-	w.produceWg.Done()
-}
-
-func (w *LocalWriter) WaitConsume() {
-	w.produceWg.Wait()
 	close(w.kvsChan)
 	w.consumeWg.Wait()
-}
-
-func (w *LocalWriter) AddProducer() {
-	w.produceWg.Add(1)
+	return w.writeErr.Get()
 }
 
 func (w *LocalWriter) writeRowsLoop() {

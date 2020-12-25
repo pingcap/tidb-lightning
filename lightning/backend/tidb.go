@@ -528,12 +528,6 @@ type TiDBWriter struct {
 	engineUUID uuid.UUID
 }
 
-func (w *TiDBWriter) AddProducer() {
-}
-
-func (w *TiDBWriter) Done() {
-}
-
 func (w *TiDBWriter) Close() error {
 	return nil
 }

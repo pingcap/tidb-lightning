@@ -362,19 +362,9 @@ func (importer *importer) LocalWriter(ctx context.Context, engineUUID uuid.UUID)
 type ImporterWriter struct {
 	importer   *importer
 	engineUUID uuid.UUID
-	wg         sync.WaitGroup
-}
-
-func (w *ImporterWriter) AddProducer() {
-	w.wg.Add(1)
-}
-
-func (w *ImporterWriter) Done() {
-	w.wg.Done()
 }
 
 func (w *ImporterWriter) Close() error {
-	w.wg.Wait()
 	return nil
 }
 

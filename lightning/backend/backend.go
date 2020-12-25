@@ -283,16 +283,8 @@ func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string,
 	return w.writer.AppendRows(ctx, w.tableName, columnNames, w.ts, rows)
 }
 
-func (w *LocalEngineWriter) Done() {
-	w.writer.Done()
-}
-
-func (w *LocalEngineWriter) WaitConsume() error {
+func (w *LocalEngineWriter) Close() error {
 	return w.writer.Close()
-}
-
-func (w *LocalEngineWriter) AddProducer() {
-	w.writer.AddProducer()
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.
@@ -407,6 +399,4 @@ type EngineWriter interface {
 		rows Rows,
 	) error
 	Close() error
-	AddProducer()
-	Done()
 }

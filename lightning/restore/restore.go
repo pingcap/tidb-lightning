@@ -983,7 +983,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 					defer wg.Done()
 
 					engineLogTask := t.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
-					dataClosedEngine, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
+					dataClosedEngine, dataWorker, err := t.restoreEngine(ctx, rc, indexEngine, eid, ecp)
 					engineLogTask.End(zap.ErrorLevel, err)
 					rc.tableWorkers.Recycle(w)
 					if err != nil {
@@ -995,6 +995,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 						panic("forcing failure due to FailBeforeDataEngineImported")
 					})
 
+					defer rc.closedEngineLimit.Recycle(dataWorker)
 					if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
 						engineErr.Set(err)
 					}
@@ -1055,26 +1056,27 @@ func (t *TableRestore) restoreEngine(
 	indexEngine *kv.OpenedEngine,
 	engineID int32,
 	cp *EngineCheckpoint,
-) (*kv.ClosedEngine, error) {
+) (*kv.ClosedEngine, *worker.Worker, error) {
 	if cp.Status >= CheckpointStatusClosed {
+		w := rc.closedEngineLimit.Apply()
 		closedEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
-			return closedEngine, errors.Trace(err)
+			return closedEngine, nil, errors.Trace(err)
 		}
-		return closedEngine, nil
+		return closedEngine, w, nil
 	}
 
 	indexWriter, err := indexEngine.LocalWriter(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 
 	dataEngine, err := rc.backend.OpenEngine(ctx, t.tableName, engineID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	var wg sync.WaitGroup
@@ -1088,7 +1090,7 @@ func (t *TableRestore) restoreEngine(
 
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		default:
 		}
 
@@ -1103,7 +1105,7 @@ func (t *TableRestore) restoreEngine(
 		// 	4. flush kvs data (into tikv node)
 		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, t.tableInfo)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Inc()
 
@@ -1111,23 +1113,21 @@ func (t *TableRestore) restoreEngine(
 		wg.Add(1)
 		dataWriter, err := dataEngine.LocalWriter(ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
-		indexWriter.AddProducer()
 		go func(w *worker.Worker, cr *chunkRestore) {
 			// Restore a chunk.
 			defer func() {
 				cr.close()
 				wg.Done()
 				rc.regionWorkers.Recycle(w)
-				indexWriter.Done()
 			}()
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
 			if err == nil {
 				err = cr.restore(ctx, t, engineID, dataWriter, indexWriter, rc)
 			}
 			if err == nil {
-				err = dataWriter.WaitConsume()
+				err = dataWriter.Close()
 			}
 			if err == nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
@@ -1139,8 +1139,8 @@ func (t *TableRestore) restoreEngine(
 	}
 
 	wg.Wait()
-	if err := indexWriter.WaitConsume(); err != nil {
-		return nil, errors.Trace(err)
+	if err := indexWriter.Close(); err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 
 	// Report some statistics into the log for debugging.
@@ -1164,14 +1164,16 @@ func (t *TableRestore) restoreEngine(
 		rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusAllWritten)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
+	dataWorker := rc.closedEngineLimit.Apply()
 	closedDataEngine, err := dataEngine.Close(ctx)
 	if err == nil && rc.cfg.Checkpoint.Enable && rc.isLocalBackend() {
 		if err = indexEngine.Flush(); err != nil {
 			// If any error occurred, recycle worker immediately
-			return nil, errors.Trace(err)
+			rc.closedEngineLimit.Recycle(dataWorker)
+			return nil, nil, errors.Trace(err)
 		}
 
 		// Currently we write all the checkpoints after data&index engine are flushed.
@@ -1182,9 +1184,9 @@ func (t *TableRestore) restoreEngine(
 	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusClosed)
 	if err != nil {
 		// If any error occurred, recycle worker immediately
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
-	return closedDataEngine, nil
+	return closedDataEngine, dataWorker, nil
 }
 
 func (t *TableRestore) importEngine(
