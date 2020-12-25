@@ -265,6 +265,7 @@ func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string,
 		return err
 	}
 	if err = writer.AppendRows(ctx, engine.tableName, columnNames, engine.ts, rows); err != nil {
+		writer.Close()
 		return err
 	}
 	return writer.Close()
