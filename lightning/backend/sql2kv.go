@@ -17,6 +17,8 @@ import (
 	"math/rand"
 	"sort"
 
+	"github.com/pingcap/tidb/util/fastrand"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -295,7 +297,8 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = make([]types.Datum, 0, len(cols)+1)
 	}
 
-	isAutoRandom := kvcodec.tbl.Meta().PKIsHandle && kvcodec.tbl.Meta().ContainsAutoRandomBits()
+	meta := kvcodec.tbl.Meta()
+	isAutoRandom := meta.PKIsHandle && meta.ContainsAutoRandomBits()
 	for i, col := range cols {
 		j := columnPermutation[i]
 		isAutoIncCol := mysql.HasAutoIncrementFlag(col.Flag)
@@ -330,7 +333,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		record = append(record, value)
 
 		if isAutoRandom && isPk {
-			incrementalBits := autoRandomIncrementBits(col, int(kvcodec.tbl.Meta().AutoRandomBits))
+			incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
 			kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64()&((1<<incrementalBits)-1), false, autoid.AutoRandomType)
 		}
 		if isAutoIncCol {
@@ -338,18 +341,24 @@ func (kvcodec *tableKVEncoder) Encode(
 		}
 	}
 
-	if common.TableHasAutoRowID(kvcodec.tbl.Meta()) {
+	if common.TableHasAutoRowID(meta) {
+		rowValue := rowID
 		j := columnPermutation[len(cols)]
 		if j >= 0 && j < len(row) {
 			value, err = table.CastValue(kvcodec.se, row[j], extraHandleColumnInfo, false, false)
+			rowValue = value.GetInt64()
 		} else {
+			if meta.ShardRowIDBits > 0 {
+				shard := (int64(fastrand.Uint32()) & (1<<meta.ShardRowIDBits - 1)) << (autoid.RowIDBitLength - meta.ShardRowIDBits - 1)
+				rowID |= shard
+			}
 			value, err = types.NewIntDatum(rowID), nil
 		}
 		if err != nil {
 			return nil, logKVConvertFailed(logger, row, j, extraHandleColumnInfo, err)
 		}
 		record = append(record, value)
-		kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.RowIDAllocType)
+		kvcodec.tbl.RebaseAutoID(kvcodec.se, rowValue, false, autoid.RowIDAllocType)
 	}
 
 	if len(kvcodec.genCols) > 0 {
