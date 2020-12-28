@@ -90,7 +90,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	})
 	c.Assert(err, IsNil)
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1})
-	c.Assert(err, ErrorMatches, "failed to cast `10000000` as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint")
+	c.Assert(err, ErrorMatches, "failed to cast value as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint")
 	c.Assert(pairs, IsNil)
 
 	rowsWithPk := []types.Datum{
@@ -98,7 +98,7 @@ func (s *kvSuite) TestEncode(c *C) {
 		types.NewStringDatum("invalid-pk"),
 	}
 	pairs, err = strictMode.Encode(logger, rowsWithPk, 2, []int{0, 1})
-	c.Assert(err, ErrorMatches, "failed to cast `invalid-pk` as bigint\\(20\\) for column `_tidb_rowid`.*Truncated.*")
+	c.Assert(err, ErrorMatches, "failed to cast value as bigint\\(20\\) for column `_tidb_rowid`.*Truncated.*")
 
 	rowsWithPk2 := []types.Datum{
 		types.NewIntDatum(1),
