@@ -63,6 +63,11 @@ const (
 	IgnoreOnDup = "ignore"
 	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
+
+	defaultDistSQLScanConcurrency     = 15
+	defaultBuildStatsConcurrency      = 20
+	defaultIndexSerialScanConcurrency = 20
+	defaultChecksumTableConcurrency   = 4
 )
 
 var (
@@ -334,10 +339,10 @@ func NewConfig() *Config {
 			StatusPort:                 10080,
 			StrSQLMode:                 "ONLY_FULL_GROUP_BY,NO_AUTO_CREATE_USER",
 			MaxAllowedPacket:           defaultMaxAllowedPacket,
-			BuildStatsConcurrency:      20,
-			DistSQLScanConcurrency:     100,
-			IndexSerialScanConcurrency: 20,
-			ChecksumTableConcurrency:   4,
+			BuildStatsConcurrency:      defaultBuildStatsConcurrency,
+			DistSQLScanConcurrency:     defaultDistSQLScanConcurrency,
+			IndexSerialScanConcurrency: defaultIndexSerialScanConcurrency,
+			ChecksumTableConcurrency:   defaultChecksumTableConcurrency,
 		},
 		Cron: Cron{
 			SwitchMode:  Duration{Duration: 5 * time.Minute},
@@ -526,16 +531,16 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 			cfg.TikvImporter.RegionSplitSize = SplitRegionSize
 		}
 		if cfg.TiDB.DistSQLScanConcurrency == 0 {
-			cfg.TiDB.DistSQLScanConcurrency = 100
+			cfg.TiDB.DistSQLScanConcurrency = defaultDistSQLScanConcurrency
 		}
 		if cfg.TiDB.BuildStatsConcurrency == 0 {
-			cfg.TiDB.BuildStatsConcurrency = 20
+			cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency
 		}
 		if cfg.TiDB.IndexSerialScanConcurrency == 0 {
-			cfg.TiDB.IndexSerialScanConcurrency = 20
+			cfg.TiDB.IndexSerialScanConcurrency = defaultIndexSerialScanConcurrency
 		}
 		if cfg.TiDB.ChecksumTableConcurrency == 0 {
-			cfg.TiDB.ChecksumTableConcurrency = 4
+			cfg.TiDB.ChecksumTableConcurrency = defaultChecksumTableConcurrency
 		}
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)

@@ -211,7 +211,7 @@ log-level = "error"
 # set tidb session variables to speed up checksum/analyze table.
 # see https://pingcap.com/docs/sql/statistics/#control-analyze-concurrency for the meaning of each setting
 build-stats-concurrency = 20
-distsql-scan-concurrency = 100
+distsql-scan-concurrency = 15
 index-serial-scan-concurrency = 20
 # checksum-table-concurrency controls the maximum checksum table tasks to run concurrently.
 checksum-table-concurrency = 4
