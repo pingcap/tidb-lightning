@@ -190,10 +190,6 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 	return sizeProps, nil
 }
 
-func (e *LocalFile) isImporting() bool {
-	return atomic.LoadInt32(&e.isImportingAtomic) == int32(importMutexStateImport)
-}
-
 func (e *LocalFile) isLocked() bool {
 	return atomic.LoadInt32(&e.isImportingAtomic) != 0
 }
@@ -205,7 +201,7 @@ func (e *LocalFile) getEngineFileSize() EngineFileSize {
 		UUID:        e.Uuid,
 		DiskSize:    total.Size,
 		MemSize:     int64(metrics.MemTable.Size / 10),
-		IsImporting: e.isImporting(),
+		IsImporting: e.isLocked(),
 	}
 }
 
