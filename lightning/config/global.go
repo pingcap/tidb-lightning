@@ -144,6 +144,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 
 	logLevel := flagext.ChoiceVar(fs, "L", "", `log level: info, debug, warn, error, fatal (default info)`, "", "info", "debug", "warn", "warning", "error", "fatal")
 	logFilePath := fs.String("log-file", "", "log file path")
+	redactLog := fs.Bool("redact-log", false, "whether to redact sensitive info in log")
 	tidbHost := fs.String("tidb-host", "", "TiDB server host")
 	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
 	tidbUser := fs.String("tidb-user", "", "TiDB user name to connect")
@@ -197,6 +198,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if *logFilePath != "" {
 		cfg.App.Config.File = *logFilePath
+	}
+	if *redactLog {
+		cfg.App.Config.RedactLog = *redactLog
 	}
 	// "-" is a special config for log to stdout
 	if cfg.App.Config.File == "-" {
