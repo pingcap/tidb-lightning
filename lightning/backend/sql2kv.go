@@ -17,8 +17,6 @@ import (
 	"math/rand"
 	"sort"
 
-	"github.com/pingcap/tidb/util/fastrand"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -30,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/fastrand"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
