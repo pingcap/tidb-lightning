@@ -108,6 +108,14 @@ type localFileMeta struct {
 	TotalSize int64 `json:"total_size"`
 }
 
+type importMutexState int32
+
+const (
+	importMutexStateImport importMutexState = iota + 1
+	importMutexStateFlush
+	importMutexStateClose
+)
+
 type LocalFile struct {
 	localFileMeta
 	db   *pebble.DB
@@ -121,9 +129,9 @@ type LocalFile struct {
 }
 
 // lock locks the local file for importing.
-func (e *LocalFile) lock() {
+func (e *LocalFile) lock(state importMutexState) {
 	e.importMutex.Lock()
-	atomic.StoreInt32(&e.isImportingAtomic, 1)
+	atomic.StoreInt32(&e.isImportingAtomic, int32(state))
 }
 
 // unlock unlocks the local file from importing.
@@ -181,6 +189,10 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 }
 
 func (e *LocalFile) isImporting() bool {
+	return atomic.LoadInt32(&e.isImportingAtomic) == int32(importMutexStateImport)
+}
+
+func (e *LocalFile) isLocked() bool {
 	return atomic.LoadInt32(&e.isImportingAtomic) != 0
 }
 
@@ -414,6 +426,16 @@ func (local *local) Close() {
 func (local *local) FlushEngine(engineId uuid.UUID) error {
 	if engine, ok := local.engines.Load(engineId); ok {
 		engineFile := engine.(*LocalFile)
+		engineFile.lock(importMutexStateFlush)
+		defer engineFile.unlock()
+		// double-check the engine is not really deleted yet.
+		// if the engine has been deleted after we acquired the lock, or the engine is changed,
+		// we guess that it has been reset and fresh and thus no need to flush.
+		// (even if we hit the rare "ABA problem" the cost is just one extra flush on a valid engine).
+		realEngine, realOk := local.engines.Load(engineId)
+		if !realOk || realEngine != engine {
+			return nil
+		}
 		if err := engineFile.db.Flush(); err != nil {
 			return err
 		}
@@ -429,8 +451,8 @@ func (local *local) FlushAllEngines() (err error) {
 	// first, (asynchronously) flush all opened engines
 	local.engines.Range(func(k, v interface{}) bool {
 		engineFile := v.(*LocalFile)
-		if engineFile.isImporting() {
-			// ignore closed engines.
+		if engineFile.isLocked() {
+			// ignore engines which have been importing, flushing, or closing.
 			return true
 		}
 
@@ -1198,7 +1220,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 	lf := engineFile.(*LocalFile)
 
-	lf.lock()
+	lf.lock(importMutexStateImport)
 	defer lf.unlock()
 
 	if lf.TotalSize == 0 {
@@ -1271,7 +1293,7 @@ func (local *local) cleanupEngineIfExists(ctx context.Context, engineUUID uuid.U
 	}
 
 	localEngine := engineFile.(*LocalFile)
-	localEngine.lock()
+	localEngine.lock(importMutexStateClose)
 	defer localEngine.unlock()
 
 	// since closing the engine causes all subsequent operations on it panic,
