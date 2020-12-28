@@ -213,7 +213,8 @@ log-level = "error"
 build-stats-concurrency = 20
 distsql-scan-concurrency = 100
 index-serial-scan-concurrency = 20
-checksum-table-concurrency = 16
+# checksum-table-concurrency controls the maximum checksum table tasks to run concurrently.
+checksum-table-concurrency = 4
 
 # specifies certificates and keys for TLS-enabled MySQL connections.
 # defaults to a copy of the [security] section.
@@ -245,8 +246,8 @@ level-1-compact = false
 # if set true, compact will do full compaction to tikv data.
 # if this setting is missing, the default value is false.
 compact = false
-# if set to true, lightning will analyze all table together at last
-analyze-at-last = false
+# if set to true, lightning will run checksum and analyze for all tables together at last
+checksum-at-last = false
 
 # cron performs some periodic actions in background
 [cron]

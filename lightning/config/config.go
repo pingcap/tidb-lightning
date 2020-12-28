@@ -204,11 +204,11 @@ func (t PostOpLevel) String() string {
 
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
-	Level1Compact bool        `toml:"level-1-compact" json:"level-1-compact"`
-	Compact       bool        `toml:"compact" json:"compact"`
-	Checksum      PostOpLevel `toml:"checksum" json:"checksum"`
-	Analyze       PostOpLevel `toml:"analyze" json:"analyze"`
-	AnalyzeAtLast bool        `toml:"analyze-at-last" json:"analyze-at-last"`
+	Level1Compact  bool        `toml:"level-1-compact" json:"level-1-compact"`
+	Compact        bool        `toml:"compact" json:"compact"`
+	Checksum       PostOpLevel `toml:"checksum" json:"checksum"`
+	Analyze        PostOpLevel `toml:"analyze" json:"analyze"`
+	ChecksumAtLast bool        `toml:"checksum-at-last" json:"checksum-at-last"`
 }
 
 type CSVConfig struct {
@@ -337,7 +337,7 @@ func NewConfig() *Config {
 			BuildStatsConcurrency:      20,
 			DistSQLScanConcurrency:     100,
 			IndexSerialScanConcurrency: 20,
-			ChecksumTableConcurrency:   16,
+			ChecksumTableConcurrency:   4,
 		},
 		Cron: Cron{
 			SwitchMode:  Duration{Duration: 5 * time.Minute},
@@ -524,6 +524,18 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		}
 		if cfg.TikvImporter.RegionSplitSize == 0 {
 			cfg.TikvImporter.RegionSplitSize = SplitRegionSize
+		}
+		if cfg.TiDB.DistSQLScanConcurrency == 0 {
+			cfg.TiDB.DistSQLScanConcurrency = 100
+		}
+		if cfg.TiDB.BuildStatsConcurrency == 0 {
+			cfg.TiDB.BuildStatsConcurrency = 20
+		}
+		if cfg.TiDB.IndexSerialScanConcurrency == 0 {
+			cfg.TiDB.IndexSerialScanConcurrency = 20
+		}
+		if cfg.TiDB.ChecksumTableConcurrency == 0 {
+			cfg.TiDB.ChecksumTableConcurrency = 4
 		}
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
