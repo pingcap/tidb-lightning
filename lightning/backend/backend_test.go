@@ -187,6 +187,7 @@ func (s *backendSuite) TestWriteEngineFailed(c *C) {
 	mockWriter.EXPECT().
 		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable write error"))
+	mockWriter.EXPECT().Close().Return(nil)
 
 	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
@@ -207,6 +208,7 @@ func (s *backendSuite) TestWriteBatchSendFailedWithRetry(c *C) {
 	mockWriter.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.New("fake recoverable write batch error")).
 		MinTimes(1)
+	mockWriter.EXPECT().Close().Return(nil).MinTimes(1)
 
 	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
