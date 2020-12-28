@@ -41,6 +41,8 @@ file = "tidb-lightning.log"
 max-size = 128 # MB
 max-days = 28
 max-backups = 14
+# If set to true, lightning will redact sensitive infomation in log.
+redact-log = false
 
 [security]
 # specifies certificates and keys for TLS connections within the cluster.

@@ -214,7 +214,7 @@ func (row rowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error
 		}
 		encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
 			enc.AddString("kind", kindStr[kind])
-			enc.AddString("val", str)
+			enc.AddString("val", log.RedactString(str))
 			return nil
 		}))
 	}
@@ -236,10 +236,12 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 		log.ShortError(err),
 	)
 
+	log.L().Error("failed to covert kv value", log.ZapRedactReflect("origVal", original.GetValue()),
+		zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+		zap.Int("columnID", j+1))
 	return errors.Annotatef(
 		err,
-		"failed to cast `%v` as %s for column `%s` (#%d)",
-		original.GetValue(), &colInfo.FieldType, colInfo.Name.O, j+1,
+		"failed to cast value as %s for column `%s` (#%d)", &colInfo.FieldType, colInfo.Name.O, j+1,
 	)
 }
 
