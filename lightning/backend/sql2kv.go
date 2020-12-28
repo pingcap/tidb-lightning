@@ -214,7 +214,7 @@ func (row rowArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error
 		}
 		encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
 			enc.AddString("kind", kindStr[kind])
-			enc.AddString("val", str)
+			enc.AddString("val", log.RedactString(str))
 			return nil
 		}))
 	}
