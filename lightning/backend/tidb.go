@@ -358,7 +358,7 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	// Retry will be done externally, so we're not going to retry here.
 	_, err := be.db.ExecContext(ctx, insertStmt.String())
 	if err != nil {
-		log.L().Error("execute statement failed", zap.String("stmt", insertStmt.String()),
+		log.L().Error("execute statement failed", log.ZapRedactString("stmt", insertStmt.String()),
 			log.ZapRedactArray("rows", rows), zap.Error(err))
 	}
 	failpoint.Inject("FailIfImportedSomeRows", func() {
