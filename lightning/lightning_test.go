@@ -467,8 +467,8 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 		},
 	}
 
-	// with max open files 2048, the max table size will be: 524288MB
-	err := failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(2049)")
+	// with max open files 1024, the max table size will be: 65536MB
+	err := failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(8199)")
 	c.Assert(err, IsNil)
 	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/SetRlimitError", "return(true)")
 	c.Assert(err, IsNil)
@@ -487,7 +487,7 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	c.Assert(err, IsNil)
 
 	// the min rlimit should be bigger than the default min value (16384)
-	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(2050)")
+	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(8200)")
 	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue")
 	c.Assert(err, IsNil)
 	err = checkSystemRequirement(cfg, dbMetas)
