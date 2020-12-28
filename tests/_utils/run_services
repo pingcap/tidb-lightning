@@ -139,8 +139,7 @@ EOF
 
     echo "Verifying TiDB is started..."
     i=0
-    # export TEST_NAME=waiting_for_tidb
-    while ! run_sql 'select * from mysql.tidb;'; do
+    while ! TEST_NAME=waiting_for_tidb run_sql 'select * from mysql.tidb;'; do
         i=$((i+1))
         if [ "$i" -gt 10 ]; then
             echo 'Failed to start TiDB'
