@@ -67,7 +67,7 @@ const (
 	defaultDistSQLScanConcurrency     = 15
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
-	defaultChecksumTableConcurrency   = 4
+	defaultChecksumTableConcurrency   = 2
 )
 
 var (

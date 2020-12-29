@@ -216,7 +216,7 @@ build-stats-concurrency = 20
 distsql-scan-concurrency = 15
 index-serial-scan-concurrency = 20
 # checksum-table-concurrency controls the maximum checksum table tasks to run concurrently.
-checksum-table-concurrency = 4
+checksum-table-concurrency = 2
 
 # specifies certificates and keys for TLS-enabled MySQL connections.
 # defaults to a copy of the [security] section.
