@@ -314,14 +314,14 @@ const (
 )
 
 type schemaJob struct {
-	dbName string
-	stmts  []*schemaStmt
+	dbName   string
+	tblName  string // empty for create db jobs
+	stmtType schemaStmtType
+	stmts    []*schemaStmt
 }
 
 type schemaStmt struct {
-	tblName  string
-	stmtType schemaStmtType
-	sql      string
+	sql string
 }
 
 type restoreSchemaWorker struct {
@@ -334,82 +334,92 @@ type restoreSchemaWorker struct {
 	store storage.ExternalStorage
 }
 
-func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
-	select {
-	case <-worker.ctx.Done():
-		return
-	default:
-		// 1. restore databases, execute statements concurrency
-		for _, dbMeta := range dbMetas {
-			restoreSchemaJob := &schemaJob{
-				dbName: dbMeta.Name,
-				stmts:  make([]*schemaStmt, 0, 1),
-			}
-			worker.wg.Add(1)
-			restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-				stmtType: schemaCreateDatabase,
-				sql:      createDatabaseIfNotExistStmt(dbMeta.Name),
-			})
-			worker.jobCh <- restoreSchemaJob
+func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) error {
+	defer close(worker.jobCh)
+	var err error
+	// 1. restore databases, execute statements concurrency
+	for _, dbMeta := range dbMetas {
+		restoreSchemaJob := &schemaJob{
+			dbName:   dbMeta.Name,
+			stmtType: schemaCreateDatabase,
+			stmts:    make([]*schemaStmt, 0, 1),
 		}
-		worker.wg.Wait()
-		// 2. restore tables, execute statements concurrency
-		for _, dbMeta := range dbMetas {
-			for _, tblMeta := range dbMeta.Tables {
-				sql := tblMeta.GetSchema(worker.ctx, worker.store)
-				if sql != "" {
-					stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, tblMeta.Name)
-					if err != nil {
-						worker.throw(err)
-						return
-					}
-					restoreSchemaJob := &schemaJob{
-						dbName: dbMeta.Name,
-						stmts:  make([]*schemaStmt, 0, len(stmts)),
-					}
-					for _, sql := range stmts {
-						restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-							tblName:  tblMeta.Name,
-							stmtType: schemaCreateTable,
-							sql:      sql,
-						})
-					}
-					worker.wg.Add(1)
-					worker.jobCh <- restoreSchemaJob
-				}
-			}
+		restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+			sql: createDatabaseIfNotExistStmt(dbMeta.Name),
+		})
+		err = worker.appendJob(restoreSchemaJob)
+		if err != nil {
+			return err
 		}
-		worker.wg.Wait()
-		// 3. restore views. Since views can cross database we must restore views after all table schemas are restored.
-		for _, dbMeta := range dbMetas {
-			restoreSchemaJob := &schemaJob{
-				dbName: dbMeta.Name,
-				stmts:  make([]*schemaStmt, 0), // sadly, we can't pre-alloc precise value of cap
-			}
-			for _, viewMeta := range dbMeta.Views {
-				sql := viewMeta.GetSchema(worker.ctx, worker.store)
-				if sql != "" {
-					stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, viewMeta.Name)
-					if err != nil {
-						worker.throw(err)
-						return
-					}
-					for _, sql := range stmts {
-						restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-							tblName:  viewMeta.Name,
-							stmtType: schemaCreateView,
-							sql:      sql,
-						})
-					}
-				}
-			}
-			worker.wg.Add(1)
-			worker.jobCh <- restoreSchemaJob
-			// we don't support restore views concurrency, cauz it maybe will raise a error
-			worker.wg.Wait()
-		}
-		worker.quit()
 	}
+	err = worker.wait()
+	if err != nil {
+		return err
+	}
+	// 2. restore tables, execute statements concurrency
+	for _, dbMeta := range dbMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			sql := tblMeta.GetSchema(worker.ctx, worker.store)
+			if sql != "" {
+				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, tblMeta.Name)
+				if err != nil {
+					return err
+				}
+				restoreSchemaJob := &schemaJob{
+					dbName:   dbMeta.Name,
+					tblName:  tblMeta.Name,
+					stmtType: schemaCreateTable,
+					stmts:    make([]*schemaStmt, 0, len(stmts)),
+				}
+				for _, sql := range stmts {
+					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+						sql: sql,
+					})
+				}
+				err = worker.appendJob(restoreSchemaJob)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	err = worker.wait()
+	if err != nil {
+		return err
+	}
+	// 3. restore views. Since views can cross database we must restore views after all table schemas are restored.
+	for _, dbMeta := range dbMetas {
+		for _, viewMeta := range dbMeta.Views {
+			sql := viewMeta.GetSchema(worker.ctx, worker.store)
+			if sql != "" {
+				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, viewMeta.Name)
+				if err != nil {
+					return err
+				}
+				restoreSchemaJob := &schemaJob{
+					dbName:   dbMeta.Name,
+					tblName:  viewMeta.Name,
+					stmtType: schemaCreateView,
+					stmts:    make([]*schemaStmt, 0, len(stmts)),
+				}
+				for _, sql := range stmts {
+					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+						sql: sql,
+					})
+				}
+				err = worker.appendJob(restoreSchemaJob)
+				if err != nil {
+					return err
+				}
+				// we don't support restore views concurrency, cauz it maybe will raise a error
+				err = worker.wait()
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (worker *restoreSchemaWorker) doJob() {
@@ -436,25 +446,25 @@ func (worker *restoreSchemaWorker) doJob() {
 					return
 				}
 			}
+			if job.stmtType == schemaCreateDatabase {
+				logger = log.With(zap.String("db", job.dbName))
+			} else if job.stmtType == schemaCreateTable {
+				logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
+			} else if job.stmtType == schemaCreateView {
+				logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
+			}
 			for _, stmt := range job.stmts {
-				if stmt.stmtType == schemaCreateDatabase {
-					logger = log.With(zap.String("db", job.dbName))
-				} else if stmt.stmtType == schemaCreateTable {
-					logger = log.With(zap.String("table", common.UniqueTable(job.dbName, stmt.tblName)))
-				} else if stmt.stmtType == schemaCreateView {
-					logger = log.With(zap.String("table", common.UniqueTable(job.dbName, stmt.tblName)))
-				}
 				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
 				_, err = session.Execute(worker.ctx, stmt.sql)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
-					switch stmt.stmtType {
+					switch job.stmtType {
 					case schemaCreateDatabase:
 						err = errors.Annotatef(err, "restore database schema %s failed", job.dbName)
 					case schemaCreateTable:
-						err = errors.Annotatef(err, "restore table schema %s failed", stmt.tblName)
+						err = errors.Annotatef(err, "restore table schema %s failed", job.tblName)
 					case schemaCreateView:
-						err = errors.Annotatef(err, "restore view schema %s failed", stmt.tblName)
+						err = errors.Annotatef(err, "restore view schema %s failed", job.tblName)
 					}
 					worker.wg.Done()
 					worker.throw(err)
@@ -467,21 +477,43 @@ func (worker *restoreSchemaWorker) doJob() {
 }
 
 func (worker *restoreSchemaWorker) wait() error {
-	defer worker.quit()
 	select {
 	case err := <-worker.errCh:
+		if err != nil {
+			worker.quit()
+		}
 		return err
 	case <-worker.ctx.Done():
+		return worker.ctx.Err()
+	default:
+		worker.wg.Wait()
 		return nil
 	}
 }
 
 func (worker *restoreSchemaWorker) throw(err error) {
+	if err != nil {
+		select {
+		case <-worker.ctx.Done():
+			err := worker.ctx.Err()
+			if err != nil {
+				worker.errCh <- err
+			}
+		case worker.errCh <- err:
+			worker.quit()
+		}
+	}
+}
+
+func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
 	select {
+	case err := <-worker.errCh:
+		return err
 	case <-worker.ctx.Done():
-		return
-	default:
-		worker.errCh <- err
+		return worker.ctx.Err()
+	case worker.jobCh <- job:
+		worker.wg.Add(1)
+		return nil
 	}
 }
 
@@ -498,11 +530,10 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 			glue:  rc.tidbGlue,
 			store: rc.store,
 		}
-		go worker.makeJobs(rc.dbMetas)
 		for i := 0; i < concurrency; i++ {
 			go worker.doJob()
 		}
-		err := worker.wait()
+		err := worker.makeJobs(rc.dbMetas)
 		logTask.End(zap.ErrorLevel, err)
 		if err != nil {
 			return err
