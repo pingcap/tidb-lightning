@@ -325,18 +325,16 @@ type schemaStmt struct {
 }
 
 type restoreSchemaWorker struct {
-	ctx      context.Context
-	quit     context.CancelFunc
-	jobCh    chan *schemaJob
-	errCh    chan error
-	wg       sync.WaitGroup
-	glue     glue.Glue
-	store    storage.ExternalStorage
-	sessions chan checkpoints.Session
+	ctx   context.Context
+	quit  context.CancelFunc
+	jobCh chan *schemaJob
+	errCh chan error
+	wg    sync.WaitGroup
+	glue  glue.Glue
+	store storage.ExternalStorage
 }
 
 func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
-	//TODO: maybe we should put these create statements into a transaction
 	select {
 	case <-worker.ctx.Done():
 		return
@@ -363,6 +361,7 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 					stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, tblMeta.Name)
 					if err != nil {
 						worker.throw(err)
+						return
 					}
 					restoreSchemaJob := &schemaJob{
 						dbName: dbMeta.Name,
@@ -393,6 +392,7 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 					stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, viewMeta.Name)
 					if err != nil {
 						worker.throw(err)
+						return
 					}
 					for _, sql := range stmts {
 						restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
@@ -413,6 +413,13 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) {
 }
 
 func (worker *restoreSchemaWorker) doJob() {
+	var logger log.Logger
+	var session checkpoints.Session
+	defer func() {
+		if session != nil {
+			session.Close()
+		}
+	}()
 	for {
 		select {
 		case <-worker.ctx.Done():
@@ -421,8 +428,14 @@ func (worker *restoreSchemaWorker) doJob() {
 			if job == nil {
 				return
 			}
-			session := worker.getSession()
-			var logger log.Logger
+			var err error
+			if session == nil {
+				session, err = worker.glue.GetSession(worker.ctx)
+				if err != nil {
+					worker.throw(err)
+					return
+				}
+			}
 			for _, stmt := range job.stmts {
 				if stmt.stmtType == schemaCreateDatabase {
 					logger = log.With(zap.String("db", job.dbName))
@@ -432,7 +445,7 @@ func (worker *restoreSchemaWorker) doJob() {
 					logger = log.With(zap.String("table", common.UniqueTable(job.dbName, stmt.tblName)))
 				}
 				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
-				_, err := session.Execute(worker.ctx, stmt.sql)
+				_, err = session.Execute(worker.ctx, stmt.sql)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
 					switch stmt.stmtType {
@@ -443,25 +456,18 @@ func (worker *restoreSchemaWorker) doJob() {
 					case schemaCreateView:
 						err = errors.Annotatef(err, "restore view schema %s failed", stmt.tblName)
 					}
-					worker.recycleSession(session)
 					worker.wg.Done()
 					worker.throw(err)
+					return
 				}
 			}
-			worker.recycleSession(session)
 			worker.wg.Done()
 		}
 	}
 }
 
 func (worker *restoreSchemaWorker) wait() error {
-	defer func() {
-		worker.quit()
-		close(worker.sessions)
-		for session := range worker.sessions {
-			session.Close()
-		}
-	}()
+	defer worker.quit()
 	select {
 	case err := <-worker.errCh:
 		return err
@@ -474,33 +480,17 @@ func (worker *restoreSchemaWorker) throw(err error) {
 	worker.errCh <- err
 }
 
-func (worker *restoreSchemaWorker) getSession() checkpoints.Session {
-	if len(worker.sessions) > 0 {
-		return <-worker.sessions
-	}
-	session, err := worker.glue.GetSession(worker.ctx)
-	if err != nil {
-		worker.throw(err)
-	}
-	return session
-}
-
-func (worker *restoreSchemaWorker) recycleSession(session checkpoints.Session) {
-	worker.sessions <- session
-}
-
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	if !rc.cfg.Mydumper.NoSchema {
 		concurrency := 16
 		childCtx, cancel := context.WithCancel(ctx)
 		worker := restoreSchemaWorker{
-			ctx:      childCtx,
-			quit:     cancel,
-			jobCh:    make(chan *schemaJob, concurrency),
-			errCh:    make(chan error),
-			glue:     rc.tidbGlue,
-			store:    rc.store,
-			sessions: make(chan checkpoints.Session, concurrency),
+			ctx:   childCtx,
+			quit:  cancel,
+			jobCh: make(chan *schemaJob, concurrency),
+			errCh: make(chan error),
+			glue:  rc.tidbGlue,
+			store: rc.store,
 		}
 		go worker.makeJobs(rc.dbMetas)
 		for i := 0; i < concurrency; i++ {
