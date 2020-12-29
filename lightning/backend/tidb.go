@@ -316,7 +316,27 @@ func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, _ uint64, r Rows) error {
+func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, _ uint64, rows Rows) error {
+	var err error
+outside:
+	for _, r := range rows.SplitIntoChunks(be.MaxChunkSize()) {
+		for i := 0; i < maxRetryTimes; i++ {
+			err = be.WriteRowsToDB(ctx, tableName, columnNames, r)
+			switch {
+			case err == nil:
+				continue outside
+			case common.IsRetryableError(err):
+				// retry next loop
+			default:
+				return err
+			}
+		}
+		return errors.Annotatef(err, "[%s] write rows reach max retry %d and still failed", tableName, maxRetryTimes)
+	}
+	return nil
+}
+
+func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, r Rows) error {
 	rows := r.(tidbRows)
 	if len(rows) == 0 {
 		return nil
@@ -358,8 +378,8 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	// Retry will be done externally, so we're not going to retry here.
 	_, err := be.db.ExecContext(ctx, insertStmt.String())
 	if err != nil {
-		log.L().Error("execute statement failed", zap.String("stmt", insertStmt.String()),
-			zap.Array("rows", rows), zap.Error(err))
+		log.L().Error("execute statement failed", log.ZapRedactString("stmt", insertStmt.String()),
+			log.ZapRedactArray("rows", rows), zap.Error(err))
 	}
 	failpoint.Inject("FailIfImportedSomeRows", func() {
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
@@ -497,4 +517,21 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		return nil
 	})
 	return
+}
+
+func (be *tidbBackend) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+	return &TiDBWriter{be: be, engineUUID: engineUUID}, nil
+}
+
+type TiDBWriter struct {
+	be         *tidbBackend
+	engineUUID uuid.UUID
+}
+
+func (w *TiDBWriter) Close() error {
+	return nil
+}
+
+func (w *TiDBWriter) AppendRows(ctx context.Context, tableName string, columnNames []string, arg1 uint64, rows Rows) error {
+	return w.be.WriteRows(ctx, w.engineUUID, tableName, columnNames, arg1, rows)
 }

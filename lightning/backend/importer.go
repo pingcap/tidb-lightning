@@ -142,6 +142,10 @@ func (importer *importer) CloseEngine(ctx context.Context, engineUUID uuid.UUID)
 	return nil
 }
 
+func (importer *importer) Flush(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+
 func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	req := &kv.ImportEngineRequest{
 		Uuid:   engineUUID[:],
@@ -166,6 +170,31 @@ func (importer *importer) WriteRows(
 	engineUUID uuid.UUID,
 	tableName string,
 	columnNames []string,
+	ts uint64,
+	rows Rows,
+) (finalErr error) {
+	var err error
+outside:
+	for _, r := range rows.SplitIntoChunks(importer.MaxChunkSize()) {
+		for i := 0; i < maxRetryTimes; i++ {
+			err = importer.WriteRowsToImporter(ctx, engineUUID, ts, r)
+			switch {
+			case err == nil:
+				continue outside
+			case common.IsRetryableError(err):
+				// retry next loop
+			default:
+				return err
+			}
+		}
+		return errors.Annotatef(err, "[%s] write rows reach max retry %d and still failed", tableName, maxRetryTimes)
+	}
+	return nil
+}
+
+func (importer *importer) WriteRowsToImporter(
+	ctx context.Context,
+	engineUUID uuid.UUID,
 	ts uint64,
 	rows Rows,
 ) (finalErr error) {
@@ -324,4 +353,21 @@ func checkVersion(component string, expected, actual semver.Version) error {
 
 func (importer *importer) FetchRemoteTableModels(ctx context.Context, schema string) ([]*model.TableInfo, error) {
 	return fetchRemoteTableModelsFromTLS(ctx, importer.tls, schema)
+}
+
+func (importer *importer) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+	return &ImporterWriter{importer: importer, engineUUID: engineUUID}, nil
+}
+
+type ImporterWriter struct {
+	importer   *importer
+	engineUUID uuid.UUID
+}
+
+func (w *ImporterWriter) Close() error {
+	return nil
+}
+
+func (w *ImporterWriter) AppendRows(ctx context.Context, tableName string, columnNames []string, ts uint64, rows Rows) error {
+	return w.importer.WriteRows(ctx, w.engineUUID, tableName, columnNames, ts, rows)
 }

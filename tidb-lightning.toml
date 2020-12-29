@@ -41,6 +41,8 @@ file = "tidb-lightning.log"
 max-size = 128 # MB
 max-days = 28
 max-backups = 14
+# If set to true, lightning will redact sensitive infomation in log.
+redact-log = false
 
 [security]
 # specifies certificates and keys for TLS connections within the cluster.
@@ -245,6 +247,8 @@ level-1-compact = false
 # if set true, compact will do full compaction to tikv data.
 # if this setting is missing, the default value is false.
 compact = false
+# if set to true, lightning will analyze all table together at last
+analyze-at-last = false
 
 # cron performs some periodic actions in background
 [cron]
