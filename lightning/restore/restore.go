@@ -1292,12 +1292,12 @@ func (t *TableRestore) postProcess(
 				if err != nil {
 					return false, errors.Trace(err)
 				}
+				cp.Status = CheckpointStatusChecksummed
 			} else {
 				finished = false
 			}
 
 		}
-		cp.Status = CheckpointStatusChecksummed
 	}
 	if !finished {
 		return !finished, nil
