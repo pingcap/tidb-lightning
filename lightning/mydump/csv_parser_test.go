@@ -800,6 +800,26 @@ func (s *testMydumpCSVParserSuite) TestSyntaxErrorLog(c *C) {
 	)
 }
 
+// TestTrimLastSep checks that set `TrimLastSep` to true trim only the last empty filed.
+func (s *testMydumpCSVParserSuite) TestTrimLastSep(c *C) {
+	cfg := config.CSVConfig{
+		Separator:   ",",
+		Delimiter:   `"`,
+		TrimLastSep: true,
+	}
+	parser := mydump.NewCSVParser(
+		&cfg,
+		mydump.NewStringReader("123,456,789,\r\na,b,,\r\n,,,\r\n\"a\",\"\",\"\",\r\n"),
+		int64(config.ReadBlockSize),
+		s.ioWorkers,
+		false,
+	)
+	for i := 0; i < 4; i++ {
+		c.Assert(parser.ReadRow(), IsNil)
+		c.Assert(len(parser.LastRow().Row), Equals, 3)
+	}
+}
+
 // Run `go test github.com/pingcap/tidb-lightning/lightning/mydump -check.b -check.bmem -test.v` to get benchmark result.
 // Please ensure your temporary storage has (c.N / 2) KiB of free space.
 
