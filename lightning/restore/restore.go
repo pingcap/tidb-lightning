@@ -477,7 +477,12 @@ func (worker *restoreSchemaWorker) wait() error {
 }
 
 func (worker *restoreSchemaWorker) throw(err error) {
-	worker.errCh <- err
+	select {
+	case <-worker.ctx.Done():
+		return
+	default:
+		worker.errCh <- err
+	}
 }
 
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
