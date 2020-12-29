@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/sstable"
 	"github.com/coreos/go-semver/semver"
 	"github.com/google/btree"
 	"github.com/google/uuid"
@@ -68,7 +70,7 @@ const (
 	gRPCKeepAliveTimeout = 3 * time.Second
 	gRPCBackOffMaxDelay  = 3 * time.Second
 
-	LocalMemoryTableSize = 512 << 20
+	LocalMemoryTableSize = 128 << 20
 
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
 	regionMaxKeyCount = 1_440_000
@@ -517,9 +519,9 @@ func (local *local) WriteToTiKV(
 	}
 
 	if !iter.Valid() {
-		log.L().Info("keys within region is empty, skip ingest", zap.Binary("start", start),
-			zap.Binary("regionStart", region.Region.StartKey), zap.Binary("end", end),
-			zap.Binary("regionEnd", region.Region.EndKey))
+		log.L().Info("keys within region is empty, skip ingest", log.ZapRedactBinary("start", start),
+			log.ZapRedactBinary("regionStart", region.Region.StartKey), log.ZapRedactBinary("end", end),
+			log.ZapRedactBinary("regionEnd", region.Region.EndKey))
 		return nil, nil, nil
 	}
 
@@ -641,8 +643,8 @@ func (local *local) WriteToTiKV(
 
 	// if there is not leader currently, we should directly return an error
 	if leaderPeerMetas == nil {
-		log.L().Warn("write to tikv no leader", zap.Reflect("region", region),
-			zap.Uint64("leader_id", leaderID), zap.Reflect("meta", meta),
+		log.L().Warn("write to tikv no leader", log.ZapRedactReflect("region", region),
+			zap.Uint64("leader_id", leaderID), log.ZapRedactReflect("meta", meta),
 			zap.Int("kv_pairs", totalCount), zap.Int64("total_bytes", size))
 		return nil, nil, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
 			region.Region.Id, leaderID)
@@ -659,9 +661,9 @@ func (local *local) WriteToTiKV(
 		firstKey := append([]byte{}, iter.Key()...)
 		remainRange = &Range{start: firstKey, end: regionRange.end}
 		log.L().Info("write to tikv partial finish", zap.Int("count", totalCount),
-			zap.Int64("size", size), zap.Binary("startKey", regionRange.start), zap.Binary("endKey", regionRange.end),
-			zap.Binary("remainStart", remainRange.start), zap.Binary("remainEnd", remainRange.end),
-			zap.Reflect("region", region))
+			zap.Int64("size", size), log.ZapRedactBinary("startKey", regionRange.start), log.ZapRedactBinary("endKey", regionRange.end),
+			log.ZapRedactBinary("remainStart", remainRange.start), log.ZapRedactBinary("remainEnd", remainRange.end),
+			log.ZapRedactReflect("region", region))
 	}
 
 	return leaderPeerMetas, remainRange, nil
@@ -760,7 +762,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 
 	log.L().Info("split engine key ranges", zap.Stringer("engine", engineFile.Uuid),
 		zap.Int64("totalSize", engineFile.TotalSize), zap.Int64("totalCount", engineFile.Length),
-		zap.Binary("firstKey", firstKey), zap.Binary("lastKey", lastKey),
+		log.ZapRedactBinary("firstKey", firstKey), log.ZapRedactBinary("lastKey", lastKey),
 		zap.Int("ranges", len(ranges)))
 
 	return ranges, nil
@@ -882,9 +884,9 @@ func (local *local) writeAndIngestByRange(
 	}
 	if !hasKey {
 		log.L().Info("There is no pairs in iterator",
-			zap.Binary("start", start),
-			zap.Binary("end", end),
-			zap.Binary("next end", nextKey(end)))
+			log.ZapRedactBinary("start", start),
+			log.ZapRedactBinary("end", end),
+			log.ZapRedactBinary("next end", nextKey(end)))
 		return nil
 	}
 	pairStart := append([]byte{}, iter.Key()...)
@@ -913,7 +915,7 @@ WriteAndIngest:
 		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, 128)
 		if err != nil || len(regions) == 0 {
 			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
-				zap.Binary("startKey", startKey), zap.Binary("endKey", endKey), zap.Int("retry", retry))
+				log.ZapRedactBinary("startKey", startKey), log.ZapRedactBinary("endKey", endKey), zap.Int("retry", retry))
 			retry++
 			continue WriteAndIngest
 		}
@@ -936,8 +938,8 @@ WriteAndIngest:
 				} else {
 					retry++
 				}
-				log.L().Info("retry write and ingest kv pairs", zap.Binary("startKey", pairStart),
-					zap.Binary("endKey", end), log.ShortError(err), zap.Int("retry", retry))
+				log.L().Info("retry write and ingest kv pairs", log.ZapRedactBinary("startKey", pairStart),
+					log.ZapRedactBinary("endKey", end), log.ShortError(err), zap.Int("retry", retry))
 				continue WriteAndIngest
 			}
 			if rg != nil {
@@ -983,8 +985,11 @@ loopWrite:
 				var resp *sst.IngestResponse
 				resp, err = local.Ingest(ctx, meta, region)
 				if err != nil {
-					log.L().Warn("ingest failed", log.ShortError(err), zap.Reflect("meta", meta),
-						zap.Reflect("region", region))
+					if errors.Cause(err) == context.Canceled {
+						return nil, err
+					}
+					log.L().Warn("ingest failed", log.ShortError(err), log.ZapRedactReflect("meta", meta),
+						log.ZapRedactReflect("region", region))
 					errCnt++
 					continue
 				}
@@ -1007,8 +1012,8 @@ loopWrite:
 				}
 				switch retryTy {
 				case retryNone:
-					log.L().Warn("ingest failed noretry", log.ShortError(err), zap.Reflect("meta", meta),
-						zap.Reflect("region", region))
+					log.L().Warn("ingest failed noretry", log.ShortError(err), log.ZapRedactReflect("meta", meta),
+						log.ZapRedactReflect("region", region))
 					// met non-retryable error retry whole Write procedure
 					return remainRange, err
 				case retryWrite:
@@ -1023,7 +1028,8 @@ loopWrite:
 
 		if err != nil {
 			log.L().Warn("write and ingest region, will retry import full range", log.ShortError(err),
-				zap.Stringer("region", region.Region), zap.Binary("start", start), zap.Binary("end", end))
+				log.ZapRedactStringer("region", region.Region), log.ZapRedactBinary("start", start),
+				log.ZapRedactBinary("end", end))
 		}
 		return remainRange, errors.Trace(err)
 	}
@@ -1051,12 +1057,12 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *Loca
 			defer local.rangeConcurrency.Recycle(w)
 			var err error
 			for i := 0; i < maxRetryTimes; i++ {
-				if err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainRanges); err != nil {
-					log.L().Warn("write and ingest by range failed",
-						zap.Int("retry time", i+1), log.ShortError(err))
-				} else {
+				err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, remainRanges)
+				if err == nil || errors.Cause(err) == context.Canceled {
 					break
 				}
+				log.L().Warn("write and ingest by range failed",
+					zap.Int("retry time", i+1), log.ShortError(err))
 			}
 			errCh <- err
 		}(w)
@@ -1125,7 +1131,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
-			if err == nil {
+			if err == nil || errors.Cause(err) == context.Canceled {
 				break
 			}
 
@@ -1193,50 +1199,29 @@ func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName strin
 	return fetchRemoteTableModelsFromTLS(ctx, local.tls, schemaName)
 }
 
-func (local *local) WriteRows(
-	ctx context.Context,
-	engineUUID uuid.UUID,
-	tableName string,
-	columnNames []string,
-	ts uint64,
-	rows Rows,
-) (finalErr error) {
-	kvs := rows.(kvPairs)
-	if len(kvs) == 0 {
-		return nil
-	}
-
-	e, ok := local.engines.Load(engineUUID)
-	if !ok {
-		return errors.Errorf("could not find engine for %s", engineUUID.String())
-	}
-	engineFile := e.(*LocalFile)
-
-	// write to pebble to make them sorted
-	wb := engineFile.db.NewBatch()
-	defer wb.Close()
-	wo := &pebble.WriteOptions{Sync: false}
-
-	size := int64(0)
-	for _, pair := range kvs {
-		wb.Set(pair.Key, pair.Val, wo)
-		size += int64(len(pair.Key) + len(pair.Val))
-	}
-	if err := wb.Commit(wo); err != nil {
-		return err
-	}
-	atomic.AddInt64(&engineFile.Length, int64(len(kvs)))
-	atomic.AddInt64(&engineFile.TotalSize, size)
-	engineFile.Ts = ts
-	return
-}
-
 func (local *local) MakeEmptyRows() Rows {
 	return kvPairs(nil)
 }
 
 func (local *local) NewEncoder(tbl table.Table, options *SessionOptions) (Encoder, error) {
 	return NewTableKVEncoder(tbl, options)
+}
+
+func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+	e, ok := local.engines.Load(engineUUID)
+	if !ok {
+		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
+	}
+	engineFile := e.(*LocalFile)
+	return openLocalWriter(engineFile, local.localStoreDir, LocalMemoryTableSize), nil
+}
+
+func openLocalWriter(f *LocalFile, sstDir string, memtableSizeLimit int64) *LocalWriter {
+	kvsChan := make(chan []common.KvPair, 1024)
+	w := &LocalWriter{sstDir: sstDir, kvsChan: kvsChan, local: f, memtableSizeLimit: memtableSizeLimit}
+	w.consumeWg.Add(1)
+	go w.writeRowsLoop()
+	return w
 }
 
 func (local *local) isIngestRetryable(
@@ -1258,7 +1243,7 @@ func (local *local) isIngestRetryable(
 			if newRegion != nil {
 				return newRegion, nil
 			}
-			log.L().Warn("get region by key return nil, will retry", zap.Reflect("region", region),
+			log.L().Warn("get region by key return nil, will retry", log.ZapRedactReflect("region", region),
 				zap.Int("retry", i))
 			select {
 			case <-ctx.Done():
@@ -1509,4 +1494,181 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 		prop := i.(*rangeProperty)
 		return f(prop)
 	})
+}
+
+type LocalWriter struct {
+	writeErr           common.OnceError
+	local              *LocalFile
+	lastKey            []byte
+	consumeWg          sync.WaitGroup
+	kvsChan            chan []common.KvPair
+	sstDir             string
+	memtableSizeLimit  int64
+	writeBatch         []common.KvPair
+	isWriteBatchSorted bool
+}
+
+// If this method return false, it would not change `w.lastKey`
+func (w *LocalWriter) isSorted(kvs []common.KvPair) bool {
+	lastKey := w.lastKey
+	for _, pair := range kvs {
+		if len(lastKey) > 0 && bytes.Compare(lastKey, pair.Key) >= 0 {
+			return false
+		}
+		lastKey = pair.Key
+	}
+	w.lastKey = append(w.lastKey[:0], lastKey...)
+	return true
+}
+
+func (w *LocalWriter) AppendRows(ctx context.Context, tableName string, columnNames []string, ts uint64, rows Rows) error {
+	kvs := rows.(kvPairs)
+	if len(kvs) == 0 {
+		return nil
+	}
+	w.kvsChan <- kvs
+	w.local.Ts = ts
+	return nil
+}
+
+func (w *LocalWriter) Close() error {
+	close(w.kvsChan)
+	w.consumeWg.Wait()
+	return w.writeErr.Get()
+}
+
+func (w *LocalWriter) writeRowsLoop() {
+	batchSize := int64(0)
+	totalSize := int64(0)
+	totalCount := int64(0)
+	w.isWriteBatchSorted = true
+	var writer *sstable.Writer = nil
+	//var wb *pebble.Batch = nil
+	var filePath string
+	defer w.consumeWg.Done()
+	var err error
+	for kvs := range w.kvsChan {
+		hasSort := w.isSorted(kvs)
+		if totalCount > 1000 && hasSort {
+			for _, pair := range kvs {
+				totalSize += int64(len(pair.Key) + len(pair.Val))
+			}
+			if writer == nil {
+				writer, filePath, err = w.createWriter()
+				if err != nil {
+					w.writeErr.Set(err)
+					return
+				}
+				if len(w.writeBatch) > 0 && w.isWriteBatchSorted {
+					if err := writeKVs(writer, w.writeBatch); err != nil {
+						w.writeErr.Set(err)
+						return
+					}
+					w.isWriteBatchSorted = true
+					w.writeBatch = w.writeBatch[:0]
+					totalSize += batchSize
+					batchSize = 0
+				}
+			}
+			if err := writeKVs(writer, kvs); err != nil {
+				w.writeErr.Set(err)
+				return
+			}
+		} else {
+			for _, pair := range kvs {
+				batchSize += int64(len(pair.Key) + len(pair.Val))
+			}
+			if !hasSort {
+				w.isWriteBatchSorted = false
+			}
+			w.writeBatch = append(w.writeBatch, kvs...)
+
+			if batchSize > w.memtableSizeLimit {
+				if err := w.flushKVs(); err != nil {
+					w.writeErr.Set(err)
+					return
+				}
+				if writer == nil {
+					w.lastKey = w.lastKey[:0]
+				}
+				totalSize += batchSize
+				batchSize = 0
+				w.isWriteBatchSorted = true
+			}
+		}
+		totalCount += int64(len(kvs))
+	}
+
+	atomic.AddInt64(&w.local.Length, totalCount)
+	if batchSize > 0 {
+		if err := w.flushKVs(); err != nil {
+			w.writeErr.Set(err)
+			return
+		}
+		totalSize += batchSize
+		log.L().Info("write data by sort index", zap.Int64("bytes", totalSize))
+	}
+	if writer != nil {
+		if err := writer.Close(); err != nil {
+			w.writeErr.Set(err)
+			return
+		}
+		if err := w.local.db.Ingest([]string{filePath}); err != nil {
+			w.writeErr.Set(err)
+			return
+		}
+		log.L().Info("write data by sst writer", zap.Int64("bytes", totalSize))
+	}
+	atomic.AddInt64(&w.local.TotalSize, totalSize)
+}
+
+func (w *LocalWriter) flushKVs() error {
+	writer, filePath, err := w.createWriter()
+	if err != nil {
+		return err
+	}
+	if !w.isWriteBatchSorted {
+		sort.Slice(w.writeBatch, func(i, j int) bool {
+			return bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0
+		})
+	}
+	if err := writeKVs(writer, w.writeBatch); err != nil {
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	w.writeBatch = w.writeBatch[:0]
+	return w.local.db.Ingest([]string{filePath})
+}
+
+func (w *LocalWriter) createWriter() (*sstable.Writer, string, error) {
+	filePath := filepath.Join(w.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
+	f, err := os.Create(filePath)
+	if err != nil {
+		return nil, filePath, err
+	}
+	writer := sstable.NewWriter(f, sstable.WriterOptions{
+		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+			func() pebble.TablePropertyCollector {
+				return newRangePropertiesCollector()
+			},
+		},
+		BlockSize: 16 * 1024,
+	})
+	return writer, filePath, nil
+}
+
+func writeKVs(writer *sstable.Writer, kvs []common.KvPair) error {
+	internalKey := sstable.InternalKey{
+		UserKey: []byte{},
+		Trailer: uint64(sstable.InternalKeyKindSet),
+	}
+	for _, p := range kvs {
+		internalKey.UserKey = p.Key
+		if err := writer.Add(internalKey, p.Val); err != nil {
+			return err
+		}
+	}
+	return nil
 }

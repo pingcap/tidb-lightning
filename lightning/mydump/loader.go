@@ -124,7 +124,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 		f, err = filter.Parse(cfg.Mydumper.Filter)
 	}
 	if err != nil {
-		return nil, err
+		return nil, errors.Annotate(err, "parse filter failed")
 	}
 	if !cfg.Mydumper.CaseSensitive {
 		f = filter.CaseInsensitive(f)
@@ -137,7 +137,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 
 	fileRouter, err := NewFileRouter(fileRouteRules)
 	if err != nil {
-		return nil, err
+		return nil, errors.Annotate(err, "parser file routing rule failed")
 	}
 
 	mdl := &MDLoader{
@@ -219,7 +219,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 	if !s.loader.noSchema {
 		// setup database schema
 		if len(s.dbSchemas) == 0 {
-			return errors.New("missing {schema}-schema-create.sql")
+			return errors.New("no schema create sql files found. Please either set `mydumper.no-schema` to true or add schema sql file for each database.")
 		}
 		for _, fileInfo := range s.dbSchemas {
 			if _, dbExists := s.insertDB(fileInfo.TableName.Schema, fileInfo.FileMeta.Path); dbExists && s.loader.router == nil {

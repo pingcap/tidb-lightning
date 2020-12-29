@@ -208,6 +208,7 @@ type PostRestore struct {
 	Compact       bool        `toml:"compact" json:"compact"`
 	Checksum      PostOpLevel `toml:"checksum" json:"checksum"`
 	Analyze       PostOpLevel `toml:"analyze" json:"analyze"`
+	AnalyzeAtLast bool        `toml:"analyze-at-last" json:"analyze-at-last"`
 }
 
 type CSVConfig struct {
@@ -360,7 +361,7 @@ func NewConfig() *Config {
 		TikvImporter: TikvImporter{
 			Backend:         BackendImporter,
 			OnDuplicate:     ReplaceOnDup,
-			MaxKVPairs:      32,
+			MaxKVPairs:      4096,
 			SendKVPairs:     32768,
 			RegionSplitSize: SplitRegionSize,
 		},
