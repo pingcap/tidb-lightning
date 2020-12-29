@@ -44,6 +44,8 @@ type Config struct {
 	FileMaxDays int `toml:"max-days" json:"max-days"`
 	// Maximum number of old log files to retain.
 	FileMaxBackups int `toml:"max-backups" json:"max-backups"`
+	// Redact sensitive logs during the whole process
+	RedactLog bool `toml:"redact-log" json:"redact-log"`
 }
 
 func (cfg *Config) Adjust() {
@@ -97,6 +99,8 @@ func InitLogger(cfg *Config, tidbLoglevel string) error {
 	// error itself.
 	appLogger = Logger{logger.WithOptions(zap.AddStacktrace(zap.DPanicLevel))}
 	appLevel = props.Level
+
+	InitRedact(cfg.RedactLog)
 
 	return nil
 }

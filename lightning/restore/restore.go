@@ -1065,10 +1065,14 @@ func (t *TableRestore) restoreEngine(
 		closedEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
-			rc.closedEngineLimit.Recycle(w)
 			return closedEngine, nil, errors.Trace(err)
 		}
 		return closedEngine, w, nil
+	}
+
+	indexWriter, err := indexEngine.LocalWriter(ctx)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
@@ -1110,6 +1114,10 @@ func (t *TableRestore) restoreEngine(
 
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
+		dataWriter, err := dataEngine.LocalWriter(ctx)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
 		go func(w *worker.Worker, cr *chunkRestore) {
 			// Restore a chunk.
 			defer func() {
@@ -1118,17 +1126,25 @@ func (t *TableRestore) restoreEngine(
 				rc.regionWorkers.Recycle(w)
 			}()
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
-			err := cr.restore(ctx, t, engineID, dataEngine, indexEngine, rc)
+			if err == nil {
+				err = cr.restore(ctx, t, engineID, dataWriter, indexWriter, rc)
+			}
+			if err == nil {
+				err = dataWriter.Close()
+			}
 			if err == nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
-				return
+			} else {
+				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
+				chunkErr.Set(err)
 			}
-			metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
-			chunkErr.Set(err)
 		}(restoreWorker, cr)
 	}
 
 	wg.Wait()
+	if err := indexWriter.Close(); err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
@@ -1164,6 +1180,7 @@ func (t *TableRestore) restoreEngine(
 			rc.closedEngineLimit.Recycle(dataWorker)
 			return nil, nil, errors.Trace(err)
 		}
+
 		// Currently we write all the checkpoints after data&index engine are flushed.
 		for _, chunk := range cp.Chunks {
 			saveCheckpoint(rc, t, engineID, chunk)
@@ -1771,12 +1788,10 @@ func (cr *chunkRestore) deliverLoop(
 	kvsCh <-chan []deliveredKVs,
 	t *TableRestore,
 	engineID int32,
-	dataEngine, indexEngine *kv.OpenedEngine,
+	dataEngine, indexEngine *kv.LocalEngineWriter,
 	rc *RestoreController,
 ) (deliverTotalDur time.Duration, err error) {
 	var channelClosed bool
-	dataKVs := rc.backend.MakeEmptyRows()
-	indexKVs := rc.backend.MakeEmptyRows()
 
 	deliverLogger := t.logger.With(
 		zap.Int32("engineNumber", engineID),
@@ -1794,8 +1809,11 @@ func (cr *chunkRestore) deliverLoop(
 		offset := cr.chunk.Chunk.Offset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
 		// Fetch enough KV pairs from the source.
+		dataKVs := rc.backend.MakeEmptyRows()
+		indexKVs := rc.backend.MakeEmptyRows()
+
 	populate:
-		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
+		for dataChecksum.SumSize() < minDeliverBytes {
 			select {
 			case kvPacket = <-kvsCh:
 				if len(kvPacket) == 0 {
@@ -1833,9 +1851,6 @@ func (cr *chunkRestore) deliverLoop(
 		metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumSize()))
 		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
 		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
-
-		dataKVs = dataKVs.Clear()
-		indexKVs = indexKVs.Clear()
 
 		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)
@@ -1995,7 +2010,7 @@ func (cr *chunkRestore) restore(
 	ctx context.Context,
 	t *TableRestore,
 	engineID int32,
-	dataEngine, indexEngine *kv.OpenedEngine,
+	dataEngine, indexEngine *kv.LocalEngineWriter,
 	rc *RestoreController,
 ) error {
 	// Create the encoder.
