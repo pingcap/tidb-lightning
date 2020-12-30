@@ -293,6 +293,11 @@ func (e *tikvChecksumManager) checksumDB(ctx context.Context, tableInfo *TidbTab
 		log.L().Warn("remote checksum failed", zap.String("db", tableInfo.DB),
 			zap.String("table", tableInfo.Name), zap.Error(err),
 			zap.Int("concurrency", distSQLScanConcurrency), zap.Int("retry", i))
+
+		// do not retry context.Canceled error
+		if !common.IsRetryableError(err) {
+			break
+		}
 		if distSQLScanConcurrency > minDistSQLScanConcurrency {
 			distSQLScanConcurrency = utils.MaxInt(distSQLScanConcurrency/2, minDistSQLScanConcurrency)
 		}
