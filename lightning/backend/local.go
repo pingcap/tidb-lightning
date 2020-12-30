@@ -123,23 +123,9 @@ type LocalFile struct {
 	db   *pebble.DB
 	Uuid uuid.UUID
 
-	// importMutex ensures the engine can only be imported by a single thread.
-	importMutex sync.Mutex
 	// isImportingAtomic is an atomic variable indicating whether the importMutex has been locked.
 	// This should not be used as a "spin lock" indicator.
 	isImportingAtomic int32
-}
-
-// lock locks the local file for importing.
-func (e *LocalFile) lock(state importMutexState) {
-	e.importMutex.Lock()
-	atomic.StoreInt32(&e.isImportingAtomic, int32(state))
-}
-
-// unlock unlocks the local file from importing.
-func (e *LocalFile) unlock() {
-	atomic.StoreInt32(&e.isImportingAtomic, 0)
-	e.importMutex.Unlock()
 }
 
 func (e *LocalFile) Close() error {
@@ -220,7 +206,9 @@ func (conns *gRPCConns) Close() {
 }
 
 type local struct {
-	engines  sync.Map
+	engines           sync.Map // sync version of map[uuid.UUID]*LocalFile
+	engineImportLocks sync.Map // sync version of map[uuid.UUID]*sync.Mutex
+
 	conns    gRPCConns
 	splitCli split.SplitClient
 	tls      *common.TLS
@@ -356,6 +344,46 @@ func NewLocalBackend(
 	return MakeBackend(local), nil
 }
 
+// lockForImport locks the local file for importing.
+func (local *local) lockForImport(engineId uuid.UUID, state importMutexState) (engine *LocalFile, exists bool) {
+	if lock, ok := local.engineImportLocks.Load(engineId); ok {
+		lock.(*sync.Mutex).Lock()
+	}
+
+	var engineInterface interface{}
+	engineInterface, exists = local.engines.Load(engineId)
+	// TODO: should we assert that `exists` implies `ok`?
+	if exists {
+		engine = engineInterface.(*LocalFile)
+		atomic.StoreInt32(&engine.isImportingAtomic, int32(state))
+	}
+	return
+}
+
+// unlockForImport unlocks the local file from importing.
+func (local *local) unlockForImport(engineId uuid.UUID) {
+	if engine, ok := local.engines.Load(engineId); ok {
+		atomic.StoreInt32(&engine.(*LocalFile).isImportingAtomic, 0)
+	}
+	if lock, ok := local.engineImportLocks.Load(engineId); ok {
+		lock.(*sync.Mutex).Unlock()
+	}
+}
+
+func (local *local) lockAllForImport() {
+	local.engineImportLocks.Range(func(k, v interface{}) bool {
+		v.(*sync.Mutex).Lock()
+		return true
+	})
+}
+
+func (local *local) unlockAllForImport() {
+	local.engineImportLocks.Range(func(k, v interface{}) bool {
+		v.(*sync.Mutex).Unlock()
+		return true
+	})
+}
+
 func (local *local) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
 	store, err := local.splitCli.GetStore(ctx, storeID)
 	if err != nil {
@@ -403,6 +431,12 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 
 // Close the importer connection.
 func (local *local) Close() {
+	local.lockAllForImport()
+	defer func() {
+		local.unlockAllForImport()
+		local.engineImportLocks = sync.Map{}
+	}()
+
 	local.engines.Range(func(k, v interface{}) bool {
 		v.(*LocalFile).Close()
 		return true
@@ -422,18 +456,12 @@ func (local *local) Close() {
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
 func (local *local) FlushEngine(engineId uuid.UUID) error {
-	if engine, ok := local.engines.Load(engineId); ok {
-		engineFile := engine.(*LocalFile)
-		engineFile.lock(importMutexStateFlush)
-		defer engineFile.unlock()
-		// double-check the engine is not really deleted yet.
-		// if the engine has been deleted after we acquired the lock, or the engine is changed,
-		// we guess that it has been reset and fresh and thus no need to flush.
-		// (even if we hit the rare "ABA problem" the cost is just one extra flush on a valid engine).
-		realEngine, realOk := local.engines.Load(engineId)
-		if !realOk || realEngine != engine {
-			return nil
-		}
+	engineFile, ok := local.lockForImport(engineId, importMutexStateFlush)
+	defer local.unlockForImport(engineId)
+
+	// the engine cannot be deleted after while we've acquired the lock identified by UUID.
+
+	if ok {
 		if err := engineFile.db.Flush(); err != nil {
 			return err
 		}
@@ -443,6 +471,9 @@ func (local *local) FlushEngine(engineId uuid.UUID) error {
 }
 
 func (local *local) FlushAllEngines() (err error) {
+	local.lockAllForImport()
+	defer local.unlockAllForImport()
+
 	var flushFinishedWg sync.WaitGroup
 	var flushedEngines []*LocalFile
 
@@ -547,6 +578,7 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		return err
 	}
+	local.engineImportLocks.Store(engineUUID, new(sync.Mutex))
 	local.engines.Store(engineUUID, &LocalFile{
 		localFileMeta: meta,
 		db:            db,
@@ -581,6 +613,7 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 			Uuid:          engineUUID,
 			db:            db,
 		}
+		local.engineImportLocks.Store(engineUUID, new(sync.Mutex))
 		local.engines.Store(engineUUID, engineFile)
 		return nil
 	}
@@ -1211,16 +1244,13 @@ func (r *syncdRanges) take() []Range {
 }
 
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	engineFile, ok := local.engines.Load(engineUUID)
+	lf, ok := local.lockForImport(engineUUID, importMutexStateImport)
+	defer local.unlockForImport(engineUUID)
+
 	if !ok {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
 		return nil
 	}
-
-	lf := engineFile.(*LocalFile)
-
-	lf.lock(importMutexStateImport)
-	defer lf.unlock()
 
 	if lf.TotalSize == 0 {
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
@@ -1254,7 +1284,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		}
 
 		// start to write to kv and ingest
-		err = local.writeAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
+		err = local.writeAndIngestByRanges(ctx, lf, ranges, remains)
 		if err != nil {
 			log.L().Error("write and ingest engine failed", log.ShortError(err))
 			return err
@@ -1284,16 +1314,14 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 // cleanupEngineIfExists returns if the engine with given UUID exists. If the
 // engine already exists, it will be deleted.
 func (local *local) cleanupEngineIfExists(ctx context.Context, engineUUID uuid.UUID) (exists bool, err error) {
+	localEngine, ok := local.lockForImport(engineUUID, importMutexStateClose)
+	defer local.unlockForImport(engineUUID)
+
 	// release this engine after import success
-	engineFile, ok := local.engines.Load(engineUUID)
 	if !ok {
 		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return false, nil
 	}
-
-	localEngine := engineFile.(*LocalFile)
-	localEngine.lock(importMutexStateClose)
-	defer localEngine.unlock()
 
 	// since closing the engine causes all subsequent operations on it panic,
 	// we make sure to delete it from the engine map before calling Close().
