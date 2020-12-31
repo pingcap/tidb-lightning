@@ -423,7 +423,6 @@ func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) er
 }
 
 func (worker *restoreSchemaWorker) doJob() {
-	var logger log.Logger
 	var session checkpoints.Session
 	defer func() {
 		if session != nil {
@@ -433,6 +432,8 @@ func (worker *restoreSchemaWorker) doJob() {
 	for {
 		select {
 		case <-worker.ctx.Done():
+			// don't throw `worker.ctx.Err()` here,
+			// it will be blocked to death when number of `doJob`'s goroutines  > 1.
 			return
 		case job := <-worker.jobCh:
 			if job == nil {
@@ -442,17 +443,12 @@ func (worker *restoreSchemaWorker) doJob() {
 			if session == nil {
 				session, err = worker.glue.GetSession(worker.ctx)
 				if err != nil {
+					worker.wg.Done()
 					worker.throw(err)
 					return
 				}
 			}
-			if job.stmtType == schemaCreateDatabase {
-				logger = log.With(zap.String("db", job.dbName))
-			} else if job.stmtType == schemaCreateTable {
-				logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
-			} else if job.stmtType == schemaCreateView {
-				logger = log.With(zap.String("table", common.UniqueTable(job.dbName, job.tblName)))
-			}
+			logger := log.With(zap.String("db", job.dbName), zap.String("table", job.tblName))
 			for _, stmt := range job.stmts {
 				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
 				_, err = session.Execute(worker.ctx, stmt.sql)
@@ -479,9 +475,6 @@ func (worker *restoreSchemaWorker) doJob() {
 func (worker *restoreSchemaWorker) wait() error {
 	select {
 	case err := <-worker.errCh:
-		if err != nil {
-			worker.quit()
-		}
 		return err
 	case <-worker.ctx.Done():
 		return worker.ctx.Err()
@@ -492,16 +485,12 @@ func (worker *restoreSchemaWorker) wait() error {
 }
 
 func (worker *restoreSchemaWorker) throw(err error) {
-	if err != nil {
-		select {
-		case <-worker.ctx.Done():
-			err := worker.ctx.Err()
-			if err != nil {
-				worker.errCh <- err
-			}
-		case worker.errCh <- err:
-			worker.quit()
-		}
+	select {
+	case <-worker.ctx.Done():
+		// don't throw `worker.ctx.Err()` again, it will be blocked to death.
+		return
+	case worker.errCh <- err:
+		worker.quit()
 	}
 }
 
@@ -511,8 +500,9 @@ func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
 		return err
 	case <-worker.ctx.Done():
 		return worker.ctx.Err()
-	case worker.jobCh <- job:
+	default:
 		worker.wg.Add(1)
+		worker.jobCh <- job
 		return nil
 	}
 }
