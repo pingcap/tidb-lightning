@@ -307,6 +307,18 @@ outside:
 
 type schemaStmtType int
 
+func (stmtType schemaStmtType) String() string {
+	switch stmtType {
+	case schemaCreateDatabase:
+		return "restore database schema"
+	case schemaCreateTable:
+		return "restore table schema"
+	case schemaCreateView:
+		return "restore view schema"
+	}
+	return "unknown statement of schema"
+}
+
 const (
 	schemaCreateDatabase = iota
 	schemaCreateTable
@@ -454,14 +466,7 @@ func (worker *restoreSchemaWorker) doJob() {
 				_, err = session.Execute(worker.ctx, stmt.sql)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
-					switch job.stmtType {
-					case schemaCreateDatabase:
-						err = errors.Annotatef(err, "restore database schema %s failed", job.dbName)
-					case schemaCreateTable:
-						err = errors.Annotatef(err, "restore table schema %s failed", job.tblName)
-					case schemaCreateView:
-						err = errors.Annotatef(err, "restore view schema %s failed", job.tblName)
-					}
+					err = errors.Annotatef(err, "%s %s failed", job.stmtType.String(), common.UniqueTable(job.dbName, job.tblName))
 					worker.wg.Done()
 					worker.throw(err)
 					return
