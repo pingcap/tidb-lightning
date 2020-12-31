@@ -495,14 +495,17 @@ func (worker *restoreSchemaWorker) throw(err error) {
 }
 
 func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
+	worker.wg.Add(1)
 	select {
 	case err := <-worker.errCh:
+		// cancel the job
+		worker.wg.Done()
 		return err
 	case <-worker.ctx.Done():
+		// cancel the job
+		worker.wg.Done()
 		return worker.ctx.Err()
-	default:
-		worker.wg.Add(1)
-		worker.jobCh <- job
+	case worker.jobCh <- job:
 		return nil
 	}
 }
