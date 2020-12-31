@@ -854,7 +854,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		go func() {
 			for task := range postProcessTaskChan {
 				// force all the remain post-process tasks to be executed
-				_, err := task.tr.postProcess(ctx, rc, task.cp, true)
+				_, err := task.tr.postProcess(ctx2, rc, task.cp, true)
 				restoreErr.Set(err)
 			}
 			wg.Done()
