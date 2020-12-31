@@ -441,14 +441,17 @@ func (worker *restoreSchemaWorker) doJob() {
 			session.Close()
 		}
 	}()
+loop:
 	for {
 		select {
 		case <-worker.ctx.Done():
-			// don't throw `worker.ctx.Err()` here,
-			// it will be blocked to death when number of `doJob`'s goroutines  > 1.
-			return
+			// don't `return` or throw `worker.ctx.Err()`here,
+			// if we `return`, we can't mark cancelled jobs as done,
+			// if we `throw(worker.ctx.Err())`, it will be blocked to death
+			break loop
 		case job := <-worker.jobCh:
 			if job == nil {
+				// successful exit
 				return
 			}
 			var err error
@@ -457,7 +460,8 @@ func (worker *restoreSchemaWorker) doJob() {
 				if err != nil {
 					worker.wg.Done()
 					worker.throw(err)
-					return
+					// don't return
+					break loop
 				}
 			}
 			logger := log.With(zap.String("db", job.dbName), zap.String("table", job.tblName))
@@ -469,22 +473,36 @@ func (worker *restoreSchemaWorker) doJob() {
 					err = errors.Annotatef(err, "%s %s failed", job.stmtType.String(), common.UniqueTable(job.dbName, job.tblName))
 					worker.wg.Done()
 					worker.throw(err)
-					return
+					// don't return
+					break loop
 				}
 			}
 			worker.wg.Done()
 		}
 	}
+	// mark the cancelled job as `Done`, a little tricky,
+	// cauz we need make sure `worker.wg.Wait()` wouldn't blocked forever
+	for range worker.jobCh {
+		worker.wg.Done()
+	}
 }
 
 func (worker *restoreSchemaWorker) wait() error {
+	// avoid to `worker.wg.Wait()` blocked forever when all `doJob`'s goroutine exited.
+	// don't worry about goroutine below, it never become a zombie,
+	// cauz we have mechanism to clean cancelled jobs in `worker.jobCh`.
+	// means whole jobs has been send to `worker.jobCh` would be done.
+	waitCh := make(chan struct{})
+	go func() {
+		worker.wg.Wait()
+		close(waitCh)
+	}()
 	select {
 	case err := <-worker.errCh:
 		return err
 	case <-worker.ctx.Done():
 		return worker.ctx.Err()
-	default:
-		worker.wg.Wait()
+	case <-waitCh:
 		return nil
 	}
 }
