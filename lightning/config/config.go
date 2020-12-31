@@ -209,11 +209,11 @@ func (t PostOpLevel) String() string {
 
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
-	Level1Compact  bool        `toml:"level-1-compact" json:"level-1-compact"`
-	Compact        bool        `toml:"compact" json:"compact"`
-	Checksum       PostOpLevel `toml:"checksum" json:"checksum"`
-	Analyze        PostOpLevel `toml:"analyze" json:"analyze"`
-	ChecksumAtLast bool        `toml:"checksum-at-last" json:"checksum-at-last"`
+	Level1Compact     bool        `toml:"level-1-compact" json:"level-1-compact"`
+	Compact           bool        `toml:"compact" json:"compact"`
+	Checksum          PostOpLevel `toml:"checksum" json:"checksum"`
+	Analyze           PostOpLevel `toml:"analyze" json:"analyze"`
+	PostProcessAtLast bool        `toml:"post-process-at-last" json:"post-process-at-last"`
 }
 
 type CSVConfig struct {
@@ -371,8 +371,9 @@ func NewConfig() *Config {
 			RegionSplitSize: SplitRegionSize,
 		},
 		PostRestore: PostRestore{
-			Checksum: OpLevelRequired,
-			Analyze:  OpLevelOptional,
+			Checksum:          OpLevelRequired,
+			Analyze:           OpLevelOptional,
+			PostProcessAtLast: true,
 		},
 	}
 }

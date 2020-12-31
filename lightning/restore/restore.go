@@ -1288,7 +1288,7 @@ func (t *TableRestore) postProcess(
 			t.logger.Info("skip checksum")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
-			if forcePostProcess || !rc.cfg.PostRestore.ChecksumAtLast {
+			if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
 				// 4. do table checksum
 				var localChecksum verify.KVChecksum
 				for _, engine := range cp.Engines {
@@ -1326,7 +1326,7 @@ func (t *TableRestore) postProcess(
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 			cp.Status = CheckpointStatusAnalyzed
-		} else if forcePostProcess || !rc.cfg.PostRestore.ChecksumAtLast {
+		} else if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
 			err := t.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
