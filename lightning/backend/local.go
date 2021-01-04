@@ -1224,10 +1224,9 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	ok := local.lockForImport(engineUUID, importMutexStateClose)
 	err := local.CleanupEngine(ctx, engineUUID)
-	if err != nil {
-		return err
+	if err == nil {
+		err = local.OpenEngine(ctx, engineUUID)
 	}
-	err = local.OpenEngine(ctx, engineUUID)
 	if ok {
 		local.unlockForImport(engineUUID)
 	}
