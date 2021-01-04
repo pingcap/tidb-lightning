@@ -31,7 +31,6 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb-lightning/lightning/glue"
-	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -73,8 +72,6 @@ const (
 var DeliverPauser = common.NewPauser()
 
 func init() {
-	cfg := tidbcfg.GetGlobalConfig()
-	cfg.Log.SlowThreshold = 3000
 	// used in integration tests
 	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
 		minDeliverBytes = uint64(v.(int))
