@@ -1239,7 +1239,7 @@ func (t *TableRestore) importEngine(
 // postProcess execute rebase-auto-id/checksum/analyze according to the task config.
 //
 // if the parameter forcePostProcess to true, postProcess force run checksum and analyze even if the
-// analyze-at-last config is true. And if this two phases are skipped, the first return value will be true.
+// post-process-at-last config is true. And if this two phases are skipped, the first return value will be true.
 func (t *TableRestore) postProcess(
 	ctx context.Context,
 	rc *RestoreController,
@@ -1298,7 +1298,7 @@ func (t *TableRestore) postProcess(
 				}
 				t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 				err := t.compareChecksum(ctx, localChecksum)
-				// witch post restore level 'optional', we will skip checksum error
+				// with post restore level 'optional', we will skip checksum error
 				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
 					if err != nil {
 						t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
