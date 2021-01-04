@@ -106,10 +106,23 @@ type localFileMeta struct {
 	TotalSize int64  `json:"total_size"`
 }
 
+type importMutexState int32
+
+const (
+	importMutexStateImport importMutexState = iota + 1
+	importMutexStateFlush
+	importMutexStateClose
+)
+
 type LocalFile struct {
 	localFileMeta
 	db   *pebble.DB
 	Uuid uuid.UUID
+
+	// isImportingAtomic is an atomic variable indicating whether the importMutex has been locked.
+	// This should not be used as a "spin lock" indicator.
+	isImportingAtomic int32
+	mutex sync.Mutex
 }
 
 func (e *LocalFile) Close() error {
@@ -152,6 +165,25 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 	}
 
 	return sizeProps, nil
+}
+
+func (e *LocalFile) isLocked() bool {
+	return atomic.LoadInt32(&e.isImportingAtomic) != 0
+}
+
+// lockForImport locks the local file for importing.
+func (e *LocalFile) lockForImport(state importMutexState) {
+	ok := atomic.CompareAndSwapInt32(&e.isImportingAtomic, 0, int32(state))
+	e.mutex.Lock()
+	for !ok {
+		ok = atomic.CompareAndSwapInt32(&e.isImportingAtomic, 0, int32(state))
+	}
+}
+
+func (e *LocalFile) unlockForImport() {
+	// TODO: should we assert that `exists` implies `ok`?
+	atomic.StoreInt32(&e.isImportingAtomic, 0)
+	e.mutex.Unlock()
 }
 
 type gRPCConns struct {
@@ -305,6 +337,26 @@ func NewLocalBackend(
 	return MakeBackend(local), nil
 }
 
+// lockForImport locks the local file for importing.
+func (local *local) lockForImport(engineId uuid.UUID, state importMutexState) bool {
+	if e, ok := local.engines.Load(engineId); ok {
+		engine := e.(*LocalFile)
+		engine.lockForImport(state)
+		return true
+	}
+	return false
+}
+
+// unlockForImport unlocks the local file from importing.
+func (local *local) unlockForImport(engineId uuid.UUID) bool {
+	if e, ok := local.engines.Load(engineId); ok {
+		engine := e.(*LocalFile)
+		engine.unlockForImport()
+		return true
+	}
+	return false
+}
+
 func (local *local) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
 	store, err := local.splitCli.GetStore(ctx, storeID)
 	if err != nil {
@@ -438,6 +490,7 @@ func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) 
 	return meta, err
 }
 
+// This method must be called with holding mutex of LocalFile
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	meta, err := local.LoadEngineMeta(engineUUID)
 	if err != nil {
@@ -447,7 +500,12 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID})
+	if e, ok := local.engines.Load(engineUUID); ok {
+		engine := e.(*LocalFile)
+		engine.db = db
+	} else {
+		local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID})
+	}
 	return nil
 }
 
@@ -1162,6 +1220,20 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 	return nil
 }
 
+func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
+	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
+	ok := local.lockForImport(engineUUID, importMutexStateClose)
+	err := local.CleanupEngine(ctx, engineUUID)
+	if err != nil {
+		return err
+	}
+	err = local.OpenEngine(ctx, engineUUID)
+	if ok {
+		local.unlockForImport(engineUUID)
+	}
+	return err
+}
+
 func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// release this engine after import success
 	engineFile, ok := local.engines.Load(engineUUID)
@@ -1599,7 +1671,6 @@ func (w *LocalWriter) writeRowsLoop() {
 		totalCount += int64(len(kvs))
 	}
 
-	atomic.AddInt64(&w.local.Length, totalCount)
 	if batchSize > 0 {
 		if err := w.flushKVs(); err != nil {
 			w.writeErr.Set(err)
@@ -1613,13 +1684,20 @@ func (w *LocalWriter) writeRowsLoop() {
 			w.writeErr.Set(err)
 			return
 		}
-		if err := w.local.db.Ingest([]string{filePath}); err != nil {
-			w.writeErr.Set(err)
-			return
-		}
+		w.local.lockForImport(importMutexStateFlush)
+		err := w.local.db.Ingest([]string{filePath})
+		// The following two variable should be changed with holding mutex
+		atomic.AddInt64(&w.local.TotalSize, totalSize)
+		atomic.AddInt64(&w.local.Length, totalCount)
+		w.local.unlockForImport()
+		w.writeErr.Set(err)
 		log.L().Info("write data by sst writer", zap.Int64("bytes", totalSize))
+	} else {
+		w.local.lockForImport(importMutexStateFlush)
+		atomic.AddInt64(&w.local.TotalSize, totalSize)
+		atomic.AddInt64(&w.local.Length, totalCount)
+		w.local.unlockForImport()
 	}
-	atomic.AddInt64(&w.local.TotalSize, totalSize)
 }
 
 func (w *LocalWriter) flushKVs() error {
@@ -1639,7 +1717,10 @@ func (w *LocalWriter) flushKVs() error {
 		return err
 	}
 	w.writeBatch = w.writeBatch[:0]
-	return w.local.db.Ingest([]string{filePath})
+	w.local.lockForImport(importMutexStateFlush)
+	err = w.local.db.Ingest([]string{filePath})
+	w.local.unlockForImport()
+	return err
 }
 
 func (w *LocalWriter) createWriter() (*sstable.Writer, string, error) {
