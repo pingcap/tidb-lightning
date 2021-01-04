@@ -75,6 +75,7 @@ func newChecksumManager(ctx context.Context, rc *RestoreController) (ChecksumMan
 			return nil, errors.Trace(err)
 		}
 
+		// TODO: make tikv.Driver{}.Open use arguments instead of global variables
 		if tlsOpt.CAPath != "" {
 			conf := tidbcfg.GetGlobalConfig()
 			conf.Security.ClusterSSLCA = tlsOpt.CAPath
