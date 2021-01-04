@@ -161,7 +161,7 @@ func (e ExternalTiDBGlue) GetTables(context.Context, string) ([]*model.TableInfo
 	return nil, errors.New("ExternalTiDBGlue doesn't have a valid GetTables function")
 }
 
-func (e ExternalTiDBGlue) GetSession(ctx context.Context) (checkpoints.Session, error) {
+func (e *ExternalTiDBGlue) GetSession(ctx context.Context) (checkpoints.Session, error) {
 	conn, err := e.db.Conn(ctx)
 	if err != nil {
 		return nil, err

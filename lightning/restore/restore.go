@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/br/pkg/pdutil"
 	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -320,7 +321,7 @@ func (stmtType schemaStmtType) String() string {
 }
 
 const (
-	schemaCreateDatabase = iota
+	schemaCreateDatabase schemaStmtType = iota
 	schemaCreateTable
 	schemaCreateView
 )
@@ -536,7 +537,7 @@ func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
 func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	if !rc.cfg.Mydumper.NoSchema {
 		logTask := log.L().Begin(zap.InfoLevel, "restore all schema")
-		concurrency := 16
+		concurrency := utils.MinInt(rc.cfg.App.RegionConcurrency, 8)
 		childCtx, cancel := context.WithCancel(ctx)
 		worker := restoreSchemaWorker{
 			ctx:   childCtx,
