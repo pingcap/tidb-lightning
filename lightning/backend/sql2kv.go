@@ -48,6 +48,8 @@ type genCol struct {
 	expr  expression.Expression
 }
 
+type autoIDConverter func(int64) int64
+
 type tableKVEncoder struct {
 	tbl         table.Table
 	se          *session
@@ -55,6 +57,7 @@ type tableKVEncoder struct {
 	genCols     []genCol
 	// auto random bits value for this chunk
 	autoRandomHeaderBits int64
+	autoIDFn             autoIDConverter
 }
 
 func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error) {
@@ -66,14 +69,26 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error
 	recordCtx := tables.NewCommonAddRecordCtx(len(cols))
 	tables.SetAddRecordCtx(se, recordCtx)
 
-	var autoRandomBits int64
+	autoIDFn := func(id int64) int64 { return id }
 	if meta.PKIsHandle && meta.ContainsAutoRandomBits() {
 		for _, col := range cols {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
-				autoRandomBits = rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits
+				autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits
+				autoIDFn = func(id int64) int64 {
+					return autoRandomBits | id
+				}
 				break
 			}
+		}
+	} else if meta.ShardRowIDBits > 0 {
+		rd := rand.New(rand.NewSource(options.AutoRandomSeed))
+		mask := int64(1)<<meta.ShardRowIDBits - 1
+		shift := autoid.RowIDBitLength - meta.ShardRowIDBits - 1
+		autoIDFn = func(id int64) int64 {
+			rd.Seed(id)
+			shardBits := (int64(rd.Uint32()) & mask) << shift
+			return shardBits | id
 		}
 	}
 
@@ -88,6 +103,7 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error
 		se:                   se,
 		genCols:              genCols,
 		autoRandomHeaderBits: autoRandomBits,
+		autoIDFn:             autoIDFn,
 	}, nil
 }
 
@@ -314,10 +330,11 @@ func (kvcodec *tableKVEncoder) Encode(
 			value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo(), false, false)
 		} else if isAutoRandom && isPk {
 			var val types.Datum
+			realRowID := kvcodec.autoIDFn(rowID)
 			if mysql.HasUnsignedFlag(col.Flag) {
-				val = types.NewUintDatum(uint64(kvcodec.autoRandomHeaderBits | rowID))
+				val = types.NewUintDatum(uint64(realRowID))
 			} else {
-				val = types.NewIntDatum(kvcodec.autoRandomHeaderBits | rowID)
+				val = types.NewIntDatum(realRowID)
 			}
 			value, err = table.CastValue(kvcodec.se, val, col.ToInfo(), false, false)
 		} else if col.IsGenerated() {
@@ -349,10 +366,7 @@ func (kvcodec *tableKVEncoder) Encode(
 			value, err = table.CastValue(kvcodec.se, row[j], extraHandleColumnInfo, false, false)
 			rowValue = value.GetInt64()
 		} else {
-			if meta.ShardRowIDBits > 0 {
-				shard := (int64(fastrand.Uint32()) & (1<<meta.ShardRowIDBits - 1)) << (autoid.RowIDBitLength - meta.ShardRowIDBits - 1)
-				rowID |= shard
-			}
+			rowID = kvcodec.autoIDFn(rowID)
 			value, err = types.NewIntDatum(rowID), nil
 		}
 		if err != nil {
