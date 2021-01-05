@@ -31,7 +31,6 @@ import (
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb-lightning/lightning/glue"
-	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -73,8 +72,6 @@ const (
 var DeliverPauser = common.NewPauser()
 
 func init() {
-	cfg := tidbcfg.GetGlobalConfig()
-	cfg.Log.SlowThreshold = 3000
 	// used in integration tests
 	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
 		minDeliverBytes = uint64(v.(int))
@@ -136,6 +133,7 @@ type RestoreController struct {
 	indexWorkers    *worker.Pool
 	regionWorkers   *worker.Pool
 	ioWorkers       *worker.Pool
+	checksumWorks   *worker.Pool
 	pauser          *common.Pauser
 	backend         kv.Backend
 	tidbGlue        glue.Glue
@@ -235,6 +233,7 @@ func NewRestoreControllerWithPauser(
 		indexWorkers:  worker.NewPool(ctx, cfg.App.IndexConcurrency, "index"),
 		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
+		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        pauser,
 		backend:       backend,
 		tidbGlue:      g,
@@ -852,7 +851,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		go func() {
 			for task := range postProcessTaskChan {
 				// force all the remain post-process tasks to be executed
-				_, err := task.tr.postProcess(ctx, rc, task.cp, true)
+				_, err := task.tr.postProcess(ctx2, rc, task.cp, true)
 				restoreErr.Set(err)
 			}
 			wg.Done()
@@ -1236,9 +1235,14 @@ func (t *TableRestore) importEngine(
 
 // postProcess execute rebase-auto-id/checksum/analyze according to the task config.
 //
-// if the parameter forceAnalyze to true, postProcess force run analyze even if the analyze-at-last config is true.
-// And if analyze phase is skipped, the first return value will be true.
-func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, forceAnalyze bool) (bool, error) {
+// if the parameter forcePostProcess to true, postProcess force run checksum and analyze even if the
+// post-process-at-last config is true. And if this two phases are skipped, the first return value will be true.
+func (t *TableRestore) postProcess(
+	ctx context.Context,
+	rc *RestoreController,
+	cp *TableCheckpoint,
+	forcePostProcess bool,
+) (bool, error) {
 	// there are no data in this table, no need to do post process
 	// this is important for tables that are just the dump table of views
 	// because at this stage, the table was already deleted and replaced by the related view
@@ -1272,44 +1276,54 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		return false, nil
 	}
 
-	// 4. do table checksum
-	var localChecksum verify.KVChecksum
-	for _, engine := range cp.Engines {
-		for _, chunk := range engine.Chunks {
-			localChecksum.Add(&chunk.Checksum)
-		}
-	}
+	w := rc.checksumWorks.Apply()
+	defer rc.checksumWorks.Recycle(w)
 
-	t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+	finished := true
 	if cp.Status < CheckpointStatusChecksummed {
 		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 			t.logger.Info("skip checksum")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
-			err := t.compareChecksum(ctx, localChecksum)
-			// witch post restore level 'optional', we will skip checksum error
-			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-				if err != nil {
-					t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-					err = nil
+			if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
+				// 4. do table checksum
+				var localChecksum verify.KVChecksum
+				for _, engine := range cp.Engines {
+					for _, chunk := range engine.Chunks {
+						localChecksum.Add(&chunk.Checksum)
+					}
 				}
+				t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+				err := t.compareChecksum(ctx, localChecksum)
+				// with post restore level 'optional', we will skip checksum error
+				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+					if err != nil {
+						t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+						err = nil
+					}
+				}
+				rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				cp.Status = CheckpointStatusChecksummed
+			} else {
+				finished = false
 			}
-			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
+
 		}
-		cp.Status = CheckpointStatusChecksummed
+	}
+	if !finished {
+		return !finished, nil
 	}
 
 	// 5. do table analyze
-	finished := true
 	if cp.Status < CheckpointStatusAnalyzed {
 		if rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 			cp.Status = CheckpointStatusAnalyzed
-		} else if forceAnalyze || !rc.cfg.PostRestore.AnalyzeAtLast {
+		} else if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
 			err := t.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
