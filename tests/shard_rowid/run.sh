@@ -40,8 +40,8 @@ for backend in importer local; do
 
     # since we use random to generate the shard bits, with 16 record, there maybe less than 8 distinct value,
     # but it should be bigger than 4
-    run_sql "SELECT count(distinct _tidb_rowid >> 60) as count from shard_rowid.shr"
-    check_contains_regexp "count: [5-8]"
+    run_sql 'SELECT count between 5 and 8 as correct from (SELECT count(distinct _tidb_rowid >> 60) as count from shard_rowid.shr) _'
+    check_contains "correct: 1"
 done
 
 if [ -n "$is_on" ]; then
