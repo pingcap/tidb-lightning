@@ -98,6 +98,8 @@ func DBFromConfig(dsn config.DBStore) (*sql.DB, error) {
 			// after https://github.com/pingcap/tidb/pull/17102 merge,
 			// we need set session to true for insert auto_random value in TiDB Backend
 			"allow_auto_random_explicit_insert": "1",
+			// allow use _tidb_rowid in sql statement
+			"tidb_opt_write_row_id": "1",
 		},
 	}
 	db, err := param.Connect()

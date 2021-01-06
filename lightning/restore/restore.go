@@ -1706,7 +1706,12 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 	for _, idx := range colIndexes {
 		// skip columns with index -1
 		if idx >= 0 {
-			names = append(names, tableInfo.Columns[idx].Name.O)
+			// original fiels contains _tidb_rowid field
+			if idx == len(tableInfo.Columns) {
+				names = append(names, model.ExtraHandleName.O)
+			} else {
+				names = append(names, tableInfo.Columns[idx].Name.O)
+			}
 		}
 	}
 	return names
