@@ -653,7 +653,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 				state = "writing"
 
 			} else {
-				state = "writing"
+				state = "preparing"
 
 			}
 
@@ -666,7 +666,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 				writePercent := math.Min(finished/estimated, 1.0)
 				importPercent := 1.0
 				if bytesWritten > 0 {
-					totalBytes := 1.0 / writePercent * bytesWritten
+					totalBytes := bytesWritten / writePercent
 					importPercent = math.Min(bytesImported/totalBytes, 1.0)
 				}
 				totalPercent = writePercent*0.8 + importPercent*0.2
@@ -1123,8 +1123,11 @@ func (t *TableRestore) restoreEngine(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		remainChunkCnt := float64(chunk.Chunk.EndOffset-chunk.Chunk.Offset) / float64(chunk.Chunk.EndOffset-chunk.Key.Offset)
-		metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
+		var remainChunkCnt float64
+		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
+			remainChunkCnt = float64(chunk.Chunk.EndOffset-chunk.Chunk.Offset) / float64(chunk.Chunk.EndOffset-chunk.Key.Offset)
+			metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
+		}
 
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
@@ -1165,7 +1168,6 @@ func (t *TableRestore) restoreEngine(
 
 	flushAndSaveAllChunks := func() error {
 		if err = indexEngine.Flush(); err != nil {
-			// If any error occurred, recycle worker immediately
 			return errors.Trace(err)
 		}
 		// Currently we write all the checkpoints after data&index engine are flushed.
