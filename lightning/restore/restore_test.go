@@ -610,6 +610,11 @@ func (s *tableRestoreSuite) TestGetColumnsNames(c *C) {
 	c.Assert(getColumnNames(s.tableInfo.Core, []int{0, 1, -1, -1}), DeepEquals, []string{"a", "b"})
 	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, -1, 0, -1}), DeepEquals, []string{"c", "a"})
 	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 0, -1, -1}), DeepEquals, []string{"b"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, 2, 3, 0}), DeepEquals, []string{"_tidb_rowid", "a", "b", "c"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, 0, 2, 3}), DeepEquals, []string{"b", "a", "c", "_tidb_rowid"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 0, 2, 1}), DeepEquals, []string{"b", "_tidb_rowid", "c"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{2, -1, 0, 1}), DeepEquals, []string{"c", "_tidb_rowid", "a"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 1, -1, 0}), DeepEquals, []string{"_tidb_rowid", "b"})
 }
 
 func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
@@ -1004,6 +1009,43 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, ErrorMatches, "fake deliver error")
+	c.Assert(kvsCh, HasLen, 0)
+}
+
+func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
+	dir := c.MkDir()
+	fileName := "db.table.000.csv"
+	err := ioutil.WriteFile(filepath.Join(dir, fileName), []byte("1,2,3,4\r\n4,5,6,7\r\n"), 0644)
+	c.Assert(err, IsNil)
+
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	cfg := config.NewConfig()
+	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
+
+	reader, err := store.Open(ctx, fileName)
+	c.Assert(err, IsNil)
+	w := worker.NewPool(ctx, 5, "io")
+	p := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false)
+
+	err = s.cr.parser.Close()
+	c.Assert(err, IsNil)
+	s.cr.parser = p
+
+	kvsCh := make(chan []deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+	kvEncoder, err := kv.NewTiDBBackend(nil, config.ReplaceOnDup).NewEncoder(
+		s.tr.encTable,
+		&kv.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567895,
+		})
+	c.Assert(err, IsNil)
+
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	c.Assert(err, ErrorMatches, "in file db.table.2.sql:0 at offset 8: column count mismatch, expected 3, got 4")
 	c.Assert(kvsCh, HasLen, 0)
 }
 
