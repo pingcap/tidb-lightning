@@ -91,7 +91,7 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 		perms = append(perms, i)
 	}
 	perms = append(perms, -1)
-	encoder, err := s.backend.NewEncoder(s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890, RowFormatVersion: "1"})
+	encoder, err := s.backend.NewEncoder(s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890})
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewUintDatum(18446744073709551615),
@@ -141,6 +141,15 @@ func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	err = engine.WriteRows(ctx, []string{"a"}, dataRows)
+	c.Assert(err, IsNil)
+
+	// test encode rows with _tidb_rowid
+	encoder, err = ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
+	c.Assert(err, IsNil)
+	row, err = encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(1), // _tidb_rowid field
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1})
 	c.Assert(err, IsNil)
 }
 
@@ -192,14 +201,17 @@ func (s *mysqlSuite) TestStrictMode(c *C) {
 	logger := log.L()
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("test"),
-	}, 1, []int{0, 1, -1})
+	}, 1, []int{0, -1, -1})
 	c.Assert(err, IsNil)
 
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("\xff\xff\xff\xff"),
-	}, 1, []int{0, 1, -1})
+	}, 1, []int{0, -1, -1})
 	c.Assert(err, ErrorMatches, `.*incorrect utf8 value .* for column s0`)
 
+	// oepn a new encode because column count changed.
+	encoder, err = bk.NewEncoder(tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
+	c.Assert(err, IsNil)
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum(""),
 		types.NewStringDatum("非 ASCII 字符串"),

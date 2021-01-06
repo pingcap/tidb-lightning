@@ -37,22 +37,25 @@ for backend in tidb importer local; do
       check_contains 'inc: 4'
       check_contains 'inc: 5'
       check_contains 'inc: 6'
+      NEXT_AUTO_RAND_VAL=7
     else
       check_contains 'inc: 25'
       check_contains 'inc: 26'
       check_contains 'inc: 27'
+      NEXT_AUTO_RAND_VAL=28
     fi
 
-
-    run_sql "select count(distinct id >> 58) as count from auto_random.t"
-    check_contains "count: 2"
+    # tidb backend randomly generate the auto-random bit for each statement, so with 2 statements,
+    # the distinct auto_random prefix values can be 1 or 2, so we skip this check with tidb backend
+    if [ "$backend" != 'tidb' ]; then
+      run_sql "select count(distinct id >> 58) as count from auto_random.t"
+      check_contains "count: 2"
+    fi
 
     # auto random base is 4
+    run_sql "SELECT max(id & b'000001111111111111111111111111111111111111111111111111111111111') >= $NEXT_AUTO_RAND_VAL as ge FROM auto_random.t"
+    check_contains 'ge: 0'
     run_sql "INSERT INTO auto_random.t VALUES ();"
-    run_sql "SELECT id & b'000001111111111111111111111111111111111111111111111111111111111' as inc FROM auto_random.t"
-    if [ "$backend" = 'tidb' ]; then
-      check_contains 'inc: 2000001'
-    else
-      check_contains 'inc: 28'
-    fi
+    run_sql "SELECT max(id & b'000001111111111111111111111111111111111111111111111111111111111') >= $NEXT_AUTO_RAND_VAL as ge FROM auto_random.t"
+    check_contains 'ge: 1'
 done

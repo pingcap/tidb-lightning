@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
@@ -93,6 +94,14 @@ type Chunk struct {
 type Row struct {
 	RowID int64
 	Row   []types.Datum
+}
+
+// MarshalLogArray implements the zapcore.ArrayMarshaler interface
+func (row Row) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
+	for _, r := range row.Row {
+		encoder.AppendString(r.String())
+	}
+	return nil
 }
 
 type backslashEscapeFlavor uint8
