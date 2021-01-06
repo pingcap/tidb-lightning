@@ -270,11 +270,11 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 
 	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, &storage.BackendOptions{})
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotate(err, "parse backend failed")
 	}
 	s, err := storage.Create(ctx, u, true)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotate(err, "create storage failed")
 	}
 
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
@@ -651,6 +651,11 @@ func handleLogLevel(w http.ResponseWriter, req *http.Request) {
 }
 
 func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) error {
+	if !cfg.App.CheckRequirements {
+		log.L().Info("check-requirement is disabled, skip check system rlimit")
+		return nil
+	}
+
 	// in local mode, we need to read&write a lot of L0 sst files, so we need to check system max open files limit
 	if cfg.TikvImporter.Backend == config.BackendLocal {
 		// estimate max open files = {top N(TableConcurrency) table sizes} / {MemoryTableSize}
@@ -668,7 +673,7 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 			topNTotalSize += tableTotalSizes[i]
 		}
 
-		estimateMaxFiles := uint64(topNTotalSize / backend.LocalMemoryTableSize)
+		estimateMaxFiles := uint64(topNTotalSize/backend.LocalMemoryTableSize) * 2
 		if err := backend.VerifyRLimit(estimateMaxFiles); err != nil {
 			return err
 		}
