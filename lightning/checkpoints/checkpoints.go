@@ -26,14 +26,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb-lightning/lightning/config"
-
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
@@ -505,6 +504,39 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 
 	default:
 		return nil, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
+	}
+}
+
+func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error) {
+	if !cfg.Checkpoint.Enable {
+		return false, nil
+	}
+	switch cfg.Checkpoint.Driver {
+	case config.CheckpointDriverMySQL:
+		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		defer db.Close()
+		checkSQL := fmt.Sprintf("SHOW DATABASES LIKE %s", common.InterpolateMySQLString(cfg.Checkpoint.Schema))
+		rows, err := db.QueryContext(ctx, checkSQL)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		defer rows.Close()
+		return rows.Next(), nil
+
+	case config.CheckpointDriverFile:
+		_, err := os.Stat(cfg.Checkpoint.DSN)
+		if err == nil {
+			return true, err
+		} else if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, errors.Trace(err)
+
+	default:
+		return false, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
 	}
 }
 
