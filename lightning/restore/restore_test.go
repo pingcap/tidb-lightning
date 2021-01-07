@@ -610,6 +610,11 @@ func (s *tableRestoreSuite) TestGetColumnsNames(c *C) {
 	c.Assert(getColumnNames(s.tableInfo.Core, []int{0, 1, -1, -1}), DeepEquals, []string{"a", "b"})
 	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, -1, 0, -1}), DeepEquals, []string{"c", "a"})
 	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 0, -1, -1}), DeepEquals, []string{"b"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, 2, 3, 0}), DeepEquals, []string{"_tidb_rowid", "a", "b", "c"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{1, 0, 2, 3}), DeepEquals, []string{"b", "a", "c", "_tidb_rowid"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 0, 2, 1}), DeepEquals, []string{"b", "_tidb_rowid", "c"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{2, -1, 0, 1}), DeepEquals, []string{"c", "_tidb_rowid", "a"})
+	c.Assert(getColumnNames(s.tableInfo.Core, []int{-1, 1, -1, 0}), DeepEquals, []string{"_tidb_rowid", "b"})
 }
 
 func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
@@ -816,11 +821,19 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData(c *C) {
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil).Times(2)
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
-	mockBackend.EXPECT().MaxChunkSize().Return(10000).AnyTimes()
+	mockWriter := mock.NewMockEngineWriter(controller)
+	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	mockWriter.EXPECT().
+		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0)
 	c.Assert(err, IsNil)
+	dataWriter, err := dataEngine.LocalWriter(ctx)
+	c.Assert(err, IsNil)
 	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1)
+	c.Assert(err, IsNil)
+	indexWriter, err := indexEngine.LocalWriter(ctx)
 	c.Assert(err, IsNil)
 
 	// Deliver nothing.
@@ -830,7 +843,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData(c *C) {
 
 	kvsCh := make(chan []deliveredKVs, 1)
 	kvsCh <- []deliveredKVs{}
-	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataEngine, indexEngine, rc)
+	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	c.Assert(err, IsNil)
 }
 
@@ -848,17 +861,23 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil).Times(2)
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
-	mockBackend.EXPECT().MaxChunkSize().Return(10000).AnyTimes()
+	mockWriter := mock.NewMockEngineWriter(controller)
+	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0)
 	c.Assert(err, IsNil)
 	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1)
 	c.Assert(err, IsNil)
 
+	dataWriter, err := dataEngine.LocalWriter(ctx)
+	c.Assert(err, IsNil)
+	indexWriter, err := indexEngine.LocalWriter(ctx)
+	c.Assert(err, IsNil)
+
 	// Set up the expected API calls to the data engine...
 
-	mockBackend.EXPECT().
-		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]common.KvPair{
+	mockWriter.EXPECT().
+		AppendRows(ctx, s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]common.KvPair{
 			{
 				Key: []byte("txxxxxxxx_ryyyyyyyy"),
 				Val: []byte("value1"),
@@ -874,8 +893,8 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	//
 	// Note: This test assumes data engine is written before the index engine.
 
-	mockBackend.EXPECT().
-		WriteRows(ctx, gomock.Any(), s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]common.KvPair{
+	mockWriter.EXPECT().
+		AppendRows(ctx, s.tr.tableName, mockCols, gomock.Any(), kv.MakeRowsFromKvPairs([]common.KvPair{
 			{
 				Key: []byte("txxxxxxxx_izzzzzzzz"),
 				Val: []byte("index1"),
@@ -914,7 +933,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	cfg := &config.Config{}
 	rc := &RestoreController{cfg: cfg, saveCpCh: saveCpCh, backend: importer}
 
-	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataEngine, indexEngine, rc)
+	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	c.Assert(err, IsNil)
 	c.Assert(saveCpCh, HasLen, 2)
 	c.Assert(s.cr.chunk.Chunk.Offset, Equals, int64(12))
@@ -927,9 +946,8 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567895,
-		RowFormatVersion: "1",
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567895,
 	})
 	c.Assert(err, IsNil)
 	cfg := config.NewConfig()
@@ -953,9 +971,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopCanceled(c *C) {
 	kvsCh := make(chan []deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567896,
-		RowFormatVersion: "1",
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567896,
 	})
 	c.Assert(err, IsNil)
 
@@ -972,9 +989,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopForcedError(c *C) {
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567897,
-		RowFormatVersion: "1",
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567897,
 	})
 	c.Assert(err, IsNil)
 
@@ -993,9 +1009,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	kvsCh := make(chan []deliveredKVs)
 	deliverCompleteCh := make(chan deliverResult)
 	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
-		SQLMode:          s.cfg.TiDB.SQLMode,
-		Timestamp:        1234567898,
-		RowFormatVersion: "1",
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567898,
 	})
 	c.Assert(err, IsNil)
 
@@ -1008,6 +1023,43 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, ErrorMatches, "fake deliver error")
+	c.Assert(kvsCh, HasLen, 0)
+}
+
+func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
+	dir := c.MkDir()
+	fileName := "db.table.000.csv"
+	err := ioutil.WriteFile(filepath.Join(dir, fileName), []byte("1,2,3,4\r\n4,5,6,7\r\n"), 0644)
+	c.Assert(err, IsNil)
+
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	cfg := config.NewConfig()
+	rc := &RestoreController{pauser: DeliverPauser, cfg: cfg}
+
+	reader, err := store.Open(ctx, fileName)
+	c.Assert(err, IsNil)
+	w := worker.NewPool(ctx, 5, "io")
+	p := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false)
+
+	err = s.cr.parser.Close()
+	c.Assert(err, IsNil)
+	s.cr.parser = p
+
+	kvsCh := make(chan []deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+	kvEncoder, err := kv.NewTiDBBackend(nil, config.ReplaceOnDup).NewEncoder(
+		s.tr.encTable,
+		&kv.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567895,
+		})
+	c.Assert(err, IsNil)
+
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	c.Assert(err, ErrorMatches, "in file db.table.2.sql:0 at offset 8: column count mismatch, expected 3, got 4")
 	c.Assert(kvsCh, HasLen, 0)
 }
 
@@ -1029,6 +1081,10 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0)
 	c.Assert(err, IsNil)
 	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1)
+	c.Assert(err, IsNil)
+	dataWriter, err := dataEngine.LocalWriter(ctx)
+	c.Assert(err, IsNil)
+	indexWriter, err := indexEngine.LocalWriter(ctx)
 	c.Assert(err, IsNil)
 
 	// Expected API sequence
@@ -1053,7 +1109,7 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 	// Now actually start the restore loop.
 
 	saveCpCh := make(chan saveCp, 2)
-	err = s.cr.restore(ctx, s.tr, 0, dataEngine, indexEngine, &RestoreController{
+	err = s.cr.restore(ctx, s.tr, 0, dataWriter, indexWriter, &RestoreController{
 		cfg:      s.cfg,
 		saveCpCh: saveCpCh,
 		backend:  importer,
@@ -1061,4 +1117,158 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 	})
 	c.Assert(err, IsNil)
 	c.Assert(saveCpCh, HasLen, 2)
+}
+
+var _ = Suite(&restoreSchemaSuite{})
+
+type restoreSchemaSuite struct {
+	ctx        context.Context
+	rc         *RestoreController
+	controller *gomock.Controller
+}
+
+func (s *restoreSchemaSuite) SetUpSuite(c *C) {
+	ctx := context.Background()
+	fakeDataDir := c.MkDir()
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	c.Assert(err, IsNil)
+	// restore database schema file
+	fakeDBName := "fakedb"
+	// please follow the `mydump.defaultFileRouteRules`, matches files like '{schema}-schema-create.sql'
+	fakeFileName := fmt.Sprintf("%s-schema-create.sql", fakeDBName)
+	err = store.Write(ctx, fakeFileName, []byte(fmt.Sprintf("CREATE DATABASE %s;", fakeDBName)))
+	c.Assert(err, IsNil)
+	// restore table schema files
+	fakeTableFilesCount := 8
+	for i := 1; i <= fakeTableFilesCount; i++ {
+		fakeTableName := fmt.Sprintf("tbl%d", i)
+		// please follow the `mydump.defaultFileRouteRules`, matches files like '{schema}.{table}-schema.sql'
+		fakeFileName := fmt.Sprintf("%s.%s-schema.sql", fakeDBName, fakeTableName)
+		fakeFileContent := []byte(fmt.Sprintf("CREATE TABLE %s(i TINYINT);", fakeTableName))
+		err = store.Write(ctx, fakeFileName, fakeFileContent)
+		c.Assert(err, IsNil)
+	}
+	// restore view schema files
+	fakeViewFilesCount := 8
+	for i := 1; i <= fakeViewFilesCount; i++ {
+		fakeViewName := fmt.Sprintf("tbl%d", i)
+		// please follow the `mydump.defaultFileRouteRules`, matches files like '{schema}.{table}-schema-view.sql'
+		fakeFileName := fmt.Sprintf("%s.%s-schema-view.sql", fakeDBName, fakeViewName)
+		fakeFileContent := []byte(fmt.Sprintf("CREATE ALGORITHM=UNDEFINED VIEW `%s` (`i`) AS SELECT `i` FROM `%s`.`%s`;", fakeViewName, fakeDBName, fmt.Sprintf("tbl%d", i)))
+		err = store.Write(ctx, fakeFileName, fakeFileContent)
+		c.Assert(err, IsNil)
+	}
+	config := config.NewConfig()
+	config.Mydumper.NoSchema = false
+	config.Mydumper.DefaultFileRules = true
+	config.Mydumper.CharacterSet = "utf8mb4"
+	config.App.RegionConcurrency = 8
+	mydumpLoader, err := mydump.NewMyDumpLoaderWithStore(ctx, config, store)
+	c.Assert(err, IsNil)
+	s.rc = &RestoreController{
+		cfg:           config,
+		store:         store,
+		dbMetas:       mydumpLoader.GetDatabases(),
+		checkpointsDB: &checkpoints.NullCheckpointsDB{},
+	}
+}
+
+func (s *restoreSchemaSuite) SetUpTest(c *C) {
+	s.controller, s.ctx = gomock.WithContext(context.Background(), c)
+	mockBackend := mock.NewMockBackend(s.controller)
+	// We don't care the execute results of those
+	mockBackend.EXPECT().
+		FetchRemoteTableModels(gomock.Any(), gomock.Any()).
+		AnyTimes().
+		Return(make([]*model.TableInfo, 0), nil)
+	s.rc.backend = kv.MakeBackend(mockBackend)
+	mockSQLExecutor := mock.NewMockSQLExecutor(s.controller)
+	mockSQLExecutor.EXPECT().
+		ExecuteWithLog(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes().
+		Return(nil)
+	mockSession := mock.NewMockSession(s.controller)
+	mockSession.EXPECT().
+		Close().
+		AnyTimes().
+		Return()
+	mockSession.EXPECT().
+		Execute(gomock.Any(), gomock.Any()).
+		AnyTimes().
+		Return(nil, nil)
+	mockTiDBGlue := mock.NewMockGlue(s.controller)
+	mockTiDBGlue.EXPECT().
+		GetSQLExecutor().
+		AnyTimes().
+		Return(mockSQLExecutor)
+	mockTiDBGlue.EXPECT().
+		GetSession(gomock.Any()).
+		AnyTimes().
+		Return(mockSession, nil)
+	mockTiDBGlue.EXPECT().
+		OwnsSQLExecutor().
+		AnyTimes().
+		Return(true)
+	parser := parser.New()
+	mockTiDBGlue.EXPECT().
+		GetParser().
+		AnyTimes().
+		Return(parser)
+	s.rc.tidbGlue = mockTiDBGlue
+}
+
+func (s *restoreSchemaSuite) TearDownTest(c *C) {
+	s.rc.Close()
+	s.controller.Finish()
+}
+
+func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful(c *C) {
+	err := s.rc.restoreSchema(s.ctx)
+	c.Assert(err, IsNil)
+}
+
+func (s *restoreSchemaSuite) TestRestoreSchemaFailed(c *C) {
+	injectErr := errors.New("Somthing wrong")
+	mockSession := mock.NewMockSession(s.controller)
+	mockSession.EXPECT().
+		Close().
+		AnyTimes().
+		Return()
+	mockSession.EXPECT().
+		Execute(gomock.Any(), gomock.Any()).
+		AnyTimes().
+		Return(nil, injectErr)
+	mockTiDBGlue := mock.NewMockGlue(s.controller)
+	mockTiDBGlue.EXPECT().
+		GetSession(gomock.Any()).
+		AnyTimes().
+		Return(mockSession, nil)
+	s.rc.tidbGlue = mockTiDBGlue
+	err := s.rc.restoreSchema(s.ctx)
+	c.Assert(err, NotNil)
+	c.Assert(errors.ErrorEqual(err, injectErr), IsTrue)
+}
+
+func (s *restoreSchemaSuite) TestRestoreSchemaContextCancel(c *C) {
+	childCtx, cancel := context.WithCancel(s.ctx)
+	mockSession := mock.NewMockSession(s.controller)
+	mockSession.EXPECT().
+		Close().
+		AnyTimes().
+		Return()
+	mockSession.EXPECT().
+		Execute(gomock.Any(), gomock.Any()).
+		AnyTimes().
+		Do(func(context.Context, string) { cancel() }).
+		Return(nil, nil)
+	mockTiDBGlue := mock.NewMockGlue(s.controller)
+	mockTiDBGlue.EXPECT().
+		GetSession(gomock.Any()).
+		AnyTimes().
+		Return(mockSession, nil)
+	s.rc.tidbGlue = mockTiDBGlue
+	err := s.rc.restoreSchema(childCtx)
+	cancel()
+	c.Assert(err, NotNil)
+	c.Assert(err, Equals, childCtx.Err())
 }

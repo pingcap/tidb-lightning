@@ -397,7 +397,7 @@ func (parser *CSVParser) readQuotedField() error {
 					}
 				}
 				parser.skipBytes(len(parser.quote))
-				parser.recordBuffer = append(parser.recordBuffer, '"')
+				parser.recordBuffer = append(parser.recordBuffer, parser.quote...)
 			case '\r', '\n':
 				// end the field if the next is a separator
 				return nil
@@ -528,12 +528,12 @@ func (parser *CSVParser) ReadRow() error {
 		return errors.Trace(err)
 	}
 	parser.lastRecord = records
-	// remove trailing empty values
+	// remove the last empty value
 	if parser.cfg.TrimLastSep {
-		var i int
-		for i = len(records); i > 0 && len(records[i-1]) == 0; i-- {
+		i := len(records) - 1
+		if i >= 0 && len(records[i]) == 0 {
+			records = records[:i]
 		}
-		records = records[:i]
 	}
 
 	row.Row = parser.acquireDatumSlice()
