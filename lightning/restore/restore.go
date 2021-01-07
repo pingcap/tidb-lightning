@@ -1085,7 +1085,12 @@ func (t *TableRestore) restoreTable(
 	rc *RestoreController,
 	cp *TableCheckpoint,
 ) (bool, error) {
-	// 1. Load the table info.
+	tableLockUnlocked := false
+	defer func() {
+		if !tableLockUnlocked {
+			rc.tableRestoreLock.Unlock()
+		}
+	}()
 
 	select {
 	case <-ctx.Done():
@@ -1126,6 +1131,8 @@ func (t *TableRestore) restoreTable(
 
 	// 2. Restore engines (if still needed)
 	err := t.restoreEngines(ctx, rc, cp)
+	// should have unlocked the restore table in restoreEngines
+	tableLockUnlocked = true
 	if err != nil {
 		return false, errors.Trace(err)
 	}
