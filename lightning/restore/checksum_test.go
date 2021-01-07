@@ -163,7 +163,6 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 	pdClient := &testPDClient{}
 	resp := tipb.ChecksumResponse{Checksum: 123, TotalKvs: 10, TotalBytes: 1000}
 	kvClient := &mockChecksumKVClient{checksum: resp, respDur: time.Second * 5}
-	checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
 
 	// mock a table info
 	p := parser.New()
@@ -173,16 +172,32 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 999)
 	c.Assert(err, IsNil)
 
-	startTs := oracle.ComposeTS(time.Now().Unix()*1000, 0)
-	ctx := context.WithValue(context.Background(), &checksumManagerKey, checksumExec)
-	_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
-	c.Assert(err, IsNil)
+	for i := 0; i <= maxErrorRetryCount; i++ {
+		kvClient.maxErrCount = i
+		kvClient.curErrCount = 0
+		checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
+		startTs := oracle.ComposeTS(time.Now().Unix()*1000, 0)
+		ctx := context.WithValue(context.Background(), &checksumManagerKey, checksumExec)
+		_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
+		// with max error retry < maxErrorRetryCount, the checksum can success
+		if i >= maxErrorRetryCount {
+			c.Assert(err, ErrorMatches, "tikv timeout")
+			continue
+		} else {
+			c.Assert(err, IsNil)
+		}
 
-	// after checksum, safepint should be small than start ts
-	ts := pdClient.currentSafePoint()
-	// 1ms for the schedule deviation
-	c.Assert(ts <= startTs+1, IsTrue)
-	c.Assert(atomic.LoadUint32(&checksumExec.manager.started) > 0, IsTrue)
+		// after checksum, safepint should be small than start ts
+		ts := pdClient.currentSafePoint()
+		// 1ms for the schedule deviation
+		c.Assert(ts <= startTs+1, IsTrue)
+		c.Assert(atomic.LoadUint32(&checksumExec.manager.started) > 0, IsTrue)
+	}
+
+}
+
+func (s *checksumSuite) TestDoChecksumWithTikvErrRetry(c *C) {
+
 }
 
 func (s *checksumSuite) TestDoChecksumWithErrorAndLongOriginalLifetime(c *C) {
@@ -339,6 +354,17 @@ func (r *mockResponse) Close() error {
 	return nil
 }
 
+type mockErrorResponse struct {
+	err string
+}
+
+func (r *mockErrorResponse) Next(ctx context.Context) (resultSubset kv.ResultSubset, err error) {
+	return nil, errors.New(r.err)
+}
+func (r *mockErrorResponse) Close() error {
+	return nil
+}
+
 type mockResultSubset struct {
 	data []byte
 }
@@ -361,10 +387,17 @@ type mockChecksumKVClient struct {
 	kv.Client
 	checksum tipb.ChecksumResponse
 	respDur  time.Duration
+	// return error count before return success
+	maxErrCount int
+	curErrCount int
 }
 
 // a mock client for checksum request
 func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
+	if c.curErrCount < c.maxErrCount {
+		c.curErrCount++
+		return &mockErrorResponse{err: "tikv timeout"}
+	}
 	data, _ := c.checksum.Marshal()
 	time.Sleep(c.respDur)
 	return &mockResponse{data: data}

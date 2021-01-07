@@ -38,6 +38,14 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
 
+var (
+	extraHandleTableColumn = &table.Column{
+		ColumnInfo:    extraHandleColumnInfo,
+		GeneratedExpr: nil,
+		DefaultExpr:   nil,
+	}
+)
+
 type tidbRow string
 
 type tidbRows []tidbRow
@@ -51,10 +59,13 @@ func (row tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 }
 
 type tidbEncoder struct {
-	mode      mysql.SQLMode
-	tbl       table.Table
-	se        *session
+	mode mysql.SQLMode
+	tbl  table.Table
+	se   *session
+	// the index of table columns for each data field.
+	// index == len(table.columns) means this field is `_tidb_rowid`
 	columnIdx []int
+	columnCnt int
 }
 
 type tidbBackend struct {
@@ -228,17 +239,36 @@ func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, col *
 
 func (*tidbEncoder) Close() {}
 
+func getColumnByIndex(cols []*table.Column, index int) *table.Column {
+	if index == len(cols) {
+		return extraHandleTableColumn
+	}
+	return cols[index]
+}
+
 func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, columnPermutation []int) (Row, error) {
 	cols := enc.tbl.Cols()
 
 	if len(enc.columnIdx) == 0 {
+		columnCount := 0
 		columnIdx := make([]int, len(columnPermutation))
 		for i, idx := range columnPermutation {
 			if idx >= 0 {
 				columnIdx[idx] = i
+				columnCount++
 			}
 		}
 		enc.columnIdx = columnIdx
+		enc.columnCnt = columnCount
+	}
+
+	// TODO: since the column count doesn't exactly reflect the real column names, we only check the upper bound currently.
+	// See: tests/generated_columns/data/gencol.various_types.0.sql this sql has no columns, so encodeLoop will fill the
+	// column permutation with default, thus enc.columnCnt > len(row).
+	if len(row) > enc.columnCnt {
+		logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
+			zap.Array("data", rowArrayMarshaler(row)))
+		return nil, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
 	}
 
 	var encoded strings.Builder
@@ -248,7 +278,7 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 		if i != 0 {
 			encoded.WriteByte(',')
 		}
-		if err := enc.appendSQL(&encoded, &field, cols[enc.columnIdx[i]]); err != nil {
+		if err := enc.appendSQL(&encoded, &field, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
 			logger.Error("tidb encode failed",
 				zap.Array("original", rowArrayMarshaler(row)),
 				zap.Int("originalCol", i),
@@ -316,7 +346,27 @@ func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, _ uint64, r Rows) error {
+func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, _ uint64, rows Rows) error {
+	var err error
+outside:
+	for _, r := range rows.SplitIntoChunks(be.MaxChunkSize()) {
+		for i := 0; i < maxRetryTimes; i++ {
+			err = be.WriteRowsToDB(ctx, tableName, columnNames, r)
+			switch {
+			case err == nil:
+				continue outside
+			case common.IsRetryableError(err):
+				// retry next loop
+			default:
+				return err
+			}
+		}
+		return errors.Annotatef(err, "[%s] write rows reach max retry %d and still failed", tableName, maxRetryTimes)
+	}
+	return nil
+}
+
+func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, r Rows) error {
 	rows := r.(tidbRows)
 	if len(rows) == 0 {
 		return nil
@@ -358,8 +408,8 @@ func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName str
 	// Retry will be done externally, so we're not going to retry here.
 	_, err := be.db.ExecContext(ctx, insertStmt.String())
 	if err != nil {
-		log.L().Error("execute statement failed", zap.String("stmt", insertStmt.String()),
-			zap.Array("rows", rows), zap.Error(err))
+		log.L().Error("execute statement failed", log.ZapRedactString("stmt", insertStmt.String()),
+			log.ZapRedactArray("rows", rows), zap.Error(err))
 	}
 	failpoint.Inject("FailIfImportedSomeRows", func() {
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
@@ -497,4 +547,21 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		return nil
 	})
 	return
+}
+
+func (be *tidbBackend) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+	return &TiDBWriter{be: be, engineUUID: engineUUID}, nil
+}
+
+type TiDBWriter struct {
+	be         *tidbBackend
+	engineUUID uuid.UUID
+}
+
+func (w *TiDBWriter) Close() error {
+	return nil
+}
+
+func (w *TiDBWriter) AppendRows(ctx context.Context, tableName string, columnNames []string, arg1 uint64, rows Rows) error {
+	return w.be.WriteRows(ctx, w.engineUUID, tableName, columnNames, arg1, rows)
 }
