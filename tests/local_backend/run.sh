@@ -94,7 +94,7 @@ for ckpt in mysql file; do
     --backend local \
     --enable-checkpoint=1 \
     --config=tests/$TEST_NAME/$ckpt.toml >$TEST_DIR/lightning_ctl.output 2>&1
-  grep -Fq "These tables are missing intermediate files: []" $TEST_DIR/lightning_ctl.output
+  grep -Fq "No table has lost intermediate files according to given config" $TEST_DIR/lightning_ctl.output
   
   # when position of chunk file doesn't equal to offset, intermediate file should exist
   set +e
@@ -118,6 +118,6 @@ for ckpt in mysql file; do
     --backend local \
     --enable-checkpoint=1 \
     --config=tests/$TEST_NAME/$ckpt.toml >$TEST_DIR/lightning_ctl.output 2>&1
-  grep -Fq "These tables are missing intermediate files: []" $TEST_DIR/lightning_ctl.output
+  grep -Fq "No table has lost intermediate files according to given config" $TEST_DIR/lightning_ctl.output
 done
 rm -r $TEST_DIR/sorted

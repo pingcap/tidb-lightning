@@ -320,7 +320,11 @@ func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error)
 	)
 	defer func() {
 		if err2 == nil {
-			fmt.Fprintln(os.Stderr, "These tables are missing intermediate files:", tables)
+			if len(tables) == 0 {
+				fmt.Fprintln(os.Stderr, "No table has lost intermediate files according to given config")
+			} else {
+				fmt.Fprintln(os.Stderr, "These tables are missing intermediate files:", tables)
+			}
 		}
 	}()
 
@@ -344,7 +348,7 @@ func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tables = make([]string, len(tableWithEngine))
+	tables = make([]string, 0, len(tableWithEngine))
 	for tableName := range tableWithEngine {
 		tables = append(tables, tableName)
 	}
