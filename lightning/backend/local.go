@@ -168,17 +168,13 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 	return sizeProps, nil
 }
 
-func (e *LocalFile) isLocked() bool {
-	return atomic.LoadInt32(&e.isImportingAtomic) != int32(importMutexStateNoLock)
-}
-
-// lockForImport locks the local file for importing.
-func (e *LocalFile) lockForImport(state importMutexState) {
+// lock locks the local file for importing.
+func (e *LocalFile) lock(state importMutexState) {
 	e.mutex.Lock()
 	atomic.StoreInt32(&e.isImportingAtomic, int32(state))
 }
 
-func (e *LocalFile) unlockForImport() {
+func (e *LocalFile) unlock() {
 	atomic.StoreInt32(&e.isImportingAtomic, int32(importMutexStateNoLock))
 	e.mutex.Unlock()
 }
@@ -334,21 +330,21 @@ func NewLocalBackend(
 	return MakeBackend(local), nil
 }
 
-// lockForImport locks the local file for importing.
-func (local *local) lockForImport(engineId uuid.UUID, state importMutexState) bool {
+// lock locks the local file.
+func (local *local) lockEngine(engineId uuid.UUID, state importMutexState) bool {
 	if e, ok := local.engines.Load(engineId); ok {
 		engine := e.(*LocalFile)
-		engine.lockForImport(state)
+		engine.lock(state)
 		return true
 	}
 	return false
 }
 
-// unlockForImport unlocks the local file from importing.
-func (local *local) unlockForImport(engineId uuid.UUID) bool {
+// unlock unlocks the local file from importing.
+func (local *local) unlockEngine(engineId uuid.UUID) bool {
 	if e, ok := local.engines.Load(engineId); ok {
 		engine := e.(*LocalFile)
-		engine.unlockForImport()
+		engine.unlock()
 		return true
 	}
 	return false
@@ -1227,8 +1223,8 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 		return nil
 	}
 	localEngine := engineFile.(*LocalFile)
-	localEngine.lockForImport(importMutexStateClose)
-	defer localEngine.unlockForImport()
+	localEngine.lock(importMutexStateClose)
+	defer localEngine.unlock()
 	if err := localEngine.Close(); err != nil {
 		return err
 	}
@@ -1692,7 +1688,7 @@ func (w *LocalWriter) writeRowsLoop() {
 		totalSize += batchSize
 		log.L().Info("write data by sort index", zap.Int64("bytes", totalSize))
 	}
-	w.local.lockForImport(importMutexStateNoLock)
+	w.local.lock(importMutexStateNoLock)
 	if writer != nil {
 		err := writer.Close()
 		if err == nil {
@@ -1708,7 +1704,7 @@ func (w *LocalWriter) writeRowsLoop() {
 		atomic.AddInt64(&w.local.TotalSize, totalSize)
 		atomic.AddInt64(&w.local.Length, totalCount)
 	}
-	w.local.unlockForImport()
+	w.local.unlock()
 }
 
 func (w *LocalWriter) flushKVs() error {
@@ -1728,9 +1724,9 @@ func (w *LocalWriter) flushKVs() error {
 		return err
 	}
 	w.writeBatch = w.writeBatch[:0]
-	w.local.lockForImport(importMutexStateNoLock)
+	w.local.lock(importMutexStateNoLock)
 	err = w.local.db.Ingest([]string{filePath})
-	w.local.unlockForImport()
+	w.local.unlock()
 	return err
 }
 
