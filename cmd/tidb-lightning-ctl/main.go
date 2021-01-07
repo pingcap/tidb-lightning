@@ -314,7 +314,16 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	return nil
 }
 
-func getLocalStoringTables(ctx context.Context, cfg *config.Config) error {
+func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error) {
+	var (
+		tables []string
+	)
+	defer func() {
+		if err2 == nil {
+			fmt.Fprintln(os.Stderr, "These tables are missing intermediate files:", tables)
+		}
+	}()
+
 	if cfg.TikvImporter.Backend != config.BackendLocal {
 		return nil
 	}
@@ -335,12 +344,11 @@ func getLocalStoringTables(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tables := make([]string, len(tableWithEngine))
+	tables = make([]string, len(tableWithEngine))
 	for tableName := range tableWithEngine {
 		tables = append(tables, tableName)
 	}
 
-	fmt.Fprintln(os.Stderr, "These tables are missing intermediate files:", tables)
 	return nil
 }
 
