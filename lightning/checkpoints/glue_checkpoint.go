@@ -53,6 +53,8 @@ type GlueCheckpointsDB struct {
 	schema         string
 }
 
+var _ CheckpointsDB = (*GlueCheckpointsDB)(nil)
+
 func NewGlueCheckpointsDB(ctx context.Context, se Session, f func() (Session, error), schemaName string) (*GlueCheckpointsDB, error) {
 	var escapedSchemaName strings.Builder
 	common.WriteMySQLIdentifier(&escapedSchemaName, schemaName)
@@ -220,9 +222,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 	}
 	defer se.Close()
 
-	var tableNameBuilder strings.Builder
-	common.EscapeMySQLSingleQuote(&tableNameBuilder, tableName)
-	tableName = tableNameBuilder.String()
+	tableName = common.InterpolateMySQLString(tableName)
 	err = Transact(ctx, "read checkpoint", se, logger, func(c context.Context, s Session) error {
 		// 1. Populate the engines.
 		sql := fmt.Sprintf(ReadEngineTemplate, g.schema, CheckpointTableNameEngine)
@@ -510,9 +510,7 @@ func (g GlueCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName strin
 			return err
 		})
 	}
-	var tableNameBuilder strings.Builder
-	common.EscapeMySQLSingleQuote(&tableNameBuilder, tableName)
-	tableName = tableNameBuilder.String()
+	tableName = common.InterpolateMySQLString(tableName)
 	deleteChunkQuery := fmt.Sprintf(DeleteCheckpointRecordTemplate, g.schema, CheckpointTableNameChunk)
 	deleteChunkQuery = strings.ReplaceAll(deleteChunkQuery, "?", tableName)
 	deleteEngineQuery := fmt.Sprintf(DeleteCheckpointRecordTemplate, g.schema, CheckpointTableNameEngine)
@@ -564,6 +562,56 @@ func (g GlueCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) er
 	return nil
 }
 
+func (g GlueCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[string][]int32, error) {
+	se, err := g.getSessionFunc()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer se.Close()
+
+	var targetTables map[string][]int32
+
+	// lightning didn't check CheckpointStatusMaxInvalid before this function is called, so we skip invalid ones
+	// engines should exist if
+	// 1. table status is earlier than CheckpointStatusIndexImported, and
+	// 2. engine status is earlier than CheckpointStatusImported, and
+	// 3. chunk has been read
+	query := fmt.Sprintf(`
+		SELECT DISTINCT t.table_name, c.engine_id 
+		FROM %s.%s t, %s.%s c, %s.%s e 
+		WHERE t.table_name = c.table_name AND t.table_name = e.table_name AND c.engine_id = e.engine_id 
+			AND %d < t.status AND t.status < %d 
+			AND %d < e.status AND e.status < %d
+			AND c.pos > c.offset;`,
+		g.schema, CheckpointTableNameTable, g.schema, CheckpointTableNameChunk, g.schema, CheckpointTableNameEngine,
+		CheckpointStatusMaxInvalid, CheckpointStatusIndexImported,
+		CheckpointStatusMaxInvalid, CheckpointStatusImported)
+
+	err = common.Retry("get local storing tables", log.L(), func() error {
+		targetTables = make(map[string][]int32)
+		rs, err := se.Execute(ctx, query)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rows, err := drainFirstRecordSet(ctx, rs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for _, row := range rows {
+			tableName := row.GetString(0)
+			engineID := int32(row.GetInt64(1))
+			targetTables[tableName] = append(targetTables[tableName], engineID)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return targetTables, err
+}
+
 func (g GlueCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
 	logger := log.With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
@@ -581,9 +629,7 @@ func (g GlueCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName 
 		colName = "table_name"
 	}
 
-	var tableNameBuilder strings.Builder
-	common.EscapeMySQLSingleQuote(&tableNameBuilder, tableName)
-	tableName = tableNameBuilder.String()
+	tableName = common.InterpolateMySQLString(tableName)
 
 	engineQuery := fmt.Sprintf(`
 		UPDATE %s.%s SET status = %d WHERE %s = %s AND status <= %d;
@@ -622,9 +668,7 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 		aliasedColName = "t.table_name"
 	}
 
-	var tableNameBuilder strings.Builder
-	common.EscapeMySQLSingleQuote(&tableNameBuilder, tableName)
-	tableName = tableNameBuilder.String()
+	tableName = common.InterpolateMySQLString(tableName)
 
 	selectQuery := fmt.Sprintf(`
 		SELECT
@@ -725,4 +769,26 @@ func Transact(ctx context.Context, purpose string, s Session, logger log.Logger,
 		}
 		return nil
 	})
+}
+
+// TODO: will use drainFirstRecordSet to reduce repeat in GlueCheckpointsDB later
+func drainFirstRecordSet(ctx context.Context, rss []sqlexec.RecordSet) ([]chunk.Row, error) {
+	if len(rss) != 1 {
+		return nil, errors.New("given result set doesn't have length 1")
+	}
+	rs := rss[0]
+	var rows []chunk.Row
+	req := rs.NewChunk()
+	for {
+		err := rs.Next(ctx, req)
+		if err != nil || req.NumRows() == 0 {
+			rs.Close()
+			return rows, err
+		}
+		iter := chunk.NewIterator4Chunk(req)
+		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+			rows = append(rows, r)
+		}
+		req = chunk.Renew(req, 1024)
+	}
 }
