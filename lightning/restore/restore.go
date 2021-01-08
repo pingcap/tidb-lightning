@@ -224,6 +224,10 @@ func NewRestoreControllerWithPauser(
 		if err != nil {
 			return nil, errors.Annotate(err, "build local backend failed")
 		}
+		err = verifyLocalFile(ctx, cpdb, cfg.TikvImporter.SortedKVDir)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, errors.New("unknown backend: " + cfg.TikvImporter.Backend)
 	}
@@ -640,6 +644,28 @@ func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
 		}
 	}
 
+	return nil
+}
+
+// for local backend, we should check if local SST exists in disk, otherwise we'll lost data
+func verifyLocalFile(ctx context.Context, cpdb CheckpointsDB, dir string) error {
+	targetTables, err := cpdb.GetLocalStoringTables(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for tableName, engineIDs := range targetTables {
+		for _, engineID := range engineIDs {
+			_, eID := kv.MakeUUID(tableName, engineID)
+			file := kv.LocalFile{Uuid: eID}
+			err := file.Exist(dir)
+			if err != nil {
+				log.L().Error("can't find local file",
+					zap.String("table name", tableName),
+					zap.Int32("engine ID", engineID))
+				return errors.Trace(err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -1242,11 +1268,10 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 			if !rc.isLocalBackend() {
 				rc.postProcessLock.Lock()
 			}
-			err = t.importKV(ctx, closedIndexEngine)
+			err = t.importKV(ctx, closedIndexEngine, rc, indexEngineID)
 			if !rc.isLocalBackend() {
 				rc.postProcessLock.Unlock()
 			}
-			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
 		}
 
 		failpoint.Inject("FailBeforeIndexEngineImported", func() {
@@ -1421,11 +1446,10 @@ func (t *TableRestore) importEngine(
 	if !rc.isLocalBackend() {
 		rc.postProcessLock.Lock()
 	}
-	err := t.importKV(ctx, closedEngine)
+	err := t.importKV(ctx, closedEngine, rc, engineID)
 	if !rc.isLocalBackend() {
 		rc.postProcessLock.Unlock()
 	}
-	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1928,10 +1952,16 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 	return names
 }
 
-func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
+func (tr *TableRestore) importKV(
+	ctx context.Context,
+	closedEngine *kv.ClosedEngine,
+	rc *RestoreController,
+	engineID int32,
+) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 
 	err := closedEngine.Import(ctx)
+	rc.saveStatusCheckpoint(tr.tableName, engineID, err, CheckpointStatusImported)
 	if err == nil {
 		closedEngine.Cleanup(ctx)
 	}
@@ -2082,8 +2112,15 @@ func (cr *chunkRestore) deliverLoop(
 			panic("forcing failure due to FailAfterWriteRows")
 		})
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after writen
-		//10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
+		// 10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
 		// can safely update current checkpoint.
+
+		failpoint.Inject("LocalBackendSaveCheckpoint", func() {
+			if !rc.isLocalBackend() && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
+				// No need to save checkpoint if nothing was delivered.
+				saveCheckpoint(rc, t, engineID, cr.chunk)
+			}
+		})
 	}
 
 	return

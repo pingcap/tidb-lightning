@@ -141,6 +141,15 @@ func (e *LocalFile) Cleanup(dataDir string) error {
 	return os.RemoveAll(dbPath)
 }
 
+// Exist checks if db folder existing (meta sometimes won't flush before lightning exit)
+func (e *LocalFile) Exist(dataDir string) error {
+	dbPath := filepath.Join(dataDir, e.Uuid.String())
+	if _, err := os.Stat(dbPath); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 	sstables, err := e.db.SSTables(pebble.WithProperties())
 	if err != nil {
