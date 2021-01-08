@@ -518,8 +518,8 @@ func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error
 			return false, errors.Trace(err)
 		}
 		defer db.Close()
-		checkSQL := fmt.Sprintf("SHOW DATABASES LIKE %s", common.InterpolateMySQLString(cfg.Checkpoint.Schema))
-		rows, err := db.QueryContext(ctx, checkSQL)
+		checkSQL := "SHOW DATABASES WHERE `DATABASE` = ?"
+		rows, err := db.QueryContext(ctx, checkSQL, cfg.Checkpoint.Schema)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
