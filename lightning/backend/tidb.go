@@ -38,6 +38,14 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/verification"
 )
 
+var (
+	extraHandleTableColumn = &table.Column{
+		ColumnInfo:    extraHandleColumnInfo,
+		GeneratedExpr: nil,
+		DefaultExpr:   nil,
+	}
+)
+
 type tidbRow string
 
 type tidbRows []tidbRow
@@ -51,10 +59,13 @@ func (row tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 }
 
 type tidbEncoder struct {
-	mode      mysql.SQLMode
-	tbl       table.Table
-	se        *session
+	mode mysql.SQLMode
+	tbl  table.Table
+	se   *session
+	// the index of table columns for each data field.
+	// index == len(table.columns) means this field is `_tidb_rowid`
 	columnIdx []int
+	columnCnt int
 }
 
 type tidbBackend struct {
@@ -228,17 +239,36 @@ func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, col *
 
 func (*tidbEncoder) Close() {}
 
+func getColumnByIndex(cols []*table.Column, index int) *table.Column {
+	if index == len(cols) {
+		return extraHandleTableColumn
+	}
+	return cols[index]
+}
+
 func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, columnPermutation []int) (Row, error) {
 	cols := enc.tbl.Cols()
 
 	if len(enc.columnIdx) == 0 {
+		columnCount := 0
 		columnIdx := make([]int, len(columnPermutation))
 		for i, idx := range columnPermutation {
 			if idx >= 0 {
 				columnIdx[idx] = i
+				columnCount++
 			}
 		}
 		enc.columnIdx = columnIdx
+		enc.columnCnt = columnCount
+	}
+
+	// TODO: since the column count doesn't exactly reflect the real column names, we only check the upper bound currently.
+	// See: tests/generated_columns/data/gencol.various_types.0.sql this sql has no columns, so encodeLoop will fill the
+	// column permutation with default, thus enc.columnCnt > len(row).
+	if len(row) > enc.columnCnt {
+		logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
+			zap.Array("data", rowArrayMarshaler(row)))
+		return nil, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
 	}
 
 	var encoded strings.Builder
@@ -248,7 +278,7 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 		if i != 0 {
 			encoded.WriteByte(',')
 		}
-		if err := enc.appendSQL(&encoded, &field, cols[enc.columnIdx[i]]); err != nil {
+		if err := enc.appendSQL(&encoded, &field, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
 			logger.Error("tidb encode failed",
 				zap.Array("original", rowArrayMarshaler(row)),
 				zap.Int("originalCol", i),

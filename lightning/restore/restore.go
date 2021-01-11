@@ -26,12 +26,13 @@ import (
 
 	"github.com/pingcap/br/pkg/pdutil"
 	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/glue"
-	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -74,8 +75,6 @@ const (
 var DeliverPauser = common.NewPauser()
 
 func init() {
-	cfg := tidbcfg.GetGlobalConfig()
-	cfg.Log.SlowThreshold = 3000
 	// used in integration tests
 	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
 		minDeliverBytes = uint64(v.(int))
@@ -143,6 +142,7 @@ type RestoreController struct {
 	indexWorkers   *worker.Pool
 	regionWorkers  *worker.Pool
 	ioWorkers      *worker.Pool
+	checksumWorks  *worker.Pool
 	pauser         *common.Pauser
 	backend        kv.Backend
 	tidbGlue       glue.Glue
@@ -244,6 +244,7 @@ func NewRestoreControllerWithPauser(
 		indexWorkers:  worker.NewPool(ctx, cfg.App.IndexConcurrency, "index"),
 		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
+		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        pauser,
 		backend:       backend,
 		tidbGlue:      g,
@@ -313,48 +314,257 @@ outside:
 	return errors.Trace(err)
 }
 
-func (rc *RestoreController) restoreSchema(ctx context.Context) error {
-	if !rc.cfg.Mydumper.NoSchema {
-		if rc.tidbGlue.OwnsSQLExecutor() {
-			db, err := DBFromConfig(rc.cfg.TiDB)
-			if err != nil {
-				return errors.Annotate(err, "connect to tidb failed")
-			}
-			defer db.Close()
-			db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
+type schemaStmtType int
+
+func (stmtType schemaStmtType) String() string {
+	switch stmtType {
+	case schemaCreateDatabase:
+		return "restore database schema"
+	case schemaCreateTable:
+		return "restore table schema"
+	case schemaCreateView:
+		return "restore view schema"
+	}
+	return "unknown statement of schema"
+}
+
+const (
+	schemaCreateDatabase schemaStmtType = iota
+	schemaCreateTable
+	schemaCreateView
+)
+
+type schemaJob struct {
+	dbName   string
+	tblName  string // empty for create db jobs
+	stmtType schemaStmtType
+	stmts    []*schemaStmt
+}
+
+type schemaStmt struct {
+	sql string
+}
+
+type restoreSchemaWorker struct {
+	ctx   context.Context
+	quit  context.CancelFunc
+	jobCh chan *schemaJob
+	errCh chan error
+	wg    sync.WaitGroup
+	glue  glue.Glue
+	store storage.ExternalStorage
+}
+
+func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) error {
+	defer func() {
+		close(worker.jobCh)
+		worker.quit()
+	}()
+	var err error
+	// 1. restore databases, execute statements concurrency
+	for _, dbMeta := range dbMetas {
+		restoreSchemaJob := &schemaJob{
+			dbName:   dbMeta.Name,
+			stmtType: schemaCreateDatabase,
+			stmts:    make([]*schemaStmt, 0, 1),
 		}
-
-		for _, dbMeta := range rc.dbMetas {
-			task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
-
-			tablesSchema := make(map[string]string)
-			for _, tblMeta := range dbMeta.Tables {
-				tablesSchema[tblMeta.Name] = tblMeta.GetSchema(ctx, rc.store)
-			}
-			err := InitSchema(ctx, rc.tidbGlue, dbMeta.Name, tablesSchema)
-
-			task.End(zap.ErrorLevel, err)
-			if err != nil {
-				return errors.Annotatef(err, "restore table schema %s failed", dbMeta.Name)
-			}
+		restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+			sql: createDatabaseIfNotExistStmt(dbMeta.Name),
+		})
+		err = worker.appendJob(restoreSchemaJob)
+		if err != nil {
+			return err
 		}
-
-		// restore views. Since views can cross database we must restore views after all table schemas are restored.
-		for _, dbMeta := range rc.dbMetas {
-			if len(dbMeta.Views) > 0 {
-				task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore view schema")
-				viewsSchema := make(map[string]string)
-				for _, viewMeta := range dbMeta.Views {
-					viewsSchema[viewMeta.Name] = viewMeta.GetSchema(ctx, rc.store)
+	}
+	err = worker.wait()
+	if err != nil {
+		return err
+	}
+	// 2. restore tables, execute statements concurrency
+	for _, dbMeta := range dbMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			sql := tblMeta.GetSchema(worker.ctx, worker.store)
+			if sql != "" {
+				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, tblMeta.Name)
+				if err != nil {
+					return err
 				}
-				err := InitSchema(ctx, rc.tidbGlue, dbMeta.Name, viewsSchema)
+				restoreSchemaJob := &schemaJob{
+					dbName:   dbMeta.Name,
+					tblName:  tblMeta.Name,
+					stmtType: schemaCreateTable,
+					stmts:    make([]*schemaStmt, 0, len(stmts)),
+				}
+				for _, sql := range stmts {
+					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+						sql: sql,
+					})
+				}
+				err = worker.appendJob(restoreSchemaJob)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	err = worker.wait()
+	if err != nil {
+		return err
+	}
+	// 3. restore views. Since views can cross database we must restore views after all table schemas are restored.
+	for _, dbMeta := range dbMetas {
+		for _, viewMeta := range dbMeta.Views {
+			sql := viewMeta.GetSchema(worker.ctx, worker.store)
+			if sql != "" {
+				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, viewMeta.Name)
+				if err != nil {
+					return err
+				}
+				restoreSchemaJob := &schemaJob{
+					dbName:   dbMeta.Name,
+					tblName:  viewMeta.Name,
+					stmtType: schemaCreateView,
+					stmts:    make([]*schemaStmt, 0, len(stmts)),
+				}
+				for _, sql := range stmts {
+					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+						sql: sql,
+					})
+				}
+				err = worker.appendJob(restoreSchemaJob)
+				if err != nil {
+					return err
+				}
+				// we don't support restore views concurrency, cauz it maybe will raise a error
+				err = worker.wait()
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
 
+func (worker *restoreSchemaWorker) doJob() {
+	var session checkpoints.Session
+	defer func() {
+		if session != nil {
+			session.Close()
+		}
+	}()
+loop:
+	for {
+		select {
+		case <-worker.ctx.Done():
+			// don't `return` or throw `worker.ctx.Err()`here,
+			// if we `return`, we can't mark cancelled jobs as done,
+			// if we `throw(worker.ctx.Err())`, it will be blocked to death
+			break loop
+		case job := <-worker.jobCh:
+			if job == nil {
+				// successful exit
+				return
+			}
+			var err error
+			if session == nil {
+				session, err = worker.glue.GetSession(worker.ctx)
+				if err != nil {
+					worker.wg.Done()
+					worker.throw(err)
+					// don't return
+					break loop
+				}
+			}
+			logger := log.With(zap.String("db", job.dbName), zap.String("table", job.tblName))
+			for _, stmt := range job.stmts {
+				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
+				_, err = session.Execute(worker.ctx, stmt.sql)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
-					return errors.Annotatef(err, "restore view schema %s failed", dbMeta.Name)
+					err = errors.Annotatef(err, "%s %s failed", job.stmtType.String(), common.UniqueTable(job.dbName, job.tblName))
+					worker.wg.Done()
+					worker.throw(err)
+					// don't return
+					break loop
 				}
 			}
+			worker.wg.Done()
+		}
+	}
+	// mark the cancelled job as `Done`, a little tricky,
+	// cauz we need make sure `worker.wg.Wait()` wouldn't blocked forever
+	for range worker.jobCh {
+		worker.wg.Done()
+	}
+}
 
+func (worker *restoreSchemaWorker) wait() error {
+	// avoid to `worker.wg.Wait()` blocked forever when all `doJob`'s goroutine exited.
+	// don't worry about goroutine below, it never become a zombie,
+	// cauz we have mechanism to clean cancelled jobs in `worker.jobCh`.
+	// means whole jobs has been send to `worker.jobCh` would be done.
+	waitCh := make(chan struct{})
+	go func() {
+		worker.wg.Wait()
+		close(waitCh)
+	}()
+	select {
+	case err := <-worker.errCh:
+		return err
+	case <-worker.ctx.Done():
+		return worker.ctx.Err()
+	case <-waitCh:
+		return nil
+	}
+}
+
+func (worker *restoreSchemaWorker) throw(err error) {
+	select {
+	case <-worker.ctx.Done():
+		// don't throw `worker.ctx.Err()` again, it will be blocked to death.
+		return
+	case worker.errCh <- err:
+		worker.quit()
+	}
+}
+
+func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
+	worker.wg.Add(1)
+	select {
+	case err := <-worker.errCh:
+		// cancel the job
+		worker.wg.Done()
+		return err
+	case <-worker.ctx.Done():
+		// cancel the job
+		worker.wg.Done()
+		return worker.ctx.Err()
+	case worker.jobCh <- job:
+		return nil
+	}
+}
+
+func (rc *RestoreController) restoreSchema(ctx context.Context) error {
+	if !rc.cfg.Mydumper.NoSchema {
+		logTask := log.L().Begin(zap.InfoLevel, "restore all schema")
+		concurrency := utils.MinInt(rc.cfg.App.RegionConcurrency, 8)
+		childCtx, cancel := context.WithCancel(ctx)
+		worker := restoreSchemaWorker{
+			ctx:   childCtx,
+			quit:  cancel,
+			jobCh: make(chan *schemaJob, concurrency),
+			errCh: make(chan error),
+			glue:  rc.tidbGlue,
+			store: rc.store,
+		}
+		for i := 0; i < concurrency; i++ {
+			go worker.doJob()
+		}
+		err := worker.makeJobs(rc.dbMetas)
+		logTask.End(zap.ErrorLevel, err)
+		if err != nil {
+			return err
 		}
 	}
 	getTableFunc := rc.backend.FetchRemoteTableModels
@@ -879,7 +1089,7 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		go func() {
 			for task := range postProcessTaskChan {
 				// force all the remain post-process tasks to be executed
-				_, err := task.tr.postProcess(ctx, rc, task.cp, true)
+				_, err := task.tr.postProcess(ctx2, rc, task.cp, true)
 				restoreErr.Set(err)
 			}
 			wg.Done()
@@ -1249,9 +1459,14 @@ func (t *TableRestore) importEngine(
 
 // postProcess execute rebase-auto-id/checksum/analyze according to the task config.
 //
-// if the parameter forceAnalyze to true, postProcess force run analyze even if the analyze-at-last config is true.
-// And if analyze phase is skipped, the first return value will be true.
-func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint, forceAnalyze bool) (bool, error) {
+// if the parameter forcePostProcess to true, postProcess force run checksum and analyze even if the
+// post-process-at-last config is true. And if this two phases are skipped, the first return value will be true.
+func (t *TableRestore) postProcess(
+	ctx context.Context,
+	rc *RestoreController,
+	cp *TableCheckpoint,
+	forcePostProcess bool,
+) (bool, error) {
 	// there are no data in this table, no need to do post process
 	// this is important for tables that are just the dump table of views
 	// because at this stage, the table was already deleted and replaced by the related view
@@ -1285,44 +1500,54 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		return false, nil
 	}
 
-	// 4. do table checksum
-	var localChecksum verify.KVChecksum
-	for _, engine := range cp.Engines {
-		for _, chunk := range engine.Chunks {
-			localChecksum.Add(&chunk.Checksum)
-		}
-	}
+	w := rc.checksumWorks.Apply()
+	defer rc.checksumWorks.Recycle(w)
 
-	t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+	finished := true
 	if cp.Status < CheckpointStatusChecksummed {
 		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 			t.logger.Info("skip checksum")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
-			err := t.compareChecksum(ctx, localChecksum)
-			// witch post restore level 'optional', we will skip checksum error
-			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-				if err != nil {
-					t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-					err = nil
+			if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
+				// 4. do table checksum
+				var localChecksum verify.KVChecksum
+				for _, engine := range cp.Engines {
+					for _, chunk := range engine.Chunks {
+						localChecksum.Add(&chunk.Checksum)
+					}
 				}
+				t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+				err := t.compareChecksum(ctx, localChecksum)
+				// with post restore level 'optional', we will skip checksum error
+				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+					if err != nil {
+						t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+						err = nil
+					}
+				}
+				rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				cp.Status = CheckpointStatusChecksummed
+			} else {
+				finished = false
 			}
-			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
+
 		}
-		cp.Status = CheckpointStatusChecksummed
+	}
+	if !finished {
+		return !finished, nil
 	}
 
 	// 5. do table analyze
-	finished := true
 	if cp.Status < CheckpointStatusAnalyzed {
 		if rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
 			cp.Status = CheckpointStatusAnalyzed
-		} else if forceAnalyze || !rc.cfg.PostRestore.AnalyzeAtLast {
+		} else if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
 			err := t.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
@@ -1790,7 +2015,12 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 	for _, idx := range colIndexes {
 		// skip columns with index -1
 		if idx >= 0 {
-			names = append(names, tableInfo.Columns[idx].Name.O)
+			// original fiels contains _tidb_rowid field
+			if idx == len(tableInfo.Columns) {
+				names = append(names, model.ExtraHandleName.O)
+			} else {
+				names = append(names, tableInfo.Columns[idx].Name.O)
+			}
 		}
 	}
 	return names

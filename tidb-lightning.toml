@@ -224,9 +224,10 @@ log-level = "error"
 # set tidb session variables to speed up checksum/analyze table.
 # see https://pingcap.com/docs/sql/statistics/#control-analyze-concurrency for the meaning of each setting
 build-stats-concurrency = 20
-distsql-scan-concurrency = 100
+distsql-scan-concurrency = 15
 index-serial-scan-concurrency = 20
-checksum-table-concurrency = 16
+# checksum-table-concurrency controls the maximum checksum table tasks to run concurrently.
+checksum-table-concurrency = 2
 
 # specifies certificates and keys for TLS-enabled MySQL connections.
 # defaults to a copy of the [security] section.
@@ -258,8 +259,8 @@ level-1-compact = false
 # if set true, compact will do full compaction to tikv data.
 # if this setting is missing, the default value is false.
 compact = false
-# if set to true, lightning will analyze all table together at last
-analyze-at-last = false
+# if set to true, lightning will run checksum and analyze for all tables together at last
+post-process-at-last = true
 
 # cron performs some periodic actions in background
 [cron]
