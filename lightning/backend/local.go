@@ -1192,7 +1192,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 		// the table when table is created.
-		needSplit := len(ranges) > 0 || lf.TotalSize > local.regionSplitSize || lf.Length > regionMaxKeyCount
+		needSplit := len(ranges) > 1 || lf.TotalSize > local.regionSplitSize || lf.Length > regionMaxKeyCount
 
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
