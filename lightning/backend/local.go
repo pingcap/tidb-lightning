@@ -1190,10 +1190,14 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		log.L().Info("start import engine", zap.Stringer("uuid", engineUUID),
 			zap.Int("ranges", len(ranges)))
 
+		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
+		// the table when table is created.
+		needSplit := len(ranges) > 1 || lf.TotalSize > local.regionSplitSize || lf.Length > regionMaxKeyCount
+
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
-			if err == nil || errors.Cause(err) == context.Canceled {
+			err = local.SplitAndScatterRegionByRanges(ctx, ranges, needSplit)
+			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
 
@@ -1220,7 +1224,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		ranges = unfinishedRanges
 	}
 
-	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID))
+	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID),
+		zap.Int64("size", lf.TotalSize), zap.Int64("kvs", lf.Length))
 	return nil
 }
 

@@ -363,7 +363,7 @@ func (s *localSuite) doTestBatchSplitRegionByRanges(c *C, hook clientHook, errPa
 		start = end
 	}
 
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges)
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	if len(errPat) == 0 {
 		c.Assert(err, IsNil)
 	} else {
@@ -504,7 +504,7 @@ func (s *localSuite) doTestBatchSplitByRangesWithClusteredIndex(c *C, hook clien
 		start = e
 	}
 
-	err := local.SplitAndScatterRegionByRanges(ctx, ranges)
+	err := local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	c.Assert(err, IsNil)
 
 	startKey := codec.EncodeBytes([]byte{}, rangeKeys[0])
