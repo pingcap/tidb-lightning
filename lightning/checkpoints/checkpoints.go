@@ -26,14 +26,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb-lightning/lightning/config"
-
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
+	"github.com/pingcap/tidb-lightning/lightning/config"
 	"github.com/pingcap/tidb-lightning/lightning/log"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
@@ -472,6 +471,9 @@ type CheckpointsDB interface {
 	// MoveCheckpoints renames the checkpoint schema to include a suffix
 	// including the taskID (e.g. `tidb_lightning_checkpoints.1234567890.bak`).
 	MoveCheckpoints(ctx context.Context, taskID int64) error
+	// GetLocalStoringTables returns a map containing tables have engine files stored on local disk.
+	// currently only meaningful for local backend
+	GetLocalStoringTables(ctx context.Context) (map[string][]int32, error)
 	IgnoreErrorCheckpoint(ctx context.Context, tableName string) error
 	DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error)
 	DumpTables(ctx context.Context, csv io.Writer) error
@@ -502,6 +504,39 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (CheckpointsDB, 
 
 	default:
 		return nil, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
+	}
+}
+
+func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error) {
+	if !cfg.Checkpoint.Enable {
+		return false, nil
+	}
+	switch cfg.Checkpoint.Driver {
+	case config.CheckpointDriverMySQL:
+		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		defer db.Close()
+		checkSQL := "SHOW DATABASES WHERE `DATABASE` = ?"
+		rows, err := db.QueryContext(ctx, checkSQL, cfg.Checkpoint.Schema)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		defer rows.Close()
+		return rows.Next(), nil
+
+	case config.CheckpointDriverFile:
+		_, err := os.Stat(cfg.Checkpoint.DSN)
+		if err == nil {
+			return true, err
+		} else if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, errors.Trace(err)
+
+	default:
+		return false, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
 	}
 }
 
@@ -1130,6 +1165,9 @@ func (*NullCheckpointsDB) RemoveCheckpoint(context.Context, string) error {
 func (*NullCheckpointsDB) MoveCheckpoints(context.Context, int64) error {
 	return errors.Trace(cannotManageNullDB)
 }
+func (*NullCheckpointsDB) GetLocalStoringTables(context.Context) (map[string][]int32, error) {
+	return nil, nil
+}
 func (*NullCheckpointsDB) IgnoreErrorCheckpoint(context.Context, string) error {
 	return errors.Trace(cannotManageNullDB)
 }
@@ -1197,6 +1235,54 @@ func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int6
 	}
 
 	return nil
+}
+
+func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[string][]int32, error) {
+	var targetTables map[string][]int32
+
+	// lightning didn't check CheckpointStatusMaxInvalid before this function is called, so we skip invalid ones
+	// engines should exist if
+	// 1. table status is earlier than CheckpointStatusIndexImported, and
+	// 2. engine status is earlier than CheckpointStatusImported, and
+	// 3. chunk has been read
+	query := fmt.Sprintf(`
+		SELECT DISTINCT t.table_name, c.engine_id 
+		FROM %s.%s t, %s.%s c, %s.%s e 
+		WHERE t.table_name = c.table_name AND t.table_name = e.table_name AND c.engine_id = e.engine_id 
+			AND %d < t.status AND t.status < %d 
+			AND %d < e.status AND e.status < %d
+			AND c.pos > c.offset;`,
+		cpdb.schema, CheckpointTableNameTable, cpdb.schema, CheckpointTableNameChunk, cpdb.schema, CheckpointTableNameEngine,
+		CheckpointStatusMaxInvalid, CheckpointStatusIndexImported,
+		CheckpointStatusMaxInvalid, CheckpointStatusImported)
+
+	err := common.Retry("get local storing tables", log.L(), func() error {
+		targetTables = make(map[string][]int32)
+		rows, err := cpdb.db.QueryContext(ctx, query)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				tableName string
+				engineID  int32
+			)
+			if err := rows.Scan(&tableName, &engineID); err != nil {
+				return errors.Trace(err)
+			}
+			targetTables[tableName] = append(targetTables[tableName], engineID)
+		}
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return targetTables, err
 }
 
 func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
@@ -1396,6 +1482,36 @@ func (cpdb *FileCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64
 
 	newPath := fmt.Sprintf("%s.%d.bak", cpdb.path, taskID)
 	return errors.Trace(os.Rename(cpdb.path, newPath))
+}
+
+func (cpdb *FileCheckpointsDB) GetLocalStoringTables(_ context.Context) (map[string][]int32, error) {
+	cpdb.lock.Lock()
+	defer cpdb.lock.Unlock()
+
+	targetTables := make(map[string][]int32)
+
+	for tableName, tableModel := range cpdb.checkpoints.Checkpoints {
+		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) ||
+			tableModel.Status >= uint32(CheckpointStatusIndexImported) {
+			continue
+		}
+		for engineID, engineModel := range tableModel.Engines {
+			if engineModel.Status <= uint32(CheckpointStatusMaxInvalid) ||
+				engineModel.Status >= uint32(CheckpointStatusImported) {
+				continue
+			}
+
+			for _, chunkModel := range engineModel.Chunks {
+				if chunkModel.Pos > chunkModel.Offset {
+					targetTables[tableName] = append(targetTables[tableName], engineID)
+					break
+				}
+			}
+
+		}
+	}
+
+	return targetTables, nil
 }
 
 func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTableName string) error {

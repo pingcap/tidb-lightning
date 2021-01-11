@@ -45,6 +45,7 @@ func run() error {
 		compact, flagFetchMode                      *bool
 		mode, flagImportEngine, flagCleanupEngine   *string
 		cpRemove, cpErrIgnore, cpErrDestroy, cpDump *string
+		localStoringTables                          *bool
 
 		fsUsage func()
 	)
@@ -68,6 +69,8 @@ func run() error {
 		cpErrIgnore = fs.String("checkpoint-error-ignore", "", "ignore errors encoutered previously on the given table (value can be 'all' or '`db`.`table`'); may corrupt this table if used incorrectly")
 		cpErrDestroy = fs.String("checkpoint-error-destroy", "", "deletes imported data with table which has an error before (value can be 'all' or '`db`.`table`')")
 		cpDump = fs.String("checkpoint-dump", "", "dump the checkpoint information as two CSV files in the given folder")
+
+		localStoringTables = fs.Bool("check-local-storage", false, "show tables that are missing local intermediate files (value can be 'all' or '`db`.`table`')")
 
 		fsUsage = fs.Usage
 	}))
@@ -117,6 +120,9 @@ func run() error {
 	}
 	if len(*cpDump) != 0 {
 		return errors.Trace(checkpointDump(ctx, cfg, *cpDump))
+	}
+	if *localStoringTables {
+		return errors.Trace(getLocalStoringTables(ctx, cfg))
 	}
 
 	fsUsage()
@@ -305,6 +311,48 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	if err := cpdb.DumpChunks(ctx, chunksFile); err != nil {
 		return errors.Trace(err)
 	}
+	return nil
+}
+
+func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error) {
+	var (
+		tables []string
+	)
+	defer func() {
+		if err2 == nil {
+			if len(tables) == 0 {
+				fmt.Fprintln(os.Stderr, "No table has lost intermediate files according to given config")
+			} else {
+				fmt.Fprintln(os.Stderr, "These tables are missing intermediate files:", tables)
+			}
+		}
+	}()
+
+	if cfg.TikvImporter.Backend != config.BackendLocal {
+		return nil
+	}
+	exist, err := checkpoints.IsCheckpointsDBExists(ctx, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !exist {
+		return nil
+	}
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cpdb.Close()
+
+	tableWithEngine, err := cpdb.GetLocalStoringTables(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tables = make([]string, 0, len(tableWithEngine))
+	for tableName := range tableWithEngine {
+		tables = append(tables, tableName)
+	}
+
 	return nil
 }
 

@@ -280,7 +280,8 @@ func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
 	builder.WriteByte('`')
 }
 
-func EscapeMySQLSingleQuote(builder *strings.Builder, s string) {
+func InterpolateMySQLString(s string) string {
+	var builder strings.Builder
 	builder.Grow(len(s) + 2)
 	builder.WriteByte('\'')
 	for i := 0; i < len(s); i++ {
@@ -292,6 +293,7 @@ func EscapeMySQLSingleQuote(builder *strings.Builder, s string) {
 		}
 	}
 	builder.WriteByte('\'')
+	return builder.String()
 }
 
 // GetJSON fetches a page and parses it as JSON. The parsed result will be
