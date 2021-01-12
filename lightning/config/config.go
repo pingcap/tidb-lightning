@@ -63,6 +63,11 @@ const (
 	IgnoreOnDup = "ignore"
 	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
+
+	defaultDistSQLScanConcurrency     = 15
+	defaultBuildStatsConcurrency      = 20
+	defaultIndexSerialScanConcurrency = 20
+	defaultChecksumTableConcurrency   = 2
 )
 
 var (
@@ -204,10 +209,11 @@ func (t PostOpLevel) String() string {
 
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
-	Level1Compact bool        `toml:"level-1-compact" json:"level-1-compact"`
-	Compact       bool        `toml:"compact" json:"compact"`
-	Checksum      PostOpLevel `toml:"checksum" json:"checksum"`
-	Analyze       PostOpLevel `toml:"analyze" json:"analyze"`
+	Level1Compact     bool        `toml:"level-1-compact" json:"level-1-compact"`
+	Compact           bool        `toml:"compact" json:"compact"`
+	Checksum          PostOpLevel `toml:"checksum" json:"checksum"`
+	Analyze           PostOpLevel `toml:"analyze" json:"analyze"`
+	PostProcessAtLast bool        `toml:"post-process-at-last" json:"post-process-at-last"`
 }
 
 type CSVConfig struct {
@@ -333,10 +339,10 @@ func NewConfig() *Config {
 			StatusPort:                 10080,
 			StrSQLMode:                 "ONLY_FULL_GROUP_BY,NO_AUTO_CREATE_USER",
 			MaxAllowedPacket:           defaultMaxAllowedPacket,
-			BuildStatsConcurrency:      20,
-			DistSQLScanConcurrency:     100,
-			IndexSerialScanConcurrency: 20,
-			ChecksumTableConcurrency:   16,
+			BuildStatsConcurrency:      defaultBuildStatsConcurrency,
+			DistSQLScanConcurrency:     defaultDistSQLScanConcurrency,
+			IndexSerialScanConcurrency: defaultIndexSerialScanConcurrency,
+			ChecksumTableConcurrency:   defaultChecksumTableConcurrency,
 		},
 		Cron: Cron{
 			SwitchMode:  Duration{Duration: 5 * time.Minute},
@@ -360,13 +366,14 @@ func NewConfig() *Config {
 		TikvImporter: TikvImporter{
 			Backend:         BackendImporter,
 			OnDuplicate:     ReplaceOnDup,
-			MaxKVPairs:      32,
+			MaxKVPairs:      4096,
 			SendKVPairs:     32768,
 			RegionSplitSize: SplitRegionSize,
 		},
 		PostRestore: PostRestore{
-			Checksum: OpLevelRequired,
-			Analyze:  OpLevelOptional,
+			Checksum:          OpLevelRequired,
+			Analyze:           OpLevelOptional,
+			PostProcessAtLast: true,
 		},
 	}
 }
@@ -523,6 +530,18 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		}
 		if cfg.TikvImporter.RegionSplitSize == 0 {
 			cfg.TikvImporter.RegionSplitSize = SplitRegionSize
+		}
+		if cfg.TiDB.DistSQLScanConcurrency == 0 {
+			cfg.TiDB.DistSQLScanConcurrency = defaultDistSQLScanConcurrency
+		}
+		if cfg.TiDB.BuildStatsConcurrency == 0 {
+			cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency
+		}
+		if cfg.TiDB.IndexSerialScanConcurrency == 0 {
+			cfg.TiDB.IndexSerialScanConcurrency = defaultIndexSerialScanConcurrency
+		}
+		if cfg.TiDB.ChecksumTableConcurrency == 0 {
+			cfg.TiDB.ChecksumTableConcurrency = defaultChecksumTableConcurrency
 		}
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)

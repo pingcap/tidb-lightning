@@ -81,7 +81,7 @@ func (s *lightningSuite) TestRun(c *C) {
 			Driver: "invalid",
 		},
 	}, invalidGlue)
-	c.Assert(err, ErrorMatches, "Unknown checkpoint driver invalid")
+	c.Assert(err, ErrorMatches, "open checkpoint db failed: Unknown checkpoint driver invalid")
 
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
@@ -427,6 +427,7 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	}
 
 	cfg := config.NewConfig()
+	cfg.App.CheckRequirements = true
 	cfg.App.TableConcurrency = 4
 	cfg.TikvImporter.Backend = config.BackendLocal
 
@@ -466,19 +467,27 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 		},
 	}
 
-	// with max open files 1024, the max table size will be: 524288MB
-	err := failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(1024)")
+	// with max open files 1024, the max table size will be: 65536MB
+	err := failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(8199)")
 	c.Assert(err, IsNil)
 	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/SetRlimitError", "return(true)")
 	c.Assert(err, IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/backend/SetRlimitError")
-	// with this dbMetas, the estimated fds will be 1025, so should return error
+	// with this dbMetas, the estimated fds will be 2050, so should return error
 	err = checkSystemRequirement(cfg, dbMetas)
 	c.Assert(err, NotNil)
+
+	//disable check-requirement, should return nil
+	cfg.App.CheckRequirements = false
+	err = checkSystemRequirement(cfg, dbMetas)
+	c.Assert(err, IsNil)
+	cfg.App.CheckRequirements = true
+
 	err = failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue")
 	c.Assert(err, IsNil)
 
-	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(1025)")
+	// the min rlimit should be bigger than the default min value (16384)
+	err = failpoint.Enable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue", "return(8200)")
 	defer failpoint.Disable("github.com/pingcap/tidb-lightning/lightning/backend/GetRlimitValue")
 	c.Assert(err, IsNil)
 	err = checkSystemRequirement(cfg, dbMetas)
