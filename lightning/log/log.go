@@ -45,7 +45,7 @@ type Config struct {
 	// Maximum number of old log files to retain.
 	FileMaxBackups int `toml:"max-backups" json:"max-backups"`
 	// Redact sensitive logs during the whole process
-	RedactLog bool `toml:"redact-log" json:"redact-log"`
+	RedactLog bool `toml:"redact-info-log" json:"redact-info-log"`
 }
 
 func (cfg *Config) Adjust() {
