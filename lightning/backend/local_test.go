@@ -18,12 +18,13 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb-lightning/lightning/common"
 	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/pingcap/tidb-lightning/lightning/common"
 
 	"github.com/cockroachdb/pebble"
 	. "github.com/pingcap/check"

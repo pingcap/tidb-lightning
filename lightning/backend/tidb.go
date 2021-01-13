@@ -565,7 +565,7 @@ func (be *tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
 	return errors.New("cannot reset an engine in TiDB backend")
 }
 
-func (be *tidbBackend) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+func (be *tidbBackend) LocalWriter(ctx context.Context, engineUUID uuid.UUID, maxCacheSize int64) (EngineWriter, error) {
 	return &TiDBWriter{be: be, engineUUID: engineUUID}, nil
 }
 

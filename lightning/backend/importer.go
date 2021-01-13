@@ -377,7 +377,7 @@ func (importer *importer) ResetEngine(context.Context, uuid.UUID) error {
 	return errors.New("cannot reset an engine in importer backend")
 }
 
-func (importer *importer) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+func (importer *importer) LocalWriter(ctx context.Context, engineUUID uuid.UUID, maxCacheSize int64) (EngineWriter, error) {
 	return &ImporterWriter{importer: importer, engineUUID: engineUUID}, nil
 }
 

@@ -125,7 +125,7 @@ func (s *backendSuite) TestWriteEngine(c *C) {
 		Return(nil)
 
 	mockWriter := mock.NewMockEngineWriter(s.controller)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
 		AppendRows(ctx, "`db`.`table`", []string{"c1", "c2"}, gomock.Any(), rows1).
 		Return(nil)
@@ -153,7 +153,7 @@ func (s *backendSuite) TestWriteToEngineWithNothing(c *C) {
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
 	writer.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), emptyRows).Return(nil)
 	writer.EXPECT().Close().Return(nil)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(writer, nil)
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(writer, nil)
 
 	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
@@ -183,7 +183,7 @@ func (s *backendSuite) TestWriteEngineFailed(c *C) {
 
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
 	mockWriter := mock.NewMockEngineWriter(s.controller)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
 		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable write error"))
@@ -204,7 +204,7 @@ func (s *backendSuite) TestWriteBatchSendFailedWithRetry(c *C) {
 
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
 	mockWriter := mock.NewMockEngineWriter(s.controller)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.New("fake recoverable write batch error")).
 		MinTimes(1)

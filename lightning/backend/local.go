@@ -121,8 +121,9 @@ const (
 
 type LocalFile struct {
 	localFileMeta
-	db   *pebble.DB
-	Uuid uuid.UUID
+	db           *pebble.DB
+	Uuid         uuid.UUID
+	localWriters sync.Map
 
 	// isImportingAtomic is an atomic variable indicating whether the importMutex has been locked.
 	// This should not be used as a "spin lock" indicator.
@@ -203,7 +204,22 @@ func (e *LocalFile) getEngineFileSize() EngineFileSize {
 }
 
 // lock locks the local file for importing.
+//
+// Additionally, if state is importMutexStateFlush, it will ensure all local
+// writers are ingested into the local file before locking.
 func (e *LocalFile) lock(state importMutexState) {
+	if state == importMutexStateFlush {
+		wg := new(sync.WaitGroup)
+		e.localWriters.Range(func(k, v interface{}) bool {
+			wg.Add(1)
+			go func() {
+				k.(*LocalWriter).flushCh <- wg
+			}()
+			return true
+		})
+		wg.Wait()
+	}
+
 	e.mutex.Lock()
 	atomic.StoreInt32(&e.isImportingAtomic, int32(state))
 }
@@ -378,18 +394,15 @@ func (local *local) lockEngine(engineId uuid.UUID, state importMutexState) (*Loc
 	return nil, false
 }
 
-func (local *local) lockAllEngines(state importMutexState) {
+func (local *local) lockAllEngines(state importMutexState) []*LocalFile {
+	var allEngines []*LocalFile
 	local.engines.Range(func(k, v interface{}) bool {
-		v.(*LocalFile).lock(state)
+		engine := v.(*LocalFile)
+		allEngines = append(allEngines, engine)
+		engine.lock(state)
 		return true
 	})
-}
-
-func (local *local) unlockAllEngines() {
-	local.engines.Range(func(k, v interface{}) bool {
-		v.(*LocalFile).unlock()
-		return true
-	})
+	return allEngines
 }
 
 func (local *local) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
@@ -439,11 +452,13 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 
 // Close the importer connection.
 func (local *local) Close() {
-	local.engines.Range(func(k, v interface{}) bool {
-		v.(*LocalFile).Close()
-		return true
-	})
+	allEngines := local.lockAllEngines(importMutexStateClose)
 	local.engines = sync.Map{}
+
+	for _, engine := range allEngines {
+		engine.Close()
+		engine.unlock()
+	}
 	local.conns.Close()
 
 	// if checkpoint is disable or we finish load all data successfully, then files in this
@@ -473,24 +488,27 @@ func (local *local) FlushEngine(engineId uuid.UUID) error {
 }
 
 func (local *local) FlushAllEngines() (err error) {
-	local.lockAllEngines(importMutexStateFlush)
-	defer local.unlockAllEngines()
+	allEngines := local.lockAllEngines(importMutexStateFlush)
+	defer func() {
+		for _, engine := range allEngines {
+			engine.unlock()
+		}
+	}()
 
 	var flushFinishedWg sync.WaitGroup
-	var flushedEngines []*LocalFile
+	flushedEngines := make([]*LocalFile, 0, len(allEngines))
 
 	// first, (asynchronously) flush all opened engines
-	local.engines.Range(func(k, v interface{}) bool {
-		engineFile := v.(*LocalFile)
+	for _, engineFile := range allEngines {
 		if engineFile.isLocked() {
 			// ignore engines which have been importing, flushing, or closing.
-			return true
+			continue
 		}
 
 		flushFinishedCh, e := engineFile.db.AsyncFlush()
 		if e != nil {
 			err = e
-			return false
+			break
 		}
 		flushedEngines = append(flushedEngines, engineFile)
 		flushFinishedWg.Add(1)
@@ -498,8 +516,7 @@ func (local *local) FlushAllEngines() (err error) {
 			<-flushFinishedCh
 			flushFinishedWg.Done()
 		}()
-		return true
-	})
+	}
 
 	// then, wait for all engines being flushed, and then save the metadata.
 	flushFinishedWg.Wait()
@@ -581,13 +598,10 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		return err
 	}
-	if e, ok := local.engines.Load(engineUUID); ok {
-		engine := e.(*LocalFile)
-		engine.db = db
-		engine.localFileMeta = meta
-	} else {
-		local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID, isImportingAtomic: int32(importMutexStateNoLock)})
-	}
+	e, _ := local.engines.LoadOrStore(engineUUID, &LocalFile{Uuid: engineUUID, isImportingAtomic: int32(importMutexStateNoLock)})
+	engine := e.(*LocalFile)
+	engine.db = db
+	engine.localFileMeta = meta
 	return nil
 }
 
@@ -622,6 +636,8 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 		return nil
 	}
 	engineFile := engine.(*LocalFile)
+	engineFile.lock(importMutexStateFlush)
+	defer engineFile.unlock()
 	err := engineFile.db.Flush()
 	if err != nil {
 		return err
@@ -1324,14 +1340,10 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	if err := localEngine.Cleanup(local.localStoreDir); err != nil {
 		return err
 	}
-	meta, err := local.LoadEngineMeta(engineUUID)
-	if err != nil {
-		meta = localFileMeta{}
-	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err == nil {
 		localEngine.db = db
-		localEngine.localFileMeta = meta
+		localEngine.localFileMeta = localFileMeta{}
 	}
 	return err
 }
@@ -1388,19 +1400,25 @@ func (local *local) NewEncoder(tbl table.Table, options *SessionOptions) (Encode
 	return NewTableKVEncoder(tbl, options)
 }
 
-func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID, maxCacheSize int64) (EngineWriter, error) {
 	e, ok := local.engines.Load(engineUUID)
 	if !ok {
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engineFile := e.(*LocalFile)
-	return openLocalWriter(engineFile, local.localStoreDir, LocalMemoryTableSize), nil
+	return openLocalWriter(engineFile, local.localStoreDir, maxCacheSize), nil
 }
 
 func openLocalWriter(f *LocalFile, sstDir string, memtableSizeLimit int64) *LocalWriter {
-	kvsChan := make(chan []common.KvPair, 1024)
-	w := &LocalWriter{sstDir: sstDir, kvsChan: kvsChan, local: f, memtableSizeLimit: memtableSizeLimit}
-	w.consumeWg.Add(1)
+	w := &LocalWriter{
+		sstDir:            sstDir,
+		kvsChan:           make(chan []common.KvPair, 1024),
+		flushCh:           make(chan *sync.WaitGroup),
+		consumeCh:         make(chan struct{}, 1),
+		local:             f,
+		memtableSizeLimit: memtableSizeLimit,
+	}
+	f.localWriters.Store(w, nil)
 	go w.writeRowsLoop()
 	return w
 }
@@ -1690,8 +1708,9 @@ type LocalWriter struct {
 	writeErr           common.OnceError
 	local              *LocalFile
 	lastKey            []byte
-	consumeWg          sync.WaitGroup
+	consumeCh          chan struct{}
 	kvsChan            chan []common.KvPair
+	flushCh            chan *sync.WaitGroup
 	sstDir             string
 	memtableSizeLimit  int64
 	writeBatch         []common.KvPair
@@ -1716,15 +1735,28 @@ func (w *LocalWriter) AppendRows(ctx context.Context, tableName string, columnNa
 	if len(kvs) == 0 {
 		return nil
 	}
+	if err := w.writeErr.Get(); err != nil {
+		return err
+	}
 	w.kvsChan <- kvs
 	w.local.Ts = ts
 	return nil
 }
 
 func (w *LocalWriter) Close() error {
+	w.local.localWriters.Delete(w)
 	close(w.kvsChan)
-	w.consumeWg.Wait()
-	return w.writeErr.Get()
+	// after closing kvsChan, the writeRowsLoop will ingest all cached KVs.
+	// during this time, the flushCh may still be receiving data.
+	// so we have this extra loop to immediately consume them.
+	for {
+		select {
+		case <-w.consumeCh:
+			return w.writeErr.Get()
+		case doneWg := <-w.flushCh:
+			doneWg.Done()
+		}
+	}
 }
 
 func (w *LocalWriter) writeRowsLoop() {
@@ -1735,58 +1767,117 @@ func (w *LocalWriter) writeRowsLoop() {
 	var writer *sstable.Writer = nil
 	//var wb *pebble.Batch = nil
 	var filePath string
-	defer w.consumeWg.Done()
+	defer func() {
+		w.consumeCh <- struct{}{}
+	}()
 	var err error
-	for kvs := range w.kvsChan {
-		hasSort := w.isSorted(kvs)
-		if totalCount > 1000 && hasSort {
-			for _, pair := range kvs {
-				totalSize += int64(len(pair.Key) + len(pair.Val))
+outside:
+	for {
+		select {
+		case kvs, ok := <-w.kvsChan:
+			if !ok {
+				break outside
 			}
-			if writer == nil {
-				writer, filePath, err = w.createWriter()
-				if err != nil {
-					w.writeErr.Set(err)
-					return
+
+			hasSort := w.isSorted(kvs)
+			if totalCount > 1000 && hasSort {
+				for _, pair := range kvs {
+					totalSize += int64(len(pair.Key) + len(pair.Val))
 				}
-				if len(w.writeBatch) > 0 && w.isWriteBatchSorted {
-					if err := writeKVs(writer, w.writeBatch); err != nil {
+				if writer == nil {
+					writer, filePath, err = w.createWriter()
+					if err != nil {
 						w.writeErr.Set(err)
 						return
 					}
-					w.isWriteBatchSorted = true
-					w.writeBatch = w.writeBatch[:0]
-					totalSize += batchSize
-					batchSize = 0
+					if len(w.writeBatch) > 0 && w.isWriteBatchSorted {
+						if err := writeKVs(writer, w.writeBatch); err != nil {
+							w.writeErr.Set(err)
+							return
+						}
+						w.isWriteBatchSorted = true
+						w.writeBatch = w.writeBatch[:0]
+						totalSize += batchSize
+						batchSize = 0
+					}
 				}
-			}
-			if err := writeKVs(writer, kvs); err != nil {
-				w.writeErr.Set(err)
-				return
-			}
-		} else {
-			for _, pair := range kvs {
-				batchSize += int64(len(pair.Key) + len(pair.Val))
-			}
-			if !hasSort {
-				w.isWriteBatchSorted = false
-			}
-			w.writeBatch = append(w.writeBatch, kvs...)
-
-			if batchSize > w.memtableSizeLimit {
-				if err := w.flushKVs(); err != nil {
+				if err := writeKVs(writer, kvs); err != nil {
 					w.writeErr.Set(err)
 					return
 				}
-				if writer == nil {
-					w.lastKey = w.lastKey[:0]
+			} else {
+				for _, pair := range kvs {
+					batchSize += int64(len(pair.Key) + len(pair.Val))
 				}
-				totalSize += batchSize
-				batchSize = 0
-				w.isWriteBatchSorted = true
+				if !hasSort {
+					w.isWriteBatchSorted = false
+				}
+				w.writeBatch = append(w.writeBatch, kvs...)
+
+				if batchSize > w.memtableSizeLimit {
+					if err := w.flushKVs(); err != nil {
+						w.writeErr.Set(err)
+						return
+					}
+					if writer == nil {
+						w.lastKey = w.lastKey[:0]
+					}
+					totalSize += batchSize
+					batchSize = 0
+					w.isWriteBatchSorted = true
+				}
+			}
+			totalCount += int64(len(kvs))
+
+		case doneWg := <-w.flushCh:
+			err := func() error {
+				if writer != nil {
+					if len(w.writeBatch) > 0 && w.isWriteBatchSorted {
+						if err := writeKVs(writer, w.writeBatch); err != nil {
+							return err
+						}
+						w.isWriteBatchSorted = true
+						w.writeBatch = w.writeBatch[:0]
+						totalSize += batchSize
+						batchSize = 0
+					}
+
+					if err := writer.Close(); err != nil {
+						return err
+					}
+					w.local.lock(importMutexStateNoLock)
+					defer w.local.unlock()
+					if err := w.local.db.Ingest([]string{filePath}); err != nil {
+						return err
+					}
+					// The following two variable should be changed with holding mutex,
+					// because there may be another thread change localFileMeta object. See it in `local::OpenEngine`
+					atomic.AddInt64(&w.local.TotalSize, totalSize)
+					atomic.AddInt64(&w.local.Length, totalCount)
+
+					log.L().Info("write data by sst writer (flush)", zap.Int64("bytes", totalSize))
+
+					totalSize = 0
+					totalCount = 0
+					writer = nil
+				}
+				if len(w.writeBatch) > 0 {
+					if err := w.flushKVs(); err != nil {
+						return err
+					}
+					w.lastKey = w.lastKey[:0]
+					totalSize += batchSize
+					batchSize = 0
+					w.isWriteBatchSorted = true
+				}
+				return nil
+			}()
+			doneWg.Done()
+			if err != nil {
+				w.writeErr.Set(err)
+				return
 			}
 		}
-		totalCount += int64(len(kvs))
 	}
 
 	if batchSize > 0 {
