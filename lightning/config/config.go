@@ -280,6 +280,8 @@ type Security struct {
 	CAPath   string `toml:"ca-path" json:"ca-path"`
 	CertPath string `toml:"cert-path" json:"cert-path"`
 	KeyPath  string `toml:"key-path" json:"key-path"`
+	// RedactInfoLog indicates that whether enabling redact log
+	RedactInfoLog bool `toml:"redact-info-log" json:"redact-info-log"`
 }
 
 // RegistersMySQL registers (or deregisters) the TLS config with name "cluster"

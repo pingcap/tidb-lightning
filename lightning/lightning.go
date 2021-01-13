@@ -81,6 +81,8 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		log.L().Fatal("failed to load TLS certificates", zap.Error(err))
 	}
 
+	log.InitRedact(globalCfg.Security.RedactInfoLog)
+
 	ctx, shutdown := context.WithCancel(context.Background())
 	return &Lightning{
 		globalCfg: globalCfg,
