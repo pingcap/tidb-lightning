@@ -41,8 +41,6 @@ file = "tidb-lightning.log"
 max-size = 128 # MB
 max-days = 28
 max-backups = 14
-# If set to true, lightning will redact sensitive infomation in log.
-redact-info-log = false
 
 [security]
 # specifies certificates and keys for TLS connections within the cluster.
@@ -52,6 +50,8 @@ redact-info-log = false
 # cert-path = "/path/to/lightning.pem"
 # private key of this service.
 # key-path = "/path/to/lightning.key"
+# If set to true, lightning will redact sensitive infomation in log.
+# redact-info-log = false
 
 [checkpoint]
 # Whether to enable checkpoints.
