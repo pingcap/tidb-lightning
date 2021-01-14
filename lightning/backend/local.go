@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -94,6 +95,44 @@ type Range struct {
 	start  []byte
 	end    []byte
 	length int
+}
+
+type errorOnDuplicateMerger struct {
+	engineUUID uuid.UUID
+	key        []byte
+	value      []byte
+}
+
+func (m *errorOnDuplicateMerger) MergeNewer(value []byte) error {
+	if !bytes.Equal(m.value, value) {
+		// TODO: write to an error channel instead.
+		// (can't return error since it caused tons of BackgroundError log without aborting the process)
+		panic(fmt.Sprintf(
+			"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
+			m.key,
+			m.value,
+			value,
+			m.engineUUID,
+		))
+	}
+	return nil
+}
+
+func (m *errorOnDuplicateMerger) MergeOlder(value []byte) error {
+	if !bytes.Equal(m.value, value) {
+		panic(fmt.Sprintf(
+			"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
+			m.key,
+			value,
+			m.value,
+			m.engineUUID,
+		))
+	}
+	return nil
+}
+
+func (m *errorOnDuplicateMerger) Finish(bool) ([]byte, io.Closer, error) {
+	return m.value, nil, nil
 }
 
 // localFileMeta contains some field that is necessary to continue the engine restore/import process.
@@ -408,6 +447,12 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			func() pebble.TablePropertyCollector {
 				return newRangePropertiesCollector()
+			},
+		},
+		Merger: &pebble.Merger{
+			Name: "error-on-duplicates-merger",
+			Merge: func(key, value []byte) (pebble.ValueMerger, error) {
+				return &errorOnDuplicateMerger{key: key, value: value, engineUUID: engineUUID}, nil
 			},
 		},
 	}
@@ -1219,7 +1264,7 @@ func (local *local) WriteRows(
 
 	size := int64(0)
 	for _, pair := range kvs {
-		wb.Set(pair.Key, pair.Val, wo)
+		wb.Merge(pair.Key, pair.Val, wo)
 		size += int64(len(pair.Key) + len(pair.Val))
 	}
 	if err := wb.Commit(wo); err != nil {
