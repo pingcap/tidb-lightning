@@ -104,30 +104,26 @@ type errorOnDuplicateMerger struct {
 }
 
 func (m *errorOnDuplicateMerger) MergeNewer(value []byte) error {
-	if !bytes.Equal(m.value, value) {
-		// TODO: write to an error channel instead.
-		// (can't return error since it caused tons of BackgroundError log without aborting the process)
-		panic(fmt.Sprintf(
-			"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
-			m.key,
-			m.value,
-			value,
-			m.engineUUID,
-		))
-	}
+	// TODO: write to an error channel instead.
+	// (can't return error since it caused tons of BackgroundError log without aborting the process)
+	panic(fmt.Sprintf(
+		"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
+		m.key,
+		m.value,
+		value,
+		m.engineUUID,
+	))
 	return nil
 }
 
 func (m *errorOnDuplicateMerger) MergeOlder(value []byte) error {
-	if !bytes.Equal(m.value, value) {
-		panic(fmt.Sprintf(
-			"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
-			m.key,
-			value,
-			m.value,
-			m.engineUUID,
-		))
-	}
+	panic(fmt.Sprintf(
+		"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
+		m.key,
+		value,
+		m.value,
+		m.engineUUID,
+	))
 	return nil
 }
 
