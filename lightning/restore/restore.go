@@ -1638,23 +1638,24 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 }
 
 func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
-	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
+	/*
+		task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 
-	err := closedEngine.Import(ctx)
-	if err == nil {
-		closedEngine.Cleanup(ctx)
-	}
+		err := closedEngine.Import(ctx)
+		if err == nil {
+			closedEngine.Cleanup(ctx)
+		}
 
-	dur := task.End(zap.ErrorLevel, err)
+		dur := task.End(zap.ErrorLevel, err)
 
-	if err != nil {
-		return errors.Trace(err)
-	}
+		if err != nil {
+			return errors.Trace(err)
+		}
 
-	metric.ImportSecondsHistogram.Observe(dur.Seconds())
+		metric.ImportSecondsHistogram.Observe(dur.Seconds())
 
-	failpoint.Inject("SlowDownImport", func() {})
-
+		failpoint.Inject("SlowDownImport", func() {})
+	*/
 	return nil
 }
 
@@ -1756,10 +1757,12 @@ func (cr *chunkRestore) deliverLoop(
 		// Write KVs into the engine
 		start := time.Now()
 
-		if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
-			deliverLogger.Error("write to data engine failed", log.ShortError(err))
-			return
-		}
+		/*
+			if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
+				deliverLogger.Error("write to data engine failed", log.ShortError(err))
+				return
+			}
+		*/
 		if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
 			deliverLogger.Error("write to index engine failed", log.ShortError(err))
 			return
