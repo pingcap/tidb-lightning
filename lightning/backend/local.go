@@ -110,13 +110,13 @@ type localFileMeta struct {
 	TotalSize int64 `json:"total_size"`
 }
 
-type importMutexState int32
+type importMutexState uint32
 
 const (
-	importMutexStateNoLock importMutexState = iota
-	importMutexStateImport
+	importMutexStateImport importMutexState = 1 << iota
 	importMutexStateFlush
 	importMutexStateClose
+	importMutexStateLocalIngest
 )
 
 type LocalFile struct {
@@ -127,7 +127,7 @@ type LocalFile struct {
 
 	// isImportingAtomic is an atomic variable indicating whether the importMutex has been locked.
 	// This should not be used as a "spin lock" indicator.
-	isImportingAtomic int32
+	isImportingAtomic uint32
 	mutex             sync.Mutex
 }
 
@@ -189,7 +189,7 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 }
 
 func (e *LocalFile) isLocked() bool {
-	return atomic.LoadInt32(&e.isImportingAtomic) != int32(importMutexStateNoLock)
+	return atomic.LoadUint32(&e.isImportingAtomic) != 0
 }
 
 func (e *LocalFile) getEngineFileSize() EngineFileSize {
@@ -208,28 +208,49 @@ func (e *LocalFile) getEngineFileSize() EngineFileSize {
 // Additionally, if state is importMutexStateFlush, it will ensure all local
 // writers are ingested into the local file before locking.
 func (e *LocalFile) lock(state importMutexState) {
-	if state == importMutexStateFlush {
-		wg := new(sync.WaitGroup)
-		e.localWriters.Range(func(k, v interface{}) bool {
-			wg.Add(1)
-			go func() {
-				k.(*LocalWriter).flushCh <- wg
-			}()
-			return true
-		})
-		wg.Wait()
-	}
-
 	e.mutex.Lock()
-	atomic.StoreInt32(&e.isImportingAtomic, int32(state))
+	atomic.StoreUint32(&e.isImportingAtomic, uint32(state))
+}
+
+func (e *LocalFile) lockUnless(newState, ignoreStateMask importMutexState) bool {
+	for {
+		curState := atomic.LoadUint32(&e.isImportingAtomic)
+		if curState&uint32(ignoreStateMask) != 0 {
+			return false
+		}
+		if atomic.CompareAndSwapUint32(&e.isImportingAtomic, curState, uint32(newState)) {
+			e.mutex.Lock()
+			return true
+		}
+	}
 }
 
 func (e *LocalFile) unlock() {
 	if e == nil {
 		return
 	}
-	atomic.StoreInt32(&e.isImportingAtomic, int32(importMutexStateNoLock))
+	atomic.StoreUint32(&e.isImportingAtomic, 0)
 	e.mutex.Unlock()
+}
+
+func (e *LocalFile) flushLocalWriters() {
+	wg := new(sync.WaitGroup)
+	e.localWriters.Range(func(k, v interface{}) bool {
+		wg.Add(1)
+		go func() {
+			w := k.(*LocalWriter)
+			w.flushChMutex.RLock()
+			defer w.flushChMutex.RUnlock()
+			flushCh := w.flushCh
+			if flushCh != nil {
+				flushCh <- wg
+			} else {
+				wg.Done()
+			}
+		}()
+		return true
+	})
+	wg.Wait()
 }
 
 type gRPCConns struct {
@@ -394,12 +415,13 @@ func (local *local) lockEngine(engineId uuid.UUID, state importMutexState) (*Loc
 	return nil, false
 }
 
-func (local *local) lockAllEngines(state importMutexState) []*LocalFile {
+func (local *local) lockAllEnginesUnless(newState, ignoreStateMask importMutexState) []*LocalFile {
 	var allEngines []*LocalFile
 	local.engines.Range(func(k, v interface{}) bool {
 		engine := v.(*LocalFile)
-		allEngines = append(allEngines, engine)
-		engine.lock(state)
+		if engine.lockUnless(newState, ignoreStateMask) {
+			allEngines = append(allEngines, engine)
+		}
 		return true
 	})
 	return allEngines
@@ -452,7 +474,7 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 
 // Close the importer connection.
 func (local *local) Close() {
-	allEngines := local.lockAllEngines(importMutexStateClose)
+	allEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
 	local.engines = sync.Map{}
 
 	for _, engine := range allEngines {
@@ -481,6 +503,7 @@ func (local *local) FlushEngine(engineId uuid.UUID) error {
 		return errors.Errorf("engine '%s' not found", engineId)
 	}
 	defer engineFile.unlock()
+	engineFile.flushLocalWriters()
 	if err := engineFile.db.Flush(); err != nil {
 		return err
 	}
@@ -488,7 +511,7 @@ func (local *local) FlushEngine(engineId uuid.UUID) error {
 }
 
 func (local *local) FlushAllEngines() (err error) {
-	allEngines := local.lockAllEngines(importMutexStateFlush)
+	allEngines := local.lockAllEnginesUnless(importMutexStateFlush, ^importMutexStateLocalIngest)
 	defer func() {
 		for _, engine := range allEngines {
 			engine.unlock()
@@ -500,11 +523,7 @@ func (local *local) FlushAllEngines() (err error) {
 
 	// first, (asynchronously) flush all opened engines
 	for _, engineFile := range allEngines {
-		if engineFile.isLocked() {
-			// ignore engines which have been importing, flushing, or closing.
-			continue
-		}
-
+		engineFile.flushLocalWriters()
 		flushFinishedCh, e := engineFile.db.AsyncFlush()
 		if e != nil {
 			err = e
@@ -598,7 +617,7 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		return err
 	}
-	e, _ := local.engines.LoadOrStore(engineUUID, &LocalFile{Uuid: engineUUID, isImportingAtomic: int32(importMutexStateNoLock)})
+	e, _ := local.engines.LoadOrStore(engineUUID, &LocalFile{Uuid: engineUUID})
 	engine := e.(*LocalFile)
 	engine.db = db
 	engine.localFileMeta = meta
@@ -627,10 +646,9 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 			return err
 		}
 		engineFile := &LocalFile{
-			localFileMeta:     meta,
-			Uuid:              engineUUID,
-			db:                db,
-			isImportingAtomic: int32(importMutexStateNoLock),
+			localFileMeta: meta,
+			Uuid:          engineUUID,
+			db:            db,
 		}
 		local.engines.Store(engineUUID, engineFile)
 		return nil
@@ -1710,6 +1728,7 @@ type LocalWriter struct {
 	lastKey            []byte
 	consumeCh          chan struct{}
 	kvsChan            chan []common.KvPair
+	flushChMutex       sync.RWMutex
 	flushCh            chan *sync.WaitGroup
 	sstDir             string
 	memtableSizeLimit  int64
@@ -1746,14 +1765,20 @@ func (w *LocalWriter) AppendRows(ctx context.Context, tableName string, columnNa
 func (w *LocalWriter) Close() error {
 	w.local.localWriters.Delete(w)
 	close(w.kvsChan)
+
+	w.flushChMutex.Lock()
+	flushCh := w.flushCh
+	w.flushCh = nil
+	w.flushChMutex.Unlock()
+
 	// after closing kvsChan, the writeRowsLoop will ingest all cached KVs.
-	// during this time, the flushCh may still be receiving data.
-	// so we have this extra loop to immediately consume them.
+	// during this time, the flushCh might still be receiving data.
+	// so we have this extra loop to immediately consume them to avoid AsyncFlush
 	for {
 		select {
 		case <-w.consumeCh:
 			return w.writeErr.Get()
-		case doneWg := <-w.flushCh:
+		case doneWg := <-flushCh:
 			doneWg.Done()
 		}
 	}
@@ -1773,6 +1798,10 @@ func (w *LocalWriter) writeRowsLoop() {
 	var err error
 outside:
 	for {
+		w.flushChMutex.RLock()
+		flushCh := w.flushCh
+		w.flushChMutex.RUnlock()
+
 		select {
 		case kvs, ok := <-w.kvsChan:
 			if !ok {
@@ -1829,7 +1858,7 @@ outside:
 			}
 			totalCount += int64(len(kvs))
 
-		case doneWg := <-w.flushCh:
+		case doneWg := <-flushCh:
 			err := func() error {
 				if writer != nil {
 					if len(w.writeBatch) > 0 && w.isWriteBatchSorted {
@@ -1845,8 +1874,8 @@ outside:
 					if err := writer.Close(); err != nil {
 						return err
 					}
-					w.local.lock(importMutexStateNoLock)
-					defer w.local.unlock()
+					// No need to acquire lock around this ingest,
+					// we already held the lock before flushing.
 					if err := w.local.db.Ingest([]string{filePath}); err != nil {
 						return err
 					}
@@ -1880,6 +1909,9 @@ outside:
 		}
 	}
 
+	w.local.lock(importMutexStateLocalIngest)
+	defer w.local.unlock()
+
 	if batchSize > 0 {
 		if err := w.flushKVs(); err != nil {
 			w.writeErr.Set(err)
@@ -1888,7 +1920,6 @@ outside:
 		totalSize += batchSize
 		log.L().Info("write data by sort index", zap.Int64("bytes", totalSize))
 	}
-	w.local.lock(importMutexStateNoLock)
 	if writer != nil {
 		err := writer.Close()
 		if err == nil {
@@ -1904,7 +1935,6 @@ outside:
 		atomic.AddInt64(&w.local.TotalSize, totalSize)
 		atomic.AddInt64(&w.local.Length, totalCount)
 	}
-	w.local.unlock()
 }
 
 func (w *LocalWriter) flushKVs() error {
@@ -1924,9 +1954,7 @@ func (w *LocalWriter) flushKVs() error {
 		return err
 	}
 	w.writeBatch = w.writeBatch[:0]
-	w.local.lock(importMutexStateNoLock)
 	err = w.local.db.Ingest([]string{filePath})
-	w.local.unlock()
 	return err
 }
 
