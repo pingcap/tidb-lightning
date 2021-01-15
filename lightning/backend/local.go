@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -97,33 +96,42 @@ type Range struct {
 	length int
 }
 
+var duplicateKeys int32
+
 type errorOnDuplicateMerger struct {
-	engineUUID uuid.UUID
 	key        []byte
 	value      []byte
+	cnt        *int32
+	engineUUID uuid.UUID
 }
 
 func (m *errorOnDuplicateMerger) MergeNewer(value []byte) error {
 	// TODO: write to an error channel instead.
 	// (can't return error since it caused tons of BackgroundError log without aborting the process)
-	panic(fmt.Sprintf(
-		"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
-		m.key,
-		m.value,
-		value,
-		m.engineUUID,
-	))
+	//panic(fmt.Sprintf(
+	//	"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
+	//	m.key,
+	//	m.value,
+	//	value,
+	//	m.engineUUID,
+	//))
+	atomic.AddInt32(m.cnt, 1)
+	log.L().Error("encountered duplicate key", zap.Binary("key", m.key), zap.Binary("old", m.value),
+		zap.Binary("new", value), zap.Stringer("engine", m.engineUUID))
 	return nil
 }
 
 func (m *errorOnDuplicateMerger) MergeOlder(value []byte) error {
-	panic(fmt.Sprintf(
-		"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
-		m.key,
-		value,
-		m.value,
-		m.engineUUID,
-	))
+	log.L().Error("encountered duplicate key", zap.Binary("key", m.key), zap.Binary("old", m.value),
+		zap.Binary("new", value))
+	//panic(fmt.Sprintf(
+	//	"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
+	//	m.key,
+	//	value,
+	//	m.value,
+	//	m.engineUUID,
+	//))
+	atomic.AddInt32(m.cnt, 1)
 	return nil
 }
 
@@ -448,7 +456,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 		Merger: &pebble.Merger{
 			Name: "error-on-duplicates-merger",
 			Merge: func(key, value []byte) (pebble.ValueMerger, error) {
-				return &errorOnDuplicateMerger{key: key, value: value, engineUUID: engineUUID}, nil
+				return &errorOnDuplicateMerger{key: key, value: value, engineUUID: engineUUID, cnt: &duplicateKeys}, nil
 			},
 		},
 	}
@@ -1163,9 +1171,17 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) (err
 			err = e
 			return
 		}
+		if !it.Valid() {
+			break
+		}
 	}
 	if e := it.Error(); e != nil {
 		err = e
+	}
+	cnt := atomic.LoadInt32(&duplicateKeys)
+	if cnt > 0 {
+		log.L().Error("total duplicated key count: %d", zap.Int32("dupCnt", cnt))
+		err = errors.Errorf("total duplicated key count: %d", cnt)
 	}
 	return
 
