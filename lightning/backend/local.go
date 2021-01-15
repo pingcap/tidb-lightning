@@ -96,8 +96,6 @@ type Range struct {
 	length int
 }
 
-var duplicateKeys int32
-
 type errorOnDuplicateMerger struct {
 	key        []byte
 	value      []byte
@@ -123,7 +121,7 @@ func (m *errorOnDuplicateMerger) MergeNewer(value []byte) error {
 
 func (m *errorOnDuplicateMerger) MergeOlder(value []byte) error {
 	log.L().Error("encountered duplicate key", zap.Binary("key", m.key), zap.Binary("old", m.value),
-		zap.Binary("new", value))
+		zap.Binary("new", value), zap.Stringer("engine", m.engineUUID))
 	//panic(fmt.Sprintf(
 	//	"encountered duplicate key = %x, old value = %x, new value = %x, engine = %s",
 	//	m.key,
@@ -149,8 +147,9 @@ type localFileMeta struct {
 
 type LocalFile struct {
 	localFileMeta
-	db   *pebble.DB
-	Uuid uuid.UUID
+	db     *pebble.DB
+	Uuid   uuid.UUID
+	dupCnt int32
 }
 
 func (e *LocalFile) Close() error {
@@ -435,7 +434,7 @@ func (local *local) ShouldPostProcess() bool {
 	return true
 }
 
-func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
+func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool, lf *LocalFile) (*pebble.DB, error) {
 	opt := &pebble.Options{
 		MemTableSize: LocalMemoryTableSize,
 		// the default threshold value may cause write stall.
@@ -456,7 +455,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 		Merger: &pebble.Merger{
 			Name: "error-on-duplicates-merger",
 			Merge: func(key, value []byte) (pebble.ValueMerger, error) {
-				return &errorOnDuplicateMerger{key: key, value: value, engineUUID: engineUUID, cnt: &duplicateKeys}, nil
+				return &errorOnDuplicateMerger{key: key, value: value, engineUUID: engineUUID, cnt: &lf.dupCnt}, nil
 			},
 		},
 	}
@@ -490,11 +489,13 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		meta = localFileMeta{}
 	}
-	db, err := local.openEngineDB(engineUUID, false)
+	lf := &LocalFile{localFileMeta: meta, Uuid: engineUUID}
+	db, err := local.openEngineDB(engineUUID, false, lf)
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID})
+	lf.db = db
+	local.engines.Store(engineUUID, lf)
 	return nil
 }
 
@@ -515,15 +516,15 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 			}
 			return err
 		}
-		db, err := local.openEngineDB(engineUUID, true)
-		if err != nil {
-			return err
-		}
 		engineFile := &LocalFile{
 			localFileMeta: meta,
 			Uuid:          engineUUID,
-			db:            db,
 		}
+		db, err := local.openEngineDB(engineUUID, true, engineFile)
+		if err != nil {
+			return err
+		}
+		engineFile.db = db
 		local.engines.Store(engineUUID, engineFile)
 		return nil
 	}
@@ -1171,14 +1172,11 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) (err
 			err = e
 			return
 		}
-		if !it.Valid() {
-			break
-		}
 	}
 	if e := it.Error(); e != nil {
 		err = e
 	}
-	cnt := atomic.LoadInt32(&duplicateKeys)
+	cnt := atomic.LoadInt32(&lf.dupCnt)
 	if cnt > 0 {
 		log.L().Error("total duplicated key count: %d", zap.Int32("dupCnt", cnt))
 		err = errors.Errorf("total duplicated key count: %d", cnt)
