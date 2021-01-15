@@ -28,5 +28,5 @@ const (
 
 	defaultMaxAllowedPacket = 64 * units.MiB
 
-	defaultBatchSize ByteSize = 100 * units.GiB
+	defaultBatchSize ByteSize = 10000 * units.GiB
 )
