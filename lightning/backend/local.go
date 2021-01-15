@@ -1139,7 +1139,7 @@ func (r *syncdRanges) take() []Range {
 	return rg
 }
 
-func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) (err error) {
 	engineFile, ok := local.engines.Load(engineUUID)
 	if !ok {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1152,49 +1152,68 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		return nil
 	}
 
-	// split sorted file into range by 96MB size per file
-	ranges, err := local.readAndSplitIntoRange(lf)
-	if err != nil {
-		return err
+	it := lf.db.NewIter(nil)
+	defer func() {
+		if e := it.Close(); e != nil && err != nil {
+			err = e
+		}
+	}()
+	for it.First(); it.Valid(); it.Next() {
+		if e := it.Error(); e != nil {
+			err = e
+			return
+		}
 	}
-	remains := &syncdRanges{}
+	if e := it.Error(); e != nil {
+		err = e
+	}
+	return
 
-	for {
-		log.L().Info("start import engine", zap.Stringer("uuid", engineUUID),
-			zap.Int("ranges", len(ranges)))
+	/*
+		// split sorted file into range by 96MB size per file
+		ranges, err := local.readAndSplitIntoRange(lf)
+		if err != nil {
+			return err
+		}
+		remains := &syncdRanges{}
 
-		// split region by given ranges
-		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
-			if err == nil {
-				break
+		for {
+			log.L().Info("start import engine", zap.Stringer("uuid", engineUUID),
+				zap.Int("ranges", len(ranges)))
+
+			// split region by given ranges
+			for i := 0; i < maxRetryTimes; i++ {
+				err = local.SplitAndScatterRegionByRanges(ctx, ranges)
+				if err == nil {
+					break
+				}
+
+				log.L().Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+					log.ShortError(err), zap.Int("retry", i))
+			}
+			if err != nil {
+				log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
+				return err
 			}
 
-			log.L().Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
-				log.ShortError(err), zap.Int("retry", i))
-		}
-		if err != nil {
-			log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
-			return err
+			// start to write to kv and ingest
+			err = local.writeAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
+			if err != nil {
+				log.L().Error("write and ingest engine failed", log.ShortError(err))
+				return err
+			}
+
+			unfinishedRanges := remains.take()
+			if len(unfinishedRanges) == 0 {
+				break
+			}
+			log.L().Info("ingest ranges unfinished", zap.Int("remain ranges", len(unfinishedRanges)))
+			ranges = unfinishedRanges
 		}
 
-		// start to write to kv and ingest
-		err = local.writeAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
-		if err != nil {
-			log.L().Error("write and ingest engine failed", log.ShortError(err))
-			return err
-		}
-
-		unfinishedRanges := remains.take()
-		if len(unfinishedRanges) == 0 {
-			break
-		}
-		log.L().Info("ingest ranges unfinished", zap.Int("remain ranges", len(unfinishedRanges)))
-		ranges = unfinishedRanges
-	}
-
-	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID))
-	return nil
+		log.L().Info("import engine success", zap.Stringer("uuid", engineUUID))
+		return nil
+	*/
 }
 
 func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
