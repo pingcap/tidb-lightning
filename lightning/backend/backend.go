@@ -323,7 +323,8 @@ func (en engine) unsafeClose(ctx context.Context) (*ClosedEngine, error) {
 func (engine *ClosedEngine) Import(ctx context.Context) error {
 	var err error
 
-	for i := 0; i < maxRetryTimes; i++ {
+	// avoid retry
+	for i := 0; i < 1; i++ {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid)
 		if !common.IsRetryableError(err) {
