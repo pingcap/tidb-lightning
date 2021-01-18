@@ -461,6 +461,9 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 
 // Adjust fixes the invalid or unspecified settings to reasonable valid values.
 func (cfg *Config) Adjust(ctx context.Context) error {
+	// TODO: always disable checkpoint for check
+	cfg.Checkpoint.Enable = false
+
 	// Reject problematic CSV configurations.
 	csv := &cfg.Mydumper.CSV
 	if len(csv.Separator) == 0 {

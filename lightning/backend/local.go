@@ -769,7 +769,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 	return ranges
 }
 
-func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error) {
+func (local *local) readAndSplitIntoRange(engineFile *LocalFile, regionSplitSize, regionMaxKeyCount int64) ([]Range, error) {
 	iter := engineFile.db.NewIter(nil)
 	defer iter.Close()
 
@@ -795,7 +795,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 	endKey := nextKey(lastKey)
 
 	// <= 96MB no need to split into range
-	if engineFile.TotalSize <= local.regionSplitSize && engineFile.Length <= regionMaxKeyCount {
+	if engineFile.TotalSize <= regionSplitSize && engineFile.Length <= regionMaxKeyCount {
 		ranges := []Range{{start: firstKey, end: endKey, length: int(engineFile.Length)}}
 		return ranges, nil
 	}
@@ -806,7 +806,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 	}
 
 	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
-		local.regionSplitSize, regionMaxKeyCount*2/3)
+		regionSplitSize, regionMaxKeyCount*2/3)
 
 	log.L().Info("split engine key ranges", zap.Stringer("engine", engineFile.Uuid),
 		zap.Int64("totalSize", engineFile.TotalSize), zap.Int64("totalCount", engineFile.Length),
@@ -1161,21 +1161,49 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) (err
 		return nil
 	}
 
-	it := lf.db.NewIter(nil)
-	defer func() {
-		if e := it.Close(); e != nil && err != nil {
-			err = e
-		}
-	}()
-	for it.First(); it.Valid(); it.Next() {
-		if e := it.Error(); e != nil {
-			err = e
-			return
-		}
+	concurrency := local.tcpConcurrency
+	rangeSize := lf.TotalSize / int64(concurrency)
+	rangeKvs := lf.Length / int64(concurrency)
+	if rangeSize < local.regionSplitSize {
+		rangeSize = local.regionSplitSize
+		rangeKvs = regionMaxKeyCount
 	}
-	if e := it.Error(); e != nil {
-		err = e
+
+	ranges, err := local.readAndSplitIntoRange(lf, rangeSize, rangeKvs)
+	if err != nil {
+		return errors.Trace(err)
 	}
+
+	var wg sync.WaitGroup
+	var allErr common.OnceError
+	for _, rg := range ranges {
+		wg.Add(1)
+		w := local.rangeConcurrency.Apply()
+		go func(rg Range) {
+			defer wg.Done()
+			defer local.rangeConcurrency.Recycle(w)
+
+			it := lf.db.NewIter(&pebble.IterOptions{LowerBound: rg.start, UpperBound: rg.end})
+			defer func() {
+				if e := it.Close(); e != nil && err != nil {
+					allErr.Set(e)
+				}
+			}()
+			for it.First(); it.Valid(); it.Next() {
+				if e := it.Error(); e != nil {
+					allErr.Set(e)
+					return
+				}
+			}
+			if e := it.Error(); e != nil {
+				allErr.Set(e)
+			}
+
+		}(rg)
+	}
+
+	wg.Wait()
+	err = allErr.Get()
 	cnt := atomic.LoadInt32(&lf.dupCnt)
 	if cnt > 0 {
 		log.L().Error("total duplicated key count: %d", zap.Int32("dupCnt", cnt))
