@@ -15,17 +15,18 @@
 
 set -eux
 
-# First, verify that inject with not leader error is fine.
-rm -f "$TEST_DIR/lightning-tidb.log"
-run_sql 'DROP DATABASE IF EXISTS fail_fast;'
-
 export GO_FAILPOINTS='github.com/pingcap/tidb-lightning/lightning/restore/SlowDownWriteRows=return(50);github.com/pingcap/tidb-lightning/lightning/restore/SetMinDeliverBytes=return(1)'
 
 for CFG in chunk engine; do
+  rm -f "$TEST_DIR/lightning-tidb.log"
+  run_sql 'DROP DATABASE IF EXISTS fail_fast;'
+
   set +e
   run_lightning --backend tidb --enable-checkpoint=0 --log-file "$TEST_DIR/lightning-tidb.log" --config "tests/$TEST_NAME/$CFG.toml"
   ERRORCODE=$?
   set -e
+
+  cat $TEST_DIR/lightning-tidb.log > $TEST_DIR/lightning.log
 
   [ "$ERRORCODE" -ne 0 ]
 
