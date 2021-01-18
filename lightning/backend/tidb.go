@@ -188,13 +188,14 @@ func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, col *
 		value := strconv.AppendFloat(buffer[:0], datum.GetFloat64(), 'g', -1, 64)
 		sb.Write(value)
 	case types.KindString:
-		if enc.mode.HasStrictMode() {
-			d, err := table.CastValue(enc.se, *datum, col.ToInfo(), false, false)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			datum = &d
-		}
+		// See: https://github.com/pingcap/tidb-lightning/issues/550
+		//if enc.mode.HasStrictMode() {
+		//	d, err := table.CastValue(enc.se, *datum, col.ToInfo(), false, false)
+		//	if err != nil {
+		//		return errors.Trace(err)
+		//	}
+		//	datum = &d
+		//}
 
 		enc.appendSQLBytes(sb, datum.GetBytes())
 	case types.KindBytes:
