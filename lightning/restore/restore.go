@@ -1155,11 +1155,14 @@ func (t *TableRestore) restoreTable(
 	return t.postProcess(ctx, rc, cp, false /* force-analyze */)
 }
 
-func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
+func (t *TableRestore) restoreEngines(pCtx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
 		return errors.Errorf("table %v index engine checkpoint not found", t.tableName)
 	}
+
+	ctx, cancel := context.WithCancel(pCtx)
+	defer cancel()
 
 	// The table checkpoint status set to `CheckpointStatusIndexImported` only if
 	// both all data engines and the index engine had been imported to TiKV.
@@ -1189,6 +1192,12 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		logTask := t.logger.Begin(zap.InfoLevel, "import whole table")
 		var wg sync.WaitGroup
 		var engineErr common.OnceError
+
+		setError := func(err error) {
+			engineErr.Set(err)
+			// cancel this context to fail fast
+			cancel()
+		}
 
 		for engineID, engine := range cp.Engines {
 			select {
@@ -1224,7 +1233,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 					engineLogTask.End(zap.ErrorLevel, err)
 					rc.tableWorkers.Recycle(w)
 					if err != nil {
-						engineErr.Set(err)
+						setError(err)
 						return
 					}
 
@@ -1234,7 +1243,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 
 					defer rc.closedEngineLimit.Recycle(dataWorker)
 					if err := t.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
-						engineErr.Set(err)
+						setError(err)
 					}
 				}(restoreWorker, engineID, engine)
 			}
@@ -1287,12 +1296,14 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 }
 
 func (t *TableRestore) restoreEngine(
-	ctx context.Context,
+	pCtx context.Context,
 	rc *RestoreController,
 	indexEngine *kv.OpenedEngine,
 	engineID int32,
 	cp *EngineCheckpoint,
 ) (*kv.ClosedEngine, *worker.Worker, error) {
+	ctx, cancel := context.WithCancel(pCtx)
+	defer cancel()
 	if cp.Status >= CheckpointStatusClosed {
 		w := rc.closedEngineLimit.Apply()
 		closedEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, engineID)
@@ -1370,6 +1381,7 @@ func (t *TableRestore) restoreEngine(
 			} else {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
 				chunkErr.Set(err)
+				cancel()
 			}
 		}(restoreWorker, cr)
 	}
@@ -2086,6 +2098,10 @@ func (cr *chunkRestore) deliverLoop(
 			deliverLogger.Error("write to index engine failed", log.ShortError(err))
 			return
 		}
+		failpoint.Inject("SlowDownWriteRows", func(v failpoint.Value) {
+			dur := v.(int)
+			time.Sleep(time.Duration(dur) * time.Millisecond)
+		})
 
 		deliverDur := time.Since(start)
 		deliverTotalDur += deliverDur
