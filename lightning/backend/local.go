@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -195,10 +194,20 @@ func (e *LocalFile) isLocked() bool {
 func (e *LocalFile) getEngineFileSize() EngineFileSize {
 	metrics := e.db.Metrics()
 	total := metrics.Total()
+	var memSize int64
+	e.localWriters.Range(func(k, v interface{}) bool {
+		w := k.(*LocalWriter)
+		memSize += w.writeBatch.totalSize
+		if w.writer != nil {
+			total.Size += int64(w.writer.writer.EstimatedSize())
+		}
+		return true
+	})
+
 	return EngineFileSize{
 		UUID:        e.Uuid,
 		DiskSize:    total.Size,
-		MemSize:     int64(metrics.MemTable.Size / 10),
+		MemSize:     memSize,
 		IsImporting: e.isLocked(),
 	}
 }
@@ -577,9 +586,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 		DisableWAL:            true,
 		ReadOnly:              readOnly,
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
-			func() pebble.TablePropertyCollector {
-				return newRangePropertiesCollector()
-			},
+			newRangePropertiesCollector,
 		},
 	}
 	dbPath := filepath.Join(local.localStoreDir, engineUUID.String())
@@ -1632,7 +1639,7 @@ type RangePropertiesCollector struct {
 	propKeysIdxDistance uint64
 }
 
-func newRangePropertiesCollector() *RangePropertiesCollector {
+func newRangePropertiesCollector() pebble.TablePropertyCollector {
 	return &RangePropertiesCollector{
 		props:               make([]rangeProperty, 0, 1024),
 		propSizeIdxDistance: defaultPropSizeIndexDistance,
@@ -1729,30 +1736,16 @@ func (local *local) EngineFileSizes() (res []EngineFileSize) {
 }
 
 type LocalWriter struct {
-	writeErr           common.OnceError
-	local              *LocalFile
-	lastKey            []byte
-	consumeCh          chan struct{}
-	kvsChan            chan []common.KvPair
-	flushChMutex       sync.RWMutex
-	flushCh            chan *sync.WaitGroup
-	sstDir             string
-	memtableSizeLimit  int64
-	writeBatch         []common.KvPair
-	isWriteBatchSorted bool
-}
-
-// If this method return false, it would not change `w.lastKey`
-func (w *LocalWriter) isSorted(kvs []common.KvPair) bool {
-	lastKey := w.lastKey
-	for _, pair := range kvs {
-		if len(lastKey) > 0 && bytes.Compare(lastKey, pair.Key) >= 0 {
-			return false
-		}
-		lastKey = pair.Key
-	}
-	w.lastKey = append(w.lastKey[:0], lastKey...)
-	return true
+	writeErr          common.OnceError
+	local             *LocalFile
+	consumeCh         chan struct{}
+	kvsChan           chan []common.KvPair
+	flushChMutex      sync.RWMutex
+	flushCh           chan *sync.WaitGroup
+	sstDir            string
+	memtableSizeLimit int64
+	writeBatch        kvMemCache
+	writer            *sstWriter
 }
 
 func (w *LocalWriter) AppendRows(ctx context.Context, tableName string, columnNames []string, ts uint64, rows Rows) error {
@@ -1790,15 +1783,16 @@ func (w *LocalWriter) Close() error {
 	}
 }
 
+func (w *LocalWriter) genSSTPath() string {
+	return filepath.Join(w.sstDir, uuid.New().String()+".sst")
+}
+
 func (w *LocalWriter) writeRowsLoop() {
-	batchSize := int64(0)
-	totalSize := int64(0)
-	totalCount := int64(0)
-	w.isWriteBatchSorted = true
-	var writer *sstable.Writer = nil
-	//var wb *pebble.Batch = nil
-	var filePath string
 	defer func() {
+		if w.writer != nil {
+			w.writer.cleanUp()
+			w.writer = nil
+		}
 		w.consumeCh <- struct{}{}
 	}()
 	var err error
@@ -1814,99 +1808,31 @@ outside:
 				break outside
 			}
 
-			hasSort := w.isSorted(kvs)
-			if totalCount > 1000 && hasSort {
-				for _, pair := range kvs {
-					totalSize += int64(len(pair.Key) + len(pair.Val))
-				}
-				if writer == nil {
-					writer, filePath, err = w.createWriter()
-					if err != nil {
-						w.writeErr.Set(err)
-						return
-					}
-					if len(w.writeBatch) > 0 && w.isWriteBatchSorted {
-						if err := writeKVs(writer, w.writeBatch); err != nil {
-							w.writeErr.Set(err)
-							return
-						}
-						w.isWriteBatchSorted = true
-						w.writeBatch = w.writeBatch[:0]
-						totalSize += batchSize
-						batchSize = 0
-					}
-				}
-				if err := writeKVs(writer, kvs); err != nil {
+			w.writeBatch.append(kvs)
+			if w.writeBatch.totalSize <= w.memtableSizeLimit {
+				break
+			}
+			if w.writer == nil {
+				w.writer, err = newSSTWriter(w.genSSTPath())
+				if err != nil {
 					w.writeErr.Set(err)
 					return
 				}
-			} else {
-				for _, pair := range kvs {
-					batchSize += int64(len(pair.Key) + len(pair.Val))
-				}
-				if !hasSort {
-					w.isWriteBatchSorted = false
-				}
-				w.writeBatch = append(w.writeBatch, kvs...)
-
-				if batchSize > w.memtableSizeLimit {
-					if err := w.flushKVs(); err != nil {
-						w.writeErr.Set(err)
-						return
-					}
-					if writer == nil {
-						w.lastKey = w.lastKey[:0]
-					}
-					totalSize += batchSize
-					batchSize = 0
-					w.isWriteBatchSorted = true
-				}
 			}
-			totalCount += int64(len(kvs))
+
+			if err = w.writeKVsOrIngest(0); err != nil {
+				w.writeErr.Set(err)
+				return
+			}
 
 		case doneWg := <-flushCh:
-			err := func() error {
-				if writer != nil {
-					if len(w.writeBatch) > 0 && w.isWriteBatchSorted {
-						if err := writeKVs(writer, w.writeBatch); err != nil {
-							return err
-						}
-						w.isWriteBatchSorted = true
-						w.writeBatch = w.writeBatch[:0]
-						totalSize += batchSize
-						batchSize = 0
-					}
-
-					if err := writer.Close(); err != nil {
-						return err
-					}
-					// No need to acquire lock around this ingest,
-					// we already held the lock before flushing.
-					if err := w.local.db.Ingest([]string{filePath}); err != nil {
-						return err
-					}
-					// The following two variable should be changed with holding mutex,
-					// because there may be another thread change localFileMeta object. See it in `local::OpenEngine`
-					w.local.TotalSize.Add(totalSize)
-					w.local.Length.Add(totalCount)
-
-					log.L().Info("write data by sst writer (flush)", zap.Int64("bytes", totalSize))
-
-					totalSize = 0
-					totalCount = 0
-					writer = nil
+			err = w.writeKVsOrIngest(localIngestDescriptionFlushed)
+			if w.writer != nil {
+				err = w.writer.ingestInto(w.local, localIngestDescriptionFlushed)
+				if err == nil {
+					err = w.writer.reopen()
 				}
-				if len(w.writeBatch) > 0 {
-					if err := w.flushKVs(); err != nil {
-						return err
-					}
-					w.lastKey = w.lastKey[:0]
-					totalSize += batchSize
-					batchSize = 0
-					w.isWriteBatchSorted = true
-				}
-				return nil
-			}()
+			}
 			doneWg.Done()
 			if err != nil {
 				w.writeErr.Set(err)
@@ -1915,82 +1841,192 @@ outside:
 		}
 	}
 
-	w.local.lock(importMutexStateLocalIngest)
-	defer w.local.unlock()
-
-	if batchSize > 0 {
-		if err := w.flushKVs(); err != nil {
-			w.writeErr.Set(err)
-			return
-		}
-		totalSize += batchSize
-		log.L().Info("write data by sort index", zap.Int64("bytes", totalSize))
-	}
-	if writer != nil {
-		err := writer.Close()
-		if err == nil {
-			err = w.local.db.Ingest([]string{filePath})
-			// The following two variable should be changed with holding mutex,
-			// because there may be another thread change localFileMeta object. See it in `local::OpenEngine`
-			w.local.TotalSize.Add(totalSize)
-			w.local.Length.Add(totalCount)
-		}
+	if err = w.writeKVsOrIngest(0); err != nil {
 		w.writeErr.Set(err)
-		log.L().Info("write data by sst writer", zap.Int64("bytes", totalSize))
-	} else {
-		w.local.TotalSize.Add(totalSize)
-		w.local.Length.Add(totalCount)
+		return
+	}
+	if w.writer != nil {
+		if err := w.writer.ingestInto(w.local, 0); err != nil {
+			w.writeErr.Set(err)
+		}
 	}
 }
 
-func (w *LocalWriter) flushKVs() error {
-	writer, filePath, err := w.createWriter()
-	if err != nil {
-		return err
-	}
-	if !w.isWriteBatchSorted {
-		sort.Slice(w.writeBatch, func(i, j int) bool {
-			return bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0
-		})
-	}
-	if err := writeKVs(writer, w.writeBatch); err != nil {
-		return err
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
-	w.writeBatch = w.writeBatch[:0]
-	err = w.local.db.Ingest([]string{filePath})
-	return err
-}
-
-func (w *LocalWriter) createWriter() (*sstable.Writer, string, error) {
-	filePath := filepath.Join(w.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
-	f, err := os.Create(filePath)
-	if err != nil {
-		return nil, filePath, err
-	}
-	writer := sstable.NewWriter(f, sstable.WriterOptions{
-		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
-			func() pebble.TablePropertyCollector {
-				return newRangePropertiesCollector()
-			},
-		},
-		BlockSize: 16 * 1024,
-	})
-	return writer, filePath, nil
-}
-
-func writeKVs(writer *sstable.Writer, kvs []common.KvPair) error {
-	internalKey := sstable.InternalKey{
-		UserKey: []byte{},
-		Trailer: uint64(sstable.InternalKeyKindSet),
-	}
-	for _, p := range kvs {
-		internalKey.UserKey = p.Key
-		if err := writer.Add(internalKey, p.Val); err != nil {
+func (w *LocalWriter) writeKVsOrIngest(desc localIngestDescription) error {
+	if w.writer != nil {
+		if err := w.writer.writeKVs(&w.writeBatch); err != errorUnorderedSSTInsertion {
 			return err
 		}
 	}
+
+	// if write failed only because of unorderedness, we immediately ingest the memcache.
+	immWriter, err := newSSTWriter(w.genSSTPath())
+	if err != nil {
+		return err
+	}
+	defer immWriter.cleanUp()
+
+	if err = immWriter.writeKVs(&w.writeBatch); err != nil {
+		return err
+	}
+
+	return immWriter.ingestInto(w.local, desc|localIngestDescriptionImmediate)
+}
+
+var errorUnorderedSSTInsertion = errors.New("inserting KVs into SST without order")
+
+type localIngestDescription uint8
+
+const (
+	localIngestDescriptionFlushed localIngestDescription = 1 << iota
+	localIngestDescriptionImmediate
+)
+
+type sstWriter struct {
+	path       string
+	writer     *sstable.Writer
+	lastKey    []byte
+	totalSize  int64
+	totalCount int64
+}
+
+func newSSTWriter(path string) (*sstWriter, error) {
+	sw := &sstWriter{path: path}
+	if err := sw.reopen(); err != nil {
+		return nil, err
+	}
+	return sw, nil
+}
+
+// writeKVs moves the KV pairs in the cache into the SST writer.
+// On success, the cache will be cleared.
+func (sw *sstWriter) writeKVs(m *kvMemCache) error {
+	if len(m.kvs) == 0 {
+		return nil
+	}
+	m.sort()
+	if bytes.Compare(m.kvs[0].Key, sw.lastKey) <= 0 {
+		return errorUnorderedSSTInsertion
+	}
+
+	internalKey := sstable.InternalKey{
+		Trailer: uint64(sstable.InternalKeyKindSet),
+	}
+	for _, p := range m.kvs {
+		internalKey.UserKey = p.Key
+		if err := sw.writer.Add(internalKey, p.Val); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	sw.totalSize += m.totalSize
+	sw.totalCount += int64(len(m.kvs))
+	sw.lastKey = m.kvs[len(m.kvs)-1].Key
+	m.clear()
 	return nil
+}
+
+// ingestInto finishes the SST file, and ingests itself into the target LocalFile database.
+// On success, the entire writer will be reset as empty.
+func (sw *sstWriter) ingestInto(e *LocalFile, desc localIngestDescription) error {
+	if sw.totalCount > 0 {
+		if err := sw.writer.Close(); err != nil {
+			return errors.Trace(err)
+		}
+		if desc&localIngestDescriptionFlushed == 0 {
+			// No need to acquire lock around ingestion when flushing.
+			// we already held the lock before flushing.
+			e.lock(importMutexStateLocalIngest)
+			defer e.unlock()
+		}
+		meta, _ := sw.writer.Metadata() // this method returns error only if it has not been closed yet.
+		log.L().Info("write data to local DB",
+			zap.Int64("size", sw.totalSize),
+			zap.Int64("kvs", sw.totalCount),
+			zap.Uint8("description", uint8(desc)),
+			zap.Uint64("sstFileSize", meta.Size),
+			log.ZapRedactBinary("firstKey", meta.SmallestPoint.UserKey),
+			log.ZapRedactBinary("lastKey", meta.LargestPoint.UserKey))
+
+		if err := e.db.Ingest([]string{sw.path}); err != nil {
+			return errors.Trace(err)
+		}
+		e.TotalSize.Add(sw.totalSize)
+		e.Length.Add(sw.totalCount)
+		sw.totalSize = 0
+		sw.totalCount = 0
+		sw.lastKey = nil
+	}
+	sw.writer = nil
+	return nil
+}
+
+// reopen creates a new SST file after ingestInto is successful.
+// Returns error if the SST file was not ingested.
+func (sw *sstWriter) reopen() error {
+	if sw.writer != nil {
+		return errors.New("cannot reopen an SST writer without ingesting it first")
+	}
+	f, err := os.Create(sw.path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sw.writer = sstable.NewWriter(f, sstable.WriterOptions{
+		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+			newRangePropertiesCollector,
+		},
+		BlockSize: 16 * 1024,
+	})
+	return nil
+}
+
+// cleanUp removes any un-ingested SST file.
+func (sw *sstWriter) cleanUp() {
+	if sw.writer != nil {
+		sw.writer.Close()
+		os.Remove(sw.path)
+	}
+}
+
+// kvMemCache is an array of KV pairs. It also keep tracks of the total KV size and whether the array is already sorted.
+type kvMemCache struct {
+	kvs       []common.KvPair
+	totalSize int64
+	notSorted bool // record "not sorted" instead of "sorted" so that the zero value is correct.
+}
+
+// append more KV pairs to the kvMemCache.
+func (m *kvMemCache) append(kvs []common.KvPair) {
+	if !m.notSorted {
+		var lastKey []byte
+		if len(m.kvs) > 0 {
+			lastKey = m.kvs[len(m.kvs)-1].Key
+		}
+		for _, kv := range kvs {
+			if bytes.Compare(kv.Key, lastKey) <= 0 {
+				m.notSorted = true
+				break
+			}
+			lastKey = kv.Key
+		}
+	}
+
+	m.kvs = append(m.kvs, kvs...)
+	for _, kv := range kvs {
+		m.totalSize += int64(len(kv.Key)) + int64(len(kv.Val))
+	}
+}
+
+// sort ensures the content is actually sorted.
+func (m *kvMemCache) sort() {
+	if m.notSorted {
+		sort.Slice(m.kvs, func(i, j int) bool { return bytes.Compare(m.kvs[i].Key, m.kvs[j].Key) < 0 })
+		m.notSorted = false
+	}
+}
+
+// clear resets the cache to contain nothing.
+func (m *kvMemCache) clear() {
+	m.kvs = m.kvs[:0]
+	m.totalSize = 0
+	m.notSorted = false
 }
