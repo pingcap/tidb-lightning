@@ -368,8 +368,8 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	sort.Slice(keys, func(i, j int) bool {
 		return bytes.Compare(keys[i], keys[j]) < 0
 	})
-	c.Assert(int(f.Length), Equals, 20000)
-	c.Assert(int(f.TotalSize), Equals, 144*20000)
+	c.Assert(int(f.Length.Load()), Equals, 20000)
+	c.Assert(int(f.TotalSize.Load()), Equals, 144*20000)
 	valid := it.SeekGE(keys[0])
 	c.Assert(valid, IsTrue)
 	for _, k := range keys {

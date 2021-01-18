@@ -26,7 +26,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -105,9 +105,9 @@ type Range struct {
 type localFileMeta struct {
 	Ts uint64 `json:"ts"`
 	// Length is the number of KV pairs stored by the engine.
-	Length int64 `json:"length"`
+	Length atomic.Int64 `json:"length"`
 	// TotalSize is the total pre-compressed KV byte size stored by engine.
-	TotalSize int64 `json:"total_size"`
+	TotalSize atomic.Int64 `json:"total_size"`
 }
 
 type importMutexState uint32
@@ -127,7 +127,7 @@ type LocalFile struct {
 
 	// isImportingAtomic is an atomic variable indicating whether the importMutex has been locked.
 	// This should not be used as a "spin lock" indicator.
-	isImportingAtomic uint32
+	isImportingAtomic atomic.Uint32
 	mutex             sync.Mutex
 }
 
@@ -189,7 +189,7 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 }
 
 func (e *LocalFile) isLocked() bool {
-	return atomic.LoadUint32(&e.isImportingAtomic) != 0
+	return e.isImportingAtomic.Load() != 0
 }
 
 func (e *LocalFile) getEngineFileSize() EngineFileSize {
@@ -209,16 +209,16 @@ func (e *LocalFile) getEngineFileSize() EngineFileSize {
 // writers are ingested into the local file before locking.
 func (e *LocalFile) lock(state importMutexState) {
 	e.mutex.Lock()
-	atomic.StoreUint32(&e.isImportingAtomic, uint32(state))
+	e.isImportingAtomic.Store(uint32(state))
 }
 
 func (e *LocalFile) lockUnless(newState, ignoreStateMask importMutexState) bool {
 	for {
-		curState := atomic.LoadUint32(&e.isImportingAtomic)
+		curState := e.isImportingAtomic.Load()
 		if curState&uint32(ignoreStateMask) != 0 {
 			return false
 		}
-		if atomic.CompareAndSwapUint32(&e.isImportingAtomic, curState, uint32(newState)) {
+		if e.isImportingAtomic.CAS(curState, uint32(newState)) {
 			e.mutex.Lock()
 			return true
 		}
@@ -229,7 +229,7 @@ func (e *LocalFile) unlock() {
 	if e == nil {
 		return
 	}
-	atomic.StoreUint32(&e.isImportingAtomic, 0)
+	e.isImportingAtomic.Store(0)
 	e.mutex.Unlock()
 }
 
@@ -921,9 +921,12 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 	}
 	endKey := nextKey(lastKey)
 
+	engineFileTotalSize := engineFile.TotalSize.Load()
+	engineFileLength := engineFile.Length.Load()
+
 	// <= 96MB no need to split into range
-	if engineFile.TotalSize <= local.regionSplitSize && engineFile.Length <= regionMaxKeyCount {
-		ranges := []Range{{start: firstKey, end: endKey, length: int(engineFile.Length)}}
+	if engineFileTotalSize <= local.regionSplitSize && engineFileLength <= regionMaxKeyCount {
+		ranges := []Range{{start: firstKey, end: endKey, length: int(engineFileLength)}}
 		return ranges, nil
 	}
 
@@ -936,7 +939,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error
 		local.regionSplitSize, regionMaxKeyCount*2/3)
 
 	log.L().Info("split engine key ranges", zap.Stringer("engine", engineFile.Uuid),
-		zap.Int64("totalSize", engineFile.TotalSize), zap.Int64("totalCount", engineFile.Length),
+		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
 		log.ZapRedactBinary("firstKey", firstKey), log.ZapRedactBinary("lastKey", lastKey),
 		zap.Int("ranges", len(ranges)))
 
@@ -1213,7 +1216,7 @@ loopWrite:
 }
 
 func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *LocalFile, ranges []Range, remainRanges *syncdRanges) error {
-	if engineFile.Length == 0 {
+	if engineFile.Length.Load() == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
 		log.L().Info("engine contains no data", zap.Stringer("uuid", engineFile.Uuid))
 		return nil
@@ -1289,7 +1292,10 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 	}
 	defer lf.unlock()
 
-	if lf.TotalSize == 0 {
+	lfTotalSize := lf.TotalSize.Load()
+	lfLength := lf.Length.Load()
+
+	if lfTotalSize == 0 {
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
@@ -1307,7 +1313,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 		// the table when table is created.
-		needSplit := len(ranges) > 1 || lf.TotalSize > local.regionSplitSize || lf.Length > regionMaxKeyCount
+		needSplit := len(ranges) > 1 || lfTotalSize > local.regionSplitSize || lfLength > regionMaxKeyCount
 
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
@@ -1340,7 +1346,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 	}
 
 	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID),
-		zap.Int64("size", lf.TotalSize), zap.Int64("kvs", lf.Length))
+		zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength))
 	return nil
 }
 
@@ -1388,8 +1394,8 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 	if err != nil {
 		return err
 	}
-	localEngine.TotalSize = 0
-	localEngine.Length = 0
+	localEngine.TotalSize.Store(0)
+	localEngine.Length.Store(0)
 	return nil
 }
 
@@ -1881,8 +1887,8 @@ outside:
 					}
 					// The following two variable should be changed with holding mutex,
 					// because there may be another thread change localFileMeta object. See it in `local::OpenEngine`
-					atomic.AddInt64(&w.local.TotalSize, totalSize)
-					atomic.AddInt64(&w.local.Length, totalCount)
+					w.local.TotalSize.Add(totalSize)
+					w.local.Length.Add(totalCount)
 
 					log.L().Info("write data by sst writer (flush)", zap.Int64("bytes", totalSize))
 
@@ -1926,14 +1932,14 @@ outside:
 			err = w.local.db.Ingest([]string{filePath})
 			// The following two variable should be changed with holding mutex,
 			// because there may be another thread change localFileMeta object. See it in `local::OpenEngine`
-			atomic.AddInt64(&w.local.TotalSize, totalSize)
-			atomic.AddInt64(&w.local.Length, totalCount)
+			w.local.TotalSize.Add(totalSize)
+			w.local.Length.Add(totalCount)
 		}
 		w.writeErr.Set(err)
 		log.L().Info("write data by sst writer", zap.Int64("bytes", totalSize))
 	} else {
-		atomic.AddInt64(&w.local.TotalSize, totalSize)
-		atomic.AddInt64(&w.local.Length, totalCount)
+		w.local.TotalSize.Add(totalSize)
+		w.local.Length.Add(totalCount)
 	}
 }
 
