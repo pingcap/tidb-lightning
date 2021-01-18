@@ -1045,7 +1045,34 @@ loopWrite:
 			for errCnt < maxRetryTimes {
 				log.L().Debug("ingest meta", zap.Reflect("meta", meta))
 				var resp *sst.IngestResponse
-				resp, err = local.Ingest(ctx, meta, region)
+				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
+					// only inject the error once
+					switch val.(string) {
+					case "notleader":
+						resp = &sst.IngestResponse{
+							Error: &errorpb.Error{
+								NotLeader: &errorpb.NotLeader{
+									RegionId: region.Region.Id,
+									Leader:   region.Leader,
+								},
+							},
+						}
+					case "epochnotmatch":
+						resp = &sst.IngestResponse{
+							Error: &errorpb.Error{
+								EpochNotMatch: &errorpb.EpochNotMatch{
+									CurrentRegions: []*metapb.Region{region.Region},
+								},
+							},
+						}
+					}
+					if resp != nil {
+						err = nil
+					}
+				})
+				if resp == nil {
+					resp, err = local.Ingest(ctx, meta, region)
+				}
 				if err != nil {
 					if errors.Cause(err) == context.Canceled {
 						return nil, err
@@ -1055,16 +1082,7 @@ loopWrite:
 					errCnt++
 					continue
 				}
-				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
-					switch val.(string) {
-					case "notleader":
-						resp.Error.NotLeader = &errorpb.NotLeader{
-							RegionId: region.Region.Id, Leader: region.Leader}
-					case "epochnotmatch":
-						resp.Error.EpochNotMatch = &errorpb.EpochNotMatch{
-							CurrentRegions: []*metapb.Region{region.Region}}
-					}
-				})
+
 				var retryTy retryType
 				var newRegion *split.RegionInfo
 				retryTy, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
