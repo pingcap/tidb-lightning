@@ -144,7 +144,6 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 
 	logLevel := flagext.ChoiceVar(fs, "L", "", `log level: info, debug, warn, error, fatal (default info)`, "", "info", "debug", "warn", "warning", "error", "fatal")
 	logFilePath := fs.String("log-file", "", "log file path")
-	redactLog := fs.Bool("redact-log", false, "whether to redact sensitive info in log")
 	tidbHost := fs.String("tidb-host", "", "TiDB server host")
 	tidbPort := fs.Int("tidb-port", 0, "TiDB server port (default 4000)")
 	tidbUser := fs.String("tidb-user", "", "TiDB user name to connect")
@@ -163,6 +162,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	tlsCAPath := fs.String("ca", "", "CA certificate path for TLS connection")
 	tlsCertPath := fs.String("cert", "", "certificate path for TLS connection")
 	tlsKeyPath := fs.String("key", "", "private key path for TLS connection")
+	redactInfoLog := fs.Bool("redact-info-log", false, "whether to redact sensitive info in log")
 
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
@@ -198,9 +198,6 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if *logFilePath != "" {
 		cfg.App.Config.File = *logFilePath
-	}
-	if *redactLog {
-		cfg.App.Config.RedactLog = *redactLog
 	}
 	// "-" is a special config for log to stdout
 	if cfg.App.Config.File == "-" {
@@ -270,6 +267,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if *tlsKeyPath != "" {
 		cfg.Security.KeyPath = *tlsKeyPath
+	}
+	if *redactInfoLog {
+		cfg.Security.RedactInfoLog = *redactInfoLog
 	}
 	if len(filter) > 0 {
 		cfg.Mydumper.Filter = filter

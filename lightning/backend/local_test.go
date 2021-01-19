@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"math/rand"
 	"os"
@@ -379,16 +378,13 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 }
 
 func (s *localSuite) TestLocalWriterWithSort(c *C) {
-	fmt.Println("TestLocalWriterWithSort")
 	testLocalWriter(c, false, false)
 }
 
 func (s *localSuite) TestLocalWriterWithIngest(c *C) {
-	fmt.Println("TestLocalWriterWithIngest")
 	testLocalWriter(c, true, false)
 }
 
 func (s *localSuite) TestLocalWriterWithIngestUnsort(c *C) {
-	fmt.Println("TestLocalWriterWithIngestUnsort")
 	testLocalWriter(c, true, true)
 }
