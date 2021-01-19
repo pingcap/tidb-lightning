@@ -27,7 +27,7 @@ bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out" DEV
     --config "tests/$TEST_NAME/config.toml" \
     -d "tests/$TEST_NAME/data" \
     --importer '127.0.0.1:8808' \
-    --sorted-kv-dir "$TEST_DIR/sorted" \
+    --sorted-kv-dir "$TEST_DIR/$TEST_NAME.sorted" \
     --enable-checkpoint=0 \
     --check-requirements=0 \
     "$@"
