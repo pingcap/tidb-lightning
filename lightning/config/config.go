@@ -463,6 +463,10 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 func (cfg *Config) Adjust(ctx context.Context) error {
 	// TODO: always disable checkpoint for check
 	cfg.Checkpoint.Enable = false
+	cfg.PostRestore.Checksum = OpLevelOff
+	cfg.PostRestore.Analyze = OpLevelOff
+	cfg.PostRestore.Compact = false
+	cfg.PostRestore.Level1Compact = false
 
 	// Reject problematic CSV configurations.
 	csv := &cfg.Mydumper.CSV
@@ -522,7 +526,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 			cfg.App.TableConcurrency = 6
 		}
 		if cfg.TikvImporter.RangeConcurrency == 0 {
-			cfg.TikvImporter.RangeConcurrency = 16
+			cfg.TikvImporter.RangeConcurrency = cfg.App.RegionConcurrency
 		}
 		if cfg.TikvImporter.RegionSplitSize == 0 {
 			cfg.TikvImporter.RegionSplitSize = SplitRegionSize

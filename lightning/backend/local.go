@@ -806,7 +806,7 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, regionSplitSize
 	}
 
 	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
-		regionSplitSize, regionMaxKeyCount*2/3)
+		regionSplitSize, regionMaxKeyCount)
 
 	log.L().Info("split engine key ranges", zap.Stringer("engine", engineFile.Uuid),
 		zap.Int64("totalSize", engineFile.TotalSize), zap.Int64("totalCount", engineFile.Length),
@@ -1176,7 +1176,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) (err
 
 	var wg sync.WaitGroup
 	var allErr common.OnceError
-	for _, rg := range ranges {
+	start := time.Now()
+	for i, rg := range ranges {
+		idx := i
 		wg.Add(1)
 		w := local.rangeConcurrency.Apply()
 		go func(rg Range) {
@@ -1189,10 +1191,19 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) (err
 					allErr.Set(e)
 				}
 			}()
+
+			total := int64(0)
 			for it.First(); it.Valid(); it.Next() {
 				if e := it.Error(); e != nil {
 					allErr.Set(e)
 					return
+				}
+				total += 1
+				if total%1000000 == 0 && total < rangeKvs {
+					dur := time.Since(start)
+
+					log.L().Info("finish check 1m keys", zap.Int("thread", idx), zap.Int64("checked", total),
+						zap.Int64("remain", rangeKvs-total), zap.Duration("cost", dur))
 				}
 			}
 			if e := it.Error(); e != nil {
