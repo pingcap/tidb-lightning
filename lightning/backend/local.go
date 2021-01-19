@@ -213,14 +213,13 @@ func (e *LocalFile) getEngineFileSize() EngineFileSize {
 }
 
 // lock locks the local file for importing.
-//
-// Additionally, if state is importMutexStateFlush, it will ensure all local
-// writers are ingested into the local file before locking.
 func (e *LocalFile) lock(state importMutexState) {
 	e.mutex.Lock()
 	e.isImportingAtomic.Store(uint32(state))
 }
 
+// lockUnless tries to lock the local file unless it is already locked into the state given by
+// ignoreStateMask. Returns whether the lock is successful.
 func (e *LocalFile) lockUnless(newState, ignoreStateMask importMutexState) bool {
 	for {
 		curState := e.isImportingAtomic.Load()
@@ -424,6 +423,8 @@ func (local *local) lockEngine(engineId uuid.UUID, state importMutexState) (*Loc
 	return nil, false
 }
 
+// lockAllEnginesUnless tries to lock all engines, unless those which are already locked in the
+// state given by ignoreStateMask. Returns the list of locked engines.
 func (local *local) lockAllEnginesUnless(newState, ignoreStateMask importMutexState) []*LocalFile {
 	var allEngines []*LocalFile
 	local.engines.Range(func(k, v interface{}) bool {
