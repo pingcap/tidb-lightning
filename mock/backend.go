@@ -127,31 +127,31 @@ func (mr *MockBackendMockRecorder) FetchRemoteTableModels(arg0, arg1 interface{}
 }
 
 // FlushAllEngines mocks base method
-func (m *MockBackend) FlushAllEngines() error {
+func (m *MockBackend) FlushAllEngines(arg0 context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FlushAllEngines")
+	ret := m.ctrl.Call(m, "FlushAllEngines", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // FlushAllEngines indicates an expected call of FlushAllEngines
-func (mr *MockBackendMockRecorder) FlushAllEngines() *gomock.Call {
+func (mr *MockBackendMockRecorder) FlushAllEngines(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushAllEngines", reflect.TypeOf((*MockBackend)(nil).FlushAllEngines))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushAllEngines", reflect.TypeOf((*MockBackend)(nil).FlushAllEngines), arg0)
 }
 
 // FlushEngine mocks base method
-func (m *MockBackend) FlushEngine(arg0 uuid.UUID) error {
+func (m *MockBackend) FlushEngine(arg0 context.Context, arg1 uuid.UUID) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FlushEngine", arg0)
+	ret := m.ctrl.Call(m, "FlushEngine", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // FlushEngine indicates an expected call of FlushEngine
-func (mr *MockBackendMockRecorder) FlushEngine(arg0 interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) FlushEngine(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushEngine", reflect.TypeOf((*MockBackend)(nil).FlushEngine), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FlushEngine", reflect.TypeOf((*MockBackend)(nil).FlushEngine), arg0, arg1)
 }
 
 // ImportEngine mocks base method

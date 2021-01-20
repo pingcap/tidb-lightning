@@ -147,12 +147,12 @@ type AbstractBackend interface {
 	//
 	// This method is only relevant for local backend, and is no-op for all
 	// other backends.
-	FlushEngine(engineUUID uuid.UUID) error
+	FlushEngine(ctx context.Context, engineUUID uuid.UUID) error
 
 	// FlushAllEngines performs FlushEngine on all opened engines. This is a
 	// very expensive operation and should only be used in some rare situation
 	// (e.g. preparing to resolve a disk quota violation).
-	FlushAllEngines() error
+	FlushAllEngines(ctx context.Context) error
 
 	// EngineFileSizes obtains the size occupied locally of all engines managed
 	// by this backend. This method is used to compute disk quota.
@@ -242,8 +242,8 @@ func (be Backend) FetchRemoteTableModels(ctx context.Context, schemaName string)
 	return be.abstract.FetchRemoteTableModels(ctx, schemaName)
 }
 
-func (be Backend) FlushAll() error {
-	return be.abstract.FlushAllEngines()
+func (be Backend) FlushAll(ctx context.Context) error {
+	return be.abstract.FlushAllEngines(ctx)
 }
 
 // CheckDiskQuota verifies if the total engine file size is below the given
@@ -341,8 +341,8 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 }
 
 // Flush current written data for local backend
-func (engine *OpenedEngine) Flush() error {
-	return engine.backend.FlushEngine(engine.uuid)
+func (engine *OpenedEngine) Flush(ctx context.Context) error {
+	return engine.backend.FlushEngine(ctx, engine.uuid)
 }
 
 // WriteRows writes a collection of encoded rows into the engine.

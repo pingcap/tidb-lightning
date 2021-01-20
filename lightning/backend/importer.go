@@ -365,11 +365,11 @@ func (importer *importer) EngineFileSizes() []EngineFileSize {
 	return nil
 }
 
-func (importer *importer) FlushEngine(uuid.UUID) error {
+func (importer *importer) FlushEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (importer *importer) FlushAllEngines() error {
+func (importer *importer) FlushAllEngines(context.Context) error {
 	return nil
 }
 

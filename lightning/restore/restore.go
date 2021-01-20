@@ -1449,7 +1449,7 @@ func (t *TableRestore) restoreEngine(
 	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
 	// this flush action impact up to 10% of the performance, so we only do it if necessary.
 	if err == nil && rc.cfg.Checkpoint.Enable && rc.isLocalBackend() {
-		if err = indexEngine.Flush(); err != nil {
+		if err = indexEngine.Flush(ctx); err != nil {
 			// If any error occurred, recycle worker immediately
 			rc.closedEngineLimit.Recycle(dataWorker)
 			return nil, nil, errors.Trace(err)
@@ -1747,7 +1747,7 @@ func (rc *RestoreController) enforceDiskQuota(ctx context.Context) {
 			}
 
 			// flush all engines so that checkpoints can be updated.
-			if err := rc.backend.FlushAll(); err != nil {
+			if err := rc.backend.FlushAll(ctx); err != nil {
 				logger.Error("flush engine for disk quota failed, check again later", log.ShortError(err))
 				return
 			}

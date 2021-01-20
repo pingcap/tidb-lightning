@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,6 +48,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
@@ -63,9 +63,8 @@ import (
 )
 
 const (
-	dialTimeout          = 5 * time.Second
-	bigValueSize         = 1 << 16 // 64K
-	engineMetaFileSuffix = ".meta"
+	dialTimeout  = 5 * time.Second
+	bigValueSize = 1 << 16 // 64K
 
 	gRPCKeepAliveTime    = 10 * time.Second
 	gRPCKeepAliveTimeout = 3 * time.Second
@@ -89,6 +88,11 @@ var (
 	localMinTiDBVersion = *semver.New("4.0.0")
 	localMinTiKVVersion = *semver.New("4.0.0")
 	localMinPDVersion   = *semver.New("4.0.0")
+)
+
+var (
+	engineMetaKey      = []byte{0, 'm', 'e', 't', 'a'}
+	normalIterStartKey = []byte{1}
 )
 
 // Range record start and end key for localStoreDir.DB
@@ -142,11 +146,6 @@ func (e *LocalFile) Close() error {
 
 // Cleanup remove meta and db files
 func (e *LocalFile) Cleanup(dataDir string) error {
-	metaPath := filepath.Join(dataDir, e.Uuid.String()+engineMetaFileSuffix)
-	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
-		return errors.Trace(err)
-	}
-
 	dbPath := filepath.Join(dataDir, e.Uuid.String())
 	return os.RemoveAll(dbPath)
 }
@@ -221,16 +220,12 @@ func (e *LocalFile) lock(state importMutexState) {
 // lockUnless tries to lock the local file unless it is already locked into the state given by
 // ignoreStateMask. Returns whether the lock is successful.
 func (e *LocalFile) lockUnless(newState, ignoreStateMask importMutexState) bool {
-	for {
-		curState := e.isImportingAtomic.Load()
-		if curState&uint32(ignoreStateMask) != 0 {
-			return false
-		}
-		if e.isImportingAtomic.CAS(curState, uint32(newState)) {
-			e.mutex.Lock()
-			return true
-		}
+	curState := e.isImportingAtomic.Load()
+	if curState&uint32(ignoreStateMask) != 0 {
+		return false
 	}
+	e.lock(newState)
+	return true
 }
 
 func (e *LocalFile) unlock() {
@@ -241,24 +236,70 @@ func (e *LocalFile) unlock() {
 	e.mutex.Unlock()
 }
 
-func (e *LocalFile) flushLocalWriters() {
-	wg := new(sync.WaitGroup)
+func (e *LocalFile) flushLocalWriters(parentCtx context.Context) error {
+	eg, ctx := errgroup.WithContext(parentCtx)
 	e.localWriters.Range(func(k, v interface{}) bool {
-		wg.Add(1)
-		go func() {
+		eg.Go(func() error {
 			w := k.(*LocalWriter)
+			replyErrCh := make(chan error, 1)
 			w.flushChMutex.RLock()
-			defer w.flushChMutex.RUnlock()
-			flushCh := w.flushCh
-			if flushCh != nil {
-				flushCh <- wg
+			if w.flushCh != nil {
+				w.flushCh <- replyErrCh
 			} else {
-				wg.Done()
+				replyErrCh <- nil
 			}
-		}()
+			w.flushChMutex.RUnlock()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case err := <-replyErrCh:
+				return err
+			}
+		})
 		return true
 	})
-	wg.Wait()
+	return eg.Wait()
+}
+
+func (e *LocalFile) flushEngineUnlocked(ctx context.Context) error {
+	if err := e.flushLocalWriters(ctx); err != nil {
+		return err
+	}
+	flushFinishedCh, err := e.db.AsyncFlush()
+	if err != nil {
+		return err
+	}
+	select {
+	case <-flushFinishedCh:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// saveEngineMeta saves the metadata about the DB into the DB itself.
+// This method should be followed by a Flush to ensure the data is actually synchronized
+func (e *LocalFile) saveEngineMeta() error {
+	jsonBytes, err := json.Marshal(&e.localFileMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// note: we can't set Sync to true since we disabled WAL.
+	return errors.Trace(e.db.Set(engineMetaKey, jsonBytes, &pebble.WriteOptions{Sync: false}))
+}
+
+func (e *LocalFile) loadEngineMeta() {
+	jsonBytes, closer, err := e.db.Get(engineMetaKey)
+	if err != nil {
+		log.L().Debug("local db missing engine meta", zap.Stringer("uuid", e.Uuid), zap.Error(err))
+		return
+	}
+	defer closer.Close()
+
+	err = json.Unmarshal(jsonBytes, &e.localFileMeta)
+	if err != nil {
+		log.L().Warn("local db failed to deserialize meta", zap.Stringer("uuid", e.Uuid), zap.ByteString("content", jsonBytes), zap.Error(err))
+	}
 }
 
 type gRPCConns struct {
@@ -413,14 +454,14 @@ func NewLocalBackend(
 	return MakeBackend(local), nil
 }
 
-// lock locks the local file and returns if local file if it exists.
-func (local *local) lockEngine(engineId uuid.UUID, state importMutexState) (*LocalFile, bool) {
+// lock locks a local file and returns the LocalFile instance if it exists.
+func (local *local) lockEngine(engineId uuid.UUID, state importMutexState) *LocalFile {
 	if e, ok := local.engines.Load(engineId); ok {
 		engine := e.(*LocalFile)
 		engine.lock(state)
-		return engine, true
+		return engine
 	}
-	return nil, false
+	return nil
 }
 
 // lockAllEnginesUnless tries to lock all engines, unless those which are already locked in the
@@ -482,7 +523,7 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 	return local.conns.conns[storeID].get(ctx)
 }
 
-// Close the importer connection.
+// Close the local backend.
 func (local *local) Close() {
 	allEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
 	local.engines = sync.Map{}
@@ -504,23 +545,19 @@ func (local *local) Close() {
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
-func (local *local) FlushEngine(engineId uuid.UUID) error {
-	engineFile, ok := local.lockEngine(engineId, importMutexStateFlush)
+func (local *local) FlushEngine(ctx context.Context, engineId uuid.UUID) error {
+	engineFile := local.lockEngine(engineId, importMutexStateFlush)
 
 	// the engine cannot be deleted after while we've acquired the lock identified by UUID.
 
-	if !ok {
+	if engineFile == nil {
 		return errors.Errorf("engine '%s' not found", engineId)
 	}
 	defer engineFile.unlock()
-	engineFile.flushLocalWriters()
-	if err := engineFile.db.Flush(); err != nil {
-		return err
-	}
-	return local.saveEngineMeta(engineFile)
+	return engineFile.flushEngineUnlocked(ctx)
 }
 
-func (local *local) FlushAllEngines() (err error) {
+func (local *local) FlushAllEngines(parentCtx context.Context) (err error) {
 	allEngines := local.lockAllEnginesUnless(importMutexStateFlush, ^importMutexStateLocalIngest)
 	defer func() {
 		for _, engine := range allEngines {
@@ -528,36 +565,14 @@ func (local *local) FlushAllEngines() (err error) {
 		}
 	}()
 
-	var flushFinishedWg sync.WaitGroup
-	flushedEngines := make([]*LocalFile, 0, len(allEngines))
-
-	// first, (asynchronously) flush all opened engines
+	eg, ctx := errgroup.WithContext(parentCtx)
 	for _, engineFile := range allEngines {
-		engineFile.flushLocalWriters()
-		flushFinishedCh, e := engineFile.db.AsyncFlush()
-		if e != nil {
-			err = e
-			break
-		}
-		flushedEngines = append(flushedEngines, engineFile)
-		flushFinishedWg.Add(1)
-		go func() {
-			<-flushFinishedCh
-			flushFinishedWg.Done()
-		}()
+		ef := engineFile
+		eg.Go(func() error {
+			return ef.flushEngineUnlocked(ctx)
+		})
 	}
-
-	// then, wait for all engines being flushed, and then save the metadata.
-	flushFinishedWg.Wait()
-	if err == nil {
-		for _, engineFile := range flushedEngines {
-			err = local.saveEngineMeta(engineFile)
-			if err != nil {
-				break
-			}
-		}
-	}
-	return
+	return eg.Wait()
 }
 
 func (local *local) RetryImportDelay() time.Duration {
@@ -594,33 +609,8 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 	return pebble.Open(dbPath, opt)
 }
 
-func (local *local) saveEngineMeta(engine *LocalFile) error {
-	jsonBytes, err := json.Marshal(&engine.localFileMeta)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	metaPath := filepath.Join(local.localStoreDir, engine.Uuid.String()+engineMetaFileSuffix)
-	return errors.Trace(ioutil.WriteFile(metaPath, jsonBytes, 0644))
-}
-
-func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) {
-	var meta localFileMeta
-
-	mataPath := filepath.Join(local.localStoreDir, engineUUID.String()+engineMetaFileSuffix)
-	f, err := os.Open(mataPath)
-	if err != nil {
-		return meta, err
-	}
-	err = json.NewDecoder(f).Decode(&meta)
-	return meta, err
-}
-
 // This method must be called with holding mutex of LocalFile
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	meta, err := local.LoadEngineMeta(engineUUID)
-	if err != nil {
-		meta = localFileMeta{}
-	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err != nil {
 		return err
@@ -628,7 +618,7 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	e, _ := local.engines.LoadOrStore(engineUUID, &LocalFile{Uuid: engineUUID})
 	engine := e.(*LocalFile)
 	engine.db = db
-	engine.localFileMeta = meta
+	engine.loadEngineMeta()
 	return nil
 }
 
@@ -641,34 +631,29 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 	engine, ok := local.engines.Load(engineUUID)
 	if !ok {
 		// recovery mode, we should reopen this engine file
-		meta, err := local.LoadEngineMeta(engineUUID)
+		db, err := local.openEngineDB(engineUUID, true)
 		if err != nil {
-			// if engine meta not exist, just skip
-			if os.IsNotExist(err) {
+			// if engine db does not exist, just skip
+			if os.IsNotExist(errors.Cause(err)) {
 				return nil
 			}
 			return err
 		}
-		db, err := local.openEngineDB(engineUUID, true)
-		if err != nil {
-			return err
-		}
 		engineFile := &LocalFile{
-			localFileMeta: meta,
-			Uuid:          engineUUID,
-			db:            db,
+			Uuid: engineUUID,
+			db:   db,
 		}
+		engineFile.loadEngineMeta()
 		local.engines.Store(engineUUID, engineFile)
 		return nil
 	}
 	engineFile := engine.(*LocalFile)
 	engineFile.lock(importMutexStateFlush)
 	defer engineFile.unlock()
-	err := engineFile.db.Flush()
-	if err != nil {
+	if err := engineFile.saveEngineMeta(); err != nil {
 		return err
 	}
-	return local.saveEngineMeta(engineFile)
+	return engineFile.db.Flush()
 }
 
 func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
@@ -905,7 +890,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 }
 
 func (local *local) readAndSplitIntoRange(engineFile *LocalFile) ([]Range, error) {
-	iter := engineFile.db.NewIter(nil)
+	iter := engineFile.db.NewIter(&pebble.IterOptions{LowerBound: normalIterStartKey})
 	defer iter.Close()
 
 	iterError := func(e string) error {
@@ -1311,8 +1296,8 @@ func (r *syncdRanges) take() []Range {
 }
 
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	lf, ok := local.lockEngine(engineUUID, importMutexStateImport)
-	if !ok {
+	lf := local.lockEngine(engineUUID, importMutexStateImport)
+	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
 		return nil
 	}
@@ -1378,8 +1363,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
-	localEngine, ok := local.lockEngine(engineUUID, importMutexStateClose)
-	if !ok {
+	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
+	if localEngine == nil {
 		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
@@ -1399,9 +1384,9 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 }
 
 func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	localEngine, ok := local.lockEngine(engineUUID, importMutexStateClose)
+	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
 	// release this engine after import success
-	if !ok {
+	if localEngine == nil {
 		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
@@ -1463,7 +1448,7 @@ func openLocalWriter(f *LocalFile, sstDir string, memtableSizeLimit int64) *Loca
 	w := &LocalWriter{
 		sstDir:            sstDir,
 		kvsChan:           make(chan []common.KvPair, 1024),
-		flushCh:           make(chan *sync.WaitGroup),
+		flushCh:           make(chan chan error),
 		consumeCh:         make(chan struct{}, 1),
 		local:             f,
 		memtableSizeLimit: memtableSizeLimit,
@@ -1760,7 +1745,7 @@ type LocalWriter struct {
 	consumeCh         chan struct{}
 	kvsChan           chan []common.KvPair
 	flushChMutex      sync.RWMutex
-	flushCh           chan *sync.WaitGroup
+	flushCh           chan chan error
 	sstDir            string
 	memtableSizeLimit int64
 	writeBatch        kvMemCache
@@ -1796,8 +1781,8 @@ func (w *LocalWriter) Close() error {
 		select {
 		case <-w.consumeCh:
 			return w.writeErr.Get()
-		case doneWg := <-flushCh:
-			doneWg.Done()
+		case replyErrCh := <-flushCh:
+			replyErrCh <- nil
 		}
 	}
 }
@@ -1844,7 +1829,7 @@ outside:
 				return
 			}
 
-		case doneWg := <-flushCh:
+		case replyErrCh := <-flushCh:
 			err = w.writeKVsOrIngest(localIngestDescriptionFlushed)
 			if w.writer != nil {
 				err = w.writer.ingestInto(w.local, localIngestDescriptionFlushed)
@@ -1852,7 +1837,7 @@ outside:
 					err = w.writer.reopen()
 				}
 			}
-			doneWg.Done()
+			replyErrCh <- err
 			if err != nil {
 				w.writeErr.Set(err)
 				return

@@ -554,11 +554,11 @@ func (be *tidbBackend) EngineFileSizes() []EngineFileSize {
 	return nil
 }
 
-func (be *tidbBackend) FlushEngine(uuid.UUID) error {
+func (be *tidbBackend) FlushEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) FlushAllEngines() error {
+func (be *tidbBackend) FlushAllEngines(context.Context) error {
 	return nil
 }
 
