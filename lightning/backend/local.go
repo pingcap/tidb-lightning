@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -300,11 +299,11 @@ func NewLocalBackend(
 	g glue.Glue,
 	maxOpenFiles int,
 ) (Backend, error) {
-	pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tls.ToPDSecurityOption())
-	if err != nil {
-		return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
-	}
-	splitCli := split.NewSplitClient(pdCli, tls.TLSConfig())
+	//pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tls.ToPDSecurityOption())
+	//if err != nil {
+	//	return MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
+	//}
+	//splitCli := split.NewSplitClient(pdCli, tls.TLSConfig())
 
 	shouldCreate := true
 	if enableCheckpoint {
@@ -318,18 +317,16 @@ func NewLocalBackend(
 	}
 
 	if shouldCreate {
-		err = os.Mkdir(localFile, 0700)
+		err := os.Mkdir(localFile, 0700)
 		if err != nil {
 			return MakeBackend(nil), err
 		}
 	}
 
 	local := &local{
-		engines:  sync.Map{},
-		splitCli: splitCli,
-		tls:      tls,
-		pdAddr:   pdAddr,
-		g:        g,
+		engines: sync.Map{},
+		pdAddr:  pdAddr,
+		g:       g,
 
 		localStoreDir:   localFile,
 		regionSplitSize: regionSplitSize,
@@ -750,6 +747,9 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 	curKeys := uint64(0)
 	curKey := fullRange.start
 	sizeProps.iter(func(p *rangeProperty) bool {
+		if bytes.Compare(p.Key, fullRange.start) <= 0 {
+			return true
+		}
 		curSize += p.Size
 		curKeys += p.Keys
 		if int64(curSize) >= sizeLimit || int64(curKeys) >= keysLimit {
@@ -758,7 +758,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 			curSize = 0
 			curKeys = 0
 		}
-		return true
+		return bytes.Compare(p.Key, fullRange.end) <= 0
 	})
 
 	if curKeys > 0 {
@@ -793,6 +793,8 @@ func (local *local) readAndSplitIntoRange(engineFile *LocalFile, regionSplitSize
 		return nil, iterError("could not find last pair")
 	}
 	endKey := nextKey(lastKey)
+	firstKey = tablecodec.EncodeTableIndexPrefix(484, 1)
+	endKey = tablecodec.EncodeTableIndexPrefix(484, 3)
 
 	// <= 96MB no need to split into range
 	if engineFile.TotalSize <= regionSplitSize && engineFile.Length <= regionMaxKeyCount {
@@ -1160,6 +1162,10 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) (err
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
+
+	// only process
+	lf.Length = lf.Length / 3
+	lf.TotalSize = lf.TotalSize / 3
 
 	concurrency := local.tcpConcurrency
 	rangeSize := lf.TotalSize / int64(concurrency)
