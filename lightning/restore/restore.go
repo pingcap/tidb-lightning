@@ -359,7 +359,7 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rc.dbInfos = dbInfos
+	rc.dbInfos = removeNonUniqueIndices(dbInfos)
 
 	// Load new checkpoints
 	err = rc.checkpointsDB.Initialize(ctx, rc.cfg, dbInfos)
@@ -378,6 +378,39 @@ func (rc *RestoreController) restoreSchema(ctx context.Context) error {
 	// Estimate the number of chunks for progress reporting
 	err = rc.estimateChunkCountIntoMetrics(ctx)
 	return err
+}
+
+// only used for check version
+func removeNonUniqueIndices(dbInfos map[string]*TidbDBInfo) map[string]*TidbDBInfo {
+	newInfos := make(map[string]*TidbDBInfo, len(dbInfos))
+	for dbName, dbInfo := range dbInfos {
+		newTblInfos := make(map[string]*TidbTableInfo, len(dbInfo.Tables))
+		newIndices := make([]*model.IndexInfo, 0)
+		for name, tblInfo := range dbInfo.Tables {
+			for _, idx := range tblInfo.Core.Indices {
+				if idx.Primary || idx.Unique {
+					newIndices = append(newIndices, idx)
+				}
+			}
+			newTblInfo := tblInfo
+			if len(newIndices) != len(tblInfo.Core.Indices) {
+				newCoreInfo := *tblInfo.Core
+				newCoreInfo.Indices = newIndices
+				newTblInfo = &TidbTableInfo{
+					ID:   tblInfo.ID,
+					Name: tblInfo.Name,
+					DB:   tblInfo.DB,
+					Core: &newCoreInfo,
+				}
+			}
+			newTblInfos[name] = newTblInfo
+		}
+		newInfos[dbName] = &TidbDBInfo{
+			Name:   dbInfo.Name,
+			Tables: newTblInfos,
+		}
+	}
+	return newInfos
 }
 
 // verifyCheckpoint check whether previous task checkpoint is compatible with task config
@@ -882,8 +915,19 @@ func (t *TableRestore) restoreTable(
 		return errors.Trace(err)
 	}
 
+	// 4. do table checksum
+	var localChecksum verify.KVChecksum
+	for _, engine := range cp.Engines {
+		for _, chunk := range engine.Chunks {
+			localChecksum.Add(&chunk.Checksum)
+		}
+	}
+
+	t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+
+	return nil
 	// 3. Post-process
-	return errors.Trace(t.postProcess(ctx, rc, cp))
+	//return errors.Trace(t.postProcess(ctx, rc, cp))
 }
 
 func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
@@ -1711,6 +1755,7 @@ func (cr *chunkRestore) deliverLoop(
 	engineID int32,
 	dataEngine, indexEngine *kv.OpenedEngine,
 	rc *RestoreController,
+	writeData bool,
 ) (deliverTotalDur time.Duration, err error) {
 	var channelClosed bool
 	dataKVs := rc.backend.MakeEmptyRows()
@@ -1755,10 +1800,13 @@ func (cr *chunkRestore) deliverLoop(
 		// Write KVs into the engine
 		start := time.Now()
 
-		if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
-			deliverLogger.Error("write to data engine failed", log.ShortError(err))
-			return
+		if writeData {
+			if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
+				deliverLogger.Error("write to data engine failed", log.ShortError(err))
+				return
+			}
 		}
+
 		if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
 			deliverLogger.Error("write to index engine failed", log.ShortError(err))
 			return
@@ -1957,9 +2005,10 @@ func (cr *chunkRestore) restore(
 		close(kvsCh)
 	}()
 
+	neeDataKeys := !common.TableHasAutoRowID(t.tableInfo.Core)
 	go func() {
 		defer close(deliverCompleteCh)
-		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
+		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc, neeDataKeys)
 		select {
 		case <-ctx.Done():
 		case deliverCompleteCh <- deliverResult{dur, err}:

@@ -1161,6 +1161,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) (err
 		return nil
 	}
 
+	log.L().Info("engine kv stats", zap.Int64("keys", lf.Length), zap.Int64("bytes", lf.TotalSize),
+		zap.Stringer("uuid", engineUUID))
+
 	concurrency := local.tcpConcurrency
 	rangeSize := lf.TotalSize / int64(concurrency)
 	rangeKvs := lf.Length / int64(concurrency)
