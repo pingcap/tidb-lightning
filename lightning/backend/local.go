@@ -265,6 +265,9 @@ func (e *LocalFile) flushEngineUnlocked(ctx context.Context) error {
 	if err := e.flushLocalWriters(ctx); err != nil {
 		return err
 	}
+	if err := e.saveEngineMeta(); err != nil {
+		return err
+	}
 	flushFinishedCh, err := e.db.AsyncFlush()
 	if err != nil {
 		return err
@@ -650,10 +653,7 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 	engineFile := engine.(*LocalFile)
 	engineFile.lock(importMutexStateFlush)
 	defer engineFile.unlock()
-	if err := engineFile.saveEngineMeta(); err != nil {
-		return err
-	}
-	return engineFile.db.Flush()
+	return engineFile.flushEngineUnlocked(ctx)
 }
 
 func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
