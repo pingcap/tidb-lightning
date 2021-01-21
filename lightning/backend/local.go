@@ -1381,7 +1381,11 @@ func (local *local) isIngestRetryable(
 				return retryNone, nil, errors.Trace(err)
 			}
 		}
-		return retryIngest, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+		// TODO: because in some case, TiKV may return retryable error while the ingest is succeeded.
+		// Thus directly retry ingest may cause TiKV panic. So always return retryWrite here to avoid
+		// this issue.
+		// See: https://github.com/tikv/tikv/issues/9496
+		return retryWrite, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
@@ -1418,7 +1422,7 @@ func (local *local) isIngestRetryable(
 		if err != nil {
 			return retryNone, nil, errors.Trace(err)
 		}
-		return retryIngest, newRegion, errors.New(errPb.GetMessage())
+		return retryWrite, newRegion, errors.New(errPb.GetMessage())
 	}
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
