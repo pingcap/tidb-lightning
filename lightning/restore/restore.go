@@ -385,8 +385,8 @@ func removeNonUniqueIndices(dbInfos map[string]*TidbDBInfo) map[string]*TidbDBIn
 	newInfos := make(map[string]*TidbDBInfo, len(dbInfos))
 	for dbName, dbInfo := range dbInfos {
 		newTblInfos := make(map[string]*TidbTableInfo, len(dbInfo.Tables))
-		newIndices := make([]*model.IndexInfo, 0)
 		for name, tblInfo := range dbInfo.Tables {
+			newIndices := make([]*model.IndexInfo, 0)
 			for _, idx := range tblInfo.Core.Indices {
 				if idx.Primary || idx.Unique {
 					newIndices = append(newIndices, idx)
