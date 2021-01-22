@@ -15,10 +15,15 @@ package backend
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"math"
 	"math/rand"
+	"os"
 	"path/filepath"
+	"sort"
+
+	"github.com/pingcap/tidb-lightning/lightning/common"
 
 	"github.com/cockroachdb/pebble"
 	. "github.com/pingcap/check"
@@ -284,4 +289,102 @@ func (s *localSuite) TestRangePropertiesWithPebble(c *C) {
 	}
 
 	c.Assert(sstMetas[0][0].Properties.UserProperties, DeepEquals, props)
+}
+
+func testLocalWriter(c *C, needSort bool, partitialSort bool) {
+	dir := c.MkDir()
+	opt := &pebble.Options{
+		MemTableSize:             1024 * 1024,
+		MaxConcurrentCompactions: 16,
+		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
+		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
+		DisableWAL:               true,
+		ReadOnly:                 false,
+	}
+	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
+	c.Assert(err, IsNil)
+	tmpPath := filepath.Join(dir, "tmp")
+	err = os.Mkdir(tmpPath, 0755)
+	c.Assert(err, IsNil)
+	meta := localFileMeta{}
+	_, engineUUID := MakeUUID("ww", 0)
+	f := LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID}
+	w := openLocalWriter(&f, tmpPath, 1024*1024)
+
+	ctx := context.Background()
+	//kvs := make(kvPairs, 1000)
+	var kvs kvPairs
+	value := make([]byte, 128)
+	for i := 0; i < 16; i++ {
+		binary.BigEndian.PutUint64(value[i*8:], uint64(i))
+	}
+	var keys [][]byte
+	for i := 1; i <= 20000; i++ {
+		var kv common.KvPair
+		kv.Key = make([]byte, 16)
+		kv.Val = make([]byte, 128)
+		copy(kv.Val, value)
+		key := rand.Intn(1000)
+		binary.BigEndian.PutUint64(kv.Key, uint64(key))
+		binary.BigEndian.PutUint64(kv.Key[8:], uint64(i))
+		kvs = append(kvs, kv)
+		keys = append(keys, kv.Key)
+	}
+	var rows1 kvPairs
+	var rows2 kvPairs
+	var rows3 kvPairs
+	rows4 := kvs[:12000]
+	if partitialSort {
+		sort.Slice(rows4, func(i, j int) bool {
+			return bytes.Compare(rows4[i].Key, rows4[j].Key) < 0
+		})
+		rows1 = rows4[:6000]
+		rows3 = rows4[6000:]
+		rows2 = kvs[12000:]
+	} else {
+		if needSort {
+			sort.Slice(kvs, func(i, j int) bool {
+				return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
+			})
+		}
+		rows1 = kvs[:6000]
+		rows2 = kvs[6000:12000]
+		rows3 = kvs[12000:]
+	}
+	err = w.AppendRows(ctx, "", []string{}, 1, rows1)
+	c.Assert(err, IsNil)
+	err = w.AppendRows(ctx, "", []string{}, 1, rows2)
+	c.Assert(err, IsNil)
+	err = w.AppendRows(ctx, "", []string{}, 1, rows3)
+	c.Assert(err, IsNil)
+	err = w.Close()
+	c.Assert(err, IsNil)
+	err = db.Flush()
+	c.Assert(err, IsNil)
+	o := &pebble.IterOptions{}
+	it := db.NewIter(o)
+
+	sort.Slice(keys, func(i, j int) bool {
+		return bytes.Compare(keys[i], keys[j]) < 0
+	})
+	c.Assert(int(f.Length), Equals, 20000)
+	c.Assert(int(f.TotalSize), Equals, 144*20000)
+	valid := it.SeekGE(keys[0])
+	c.Assert(valid, IsTrue)
+	for _, k := range keys {
+		c.Assert(it.Key(), DeepEquals, k)
+		it.Next()
+	}
+}
+
+func (s *localSuite) TestLocalWriterWithSort(c *C) {
+	testLocalWriter(c, false, false)
+}
+
+func (s *localSuite) TestLocalWriterWithIngest(c *C) {
+	testLocalWriter(c, true, false)
+}
+
+func (s *localSuite) TestLocalWriterWithIngestUnsort(c *C) {
+	testLocalWriter(c, true, true)
 }

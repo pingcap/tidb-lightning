@@ -26,12 +26,13 @@ import (
 
 	"github.com/pingcap/br/pkg/pdutil"
 	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/glue"
-	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -49,9 +50,6 @@ import (
 	verify "github.com/pingcap/tidb-lightning/lightning/verification"
 	"github.com/pingcap/tidb-lightning/lightning/web"
 	"github.com/pingcap/tidb-lightning/lightning/worker"
-
-	// TODO: remove this after https://github.com/pingcap/tidb/issues/21342 is fixed.
-	_ "github.com/pingcap/tidb/planner/core"
 )
 
 const (
@@ -76,8 +74,6 @@ const (
 var DeliverPauser = common.NewPauser()
 
 func init() {
-	cfg := tidbcfg.GetGlobalConfig()
-	cfg.Log.SlowThreshold = 3000
 	// used in integration tests
 	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
 		minDeliverBytes = uint64(v.(int))
@@ -139,6 +135,7 @@ type RestoreController struct {
 	indexWorkers    *worker.Pool
 	regionWorkers   *worker.Pool
 	ioWorkers       *worker.Pool
+	checksumWorks   *worker.Pool
 	pauser          *common.Pauser
 	backend         kv.Backend
 	tidbGlue        glue.Glue
@@ -184,12 +181,12 @@ func NewRestoreControllerWithPauser(
 
 	cpdb, err := g.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotate(err, "open checkpoint db failed")
 	}
 
 	taskCp, err := cpdb.TaskCheckpoint(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotate(err, "get task checkpoint failed")
 	}
 	if err := verifyCheckpoint(cfg, taskCp); err != nil {
 		return nil, errors.Trace(err)
@@ -201,12 +198,12 @@ func NewRestoreControllerWithPauser(
 		var err error
 		backend, err = kv.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 		if err != nil {
-			return nil, err
+			return nil, errors.Annotate(err, "open importer backend failed")
 		}
 	case config.BackendTiDB:
 		db, err := DBFromConfig(cfg.TiDB)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.Annotate(err, "open tidb backend failed")
 		}
 		backend = kv.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate)
 	case config.BackendLocal:
@@ -225,6 +222,10 @@ func NewRestoreControllerWithPauser(
 			cfg.TikvImporter.SortedKVDir, cfg.TikvImporter.RangeConcurrency, cfg.TikvImporter.SendKVPairs,
 			cfg.Checkpoint.Enable, g, maxOpenFiles)
 		if err != nil {
+			return nil, errors.Annotate(err, "build local backend failed")
+		}
+		err = verifyLocalFile(ctx, cpdb, cfg.TikvImporter.SortedKVDir)
+		if err != nil {
 			return nil, err
 		}
 	default:
@@ -238,6 +239,7 @@ func NewRestoreControllerWithPauser(
 		indexWorkers:  worker.NewPool(ctx, cfg.App.IndexConcurrency, "index"),
 		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
+		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        pauser,
 		backend:       backend,
 		tidbGlue:      g,
@@ -307,48 +309,257 @@ outside:
 	return errors.Trace(err)
 }
 
-func (rc *RestoreController) restoreSchema(ctx context.Context) error {
-	if !rc.cfg.Mydumper.NoSchema {
-		if rc.tidbGlue.OwnsSQLExecutor() {
-			db, err := DBFromConfig(rc.cfg.TiDB)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			defer db.Close()
-			db.ExecContext(ctx, "SET SQL_MODE = ?", rc.cfg.TiDB.StrSQLMode)
+type schemaStmtType int
+
+func (stmtType schemaStmtType) String() string {
+	switch stmtType {
+	case schemaCreateDatabase:
+		return "restore database schema"
+	case schemaCreateTable:
+		return "restore table schema"
+	case schemaCreateView:
+		return "restore view schema"
+	}
+	return "unknown statement of schema"
+}
+
+const (
+	schemaCreateDatabase schemaStmtType = iota
+	schemaCreateTable
+	schemaCreateView
+)
+
+type schemaJob struct {
+	dbName   string
+	tblName  string // empty for create db jobs
+	stmtType schemaStmtType
+	stmts    []*schemaStmt
+}
+
+type schemaStmt struct {
+	sql string
+}
+
+type restoreSchemaWorker struct {
+	ctx   context.Context
+	quit  context.CancelFunc
+	jobCh chan *schemaJob
+	errCh chan error
+	wg    sync.WaitGroup
+	glue  glue.Glue
+	store storage.ExternalStorage
+}
+
+func (worker *restoreSchemaWorker) makeJobs(dbMetas []*mydump.MDDatabaseMeta) error {
+	defer func() {
+		close(worker.jobCh)
+		worker.quit()
+	}()
+	var err error
+	// 1. restore databases, execute statements concurrency
+	for _, dbMeta := range dbMetas {
+		restoreSchemaJob := &schemaJob{
+			dbName:   dbMeta.Name,
+			stmtType: schemaCreateDatabase,
+			stmts:    make([]*schemaStmt, 0, 1),
 		}
-
-		for _, dbMeta := range rc.dbMetas {
-			task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore table schema")
-
-			tablesSchema := make(map[string]string)
-			for _, tblMeta := range dbMeta.Tables {
-				tablesSchema[tblMeta.Name] = tblMeta.GetSchema(ctx, rc.store)
-			}
-			err := InitSchema(ctx, rc.tidbGlue, dbMeta.Name, tablesSchema)
-
-			task.End(zap.ErrorLevel, err)
-			if err != nil {
-				return errors.Annotatef(err, "restore table schema %s failed", dbMeta.Name)
-			}
+		restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+			sql: createDatabaseIfNotExistStmt(dbMeta.Name),
+		})
+		err = worker.appendJob(restoreSchemaJob)
+		if err != nil {
+			return err
 		}
-
-		// restore views. Since views can cross database we must restore views after all table schemas are restored.
-		for _, dbMeta := range rc.dbMetas {
-			if len(dbMeta.Views) > 0 {
-				task := log.With(zap.String("db", dbMeta.Name)).Begin(zap.InfoLevel, "restore view schema")
-				viewsSchema := make(map[string]string)
-				for _, viewMeta := range dbMeta.Views {
-					viewsSchema[viewMeta.Name] = viewMeta.GetSchema(ctx, rc.store)
+	}
+	err = worker.wait()
+	if err != nil {
+		return err
+	}
+	// 2. restore tables, execute statements concurrency
+	for _, dbMeta := range dbMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			sql := tblMeta.GetSchema(worker.ctx, worker.store)
+			if sql != "" {
+				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, tblMeta.Name)
+				if err != nil {
+					return err
 				}
-				err := InitSchema(ctx, rc.tidbGlue, dbMeta.Name, viewsSchema)
+				restoreSchemaJob := &schemaJob{
+					dbName:   dbMeta.Name,
+					tblName:  tblMeta.Name,
+					stmtType: schemaCreateTable,
+					stmts:    make([]*schemaStmt, 0, len(stmts)),
+				}
+				for _, sql := range stmts {
+					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+						sql: sql,
+					})
+				}
+				err = worker.appendJob(restoreSchemaJob)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	err = worker.wait()
+	if err != nil {
+		return err
+	}
+	// 3. restore views. Since views can cross database we must restore views after all table schemas are restored.
+	for _, dbMeta := range dbMetas {
+		for _, viewMeta := range dbMeta.Views {
+			sql := viewMeta.GetSchema(worker.ctx, worker.store)
+			if sql != "" {
+				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, viewMeta.Name)
+				if err != nil {
+					return err
+				}
+				restoreSchemaJob := &schemaJob{
+					dbName:   dbMeta.Name,
+					tblName:  viewMeta.Name,
+					stmtType: schemaCreateView,
+					stmts:    make([]*schemaStmt, 0, len(stmts)),
+				}
+				for _, sql := range stmts {
+					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
+						sql: sql,
+					})
+				}
+				err = worker.appendJob(restoreSchemaJob)
+				if err != nil {
+					return err
+				}
+				// we don't support restore views concurrency, cauz it maybe will raise a error
+				err = worker.wait()
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
 
+func (worker *restoreSchemaWorker) doJob() {
+	var session checkpoints.Session
+	defer func() {
+		if session != nil {
+			session.Close()
+		}
+	}()
+loop:
+	for {
+		select {
+		case <-worker.ctx.Done():
+			// don't `return` or throw `worker.ctx.Err()`here,
+			// if we `return`, we can't mark cancelled jobs as done,
+			// if we `throw(worker.ctx.Err())`, it will be blocked to death
+			break loop
+		case job := <-worker.jobCh:
+			if job == nil {
+				// successful exit
+				return
+			}
+			var err error
+			if session == nil {
+				session, err = worker.glue.GetSession(worker.ctx)
+				if err != nil {
+					worker.wg.Done()
+					worker.throw(err)
+					// don't return
+					break loop
+				}
+			}
+			logger := log.With(zap.String("db", job.dbName), zap.String("table", job.tblName))
+			for _, stmt := range job.stmts {
+				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
+				_, err = session.Execute(worker.ctx, stmt.sql)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
-					return errors.Annotatef(err, "restore view schema %s failed", dbMeta.Name)
+					err = errors.Annotatef(err, "%s %s failed", job.stmtType.String(), common.UniqueTable(job.dbName, job.tblName))
+					worker.wg.Done()
+					worker.throw(err)
+					// don't return
+					break loop
 				}
 			}
+			worker.wg.Done()
+		}
+	}
+	// mark the cancelled job as `Done`, a little tricky,
+	// cauz we need make sure `worker.wg.Wait()` wouldn't blocked forever
+	for range worker.jobCh {
+		worker.wg.Done()
+	}
+}
 
+func (worker *restoreSchemaWorker) wait() error {
+	// avoid to `worker.wg.Wait()` blocked forever when all `doJob`'s goroutine exited.
+	// don't worry about goroutine below, it never become a zombie,
+	// cauz we have mechanism to clean cancelled jobs in `worker.jobCh`.
+	// means whole jobs has been send to `worker.jobCh` would be done.
+	waitCh := make(chan struct{})
+	go func() {
+		worker.wg.Wait()
+		close(waitCh)
+	}()
+	select {
+	case err := <-worker.errCh:
+		return err
+	case <-worker.ctx.Done():
+		return worker.ctx.Err()
+	case <-waitCh:
+		return nil
+	}
+}
+
+func (worker *restoreSchemaWorker) throw(err error) {
+	select {
+	case <-worker.ctx.Done():
+		// don't throw `worker.ctx.Err()` again, it will be blocked to death.
+		return
+	case worker.errCh <- err:
+		worker.quit()
+	}
+}
+
+func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
+	worker.wg.Add(1)
+	select {
+	case err := <-worker.errCh:
+		// cancel the job
+		worker.wg.Done()
+		return err
+	case <-worker.ctx.Done():
+		// cancel the job
+		worker.wg.Done()
+		return worker.ctx.Err()
+	case worker.jobCh <- job:
+		return nil
+	}
+}
+
+func (rc *RestoreController) restoreSchema(ctx context.Context) error {
+	if !rc.cfg.Mydumper.NoSchema {
+		logTask := log.L().Begin(zap.InfoLevel, "restore all schema")
+		concurrency := utils.MinInt(rc.cfg.App.RegionConcurrency, 8)
+		childCtx, cancel := context.WithCancel(ctx)
+		worker := restoreSchemaWorker{
+			ctx:   childCtx,
+			quit:  cancel,
+			jobCh: make(chan *schemaJob, concurrency),
+			errCh: make(chan error),
+			glue:  rc.tidbGlue,
+			store: rc.store,
+		}
+		for i := 0; i < concurrency; i++ {
+			go worker.doJob()
+		}
+		err := worker.makeJobs(rc.dbMetas)
+		logTask.End(zap.ErrorLevel, err)
+		if err != nil {
+			return err
 		}
 	}
 	getTableFunc := rc.backend.FetchRemoteTableModels
@@ -466,6 +677,28 @@ func verifyCheckpoint(cfg *config.Config, taskCp *TaskCheckpoint) error {
 		}
 	}
 
+	return nil
+}
+
+// for local backend, we should check if local SST exists in disk, otherwise we'll lost data
+func verifyLocalFile(ctx context.Context, cpdb CheckpointsDB, dir string) error {
+	targetTables, err := cpdb.GetLocalStoringTables(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for tableName, engineIDs := range targetTables {
+		for _, engineID := range engineIDs {
+			_, eID := kv.MakeUUID(tableName, engineID)
+			file := kv.LocalFile{Uuid: eID}
+			err := file.Exist(dir)
+			if err != nil {
+				log.L().Error("can't find local file",
+					zap.String("table name", tableName),
+					zap.Int32("engine ID", engineID))
+				return errors.Trace(err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -719,16 +952,24 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 		}
 	}
 
+	type task struct {
+		tr *TableRestore
+		cp *TableCheckpoint
+	}
+
+	totalTables := 0
+	for _, dbMeta := range rc.dbMetas {
+		totalTables += len(dbMeta.Tables)
+	}
+	postProcessTaskChan := make(chan task, totalTables)
+
 	var wg sync.WaitGroup
 	var restoreErr common.OnceError
 
 	stopPeriodicActions := make(chan struct{})
 	go rc.runPeriodicActions(ctx, stopPeriodicActions)
+	defer close(stopPeriodicActions)
 
-	type task struct {
-		tr *TableRestore
-		cp *TableCheckpoint
-	}
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
@@ -742,12 +983,15 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
-				err := task.tr.restoreTable(ctx2, rc, task.cp)
+				needPostProcess, err := task.tr.restoreTable(ctx2, rc, task.cp)
 				err = errors.Annotatef(err, "restore table %s failed", task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
 				metric.RecordTableCount("completed", err)
 				restoreErr.Set(err)
+				if needPostProcess {
+					postProcessTaskChan <- task
+				}
 				wg.Done()
 			}
 		}()
@@ -858,7 +1102,32 @@ func (rc *RestoreController) restoreTables(ctx context.Context) error {
 	}
 
 	wg.Wait()
-	close(stopPeriodicActions)
+	// if context is done, should return directly
+	select {
+	case <-ctx.Done():
+		err = restoreErr.Get()
+		if err == nil {
+			err = ctx.Err()
+		}
+		logTask.End(zap.ErrorLevel, err)
+		return err
+	default:
+	}
+
+	close(postProcessTaskChan)
+	// otherwise, we should run all tasks in the post-process task chan
+	for i := 0; i < rc.cfg.App.TableConcurrency; i++ {
+		wg.Add(1)
+		go func() {
+			for task := range postProcessTaskChan {
+				// force all the remain post-process tasks to be executed
+				_, err := task.tr.postProcess(ctx2, rc, task.cp, true)
+				restoreErr.Set(err)
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 
 	err = restoreErr.Get()
 	logTask.End(zap.ErrorLevel, err)
@@ -869,12 +1138,12 @@ func (t *TableRestore) restoreTable(
 	ctx context.Context,
 	rc *RestoreController,
 	cp *TableCheckpoint,
-) error {
+) (bool, error) {
 	// 1. Load the table info.
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return false, ctx.Err()
 	default:
 	}
 
@@ -886,10 +1155,10 @@ func (t *TableRestore) restoreTable(
 		)
 	} else if cp.Status < CheckpointStatusAllWritten {
 		if err := t.populateChunks(ctx, rc, cp); err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, t.tableName, cp.Engines); err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		web.BroadcastTableCheckpoint(t.tableName, cp)
 
@@ -912,7 +1181,7 @@ func (t *TableRestore) restoreTable(
 	// 2. Restore engines (if still needed)
 	err := t.restoreEngines(ctx, rc, cp)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	// 4. do table checksum
@@ -925,9 +1194,9 @@ func (t *TableRestore) restoreTable(
 
 	t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
-	return nil
-	// 3. Post-process
-	//return errors.Trace(t.postProcess(ctx, rc, cp))
+	return false, nil
+	// 3. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
+	//return t.postProcess(ctx, rc, cp, false /* force-analyze */)
 }
 
 func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
@@ -1043,11 +1312,10 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 			if !rc.isLocalBackend() {
 				rc.postProcessLock.Lock()
 			}
-			err = t.importKV(ctx, closedIndexEngine)
+			err = t.importKV(ctx, closedIndexEngine, rc, indexEngineID)
 			if !rc.isLocalBackend() {
 				rc.postProcessLock.Unlock()
 			}
-			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
 		}
 
 		failpoint.Inject("FailBeforeIndexEngineImported", func() {
@@ -1074,10 +1342,14 @@ func (t *TableRestore) restoreEngine(
 		closedEngine, err := rc.backend.UnsafeCloseEngine(ctx, t.tableName, engineID)
 		// If any error occurred, recycle worker immediately
 		if err != nil {
-			rc.closedEngineLimit.Recycle(w)
 			return closedEngine, nil, errors.Trace(err)
 		}
 		return closedEngine, w, nil
+	}
+
+	indexWriter, err := indexEngine.LocalWriter(ctx)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
@@ -1119,6 +1391,10 @@ func (t *TableRestore) restoreEngine(
 
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
+		dataWriter, err := dataEngine.LocalWriter(ctx)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
 		go func(w *worker.Worker, cr *chunkRestore) {
 			// Restore a chunk.
 			defer func() {
@@ -1127,17 +1403,25 @@ func (t *TableRestore) restoreEngine(
 				rc.regionWorkers.Recycle(w)
 			}()
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Inc()
-			err := cr.restore(ctx, t, engineID, dataEngine, indexEngine, rc)
+			if err == nil {
+				err = cr.restore(ctx, t, engineID, dataWriter, indexWriter, rc)
+			}
+			if err == nil {
+				err = dataWriter.Close()
+			}
 			if err == nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
-				return
+			} else {
+				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
+				chunkErr.Set(err)
 			}
-			metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
-			chunkErr.Set(err)
 		}(restoreWorker, cr)
 	}
 
 	wg.Wait()
+	if err := indexWriter.Close(); err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
@@ -1173,6 +1457,7 @@ func (t *TableRestore) restoreEngine(
 			rc.closedEngineLimit.Recycle(dataWorker)
 			return nil, nil, errors.Trace(err)
 		}
+
 		// Currently we write all the checkpoints after data&index engine are flushed.
 		for _, chunk := range cp.Chunks {
 			saveCheckpoint(rc, t, engineID, chunk)
@@ -1205,11 +1490,10 @@ func (t *TableRestore) importEngine(
 	if !rc.isLocalBackend() {
 		rc.postProcessLock.Lock()
 	}
-	err := t.importKV(ctx, closedEngine)
+	err := t.importKV(ctx, closedEngine, rc, engineID)
 	if !rc.isLocalBackend() {
 		rc.postProcessLock.Unlock()
 	}
-	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1228,12 +1512,21 @@ func (t *TableRestore) importEngine(
 	return nil
 }
 
-func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
+// postProcess execute rebase-auto-id/checksum/analyze according to the task config.
+//
+// if the parameter forcePostProcess to true, postProcess force run checksum and analyze even if the
+// post-process-at-last config is true. And if this two phases are skipped, the first return value will be true.
+func (t *TableRestore) postProcess(
+	ctx context.Context,
+	rc *RestoreController,
+	cp *TableCheckpoint,
+	forcePostProcess bool,
+) (bool, error) {
 	// there are no data in this table, no need to do post process
 	// this is important for tables that are just the dump table of views
 	// because at this stage, the table was already deleted and replaced by the related view
 	if len(cp.Engines) == 1 {
-		return nil
+		return false, nil
 	}
 
 	// 3. alter table set auto_increment
@@ -1250,44 +1543,57 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		rc.alterTableLock.Unlock()
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAlteredAutoInc)
 		if err != nil {
-			return err
+			return false, err
 		}
+		cp.Status = CheckpointStatusAlteredAutoInc
 	}
 
 	// tidb backend don't need checksum & analyze
 	if !rc.backend.ShouldPostProcess() {
 		t.logger.Debug("skip checksum & analyze, not supported by this backend")
 		rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
-		return nil
+		return false, nil
 	}
 
-	// 4. do table checksum
-	var localChecksum verify.KVChecksum
-	for _, engine := range cp.Engines {
-		for _, chunk := range engine.Chunks {
-			localChecksum.Add(&chunk.Checksum)
-		}
-	}
+	w := rc.checksumWorks.Apply()
+	defer rc.checksumWorks.Recycle(w)
 
-	t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+	finished := true
 	if cp.Status < CheckpointStatusChecksummed {
 		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 			t.logger.Info("skip checksum")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
-			err := t.compareChecksum(ctx, localChecksum)
-			// witch post restore level 'optional', we will skip checksum error
-			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-				if err != nil {
-					t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-					err = nil
+			if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
+				// 4. do table checksum
+				var localChecksum verify.KVChecksum
+				for _, engine := range cp.Engines {
+					for _, chunk := range engine.Chunks {
+						localChecksum.Add(&chunk.Checksum)
+					}
 				}
+				t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+				err := t.compareChecksum(ctx, localChecksum)
+				// with post restore level 'optional', we will skip checksum error
+				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+					if err != nil {
+						t.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+						err = nil
+					}
+				}
+				rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				cp.Status = CheckpointStatusChecksummed
+			} else {
+				finished = false
 			}
-			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusChecksummed)
-			if err != nil {
-				return errors.Trace(err)
-			}
+
 		}
+	}
+	if !finished {
+		return !finished, nil
 	}
 
 	// 5. do table analyze
@@ -1295,7 +1601,8 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 		if rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 			t.logger.Info("skip analyze")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusAnalyzeSkipped)
-		} else {
+			cp.Status = CheckpointStatusAnalyzed
+		} else if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
 			err := t.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
@@ -1306,12 +1613,15 @@ func (t *TableRestore) postProcess(ctx context.Context, rc *RestoreController, c
 			}
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, err, CheckpointStatusAnalyzed)
 			if err != nil {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
+			cp.Status = CheckpointStatusAnalyzed
+		} else {
+			finished = false
 		}
 	}
 
-	return nil
+	return !finished, nil
 }
 
 // do full compaction for the whole data.
@@ -1675,16 +1985,27 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 	for _, idx := range colIndexes {
 		// skip columns with index -1
 		if idx >= 0 {
-			names = append(names, tableInfo.Columns[idx].Name.O)
+			// original fiels contains _tidb_rowid field
+			if idx == len(tableInfo.Columns) {
+				names = append(names, model.ExtraHandleName.O)
+			} else {
+				names = append(names, tableInfo.Columns[idx].Name.O)
+			}
 		}
 	}
 	return names
 }
 
-func (tr *TableRestore) importKV(ctx context.Context, closedEngine *kv.ClosedEngine) error {
+func (tr *TableRestore) importKV(
+	ctx context.Context,
+	closedEngine *kv.ClosedEngine,
+	rc *RestoreController,
+	engineID int32,
+) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 
 	err := closedEngine.Import(ctx)
+	rc.saveStatusCheckpoint(tr.tableName, engineID, err, CheckpointStatusImported)
 	if err == nil {
 		closedEngine.Cleanup(ctx)
 	}
@@ -1753,13 +2074,11 @@ func (cr *chunkRestore) deliverLoop(
 	kvsCh <-chan []deliveredKVs,
 	t *TableRestore,
 	engineID int32,
-	dataEngine, indexEngine *kv.OpenedEngine,
+	dataEngine, indexEngine *kv.LocalEngineWriter,
 	rc *RestoreController,
 	writeData bool,
 ) (deliverTotalDur time.Duration, err error) {
 	var channelClosed bool
-	dataKVs := rc.backend.MakeEmptyRows()
-	indexKVs := rc.backend.MakeEmptyRows()
 
 	deliverLogger := t.logger.With(
 		zap.Int32("engineNumber", engineID),
@@ -1777,8 +2096,11 @@ func (cr *chunkRestore) deliverLoop(
 		offset := cr.chunk.Chunk.Offset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
 		// Fetch enough KV pairs from the source.
+		dataKVs := rc.backend.MakeEmptyRows()
+		indexKVs := rc.backend.MakeEmptyRows()
+
 	populate:
-		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
+		for dataChecksum.SumSize() < minDeliverBytes {
 			select {
 			case kvPacket = <-kvsCh:
 				if len(kvPacket) == 0 {
@@ -1820,9 +2142,6 @@ func (cr *chunkRestore) deliverLoop(
 		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
 		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
 
-		dataKVs = dataKVs.Clear()
-		indexKVs = indexKVs.Clear()
-
 		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)
 		// No need to apply a lock since this is the only thread updating these variables.
@@ -1840,8 +2159,15 @@ func (cr *chunkRestore) deliverLoop(
 			panic("forcing failure due to FailAfterWriteRows")
 		})
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after writen
-		//10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
+		// 10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
 		// can safely update current checkpoint.
+
+		failpoint.Inject("LocalBackendSaveCheckpoint", func() {
+			if !rc.isLocalBackend() && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
+				// No need to save checkpoint if nothing was delivered.
+				saveCheckpoint(rc, t, engineID, cr.chunk)
+			}
+		})
 	}
 
 	return
@@ -1981,7 +2307,7 @@ func (cr *chunkRestore) restore(
 	ctx context.Context,
 	t *TableRestore,
 	engineID int32,
-	dataEngine, indexEngine *kv.OpenedEngine,
+	dataEngine, indexEngine *kv.LocalEngineWriter,
 	rc *RestoreController,
 ) error {
 	// Create the encoder.

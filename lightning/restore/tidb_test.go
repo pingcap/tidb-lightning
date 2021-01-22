@@ -25,9 +25,10 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb-lightning/lightning/glue"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/util/mock"
+
+	"github.com/pingcap/tidb-lightning/lightning/glue"
 
 	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb-lightning/lightning/mydump"
@@ -222,6 +223,30 @@ func (s *tidbSuite) TestInitSchemaSyntaxError(c *C) {
 		"t1": "create table `t1` with invalid syntax;",
 	})
 	c.Assert(err, NotNil)
+}
+
+func (s *tidbSuite) TestInitSchemaErrorLost(c *C) {
+	ctx := context.Background()
+
+	s.mockDB.
+		ExpectExec("CREATE DATABASE IF NOT EXISTS `db`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	s.mockDB.
+		ExpectExec("CREATE TABLE IF NOT EXISTS.*").
+		WillReturnError(&mysql.MySQLError{
+			Number:  tmysql.ErrTooBigFieldlength,
+			Message: "Column length too big",
+		})
+
+	s.mockDB.
+		ExpectClose()
+
+	err := InitSchema(ctx, s.tiGlue, "db", map[string]string{
+		"t1": "create table `t1` (a int);",
+		"t2": "create table t2 (a int primary key, b varchar(200));",
+	})
+	c.Assert(err, ErrorMatches, ".*Column length too big.*")
 }
 
 func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {

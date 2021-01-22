@@ -204,3 +204,9 @@ func (s *utilSuite) TestStringSliceEqual(c *C) {
 	c.Assert(common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b"}), IsFalse)
 	c.Assert(common.StringSliceEqual([]string{"a", "x", "y"}, []string{"a", "y", "x"}), IsFalse)
 }
+
+func (s *utilSuite) TestInterpolateMySQLString(c *C) {
+	c.Assert(common.InterpolateMySQLString("123"), Equals, "'123'")
+	c.Assert(common.InterpolateMySQLString("1'23"), Equals, "'1''23'")
+	c.Assert(common.InterpolateMySQLString("1'2''3"), Equals, "'1''2''''3'")
+}

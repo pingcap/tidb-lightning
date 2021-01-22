@@ -95,10 +95,6 @@ type AbstractBackend interface {
 	// RetryImportDelay returns the duration to sleep when retrying an import
 	RetryImportDelay() time.Duration
 
-	// MaxChunkSize returns the maximum size acceptable by the backend. The
-	// value will be used in `Rows.SplitIntoChunks`.
-	MaxChunkSize() int
-
 	// ShouldPostProcess returns whether KV-specific post-processing should be
 	// performed for this backend. Post-processing includes checksum and analyze.
 	ShouldPostProcess() bool
@@ -107,15 +103,6 @@ type AbstractBackend interface {
 	NewEncoder(tbl table.Table, options *SessionOptions) (Encoder, error)
 
 	OpenEngine(ctx context.Context, engineUUID uuid.UUID) error
-
-	WriteRows(
-		ctx context.Context,
-		engineUUID uuid.UUID,
-		tableName string,
-		columnNames []string,
-		commitTS uint64,
-		rows Rows,
-	) error
 
 	CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 
@@ -140,6 +127,8 @@ type AbstractBackend interface {
 	//     * Offset (must be 0, 1, 2, ...)
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+
+	LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error)
 }
 
 func fetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {
@@ -182,6 +171,12 @@ type OpenedEngine struct {
 // anywhere.
 type ClosedEngine struct {
 	engine
+}
+
+type LocalEngineWriter struct {
+	writer    EngineWriter
+	tableName string
+	ts        uint64
 }
 
 func MakeBackend(ab AbstractBackend) Backend {
@@ -265,25 +260,32 @@ func (engine *OpenedEngine) Flush() error {
 
 // WriteRows writes a collection of encoded rows into the engine.
 func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
-	var err error
-
-outside:
-	for _, r := range rows.SplitIntoChunks(engine.backend.MaxChunkSize()) {
-		for i := 0; i < maxRetryTimes; i++ {
-			err = engine.backend.WriteRows(ctx, engine.uuid, engine.tableName, columnNames, engine.ts, r)
-			switch {
-			case err == nil:
-				continue outside
-			case common.IsRetryableError(err):
-				// retry next loop
-			default:
-				return err
-			}
-		}
-		return errors.Annotatef(err, "[%s] write rows reach max retry %d and still failed", engine.tableName, maxRetryTimes)
+	writer, err := engine.backend.LocalWriter(ctx, engine.uuid)
+	if err != nil {
+		return err
 	}
+	if err = writer.AppendRows(ctx, engine.tableName, columnNames, engine.ts, rows); err != nil {
+		writer.Close()
+		return err
+	}
+	return writer.Close()
+}
 
-	return nil
+func (engine *OpenedEngine) LocalWriter(ctx context.Context) (*LocalEngineWriter, error) {
+	w, err := engine.backend.LocalWriter(ctx, engine.uuid)
+	if err != nil {
+		return nil, err
+	}
+	return &LocalEngineWriter{writer: w, ts: engine.ts, tableName: engine.tableName}, nil
+}
+
+// WriteRows writes a collection of encoded rows into the engine.
+func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
+	return w.writer.AppendRows(ctx, w.tableName, columnNames, w.ts, rows)
+}
+
+func (w *LocalEngineWriter) Close() error {
+	return w.writer.Close()
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.
@@ -388,4 +390,15 @@ type Rows interface {
 	// Clear returns a new collection with empty content. It may share the
 	// capacity with the current instance. The typical usage is `x = x.Clear()`.
 	Clear() Rows
+}
+
+type EngineWriter interface {
+	AppendRows(
+		ctx context.Context,
+		tableName string,
+		columnNames []string,
+		commitTS uint64,
+		rows Rows,
+	) error
+	Close() error
 }

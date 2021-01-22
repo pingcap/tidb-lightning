@@ -162,6 +162,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	tlsCAPath := fs.String("ca", "", "CA certificate path for TLS connection")
 	tlsCertPath := fs.String("cert", "", "certificate path for TLS connection")
 	tlsKeyPath := fs.String("key", "", "private key path for TLS connection")
+	redactInfoLog := fs.Bool("redact-info-log", false, "whether to redact sensitive info in log")
 
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
@@ -266,6 +267,9 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	}
 	if *tlsKeyPath != "" {
 		cfg.Security.KeyPath = *tlsKeyPath
+	}
+	if *redactInfoLog {
+		cfg.Security.RedactInfoLog = *redactInfoLog
 	}
 	if len(filter) > 0 {
 		cfg.Mydumper.Filter = filter

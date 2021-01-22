@@ -3,7 +3,7 @@ table-concurrency = 1
 
 [checkpoint]
 enable = true
-driver = "file"
+driver = "mysql"
 schema = "tidb_lightning_checkpoint_local_backend_test"
 
 [tikv-importer]
@@ -11,3 +11,7 @@ send-kv-pairs = 2
 
 [mydumper]
 batch-size = 50 # force splitting the data into 4 batches
+
+[[black-white-list.do-tables]]
+db-name = "cpeng"
+tbl-name = "a"

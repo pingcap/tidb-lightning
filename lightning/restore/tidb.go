@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+
 	"github.com/pingcap/tidb-lightning/lightning/glue"
 
 	. "github.com/pingcap/tidb-lightning/lightning/checkpoints"
@@ -97,6 +98,8 @@ func DBFromConfig(dsn config.DBStore) (*sql.DB, error) {
 			// after https://github.com/pingcap/tidb/pull/17102 merge,
 			// we need set session to true for insert auto_random value in TiDB Backend
 			"allow_auto_random_explicit_insert": "1",
+			// allow use _tidb_rowid in sql statement
+			"tidb_opt_write_row_id": "1",
 		},
 	}
 	db, err := param.Connect()
@@ -154,6 +157,7 @@ func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema 
 
 	task := logger.Begin(zap.InfoLevel, "create tables")
 	var sqlCreateStmts []string
+loopCreate:
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
@@ -171,13 +175,20 @@ func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema 
 				logger.With(zap.String("table", common.UniqueTable(database, tbl))),
 			)
 			if err != nil {
-				break
+				break loopCreate
 			}
 		}
 	}
 	task.End(zap.ErrorLevel, err)
 
 	return errors.Trace(err)
+}
+
+func createDatabaseIfNotExistStmt(dbName string) string {
+	var createDatabase strings.Builder
+	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
+	common.WriteMySQLIdentifier(&createDatabase, dbName)
+	return createDatabase.String()
 }
 
 func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
