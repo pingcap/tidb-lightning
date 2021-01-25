@@ -1,2 +1,0 @@
-[mydumper]
-data-source-dir = "s3://test-bucket/?endpoint=http%3A//127.0.0.1%3A9000&access_key=s3accesskey&secret_access_key=s3secretkey&force_path_style=true"
