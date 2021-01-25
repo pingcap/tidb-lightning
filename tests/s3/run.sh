@@ -48,10 +48,13 @@ stop_minio() {
 }
 trap stop_minio EXIT
 
-echo 'CREATE DATABASE ch;' > "$DBPATH/$DB-schema-create.sql"
-echo "CREATE TABLE t(i INT, s varchar(32));" > "$DBPATH/$DB.$TABLE-schema.sql"
-echo 'INSERT INTO tbl (i, s) VALUES (1, "1"),(2, "test2"), (3, "qqqtest");' > "$DBPATH/$DB.$TABLE.sql"
-cat > "$DBPATH/$DB.$TABLE.0.csv" << _EOF_
+BUCKET=test-bucket
+DATA_PATH=$DBPATH/$BUCKET
+mkdir -p $DATA_PATH
+echo 'CREATE DATABASE s3_test;' > "$DATA_PATH/$DB-schema-create.sql"
+echo "CREATE TABLE t(i INT, s varchar(32));" > "$DATA_PATH/$DB.$TABLE-schema.sql"
+echo 'INSERT INTO tbl (i, s) VALUES (1, "1"),(2, "test2"), (3, "qqqtest");' > "$DATA_PATH/$DB.$TABLE.sql"
+cat > "$DATA_PATH/$DB.$TABLE.0.csv" << _EOF_
 i,s
 100,"test100"
 101,"\""
@@ -64,7 +67,8 @@ _EOF_
 run_sql "DROP DATABASE IF EXISTS $DB;"
 run_sql "DROP TABLE IF EXISTS $DB.$TABLE;"
 
-run_lightning -d "$DBPATH" --backend local 2> /dev/null
+SOURCE_DIR="s3://$BUCKET/?endpoint=http%3A//127.0.0.1%3A9900&access_key=$MINIO_ACCESS_KEY&secret_access_key=$MINIO_SECRET_KEY&force_path_style=true"
+run_lightning -d $SOURCE_DIR --backend local 2> /dev/null
 run_sql "SELECT count(*), sum(i) FROM \`$DB\`.$TABLE"
 check_contains "count(*): 7"
 check_contains "sum(i): 413"
