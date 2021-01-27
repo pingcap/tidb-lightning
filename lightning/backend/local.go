@@ -107,10 +107,24 @@ type localFileMeta struct {
 	TotalSize int64  `json:"total_size"`
 }
 
+type importMutexState int32
+
+const (
+	importMutexStateNoLock importMutexState = iota
+	importMutexStateImport
+	importMutexStateFlush
+	importMutexStateClose
+)
+
 type LocalFile struct {
 	localFileMeta
 	db   *pebble.DB
 	Uuid uuid.UUID
+
+	// isImportingAtomic is an atomic variable indicating whether the importMutex has been locked.
+	// This should not be used as a "spin lock" indicator.
+	isImportingAtomic int32
+	mutex             sync.Mutex
 }
 
 func (e *LocalFile) Close() error {
@@ -126,6 +140,15 @@ func (e *LocalFile) Cleanup(dataDir string) error {
 
 	dbPath := filepath.Join(dataDir, e.Uuid.String())
 	return os.RemoveAll(dbPath)
+}
+
+// Exist checks if db folder existing (meta sometimes won't flush before lightning exit)
+func (e *LocalFile) Exist(dataDir string) error {
+	dbPath := filepath.Join(dataDir, e.Uuid.String())
+	if _, err := os.Stat(dbPath); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
@@ -153,6 +176,17 @@ func (e *LocalFile) getSizeProperties() (*sizeProperties, error) {
 	}
 
 	return sizeProps, nil
+}
+
+// lock locks the local file for importing.
+func (e *LocalFile) lock(state importMutexState) {
+	e.mutex.Lock()
+	atomic.StoreInt32(&e.isImportingAtomic, int32(state))
+}
+
+func (e *LocalFile) unlock() {
+	atomic.StoreInt32(&e.isImportingAtomic, int32(importMutexStateNoLock))
+	e.mutex.Unlock()
 }
 
 type gRPCConns struct {
@@ -306,6 +340,26 @@ func NewLocalBackend(
 	return MakeBackend(local), nil
 }
 
+// lock locks the local file.
+func (local *local) lockEngine(engineId uuid.UUID, state importMutexState) bool {
+	if e, ok := local.engines.Load(engineId); ok {
+		engine := e.(*LocalFile)
+		engine.lock(state)
+		return true
+	}
+	return false
+}
+
+// unlock unlocks the local file from importing.
+func (local *local) unlockEngine(engineId uuid.UUID) bool {
+	if e, ok := local.engines.Load(engineId); ok {
+		engine := e.(*LocalFile)
+		engine.unlock()
+		return true
+	}
+	return false
+}
+
 func (local *local) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
 	store, err := local.splitCli.GetStore(ctx, storeID)
 	if err != nil {
@@ -439,6 +493,7 @@ func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) 
 	return meta, err
 }
 
+// This method must be called with holding mutex of LocalFile
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	meta, err := local.LoadEngineMeta(engineUUID)
 	if err != nil {
@@ -448,7 +503,13 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 	if err != nil {
 		return err
 	}
-	local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID})
+	if e, ok := local.engines.Load(engineUUID); ok {
+		engine := e.(*LocalFile)
+		engine.db = db
+		engine.localFileMeta = meta
+	} else {
+		local.engines.Store(engineUUID, &LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID, isImportingAtomic: int32(importMutexStateNoLock)})
+	}
 	return nil
 }
 
@@ -474,9 +535,10 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 			return err
 		}
 		engineFile := &LocalFile{
-			localFileMeta: meta,
-			Uuid:          engineUUID,
-			db:            db,
+			localFileMeta:     meta,
+			Uuid:              engineUUID,
+			db:                db,
+			isImportingAtomic: int32(importMutexStateNoLock),
 		}
 		local.engines.Store(engineUUID, engineFile)
 		return nil
@@ -994,7 +1056,34 @@ loopWrite:
 			for errCnt < maxRetryTimes {
 				log.L().Debug("ingest meta", zap.Reflect("meta", meta))
 				var resp *sst.IngestResponse
-				resp, err = local.Ingest(ctx, meta, region)
+				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
+					// only inject the error once
+					switch val.(string) {
+					case "notleader":
+						resp = &sst.IngestResponse{
+							Error: &errorpb.Error{
+								NotLeader: &errorpb.NotLeader{
+									RegionId: region.Region.Id,
+									Leader:   region.Leader,
+								},
+							},
+						}
+					case "epochnotmatch":
+						resp = &sst.IngestResponse{
+							Error: &errorpb.Error{
+								EpochNotMatch: &errorpb.EpochNotMatch{
+									CurrentRegions: []*metapb.Region{region.Region},
+								},
+							},
+						}
+					}
+					if resp != nil {
+						err = nil
+					}
+				})
+				if resp == nil {
+					resp, err = local.Ingest(ctx, meta, region)
+				}
 				if err != nil {
 					if errors.Cause(err) == context.Canceled {
 						return nil, err
@@ -1004,16 +1093,7 @@ loopWrite:
 					errCnt++
 					continue
 				}
-				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
-					switch val.(string) {
-					case "notleader":
-						resp.Error.NotLeader = &errorpb.NotLeader{
-							RegionId: region.Region.Id, Leader: region.Leader}
-					case "epochnotmatch":
-						resp.Error.EpochNotMatch = &errorpb.EpochNotMatch{
-							CurrentRegions: []*metapb.Region{region.Region}}
-					}
-				})
+
 				var retryTy retryType
 				var newRegion *split.RegionInfo
 				retryTy, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
@@ -1141,10 +1221,14 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		log.L().Info("start import engine", zap.Stringer("uuid", engineUUID),
 			zap.Int("ranges", len(ranges)))
 
+		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
+		// the table when table is created.
+		needSplit := len(ranges) > 1 || lf.TotalSize > local.regionSplitSize || lf.Length > regionMaxKeyCount
+
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionByRanges(ctx, ranges)
-			if err == nil || errors.Cause(err) == context.Canceled {
+			err = local.SplitAndScatterRegionByRanges(ctx, ranges, needSplit)
+			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
 
@@ -1171,8 +1255,37 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		ranges = unfinishedRanges
 	}
 
-	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID))
+	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID),
+		zap.Int64("size", lf.TotalSize), zap.Int64("kvs", lf.Length))
 	return nil
+}
+
+func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
+	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
+	engineFile, ok := local.engines.Load(engineUUID)
+	if !ok {
+		log.L().Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		return nil
+	}
+	localEngine := engineFile.(*LocalFile)
+	localEngine.lock(importMutexStateClose)
+	defer localEngine.unlock()
+	if err := localEngine.Close(); err != nil {
+		return err
+	}
+	if err := localEngine.Cleanup(local.localStoreDir); err != nil {
+		return err
+	}
+	meta, err := local.LoadEngineMeta(engineUUID)
+	if err != nil {
+		meta = localFileMeta{}
+	}
+	db, err := local.openEngineDB(engineUUID, false)
+	if err == nil {
+		localEngine.db = db
+		localEngine.localFileMeta = meta
+	}
+	return err
 }
 
 func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
@@ -1612,7 +1725,6 @@ func (w *LocalWriter) writeRowsLoop() {
 		totalCount += int64(len(kvs))
 	}
 
-	atomic.AddInt64(&w.local.Length, totalCount)
 	if batchSize > 0 {
 		if err := w.flushKVs(); err != nil {
 			w.writeErr.Set(err)
@@ -1621,18 +1733,23 @@ func (w *LocalWriter) writeRowsLoop() {
 		totalSize += batchSize
 		log.L().Info("write data by sort index", zap.Int64("bytes", totalSize))
 	}
+	w.local.lock(importMutexStateNoLock)
 	if writer != nil {
-		if err := writer.Close(); err != nil {
-			w.writeErr.Set(err)
-			return
+		err := writer.Close()
+		if err == nil {
+			err = w.local.db.Ingest([]string{filePath})
+			// The following two variable should be changed with holding mutex,
+			// because there may be another thread change localFileMeta object. See it in `local::OpenEngine`
+			atomic.AddInt64(&w.local.TotalSize, totalSize)
+			atomic.AddInt64(&w.local.Length, totalCount)
 		}
-		if err := w.local.db.Ingest([]string{filePath}); err != nil {
-			w.writeErr.Set(err)
-			return
-		}
+		w.writeErr.Set(err)
 		log.L().Info("write data by sst writer", zap.Int64("bytes", totalSize))
+	} else {
+		atomic.AddInt64(&w.local.TotalSize, totalSize)
+		atomic.AddInt64(&w.local.Length, totalCount)
 	}
-	atomic.AddInt64(&w.local.TotalSize, totalSize)
+	w.local.unlock()
 }
 
 func (w *LocalWriter) flushKVs() error {
@@ -1652,7 +1769,10 @@ func (w *LocalWriter) flushKVs() error {
 		return err
 	}
 	w.writeBatch = w.writeBatch[:0]
-	return w.local.db.Ingest([]string{filePath})
+	w.local.lock(importMutexStateNoLock)
+	err = w.local.db.Ingest([]string{filePath})
+	w.local.unlock()
+	return err
 }
 
 func (w *LocalWriter) createWriter() (*sstable.Writer, string, error) {

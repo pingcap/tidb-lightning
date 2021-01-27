@@ -50,8 +50,8 @@ var (
 // TODO remove this file and use br internal functions
 // This File include region split & scatter operation just like br.
 // we can simply call br function, but we need to change some function signature of br
-
-func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []Range) error {
+// When the ranges total size is small, we can skip the split to avoid generate empty regions.
+func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []Range, needSplit bool) error {
 	if len(ranges) == 0 {
 		return nil
 	}
@@ -96,6 +96,11 @@ func (local *local) SplitAndScatterRegionByRanges(ctx context.Context, ranges []
 
 		log.L().Info("paginate scan region finished", log.ZapRedactBinary("minKey", minKey), log.ZapRedactBinary("maxKey", maxKey),
 			zap.Int("regions", len(regions)))
+
+		if !needSplit {
+			scatterRegions = append(scatterRegions, regions...)
+			break
+		}
 
 		regionMap := make(map[uint64]*split.RegionInfo)
 		for _, region := range regions {

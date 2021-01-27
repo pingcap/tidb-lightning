@@ -724,6 +724,13 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
 	importer := kv.MakeBackend(mockBackend)
+	chptCh := make(chan saveCp)
+	defer close(chptCh)
+	rc := &RestoreController{saveCpCh: chptCh}
+	go func() {
+		for range chptCh {
+		}
+	}()
 
 	ctx := context.Background()
 	engineUUID := uuid.New()
@@ -740,7 +747,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, "tag", engineUUID)
 	c.Assert(err, IsNil)
-	err = s.tr.importKV(ctx, closedEngine)
+	err = s.tr.importKV(ctx, closedEngine, rc, 1)
 	c.Assert(err, IsNil)
 }
 
@@ -749,6 +756,13 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
 	importer := kv.MakeBackend(mockBackend)
+	chptCh := make(chan saveCp)
+	defer close(chptCh)
+	rc := &RestoreController{saveCpCh: chptCh}
+	go func() {
+		for range chptCh {
+		}
+	}()
 
 	ctx := context.Background()
 	engineUUID := uuid.New()
@@ -762,7 +776,7 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, "tag", engineUUID)
 	c.Assert(err, IsNil)
-	err = s.tr.importKV(ctx, closedEngine)
+	err = s.tr.importKV(ctx, closedEngine, rc, 1)
 	c.Assert(err, ErrorMatches, "fake import error.*")
 }
 
