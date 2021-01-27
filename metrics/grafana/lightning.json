@@ -1554,7 +1554,7 @@
         "options": [
 
         ],
-        "query": "label_values(lightning_chunks, cluster)",
+        "query": "label_values(lightning_chunks, tidb_cluster)",
         "refresh": 2,
         "regex": "",
         "sort": 1,
