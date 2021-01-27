@@ -1455,8 +1455,8 @@ func (t *TableRestore) restoreEngine(
 	if err != nil {
 		// if process is canceled, we should flush all chunk checkpoints for local backend
 		if rc.isLocalBackend() && common.IsContextCanceledError(err) {
-			// ctx is cancel, so to avoid Close engine failed, we use `context.TODO()` here
-			if _, err2 := dataEngine.Close(context.TODO()); err2 != nil {
+			// ctx is canceled, so to avoid Close engine failed, we use `context.Background()` here
+			if _, err2 := dataEngine.Close(context.Background()); err2 != nil {
 				log.L().Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 				return nil, errors.Trace(err)
 			}
