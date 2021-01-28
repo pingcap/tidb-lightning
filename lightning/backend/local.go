@@ -1744,6 +1744,10 @@ func (w *LocalWriter) appendRowsSorted(kvs kvPairs) error {
 			minKey: append([]byte{}, kvs[0].Key...),
 		}
 	}
+	for _, pair := range kvs {
+		w.batchSize += int64(len(pair.Key) + len(pair.Val))
+	}
+	w.totalCount += int64(len(kvs))
 	err := writeKVs(w.writer, kvs)
 	w.curSSTMeta.maxKey = append(w.curSSTMeta.maxKey[:0], kvs[len(kvs)-1].Key...)
 	return err
@@ -1793,6 +1797,9 @@ func (w *LocalWriter) AppendRows(ctx context.Context, tableName string, columnNa
 
 func (w *LocalWriter) Close() error {
 	defer w.kvBuffer.destroy()
+	w.totalSize += w.batchSize
+	atomic.AddInt64(&w.local.Length, w.totalCount)
+	atomic.AddInt64(&w.local.TotalSize, w.totalSize)
 	if w.batchCount > 0 {
 		return w.flushKVs()
 	}
