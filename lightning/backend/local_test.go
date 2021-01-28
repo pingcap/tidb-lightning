@@ -309,7 +309,8 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	meta := localFileMeta{}
 	_, engineUUID := MakeUUID("ww", 0)
 	f := LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID}
-	w := openLocalWriter(&f, tmpPath, 1024*1024)
+	w, err := openLocalWriter(context.Background(), &f, tmpPath, 1024*1024)
+	c.Assert(err, IsNil)
 
 	ctx := context.Background()
 	//kvs := make(kvPairs, 1000)

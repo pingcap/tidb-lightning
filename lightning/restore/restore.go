@@ -1303,9 +1303,9 @@ func (t *TableRestore) restoreEngine(
 		return closedEngine, w, nil
 	}
 
-	indexWriter, err := indexEngine.LocalWriter(ctx)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
+	writerCtx := ctx
+	if common.TableHasAutoRowID(t.tableInfo.Core) {
+		writerCtx = context.WithValue(ctx, kv.LocalWriterSortedKey, true)
 	}
 
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
@@ -1347,10 +1347,16 @@ func (t *TableRestore) restoreEngine(
 
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
-		dataWriter, err := dataEngine.LocalWriter(ctx)
+		dataWriter, err := dataEngine.LocalWriter(writerCtx)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+
+		indexWriter, err := indexEngine.LocalWriter(ctx)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
 		go func(w *worker.Worker, cr *chunkRestore) {
 			// Restore a chunk.
 			defer func() {
@@ -1366,6 +1372,9 @@ func (t *TableRestore) restoreEngine(
 				err = dataWriter.Close()
 			}
 			if err == nil {
+				err = indexWriter.Close()
+			}
+			if err == nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
 			} else {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Inc()
@@ -1375,9 +1384,6 @@ func (t *TableRestore) restoreEngine(
 	}
 
 	wg.Wait()
-	if err := indexWriter.Close(); err != nil {
-		return nil, nil, errors.Trace(err)
-	}
 
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
@@ -2010,7 +2016,7 @@ func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) er
 ////////////////////////////////////////////////////////////////
 
 var (
-	maxKVQueueSize         = 128   // Cache at most this number of rows before blocking the encode loop
+	maxKVQueueSize         = 32    // Cache at most this number of rows before blocking the encode loop
 	minDeliverBytes uint64 = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
 )
 
@@ -2042,6 +2048,9 @@ func (cr *chunkRestore) deliverLoop(
 		zap.Stringer("path", &cr.chunk.Key),
 		zap.String("task", "deliver"),
 	)
+	// Fetch enough KV pairs from the source.
+	dataKVs := rc.backend.MakeEmptyRows()
+	indexKVs := rc.backend.MakeEmptyRows()
 
 	for !channelClosed {
 		var dataChecksum, indexChecksum verify.KVChecksum
@@ -2051,9 +2060,6 @@ func (cr *chunkRestore) deliverLoop(
 		// chunk checkpoint should stay the same
 		offset := cr.chunk.Chunk.Offset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
-		// Fetch enough KV pairs from the source.
-		dataKVs := rc.backend.MakeEmptyRows()
-		indexKVs := rc.backend.MakeEmptyRows()
 
 	populate:
 		for dataChecksum.SumSize() < minDeliverBytes {
@@ -2067,6 +2073,9 @@ func (cr *chunkRestore) deliverLoop(
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 					columns = p.columns
 					offset = p.offset
+					if rowID > p.rowID {
+						log.L().Fatal("rowid reversed", zap.Int64("old", rowID), zap.Int64("new", p.rowID))
+					}
 					rowID = p.rowID
 				}
 			case <-ctx.Done():
@@ -2086,6 +2095,8 @@ func (cr *chunkRestore) deliverLoop(
 			deliverLogger.Error("write to index engine failed", log.ShortError(err))
 			return
 		}
+		dataKVs = dataKVs.Clear()
+		indexKVs = indexKVs.Clear()
 
 		deliverDur := time.Since(start)
 		deliverTotalDur += deliverDur
