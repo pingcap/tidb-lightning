@@ -17,16 +17,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"github.com/google/btree"
 	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
 
-	"github.com/pingcap/tidb-lightning/lightning/common"
-
 	"github.com/cockroachdb/pebble"
+	"github.com/google/btree"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -34,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+
+	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 type localSuite struct{}
@@ -361,8 +361,7 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	c.Assert(err, IsNil)
 	err = w.Close()
 	c.Assert(err, IsNil)
-	err = db.Flush()
-	c.Assert(err, IsNil)
+	c.Assert(f.Flush(), IsNil)
 	o := &pebble.IterOptions{}
 	it := db.NewIter(o)
 
