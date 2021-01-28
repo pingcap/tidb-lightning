@@ -53,9 +53,6 @@ type importer struct {
 	tls    *common.TLS
 
 	mutationPool sync.Pool
-	// importLock is a backend-global lock to ensure only one ImportEngine() is
-	// running at a time slice.
-	importLock sync.Mutex
 }
 
 // NewImporter creates a new connection to tikv-importer. A single connection
@@ -150,9 +147,6 @@ func (importer *importer) Flush(_ context.Context, _ uuid.UUID) error {
 }
 
 func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	importer.importLock.Lock()
-	defer importer.importLock.Unlock()
-
 	req := &kv.ImportEngineRequest{
 		Uuid:   engineUUID[:],
 		PdAddr: importer.pdAddr,

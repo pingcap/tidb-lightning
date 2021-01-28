@@ -262,7 +262,7 @@ func (e *LocalFile) flushLocalWriters(parentCtx context.Context) error {
 	return eg.Wait()
 }
 
-func (e *LocalFile) flushEngineUnlocked(ctx context.Context) error {
+func (e *LocalFile) flushEngineWithoutLock(ctx context.Context) error {
 	if err := e.flushLocalWriters(ctx); err != nil {
 		return err
 	}
@@ -558,7 +558,7 @@ func (local *local) FlushEngine(ctx context.Context, engineId uuid.UUID) error {
 		return errors.Errorf("engine '%s' not found", engineId)
 	}
 	defer engineFile.unlock()
-	return engineFile.flushEngineUnlocked(ctx)
+	return engineFile.flushEngineWithoutLock(ctx)
 }
 
 func (local *local) FlushAllEngines(parentCtx context.Context) (err error) {
@@ -573,7 +573,7 @@ func (local *local) FlushAllEngines(parentCtx context.Context) (err error) {
 	for _, engineFile := range allEngines {
 		ef := engineFile
 		eg.Go(func() error {
-			return ef.flushEngineUnlocked(ctx)
+			return ef.flushEngineWithoutLock(ctx)
 		})
 	}
 	return eg.Wait()
@@ -654,7 +654,7 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 	engineFile := engine.(*LocalFile)
 	engineFile.lock(importMutexStateFlush)
 	defer engineFile.unlock()
-	return engineFile.flushEngineUnlocked(ctx)
+	return engineFile.flushEngineWithoutLock(ctx)
 }
 
 func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
