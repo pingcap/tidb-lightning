@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"github.com/google/btree"
 	"math"
 	"math/rand"
 	"os"
@@ -308,7 +309,7 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	c.Assert(err, IsNil)
 	meta := localFileMeta{}
 	_, engineUUID := MakeUUID("ww", 0)
-	f := LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID}
+	f := LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID, sstMetas: btree.New(4)}
 	w, err := openLocalWriter(context.Background(), &f, tmpPath, 1024*1024)
 	c.Assert(err, IsNil)
 

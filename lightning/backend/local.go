@@ -1270,52 +1270,52 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-	/*
-		// split sorted file into range by 96MB size per file
-		ranges, err := local.readAndSplitIntoRange(lf)
-		if err != nil {
-			return err
-		}
-		remains := &syncdRanges{}
 
-		for {
-			log.L().Info("start import engine", zap.Stringer("uuid", engineUUID),
-				zap.Int("ranges", len(ranges)))
+	// split sorted file into range by 96MB size per file
+	ranges, err := local.readAndSplitIntoRange(lf)
+	if err != nil {
+		return err
+	}
+	remains := &syncdRanges{}
 
-			// if all the kv can fit in one region, skip split regions. TiDB will split one region for
-			// the table when table is created.
-			needSplit := len(ranges) > 1 || lf.TotalSize > local.regionSplitSize || lf.Length > regionMaxKeyCount
+	for {
+		log.L().Info("start import engine", zap.Stringer("uuid", engineUUID),
+			zap.Int("ranges", len(ranges)))
 
-			// split region by given ranges
-			for i := 0; i < maxRetryTimes; i++ {
-				err = local.SplitAndScatterRegionByRanges(ctx, ranges, needSplit)
-				if err == nil || common.IsContextCanceledError(err) {
-					break
-				}
+		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
+		// the table when table is created.
+		needSplit := len(ranges) > 1 || lf.TotalSize > local.regionSplitSize || lf.Length > regionMaxKeyCount
 
-				log.L().Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
-					log.ShortError(err), zap.Int("retry", i))
-			}
-			if err != nil {
-				log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
-				return err
-			}
-
-			// start to write to kv and ingest
-			err = local.writeAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
-			if err != nil {
-				log.L().Error("write and ingest engine failed", log.ShortError(err))
-				return err
-			}
-
-			unfinishedRanges := remains.take()
-			if len(unfinishedRanges) == 0 {
+		// split region by given ranges
+		for i := 0; i < maxRetryTimes; i++ {
+			err = local.SplitAndScatterRegionByRanges(ctx, ranges, needSplit)
+			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
-			log.L().Info("ingest ranges unfinished", zap.Int("remain ranges", len(unfinishedRanges)))
-			ranges = unfinishedRanges
+
+			log.L().Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+				log.ShortError(err), zap.Int("retry", i))
 		}
-	*/
+		if err != nil {
+			log.L().Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
+			return err
+		}
+
+		// start to write to kv and ingest
+		err = local.writeAndIngestByRanges(ctx, engineFile.(*LocalFile), ranges, remains)
+		if err != nil {
+			log.L().Error("write and ingest engine failed", log.ShortError(err))
+			return err
+		}
+
+		unfinishedRanges := remains.take()
+		if len(unfinishedRanges) == 0 {
+			break
+		}
+		log.L().Info("ingest ranges unfinished", zap.Int("remain ranges", len(unfinishedRanges)))
+		ranges = unfinishedRanges
+	}
+
 	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID),
 		zap.Int64("size", lf.TotalSize), zap.Int64("kvs", lf.Length))
 	return nil
@@ -1793,7 +1793,7 @@ func (w *LocalWriter) AppendRows(ctx context.Context, tableName string, columnNa
 
 func (w *LocalWriter) Close() error {
 	defer w.kvBuffer.destroy()
-	if len(w.writeBatch) > 0 {
+	if w.batchCount > 0 {
 		return w.flushKVs()
 	}
 
@@ -1825,7 +1825,7 @@ func (w *LocalWriter) flushKVs() error {
 	meta := &sstMeta{
 		path:   filePath,
 		minKey: append([]byte{}, w.writeBatch[0].Key...),
-		maxKey: append([]byte{}, w.writeBatch[len(w.writeBatch)-1].Key...),
+		maxKey: append([]byte{}, w.writeBatch[w.batchCount-1].Key...),
 	}
 	return w.local.addSST(meta)
 }
