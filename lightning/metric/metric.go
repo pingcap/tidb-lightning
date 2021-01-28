@@ -86,6 +86,12 @@ var (
 			Name:      "chunks",
 			Help:      "count number of chunks processed",
 		}, []string{"state"})
+	BytesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "lightning",
+			Name:      "bytes",
+			Help:      "count of total bytes",
+		}, []string{"state"})
 	// state can be one of:
 	//  - estimated (an estimation derived from the file size)
 	//  - pending
@@ -190,6 +196,7 @@ func init() {
 	prometheus.MustRegister(TableCounter)
 	prometheus.MustRegister(ProcessedEngineCounter)
 	prometheus.MustRegister(ChunkCounter)
+	prometheus.MustRegister(BytesCounter)
 	prometheus.MustRegister(ImportSecondsHistogram)
 	prometheus.MustRegister(RowReadSecondsHistogram)
 	prometheus.MustRegister(RowReadBytesHistogram)
