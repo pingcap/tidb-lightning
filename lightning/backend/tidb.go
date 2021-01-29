@@ -550,7 +550,23 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 	return
 }
 
-func (be *tidbBackend) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+func (be *tidbBackend) EngineFileSizes() []EngineFileSize {
+	return nil
+}
+
+func (be *tidbBackend) FlushEngine(context.Context, uuid.UUID) error {
+	return nil
+}
+
+func (be *tidbBackend) FlushAllEngines(context.Context) error {
+	return nil
+}
+
+func (be *tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
+	return errors.New("cannot reset an engine in TiDB backend")
+}
+
+func (be *tidbBackend) LocalWriter(ctx context.Context, engineUUID uuid.UUID, maxCacheSize int64) (EngineWriter, error) {
 	return &TiDBWriter{be: be, engineUUID: engineUUID}, nil
 }
 

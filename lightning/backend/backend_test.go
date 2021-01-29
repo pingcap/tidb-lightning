@@ -125,7 +125,7 @@ func (s *backendSuite) TestWriteEngine(c *C) {
 		Return(nil)
 
 	mockWriter := mock.NewMockEngineWriter(s.controller)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
 		AppendRows(ctx, "`db`.`table`", []string{"c1", "c2"}, gomock.Any(), rows1).
 		Return(nil)
@@ -153,7 +153,7 @@ func (s *backendSuite) TestWriteToEngineWithNothing(c *C) {
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
 	writer.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), emptyRows).Return(nil)
 	writer.EXPECT().Close().Return(nil)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(writer, nil)
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(writer, nil)
 
 	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
@@ -183,7 +183,7 @@ func (s *backendSuite) TestWriteEngineFailed(c *C) {
 
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
 	mockWriter := mock.NewMockEngineWriter(s.controller)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
 		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable write error"))
@@ -204,7 +204,7 @@ func (s *backendSuite) TestWriteBatchSendFailedWithRetry(c *C) {
 
 	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
 	mockWriter := mock.NewMockEngineWriter(s.controller)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.New("fake recoverable write batch error")).
 		MinTimes(1)
@@ -303,4 +303,78 @@ func (s *backendSuite) TestNewEncoder(c *C) {
 	realEncoder, err := s.mockBackend.NewEncoder(nil, options)
 	c.Assert(realEncoder, Equals, encoder)
 	c.Assert(err, IsNil)
+}
+
+func (s *backendSuite) TestCheckDiskQuota(c *C) {
+	s.setUpTest(c)
+	defer s.tearDownTest()
+
+	uuid1 := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	uuid3 := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	uuid5 := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	uuid7 := uuid.MustParse("77777777-7777-7777-7777-777777777777")
+	uuid9 := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+
+	fileSizes := []kv.EngineFileSize{
+		{
+			UUID:        uuid1,
+			DiskSize:    1000,
+			MemSize:     0,
+			IsImporting: false,
+		},
+		{
+			UUID:        uuid3,
+			DiskSize:    2000,
+			MemSize:     1000,
+			IsImporting: true,
+		},
+		{
+			UUID:        uuid5,
+			DiskSize:    1500,
+			MemSize:     3500,
+			IsImporting: false,
+		},
+		{
+			UUID:        uuid7,
+			DiskSize:    0,
+			MemSize:     7000,
+			IsImporting: true,
+		},
+		{
+			UUID:        uuid9,
+			DiskSize:    4500,
+			MemSize:     4500,
+			IsImporting: false,
+		},
+	}
+
+	s.mockBackend.EXPECT().EngineFileSizes().Return(fileSizes).Times(4)
+
+	// No quota exceeded
+	le, iple, ds, ms := s.backend.CheckDiskQuota(30000)
+	c.Assert(le, HasLen, 0)
+	c.Assert(iple, Equals, 0)
+	c.Assert(ds, Equals, int64(9000))
+	c.Assert(ms, Equals, int64(16000))
+
+	// Quota exceeded, the largest one is out
+	le, iple, ds, ms = s.backend.CheckDiskQuota(20000)
+	c.Assert(le, DeepEquals, []uuid.UUID{uuid9})
+	c.Assert(iple, Equals, 0)
+	c.Assert(ds, Equals, int64(9000))
+	c.Assert(ms, Equals, int64(16000))
+
+	// Quota exceeded, the importing one should be ranked least priority
+	le, iple, ds, ms = s.backend.CheckDiskQuota(12000)
+	c.Assert(le, DeepEquals, []uuid.UUID{uuid5, uuid9})
+	c.Assert(iple, Equals, 0)
+	c.Assert(ds, Equals, int64(9000))
+	c.Assert(ms, Equals, int64(16000))
+
+	// Quota exceeded, the importing ones should not be visible
+	le, iple, ds, ms = s.backend.CheckDiskQuota(5000)
+	c.Assert(le, DeepEquals, []uuid.UUID{uuid1, uuid5, uuid9})
+	c.Assert(iple, Equals, 1)
+	c.Assert(ds, Equals, int64(9000))
+	c.Assert(ms, Equals, int64(16000))
 }

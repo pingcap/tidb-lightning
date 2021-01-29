@@ -198,7 +198,18 @@ var stdErrorType = reflect.TypeOf(stderrors.New(""))
 // IsRetryableError returns whether the error is transient (e.g. network
 // connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
 // function returns `false` (irrecoverable) if `err == nil`.
+//
+// If the error is a multierr, returns true only if all suberrors are retryable.
 func IsRetryableError(err error) bool {
+	for _, singleError := range errors.Errors(err) {
+		if !isSingleRetryableError(singleError) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
 
 	switch err {

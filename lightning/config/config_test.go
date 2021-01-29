@@ -65,6 +65,7 @@ func assignMinimalLegalValue(cfg *config.Config) {
 	cfg.TiDB.StatusPort = 8901
 	cfg.TiDB.PdAddr = "234.56.78.90:12345"
 	cfg.Mydumper.SourceDir = "file://."
+	cfg.TikvImporter.DiskQuota = 1
 }
 
 func (s *configTestSuite) TestAdjustPdAddrAndPort(c *C) {
@@ -144,9 +145,9 @@ func (s *configTestSuite) TestAdjustFileRoutePath(c *C) {
 	rule := &config.FileRouteRule{Path: invalidPath, Type: "sql", Schema: "test", Table: "tbl"}
 	cfg.Mydumper.FileRouters = []*config.FileRouteRule{rule}
 	err := cfg.Adjust(ctx)
-	c.Assert(err, ErrorMatches, fmt.Sprintf("file route path '%s' is not in source dir '%s'", invalidPath, tmpDir))
+	c.Assert(err, ErrorMatches, fmt.Sprintf("\\Qfile route path '%s' is not in source dir '%s'\\E", invalidPath, tmpDir))
 
-	relPath := "test_dir/1.sql"
+	relPath := filepath.FromSlash("test_dir/1.sql")
 	rule.Path = filepath.Join(tmpDir, relPath)
 	err = cfg.Adjust(ctx)
 	c.Assert(err, IsNil)
@@ -620,13 +621,12 @@ func (s *configTestSuite) TestTomlPostRestore(c *C) {
 
 func (s *configTestSuite) TestCronEncodeDecode(c *C) {
 	cfg := &config.Config{}
-	d, _ := time.ParseDuration("1m")
-	cfg.Cron.SwitchMode.Duration = d
-	d, _ = time.ParseDuration("2m")
-	cfg.Cron.LogProgress.Duration = d
+	cfg.Cron.SwitchMode.Duration = 1 * time.Minute
+	cfg.Cron.LogProgress.Duration = 2 * time.Minute
+	cfg.Cron.CheckDiskQuota.Duration = 3 * time.Second
 	var b bytes.Buffer
 	c.Assert(toml.NewEncoder(&b).Encode(cfg.Cron), IsNil)
-	c.Assert(b.String(), Equals, "switch-mode = \"1m0s\"\nlog-progress = \"2m0s\"\n")
+	c.Assert(b.String(), Equals, "switch-mode = \"1m0s\"\nlog-progress = \"2m0s\"\ncheck-disk-quota = \"3s\"\n")
 
 	confStr := "[cron]\r\n" + b.String()
 	cfg2 := &config.Config{}
