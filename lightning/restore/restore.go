@@ -1367,9 +1367,14 @@ func (t *TableRestore) restoreEngine(
 		return closedEngine, nil
 	}
 
-	// has _tidb_rowid and no auto random bits or shard rowid bits
+	// if the key are ordered, LocalWrite can optmize the writing.
+	// table has auto_incremented _tidb_rowid must satisify following restriction
+	// - clustered index disable and primary key is not number
+	// - no auto random bits (auto random or shard rowid)
+	// - no partition table
 	hasAutoIncrementAutoID := common.TableHasAutoRowID(t.tableInfo.Core) &&
-		t.tableInfo.Core.AutoRandomBits == 0 && t.tableInfo.Core.ShardRowIDBits == 0
+		t.tableInfo.Core.AutoRandomBits == 0 && t.tableInfo.Core.ShardRowIDBits == 0 &&
+		t.tableInfo.Core.Partition == nil
 	writerCtx := ctx
 	if hasAutoIncrementAutoID {
 		writerCtx = context.WithValue(ctx, kv.LocalWriterSortedKey, true)
