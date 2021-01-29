@@ -1367,8 +1367,11 @@ func (t *TableRestore) restoreEngine(
 		return closedEngine, nil
 	}
 
+	// has _tidb_rowid and no auto random bits or shard rowid bits
+	hasAutoIncrementAutoID := common.TableHasAutoRowID(t.tableInfo.Core) &&
+		t.tableInfo.Core.AutoRandomBits == 0 && t.tableInfo.Core.ShardRowIDBits == 0
 	writerCtx := ctx
-	if common.TableHasAutoRowID(t.tableInfo.Core) {
+	if hasAutoIncrementAutoID {
 		writerCtx = context.WithValue(ctx, kv.LocalWriterSortedKey, true)
 	}
 
