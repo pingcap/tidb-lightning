@@ -1424,7 +1424,7 @@ func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (Engi
 func openLocalWriter(ctx context.Context, f *LocalFile, sstDir string, memtableSizeLimit int64) (*LocalWriter, error) {
 	sortedKey := ctx.Value(LocalWriterSortedKey)
 	if !common.IsDirExists(sstDir) {
-		if err := os.Mkdir(sstDir, 0644); err != nil {
+		if err := os.Mkdir(sstDir, 0755); err != nil {
 			return nil, err
 		}
 	}
