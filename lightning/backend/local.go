@@ -131,14 +131,14 @@ type LocalFile struct {
 }
 
 func (e *LocalFile) Close() error {
-	return e.db.Close()
+	return errors.Trace(e.db.Close())
 }
 
 func (e *LocalFile) Flush() error {
 	if err := e.ingestAllSSTs(); err != nil {
-		return err
+		return errors.Trace(err)
 	}
-	return e.db.Flush()
+	return errors.Trace(e.db.Flush())
 }
 
 // Cleanup remove meta and db files
@@ -211,7 +211,7 @@ func (e *LocalFile) addSST(m *sstMeta) error {
 	if old != nil {
 		// find duplicated, ingest it directly.
 		meta := old.(*sstMeta)
-		return e.db.Ingest([]string{meta.path})
+		return errors.Trace(e.db.Ingest([]string{meta.path}))
 	}
 	return nil
 }
@@ -326,7 +326,7 @@ func (p *connPool) get(ctx context.Context) (*grpc.ClientConn, error) {
 	if len(p.conns) < p.cap {
 		c, err := p.newConn(ctx)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		p.conns = append(p.conns, c)
 		return c, nil
@@ -381,7 +381,7 @@ func NewLocalBackend(
 	if shouldCreate {
 		err = os.Mkdir(localFile, 0700)
 		if err != nil {
-			return MakeBackend(nil), err
+			return MakeBackend(nil), errors.Trace(err)
 		}
 	}
 
@@ -535,7 +535,8 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 		},
 	}
 	dbPath := filepath.Join(local.localStoreDir, engineUUID.String())
-	return pebble.Open(dbPath, opt)
+	db, err := pebble.Open(dbPath, opt)
+	return db, errors.Trace(err)
 }
 
 func (local *local) saveEngineMeta(engine *LocalFile) error {
@@ -553,10 +554,10 @@ func (local *local) LoadEngineMeta(engineUUID uuid.UUID) (localFileMeta, error) 
 	mataPath := filepath.Join(local.localStoreDir, engineUUID.String()+engineMetaFileSuffix)
 	f, err := os.Open(mataPath)
 	if err != nil {
-		return meta, err
+		return meta, errors.Trace(err)
 	}
 	err = json.NewDecoder(f).Decode(&meta)
-	return meta, err
+	return meta, errors.Trace(err)
 }
 
 // This method must be called with holding mutex of LocalFile
@@ -748,7 +749,7 @@ func (local *local) WriteToTiKV(
 			for i := range clients {
 				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 				if err := clients[i].Send(requests[i]); err != nil {
-					return nil, nil, stats, err
+					return nil, nil, stats, errors.Trace(err)
 				}
 			}
 			count = 0
@@ -768,7 +769,7 @@ func (local *local) WriteToTiKV(
 		for i := range clients {
 			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 			if err := clients[i].Send(requests[i]); err != nil {
-				return nil, nil, stats, err
+				return nil, nil, stats, errors.Trace(err)
 			}
 		}
 	}
@@ -776,7 +777,7 @@ func (local *local) WriteToTiKV(
 	var leaderPeerMetas []*sst.SSTMeta
 	for i, wStream := range clients {
 		if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
-			return nil, nil, stats, closeErr
+			return nil, nil, stats, errors.Trace(closeErr)
 		} else {
 			if leaderID == region.Region.Peers[i].GetId() {
 				leaderPeerMetas = resp.Metas
@@ -837,7 +838,7 @@ func (local *local) Ingest(ctx context.Context, meta *sst.SSTMeta, region *split
 	}
 	resp, err := cli.Ingest(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return resp, nil
 }
@@ -1753,7 +1754,7 @@ func (w *LocalWriter) appendRowsSorted(kvs kvPairs) error {
 	if w.writer == nil {
 		writer, path, err := w.createWriter()
 		if err != nil {
-			return nil
+			return errors.Trace(err)
 		}
 		w.writer = writer
 		w.curSSTMeta = &sstMeta{
@@ -1858,7 +1859,7 @@ func (w *LocalWriter) createWriter() (*sstable.Writer, string, error) {
 	filePath := filepath.Join(w.sstDir, fmt.Sprintf("%s.sst", uuid.New()))
 	f, err := os.Create(filePath)
 	if err != nil {
-		return nil, filePath, err
+		return nil, filePath, errors.Trace(err)
 	}
 	writer := sstable.NewWriter(f, sstable.WriterOptions{
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
