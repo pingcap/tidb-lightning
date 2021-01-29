@@ -23,16 +23,20 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/pingcap/tidb-lightning/lightning/common"
-
 	"github.com/cockroachdb/pebble"
+	"github.com/pingcap/br/pkg/restore"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/errorpb"
+	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+
+	"github.com/pingcap/tidb-lightning/lightning/common"
 )
 
 type localSuite struct{}
@@ -387,4 +391,85 @@ func (s *localSuite) TestLocalWriterWithIngest(c *C) {
 
 func (s *localSuite) TestLocalWriterWithIngestUnsort(c *C) {
 	testLocalWriter(c, true, true)
+}
+
+type mockSplitClient struct {
+	restore.SplitClient
+}
+
+func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*restore.RegionInfo, error) {
+	return &restore.RegionInfo{
+		Leader: &metapb.Peer{Id: 1},
+		Region: &metapb.Region{
+			Id:       1,
+			StartKey: key,
+		},
+	}, nil
+}
+
+func (s *localSuite) TestIsIngestRetryable(c *C) {
+	local := &local{
+		splitCli: &mockSplitClient{},
+	}
+
+	resp := &sst.IngestResponse{
+		Error: &errorpb.Error{
+			NotLeader: &errorpb.NotLeader{
+				Leader: &metapb.Peer{Id: 2},
+			},
+		},
+	}
+	ctx := context.Background()
+	region := &restore.RegionInfo{
+		Leader: &metapb.Peer{Id: 1},
+		Region: &metapb.Region{
+			Id:       1,
+			StartKey: []byte{1},
+			EndKey:   []byte{3},
+			RegionEpoch: &metapb.RegionEpoch{
+				ConfVer: 1,
+				Version: 1,
+			},
+		},
+	}
+	meta := &sst.SSTMeta{
+		Range: &sst.Range{
+			Start: []byte{1},
+			End:   []byte{2},
+		},
+	}
+	retryType, newRegion, err := local.isIngestRetryable(ctx, resp, region, meta)
+	c.Assert(retryType, Equals, retryWrite)
+	c.Assert(newRegion.Leader.Id, Equals, uint64(2))
+	c.Assert(err, NotNil)
+
+	resp.Error = &errorpb.Error{
+		EpochNotMatch: &errorpb.EpochNotMatch{
+			CurrentRegions: []*metapb.Region{
+				{
+					Id:       1,
+					StartKey: []byte{1},
+					EndKey:   []byte{3},
+					RegionEpoch: &metapb.RegionEpoch{
+						ConfVer: 1,
+						Version: 2,
+					},
+					Peers: []*metapb.Peer{{Id: 1}},
+				},
+			},
+		},
+	}
+	retryType, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
+	c.Assert(retryType, Equals, retryWrite)
+	c.Assert(newRegion.Region.RegionEpoch.Version, Equals, uint64(2))
+	c.Assert(err, NotNil)
+
+	resp.Error = &errorpb.Error{Message: "raft: proposal dropped"}
+	retryType, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
+	c.Assert(retryType, Equals, retryWrite)
+
+	resp.Error = &errorpb.Error{Message: "unknown error"}
+	retryType, newRegion, err = local.isIngestRetryable(ctx, resp, region, meta)
+	c.Assert(retryType, Equals, retryNone)
+	c.Assert(err, ErrorMatches, "non-retryable error: unknown error")
 }
