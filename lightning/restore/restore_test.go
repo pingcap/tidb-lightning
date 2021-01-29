@@ -836,18 +836,18 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData(c *C) {
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil).Times(2)
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 	mockWriter := mock.NewMockEngineWriter(controller)
-	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(2048)).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
 		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0)
 	c.Assert(err, IsNil)
-	dataWriter, err := dataEngine.LocalWriter(ctx)
+	dataWriter, err := dataEngine.LocalWriter(ctx, 2048)
 	c.Assert(err, IsNil)
 	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1)
 	c.Assert(err, IsNil)
-	indexWriter, err := indexEngine.LocalWriter(ctx)
+	indexWriter, err := indexEngine.LocalWriter(ctx, 2048)
 	c.Assert(err, IsNil)
 
 	// Deliver nothing.
@@ -876,16 +876,16 @@ func (s *chunkRestoreSuite) TestDeliverLoop(c *C) {
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil).Times(2)
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 	mockWriter := mock.NewMockEngineWriter(controller)
-	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any()).Return(mockWriter, nil).AnyTimes()
+	mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(2048)).Return(mockWriter, nil).AnyTimes()
 
 	dataEngine, err := importer.OpenEngine(ctx, s.tr.tableName, 0)
 	c.Assert(err, IsNil)
 	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1)
 	c.Assert(err, IsNil)
 
-	dataWriter, err := dataEngine.LocalWriter(ctx)
+	dataWriter, err := dataEngine.LocalWriter(ctx, 2048)
 	c.Assert(err, IsNil)
-	indexWriter, err := indexEngine.LocalWriter(ctx)
+	indexWriter, err := indexEngine.LocalWriter(ctx, 2048)
 	c.Assert(err, IsNil)
 
 	// Set up the expected API calls to the data engine...
@@ -1096,9 +1096,9 @@ func (s *chunkRestoreSuite) TestRestore(c *C) {
 	c.Assert(err, IsNil)
 	indexEngine, err := importer.OpenEngine(ctx, s.tr.tableName, -1)
 	c.Assert(err, IsNil)
-	dataWriter, err := dataEngine.LocalWriter(ctx)
+	dataWriter, err := dataEngine.LocalWriter(ctx, 2048)
 	c.Assert(err, IsNil)
-	indexWriter, err := indexEngine.LocalWriter(ctx)
+	indexWriter, err := indexEngine.LocalWriter(ctx, 2048)
 	c.Assert(err, IsNil)
 
 	// Expected API sequence

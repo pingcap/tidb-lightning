@@ -516,17 +516,23 @@ func (s *testMydumpLoaderSuite) TestFileRouting(c *C) {
 					},
 				},
 				{
-					DB:         "d1",
-					Name:       "v1",
-					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "d1/v1-table.sql", Type: md.SourceTypeTableSchema}},
-					DataFiles:  []md.FileInfo{},
+					DB:   "d1",
+					Name: "v1",
+					SchemaFile: md.FileInfo{
+						TableName: filter.Table{Schema: "d1", Name: "v1"},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/v1-table.sql"), Type: md.SourceTypeTableSchema},
+					},
+					DataFiles: []md.FileInfo{},
 				},
 			},
 			Views: []*md.MDTableMeta{
 				{
-					DB:         "d1",
-					Name:       "v1",
-					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "d1/v1-view.sql", Type: md.SourceTypeViewSchema}},
+					DB:   "d1",
+					Name: "v1",
+					SchemaFile: md.FileInfo{
+						TableName: filter.Table{Schema: "d1", Name: "v1"},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/v1-view.sql"), Type: md.SourceTypeViewSchema},
+					},
 				},
 			},
 		},

@@ -16,6 +16,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -82,6 +83,18 @@ func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
 
 var engineNamespace = uuid.MustParse("d68d6abe-c59e-45d6-ade8-e2b0ceb7bedf")
 
+type EngineFileSize struct {
+	// UUID is the engine's UUID.
+	UUID uuid.UUID
+	// DiskSize is the estimated total file size on disk right now.
+	DiskSize int64
+	// MemSize is the total memory size used by the engine. This is the
+	// estimated additional size saved onto disk after calling Flush().
+	MemSize int64
+	// IsImporting indicates whether the engine performing Import().
+	IsImporting bool
+}
+
 // AbstractBackend is the abstract interface behind Backend.
 // Implementations of this interface must be goroutine safe: you can share an
 // instance and execute any method anywhere.
@@ -128,7 +141,29 @@ type AbstractBackend interface {
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
 
-	LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error)
+	// FlushEngine ensures all KV pairs written to an open engine has been
+	// synchronized, such that kill-9'ing Lightning afterwards and resuming from
+	// checkpoint can recover the exact same content.
+	//
+	// This method is only relevant for local backend, and is no-op for all
+	// other backends.
+	FlushEngine(ctx context.Context, engineUUID uuid.UUID) error
+
+	// FlushAllEngines performs FlushEngine on all opened engines. This is a
+	// very expensive operation and should only be used in some rare situation
+	// (e.g. preparing to resolve a disk quota violation).
+	FlushAllEngines(ctx context.Context) error
+
+	// EngineFileSizes obtains the size occupied locally of all engines managed
+	// by this backend. This method is used to compute disk quota.
+	// It can return nil if the content are all stored remotely.
+	EngineFileSizes() []EngineFileSize
+
+	// ResetEngine clears all written KV pairs in this opened engine.
+	ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
+
+	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
+	LocalWriter(ctx context.Context, engineUUID uuid.UUID, maxCacheSize int64) (EngineWriter, error)
 }
 
 func fetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {
@@ -207,6 +242,61 @@ func (be Backend) FetchRemoteTableModels(ctx context.Context, schemaName string)
 	return be.abstract.FetchRemoteTableModels(ctx, schemaName)
 }
 
+func (be Backend) FlushAll(ctx context.Context) error {
+	return be.abstract.FlushAllEngines(ctx)
+}
+
+// CheckDiskQuota verifies if the total engine file size is below the given
+// quota. If the quota is exceeded, this method returns an array of engines,
+// which after importing can decrease the total size below quota.
+func (be Backend) CheckDiskQuota(quota int64) (
+	largeEngines []uuid.UUID,
+	inProgressLargeEngines int,
+	totalDiskSize int64,
+	totalMemSize int64,
+) {
+	sizes := be.abstract.EngineFileSizes()
+	sort.Slice(sizes, func(i, j int) bool {
+		a, b := &sizes[i], &sizes[j]
+		if a.IsImporting != b.IsImporting {
+			return a.IsImporting
+		}
+		return a.DiskSize+a.MemSize < b.DiskSize+b.MemSize
+	})
+	for _, size := range sizes {
+		totalDiskSize += size.DiskSize
+		totalMemSize += size.MemSize
+		if totalDiskSize+totalMemSize > quota {
+			if size.IsImporting {
+				inProgressLargeEngines++
+			} else {
+				largeEngines = append(largeEngines, size.UUID)
+			}
+		}
+	}
+	return
+}
+
+// UnsafeImportAndReset forces the backend to import the content of an engine
+// into the target and then reset the engine to empty. This method will not
+// close the engine. Make sure the engine is flushed manually before calling
+// this method.
+func (be Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID) error {
+	// DO NOT call be.abstract.CloseEngine()! The engine should still be writable after
+	// calling UnsafeImportAndReset().
+	closedEngine := ClosedEngine{
+		engine: engine{
+			backend: be.abstract,
+			logger:  makeLogger("<import-and-reset>", engineUUID),
+			uuid:    engineUUID,
+		},
+	}
+	if err := closedEngine.Import(ctx); err != nil {
+		return err
+	}
+	return be.abstract.ResetEngine(ctx, engineUUID)
+}
+
 // OpenEngine opens an engine with the given table name and engine ID.
 func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int32) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, engineID)
@@ -251,16 +341,13 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 }
 
 // Flush current written data for local backend
-func (engine *OpenedEngine) Flush() error {
-	if l, ok := engine.backend.(*local); ok {
-		return l.Flush(engine.uuid)
-	}
-	return nil
+func (engine *OpenedEngine) Flush(ctx context.Context) error {
+	return engine.backend.FlushEngine(ctx, engine.uuid)
 }
 
 // WriteRows writes a collection of encoded rows into the engine.
 func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
-	writer, err := engine.backend.LocalWriter(ctx, engine.uuid)
+	writer, err := engine.backend.LocalWriter(ctx, engine.uuid, LocalMemoryTableSize)
 	if err != nil {
 		return err
 	}
@@ -271,8 +358,8 @@ func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string,
 	return writer.Close()
 }
 
-func (engine *OpenedEngine) LocalWriter(ctx context.Context) (*LocalEngineWriter, error) {
-	w, err := engine.backend.LocalWriter(ctx, engine.uuid)
+func (engine *OpenedEngine) LocalWriter(ctx context.Context, maxCacheSize int64) (*LocalEngineWriter, error) {
+	w, err := engine.backend.LocalWriter(ctx, engine.uuid, maxCacheSize)
 	if err != nil {
 		return nil, err
 	}

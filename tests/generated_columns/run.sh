@@ -50,7 +50,7 @@ for BACKEND in 'local' 'tidb' 'importer'; do
     check_contains 'd: 103'
     check_contains 'e: 104'
 
-    run_sql --binary-as-hex 'SELECT * FROM gencol.various_types'
+    run_sql 'SELECT * FROM gencol.various_types' --binary-as-hex
     check_contains 'int64: 3'
     check_contains 'uint64: 5764801'
     check_contains 'float32: 0.5625'

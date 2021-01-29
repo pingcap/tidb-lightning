@@ -187,6 +187,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2.2679331552660544, 10),
 		},
 	)
+
+	LocalStorageUsageBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "lightning",
+			Name:      "local_storage_usage_bytes",
+			Help:      "disk/memory size currently occupied by intermediate files in local backend",
+		}, []string{"medium"},
+	)
 )
 
 func init() {
@@ -208,6 +216,7 @@ func init() {
 	prometheus.MustRegister(ChecksumSecondsHistogram)
 	prometheus.MustRegister(ChunkParserReadBlockSecondsHistogram)
 	prometheus.MustRegister(ApplyWorkerSecondsHistogram)
+	prometheus.MustRegister(LocalStorageUsageBytesGauge)
 }
 
 func RecordTableCount(status string, err error) {
@@ -239,7 +248,7 @@ func ReadCounter(counter prometheus.Counter) float64 {
 	return metric.Counter.GetValue()
 }
 
-// ReadCounter reports the sum of all observed values in the histogram.
+// ReadHistogramSum reports the sum of all observed values in the histogram.
 func ReadHistogramSum(histogram prometheus.Histogram) float64 {
 	var metric dto.Metric
 	if err := histogram.Write(&metric); err != nil {
