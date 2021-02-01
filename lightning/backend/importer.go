@@ -355,7 +355,23 @@ func (importer *importer) FetchRemoteTableModels(ctx context.Context, schema str
 	return fetchRemoteTableModelsFromTLS(ctx, importer.tls, schema)
 }
 
-func (importer *importer) LocalWriter(ctx context.Context, engineUUID uuid.UUID) (EngineWriter, error) {
+func (importer *importer) EngineFileSizes() []EngineFileSize {
+	return nil
+}
+
+func (importer *importer) FlushEngine(context.Context, uuid.UUID) error {
+	return nil
+}
+
+func (importer *importer) FlushAllEngines(context.Context) error {
+	return nil
+}
+
+func (importer *importer) ResetEngine(context.Context, uuid.UUID) error {
+	return errors.New("cannot reset an engine in importer backend")
+}
+
+func (importer *importer) LocalWriter(ctx context.Context, engineUUID uuid.UUID, maxCacheSize int64) (EngineWriter, error) {
 	return &ImporterWriter{importer: importer, engineUUID: engineUUID}, nil
 }
 

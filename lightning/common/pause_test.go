@@ -96,7 +96,7 @@ func (s *pauseSuite) TestPause(c *C) {
 		p.Resume()
 	}()
 
-	c.Assert(&wg, unblocksBetween, 500*time.Millisecond, 510*time.Millisecond)
+	c.Assert(&wg, unblocksBetween, 500*time.Millisecond, 520*time.Millisecond)
 
 	// if the context is canceled, Wait() should immediately unblock...
 
@@ -130,7 +130,7 @@ func (s *pauseSuite) TestPause(c *C) {
 		p.Resume()
 	}()
 
-	c.Assert(&wg, unblocksBetween, 500*time.Millisecond, 510*time.Millisecond)
+	c.Assert(&wg, unblocksBetween, 500*time.Millisecond, 520*time.Millisecond)
 }
 
 // Run `go test github.com/pingcap/tidb-lightning/lightning/common -check.b -test.v` to get benchmark result.

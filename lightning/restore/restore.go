@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/collate"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 
@@ -127,6 +128,12 @@ func (es *errorSummaries) record(tableName string, err error, status CheckpointS
 	es.summary[tableName] = errorSummary{status: status, err: err}
 }
 
+const (
+	diskQuotaStateIdle int32 = iota
+	diskQuotaStateChecking
+	diskQuotaStateImporting
+)
+
 type RestoreController struct {
 	cfg             *config.Config
 	dbMetas         []*mydump.MDDatabaseMeta
@@ -154,6 +161,9 @@ type RestoreController struct {
 	closedEngineLimit *worker.Pool
 	store             storage.ExternalStorage
 	checksumManager   ChecksumManager
+
+	diskQuotaLock  sync.RWMutex
+	diskQuotaState int32
 }
 
 func NewRestoreController(
@@ -828,22 +838,34 @@ func (rc *RestoreController) listenCheckpointUpdates() {
 }
 
 func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan struct{}) {
-	logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
-	defer logProgressTicker.Stop()
+	// a nil channel blocks forever.
+	// if the cron duration is zero we use the nil channel to skip the action.
+	var logProgressChan <-chan time.Time
+	if rc.cfg.Cron.LogProgress.Duration > 0 {
+		logProgressTicker := time.NewTicker(rc.cfg.Cron.LogProgress.Duration)
+		defer logProgressTicker.Stop()
+		logProgressChan = logProgressTicker.C
+	}
 
 	glueProgressTicker := time.NewTicker(3 * time.Second)
 	defer glueProgressTicker.Stop()
 
 	var switchModeChan <-chan time.Time
-	// tide backend don't need to switch tikv to import mode
-	if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+	// tidb backend don't need to switch tikv to import mode
+	if rc.cfg.TikvImporter.Backend != config.BackendTiDB && rc.cfg.Cron.SwitchMode.Duration > 0 {
 		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 		defer switchModeTicker.Stop()
 		switchModeChan = switchModeTicker.C
 
 		rc.switchToImportMode(ctx)
-	} else {
-		switchModeChan = make(chan time.Time)
+	}
+
+	var checkQuotaChan <-chan time.Time
+	// only local storage has disk quota concern.
+	if rc.cfg.TikvImporter.Backend == config.BackendLocal && rc.cfg.Cron.CheckDiskQuota.Duration > 0 {
+		checkQuotaTicker := time.NewTicker(rc.cfg.Cron.CheckDiskQuota.Duration)
+		defer checkQuotaTicker.Stop()
+		checkQuotaChan = checkQuotaTicker.C
 	}
 
 	start := time.Now()
@@ -860,7 +882,7 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 			// periodically switch to import mode, as requested by TiKV 3.0
 			rc.switchToImportMode(ctx)
 
-		case <-logProgressTicker.C:
+		case <-logProgressChan:
 			// log the current progress periodically, so OPS will know that we're still working
 			nanoseconds := float64(time.Since(start).Nanoseconds())
 			// the estimated chunk is not accurate(likely under estimated), but the actual count is not accurate
@@ -945,6 +967,12 @@ func (rc *RestoreController) runPeriodicActions(ctx context.Context, stop <-chan
 				zap.String("state", state),
 				remaining,
 			)
+
+		case <-checkQuotaChan:
+			// verify the total space occupied by sorted-kv-dir is below the quota,
+			// otherwise we perform an emergency import.
+			rc.enforceDiskQuota(ctx)
+
 		case <-glueProgressTicker.C:
 			finished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
 			rc.tidbGlue.Record(glue.RecordFinishedChunk, uint64(finished))
@@ -1334,6 +1362,7 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 				rc.postProcessLock.Lock()
 			}
 			err = t.importKV(ctx, closedIndexEngine, rc, indexEngineID)
+			rc.saveStatusCheckpoint(t.tableName, indexEngineID, err, CheckpointStatusImported)
 			if !rc.isLocalBackend() {
 				rc.postProcessLock.Unlock()
 			}
@@ -1380,6 +1409,18 @@ func (t *TableRestore) restoreEngine(
 		writerCtx = context.WithValue(ctx, kv.LocalWriterSortedKey, true)
 	}
 
+	// In Local backend, the local writer will produce an SST file for batch
+	// ingest into the local DB every 1000 KV pairs or up to 512 MiB.
+	// There are (region-concurrency) data writers, and (index-concurrency) index writers.
+	// Thus, the disk size occupied by these writers are up to
+	// (region-concurrency + index-concurrency) * 512 MiB.
+	// This number should not exceed the disk quota.
+	// Therefore, we need to reduce that "512 MiB" to respect the disk quota:
+	localWriterMaxCacheSize := int64(rc.cfg.TikvImporter.DiskQuota) // int64(rc.cfg.App.IndexConcurrency+rc.cfg.App.RegionConcurrency)
+	if localWriterMaxCacheSize > config.LocalMemoryTableSize {
+		localWriterMaxCacheSize = config.LocalMemoryTableSize
+	}
+
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 
 	dataEngine, err := rc.backend.OpenEngine(ctx, t.tableName, engineID)
@@ -1423,12 +1464,13 @@ func (t *TableRestore) restoreEngine(
 
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
-		dataWriter, err := dataEngine.LocalWriter(writerCtx)
+
+		dataWriter, err := dataEngine.LocalWriter(writerCtx, localWriterMaxCacheSize)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		indexWriter, err := indexEngine.LocalWriter(ctx)
+		indexWriter, err := indexEngine.LocalWriter(ctx, localWriterMaxCacheSize)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1474,7 +1516,7 @@ func (t *TableRestore) restoreEngine(
 	)
 
 	flushAndSaveAllChunks := func() error {
-		if err = indexEngine.Flush(); err != nil {
+		if err = indexEngine.Flush(ctx); err != nil {
 			return errors.Trace(err)
 		}
 		// Currently we write all the checkpoints after data&index engine are flushed.
@@ -1545,6 +1587,7 @@ func (t *TableRestore) importEngine(
 		rc.postProcessLock.Lock()
 	}
 	err := t.importKV(ctx, closedEngine, rc, engineID)
+	rc.saveStatusCheckpoint(t.tableName, engineID, err, CheckpointStatusImported)
 	if !rc.isLocalBackend() {
 		rc.postProcessLock.Unlock()
 	}
@@ -1738,6 +1781,91 @@ func (rc *RestoreController) switchTiKVMode(ctx context.Context, mode sstpb.Swit
 			return kv.SwitchMode(c, tls, store.Address, mode)
 		},
 	)
+}
+
+func (rc *RestoreController) enforceDiskQuota(ctx context.Context) {
+	if !atomic.CompareAndSwapInt32(&rc.diskQuotaState, diskQuotaStateIdle, diskQuotaStateChecking) {
+		// do not run multiple the disk quota check / import simultaneously.
+		// (we execute the lock check in background to avoid blocking the cron thread)
+		return
+	}
+
+	go func() {
+		// locker is assigned when we detect the disk quota is exceeded.
+		// before the disk quota is confirmed exceeded, we keep the diskQuotaLock
+		// unlocked to avoid periodically interrupting the writer threads.
+		var locker sync.Locker
+		defer func() {
+			atomic.StoreInt32(&rc.diskQuotaState, diskQuotaStateIdle)
+			if locker != nil {
+				locker.Unlock()
+			}
+		}()
+
+		isRetrying := false
+
+		for {
+			// sleep for a cycle if we are retrying because there is nothing new to import.
+			if isRetrying {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(rc.cfg.Cron.CheckDiskQuota.Duration):
+				}
+			} else {
+				isRetrying = true
+			}
+
+			quota := int64(rc.cfg.TikvImporter.DiskQuota)
+			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := rc.backend.CheckDiskQuota(quota)
+			metric.LocalStorageUsageBytesGauge.WithLabelValues("disk").Set(float64(totalDiskSize))
+			metric.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
+
+			logger := log.With(
+				zap.Int64("diskSize", totalDiskSize),
+				zap.Int64("memSize", totalMemSize),
+				zap.Int64("quota", quota),
+				zap.Int("largeEnginesCount", len(largeEngines)),
+				zap.Int("inProgressLargeEnginesCount", inProgressLargeEngines))
+
+			if len(largeEngines) == 0 && inProgressLargeEngines == 0 {
+				logger.Debug("disk quota respected")
+				return
+			}
+
+			if locker == nil {
+				// blocks all writers when we detected disk quota being exceeded.
+				rc.diskQuotaLock.Lock()
+				locker = &rc.diskQuotaLock
+			}
+
+			logger.Warn("disk quota exceeded")
+			if len(largeEngines) == 0 {
+				logger.Warn("all large engines are already importing, keep blocking all writes")
+				continue
+			}
+
+			// flush all engines so that checkpoints can be updated.
+			if err := rc.backend.FlushAll(ctx); err != nil {
+				logger.Error("flush engine for disk quota failed, check again later", log.ShortError(err))
+				return
+			}
+
+			// at this point, all engines are synchronized on disk.
+			// we then import every large engines one by one and complete.
+			// if any engine failed to import, we just try again next time, since the data are still intact.
+			atomic.StoreInt32(&rc.diskQuotaState, diskQuotaStateImporting)
+			task := logger.Begin(zap.WarnLevel, "importing large engines for disk quota")
+			var importErr error
+			for _, engine := range largeEngines {
+				if err := rc.backend.UnsafeImportAndReset(ctx, engine); err != nil {
+					importErr = multierr.Append(importErr, err)
+				}
+			}
+			task.End(zap.ErrorLevel, importErr)
+			return
+		}
+	}()
 }
 
 func (rc *RestoreController) checkRequirements(ctx context.Context) error {
@@ -2176,44 +2304,55 @@ func (cr *chunkRestore) deliverLoop(
 			}
 		}
 
-		// Write KVs into the engine
-		start := time.Now()
-
-		if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
-			deliverLogger.Error("write to data engine failed", log.ShortError(err))
-			return
-		}
-		if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
-			deliverLogger.Error("write to index engine failed", log.ShortError(err))
-			return
+		// we are allowed to save checkpoint when the disk quota state moved to "importing"
+		// since all engines are flushed.
+		if atomic.LoadInt32(&rc.diskQuotaState) == diskQuotaStateImporting {
+			saveCheckpoint(rc, t, engineID, cr.chunk)
 		}
 		dataKVs = dataKVs.Clear()
 		indexKVs = indexKVs.Clear()
 
-		deliverDur := time.Since(start)
-		deliverTotalDur += deliverDur
-		metric.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
-		metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumSize()))
-		metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumSize()))
-		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
-		metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
+		func() {
+			rc.diskQuotaLock.RLock()
+			defer rc.diskQuotaLock.RUnlock()
+
+			// Write KVs into the engine
+			start := time.Now()
+
+			if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
+				deliverLogger.Error("write to data engine failed", log.ShortError(err))
+				return
+			}
+			if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
+				deliverLogger.Error("write to index engine failed", log.ShortError(err))
+				return
+			}
+
+			deliverDur := time.Since(start)
+			deliverTotalDur += deliverDur
+			metric.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
+			metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumSize()))
+			metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumSize()))
+			metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
+			metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
+		}()
 
 		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)
-		// No need to apply a lock since this is the only thread updating these variables.
+		// No need to apply a lock since this is the only thread updating `cr.chunk.**`.
+		// In local mode, we should write these checkpoint after engine flushed.
 		cr.chunk.Checksum.Add(&dataChecksum)
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = offset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
-		// IN local mode, we should write these checkpoint after engine flushed
 		if !rc.isLocalBackend() && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
 			// No need to save checkpoint if nothing was delivered.
 			saveCheckpoint(rc, t, engineID, cr.chunk)
 		}
-		failpoint.Inject("FailAfterWriteRows", func() {
-			time.Sleep(time.Second)
-			panic("forcing failure due to FailAfterWriteRows")
+		failpoint.Inject("SlowDownWriteRows", func() {
+			deliverLogger.Warn("Slowed down write rows")
 		})
+		failpoint.Inject("FailAfterWriteRows", nil)
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after writen
 		// 10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
 		// can safely update current checkpoint.

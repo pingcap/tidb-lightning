@@ -90,6 +90,17 @@ addr = "127.0.0.1:8287"
 #send-kv-pairs = 32768
 # local storage directory used in "local" backend.
 #sorted-kv-dir = ""
+# Maximum size of the local storage directory. Periodically, Lightning will check if the total storage size exceeds this
+# value. If so the "local" backend will block and immediately ingest the largest engines into the target TiKV until the
+# usage falls below the specified capacity.
+# Note that the disk-quota IS NOT A HARD LIMIT. There are chances that the usage overshoots the quota before it was
+# detected. The overshoot is up to 6.3 GiB in default settings (8 open engines, 40 region-concurrency, check quota every
+# minute).
+# Setting the disk quota too low may cause engines to overlap each other too much and slow down import.
+# This setting is ignored in "tidb" and "importer" backends.
+# The default value of 0 means letting Lightning to automatically pick an appropriate capacity using the free disk space
+# of sorted-kv-dir, subtracting the overshoot.
+#disk-quota = 0
 # range-concurrency controls the maximum ingest concurrently while writing to tikv, It can affect the network traffic.
 # this default config can make full use of a 10Gib bandwidth network, if the network bandwidth is higher, you can increase
 # this to gain better performance. Larger value will also increase the memory usage slightly.
@@ -258,3 +269,5 @@ post-process-at-last = true
 switch-mode = "5m"
 # the duration which the an import progress will be printed to the log.
 log-progress = "5m"
+# the duration which tikv-importer.sorted-kv-dir-capacity is checked.
+check-disk-quota = "1m"

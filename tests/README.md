@@ -55,7 +55,7 @@ The script should exit with a nonzero error code on failure.
 Several convenient commands are provided:
 
 * `run_lightning [CONFIG]` — Starts `tidb-lightning` using `tests/TEST_NAME/CONFIG.toml`
-* `run_sql <SQL>` — Executes an SQL query on the TiDB database
+* `run_sql <SQL> <ARGS...>` — Executes an SQL query on the TiDB database
 * `check_contains <TEXT>` — Checks if the previous `run_sql` result contains the given text
     (in `-E` format)
 * `check_not_contains <TEXT>` — Checks if the previous `run_sql` result does not contain the given

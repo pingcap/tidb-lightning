@@ -26,7 +26,7 @@ for BACKEND in local importer tidb; do
     fi
     run_sql 'DROP DATABASE IF EXISTS test'
     run_sql 'CREATE DATABASE test'
-    run_sql -D test "source tests/$TEST_NAME/db.sql;"
+    run_sql "source tests/$TEST_NAME/db.sql;" -D test
 
     run_lightning --backend $BACKEND
 

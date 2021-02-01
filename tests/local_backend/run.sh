@@ -84,7 +84,7 @@ for ckpt in mysql file; do
   run_sql 'DROP DATABASE IF EXISTS cpeng;'
   run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_local_backend_test'
   rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
-  
+
   # before chunk pos is updated, local files could handle lost
   set +e
   export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/FailAfterWriteRows=return"
@@ -95,7 +95,7 @@ for ckpt in mysql file; do
     --enable-checkpoint=1 \
     --config=tests/$TEST_NAME/$ckpt.toml >$TEST_DIR/lightning_ctl.output 2>&1
   grep -Fq "No table has lost intermediate files according to given config" $TEST_DIR/lightning_ctl.output
-  
+
   # when position of chunk file doesn't equal to offset, intermediate file should exist
   set +e
   export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/LocalBackendSaveCheckpoint=return;github.com/pingcap/tidb-lightning/lightning/restore/FailIfImportedChunk=return(1)"
@@ -107,8 +107,8 @@ for ckpt in mysql file; do
     --config=tests/$TEST_NAME/$ckpt.toml >$TEST_DIR/lightning_ctl.output 2>&1
   grep -Eq "These tables are missing intermediate files: \[.+\]" $TEST_DIR/lightning_ctl.output
   # don't distinguish whole sort-kv directory missing and table's directory missing for now
-  ls -lA $TEST_DIR/sorted
-  
+  ls -lA $TEST_DIR/$TEST_NAME.sorted
+
   # after index engine is imported, local file could handle lost
   set +e
   export GO_FAILPOINTS="github.com/pingcap/tidb-lightning/lightning/restore/FailIfIndexEngineImported=return(1)"
@@ -120,4 +120,4 @@ for ckpt in mysql file; do
     --config=tests/$TEST_NAME/$ckpt.toml >$TEST_DIR/lightning_ctl.output 2>&1
   grep -Fq "No table has lost intermediate files according to given config" $TEST_DIR/lightning_ctl.output
 done
-rm -r $TEST_DIR/sorted
+rm -r $TEST_DIR/$TEST_NAME.sorted
