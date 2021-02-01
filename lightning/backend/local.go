@@ -149,6 +149,9 @@ func (e *LocalFile) Close() error {
 }
 
 func (e *LocalFile) Flush() error {
+	if err := e.flushLocalWriters(); err != nil {
+		return err
+	}
 	if err := e.ingestAllSSTs(); err != nil {
 		return errors.Trace(err)
 	}
@@ -263,7 +266,7 @@ func (e *LocalFile) addSST(m *sstMeta) error {
 
 func (e *LocalFile) ingestAllSSTs() error {
 	e.metaLock.Lock()
-	if e.sstMetas.Len() == 0 {
+	if e.sstMetas == nil || e.sstMetas.Len() == 0 {
 		return nil
 	}
 
@@ -320,7 +323,7 @@ func (e *LocalFile) flushLocalWriters(parentCtx context.Context) error {
 }
 
 func (e *LocalFile) flushEngineWithoutLock(ctx context.Context) error {
-	if err := e.flushLocalWriters(ctx); err != nil {
+	if err := e.Flush(); err != nil {
 		return err
 	}
 	if err := e.saveEngineMeta(); err != nil {
