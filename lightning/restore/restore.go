@@ -1396,8 +1396,8 @@ func (t *TableRestore) restoreEngine(
 		return closedEngine, nil
 	}
 
-	// if the key are ordered, LocalWrite can optmize the writing.
-	// table has auto_incremented _tidb_rowid must satisify following restriction
+	// if the key are ordered, LocalWrite can optimize the writing.
+	// table has auto_incremented _tidb_rowid must satisfy following restriction
 	// - clustered index disable and primary key is not number
 	// - no auto random bits (auto random or shard rowid)
 	// - no partition table
@@ -2309,8 +2309,6 @@ func (cr *chunkRestore) deliverLoop(
 		if atomic.LoadInt32(&rc.diskQuotaState) == diskQuotaStateImporting {
 			saveCheckpoint(rc, t, engineID, cr.chunk)
 		}
-		dataKVs = dataKVs.Clear()
-		indexKVs = indexKVs.Clear()
 
 		func() {
 			rc.diskQuotaLock.RLock()
@@ -2336,6 +2334,9 @@ func (cr *chunkRestore) deliverLoop(
 			metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
 			metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
 		}()
+
+		dataKVs = dataKVs.Clear()
+		indexKVs = indexKVs.Clear()
 
 		// Update the table, and save a checkpoint.
 		// (the write to the importer is effective immediately, thus update these here)

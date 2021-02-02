@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	pd "github.com/tikv/pd/client"
-	"github.com/uber-go/atomic"
+	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -148,16 +148,6 @@ func (e *LocalFile) Close() error {
 	return err
 }
 
-func (e *LocalFile) Flush() error {
-	if err := e.flushLocalWriters(); err != nil {
-		return err
-	}
-	if err := e.ingestAllSSTs(); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(e.db.Flush())
-}
-
 // Cleanup remove meta and db files
 func (e *LocalFile) Cleanup(dataDir string) error {
 	sstDir := engineSSTDir(dataDir, e.Uuid)
@@ -213,6 +203,16 @@ func (e *LocalFile) getEngineFileSize() EngineFileSize {
 	metrics := e.db.Metrics()
 	total := metrics.Total()
 	var memSize int64
+	e.metaLock.Lock()
+	if e.sstMetas != nil {
+		e.sstMetas.Ascend(func(i btree.Item) bool {
+			meta := i.(*sstMeta)
+			memSize += meta.totalSize
+			return true
+		})
+	}
+	e.metaLock.Unlock()
+
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*LocalWriter)
 		memSize += w.batchSize
@@ -254,12 +254,19 @@ func (e *LocalFile) unlock() {
 
 func (e *LocalFile) addSST(m *sstMeta) error {
 	e.metaLock.Lock()
+	if e.sstMetas == nil {
+		e.sstMetas = btree.New(4)
+	}
 	old := e.sstMetas.ReplaceOrInsert(m)
 	e.metaLock.Unlock()
 	if old != nil {
 		// find duplicated, ingest it directly.
 		meta := old.(*sstMeta)
-		return errors.Trace(e.db.Ingest([]string{meta.path}))
+		if err := e.db.Ingest([]string{meta.path}); err != nil {
+			return errors.Trace(err)
+		}
+		e.Length.Add(meta.totalCount)
+		e.TotalSize.Add(meta.totalSize)
 	}
 	return nil
 }
@@ -267,9 +274,9 @@ func (e *LocalFile) addSST(m *sstMeta) error {
 func (e *LocalFile) ingestAllSSTs() error {
 	e.metaLock.Lock()
 	if e.sstMetas == nil || e.sstMetas.Len() == 0 {
+		e.metaLock.Unlock()
 		return nil
 	}
-
 	metaLevels := make([][]*sstMeta, 0)
 	e.sstMetas.Ascend(func(i btree.Item) bool {
 		meta := i.(*sstMeta)
@@ -323,12 +330,16 @@ func (e *LocalFile) flushLocalWriters(parentCtx context.Context) error {
 }
 
 func (e *LocalFile) flushEngineWithoutLock(ctx context.Context) error {
-	if err := e.Flush(); err != nil {
+	if err := e.flushLocalWriters(ctx); err != nil {
 		return err
+	}
+	if err := e.ingestAllSSTs(); err != nil {
+		return errors.Trace(err)
 	}
 	if err := e.saveEngineMeta(); err != nil {
 		return err
 	}
+
 	flushFinishedCh, err := e.db.AsyncFlush()
 	if err != nil {
 		return err
@@ -348,6 +359,8 @@ func (e *LocalFile) saveEngineMeta() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	log.L().Debug("save engine meta", zap.Stringer("uuid", e.Uuid), zap.Int64("count", e.Length.Load()),
+		zap.Int64("size", e.TotalSize.Load()))
 	// note: we can't set Sync to true since we disabled WAL.
 	return errors.Trace(e.db.Set(engineMetaKey, jsonBytes, &pebble.WriteOptions{Sync: false}))
 }
@@ -355,7 +368,7 @@ func (e *LocalFile) saveEngineMeta() error {
 func (e *LocalFile) loadEngineMeta() {
 	jsonBytes, closer, err := e.db.Get(engineMetaKey)
 	if err != nil {
-		log.L().Debug("local db missing engine meta", zap.Stringer("uuid", e.Uuid), zap.Error(err))
+		log.L().Debug("local db missing engine meta", zap.Stringer("uuid", e.Uuid), log.ShortError(err))
 		return
 	}
 	defer closer.Close()
@@ -364,6 +377,8 @@ func (e *LocalFile) loadEngineMeta() {
 	if err != nil {
 		log.L().Warn("local db failed to deserialize meta", zap.Stringer("uuid", e.Uuid), zap.ByteString("content", jsonBytes), zap.Error(err))
 	}
+	log.L().Debug("load engine meta", zap.Stringer("uuid", e.Uuid), zap.Int64("count", e.Length.Load()),
+		zap.Int64("size", e.TotalSize.Load()))
 }
 
 type gRPCConns struct {
@@ -1864,6 +1879,7 @@ func (w *LocalWriter) appendRowsSorted(kvs kvPairs) error {
 	for _, pair := range kvs {
 		w.batchSize += int64(len(pair.Key) + len(pair.Val))
 	}
+	w.batchCount += len(kvs)
 	w.totalCount += int64(len(kvs))
 	return w.writer.writeKVs(kvs)
 }
@@ -1920,17 +1936,26 @@ func (w *LocalWriter) flush() error {
 	if w.batchCount == 0 {
 		return nil
 	}
-	w.totalSize += w.batchSize
 
-	if err := w.flushKVs(); err != nil {
-		return errors.Trace(err)
+	w.totalSize += w.batchSize
+	if len(w.writeBatch) > 0 {
+		if err := w.flushKVs(); err != nil {
+			return errors.Trace(err)
+		}
 	}
-	meta, err := w.writer.close()
-	if err != nil {
-		return errors.Trace(err)
+
+	if w.writer != nil {
+		meta, err := w.writer.close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		w.writer = nil
+		if meta != nil && meta.totalSize > 0 {
+			return w.local.addSST(meta)
+		}
 	}
-	w.writer = nil
-	return w.local.addSST(meta)
+
+	return nil
 }
 
 func (w *LocalWriter) Close() error {
@@ -1944,7 +1969,11 @@ func (w *LocalWriter) flushKVs() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = writer.writeKVs(w.writeBatch)
+	sort.Slice(w.writeBatch[:w.batchCount], func(i, j int) bool {
+		return bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0
+	})
+	writer.minKey = append(writer.minKey[:0], w.writeBatch[0].Key...)
+	err = writer.writeKVs(w.writeBatch[:w.batchCount])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2016,10 +2045,6 @@ func (sw *sstWriter) writeKVs(kvs kvPairs) error {
 }
 
 func (sw *sstWriter) close() (*sstMeta, error) {
-	if sw.totalCount == 0 {
-		return nil, nil
-	}
-
 	if err := sw.writer.Close(); err != nil {
 		return nil, errors.Trace(err)
 	}

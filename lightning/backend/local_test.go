@@ -311,9 +311,8 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	tmpPath := filepath.Join(dir, "tmp")
 	err = os.Mkdir(tmpPath, 0755)
 	c.Assert(err, IsNil)
-	meta := localFileMeta{}
 	_, engineUUID := MakeUUID("ww", 0)
-	f := LocalFile{localFileMeta: meta, db: db, Uuid: engineUUID, sstMetas: btree.New(4)}
+	f := LocalFile{db: db, Uuid: engineUUID, sstMetas: btree.New(4)}
 	w, err := openLocalWriter(context.Background(), &f, tmpPath, 1024*1024)
 	c.Assert(err, IsNil)
 
@@ -365,7 +364,7 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	c.Assert(err, IsNil)
 	err = w.Close()
 	c.Assert(err, IsNil)
-	c.Assert(f.Flush(), IsNil)
+	c.Assert(f.flushEngineWithoutLock(ctx), IsNil)
 	o := &pebble.IterOptions{}
 	it := db.NewIter(o)
 
