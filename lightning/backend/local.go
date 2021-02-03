@@ -1468,7 +1468,14 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	if err == nil {
 		localEngine.db = db
 		localEngine.localFileMeta = localFileMeta{}
+		sstDir := engineSSTDir(local.localStoreDir, engineUUID)
+		if !common.IsDirExists(sstDir) {
+			if err := os.Mkdir(sstDir, 0755); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
+
 	return err
 }
 

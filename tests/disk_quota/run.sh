@@ -45,7 +45,8 @@ for i in $(seq 3); do
     fi
 done
 
-while [ ! -e "$FINISHED_FILE" ]; do
+while [ ! -e "$FINISHED_FILE" ] && [ -e "$DISK_QUOTA_DIR" ]; do
+    // du may fail because the directory is removed by lightning
     DISK_USAGE=$(du -s -B1 "$DISK_QUOTA_DIR" | cut -f 1)
     # the disk quota of 75 MiB is a just soft limit.
     # the reserved size we have is (512 MiB + 4 files × 1000ms × 1 KiB/ms) = 516 MiB,
