@@ -1932,6 +1932,15 @@ func (w *LocalWriter) AppendRows(ctx context.Context, tableName string, columnNa
 		return nil
 	}
 
+	// if chunk has _tidb_rowid field, we can't ensure that the rows are sorted.
+	if w.isWriteBatchSorted && w.writer == nil {
+		for _, c := range columnNames {
+			if c == model.ExtraHandleName.L {
+				w.isWriteBatchSorted = false
+			}
+		}
+	}
+
 	w.local.Ts = ts
 	if w.isWriteBatchSorted {
 		return w.appendRowsSorted(kvs)
