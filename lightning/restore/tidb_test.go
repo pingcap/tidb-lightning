@@ -416,6 +416,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 	c.Assert(sysVars, DeepEquals, map[string]string{
 		"tidb_row_format_version": "2",
 		"max_allowed_packet":      "1073741824",
+		"system_time_zone":        "",
 		"div_precision_increment": "10",
 		"time_zone":               "-08:00",
 		"lc_time_names":           "ja_JP",
@@ -442,6 +443,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 	c.Assert(sysVars, DeepEquals, map[string]string{
 		"tidb_row_format_version": "1",
 		"max_allowed_packet":      "67108864",
+		"system_time_zone":        "",
 		"div_precision_increment": "4",
 		"time_zone":               "+00:00",
 		"lc_time_names":           "en_US",
