@@ -196,7 +196,7 @@ func newSession(options *SessionOptions) *session {
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
-	tz := vars.Location()
+	var tz *time.Location
 	if options.SysVars != nil {
 		var tidbTimeZone, tidbSystemTimeZone string
 		for k, v := range options.SysVars {
@@ -208,7 +208,7 @@ func newSession(options *SessionOptions) *session {
 				tidbSystemTimeZone = v
 			}
 		}
-		// we get system zone from TiDB server, we can set it for lightning session.
+		// if we get system zone from TiDB server, we can set it for lightning session.
 		if tidbTimeZone == "SYSTEM" && tidbSystemTimeZone != "" {
 			loc, err := timeutil.LoadLocation(tidbSystemTimeZone)
 			if err != nil {
@@ -216,6 +216,9 @@ func newSession(options *SessionOptions) *session {
 			}
 			tz = loc
 		}
+	}
+	if tz == nil {
+		tz = vars.Location()
 	}
 	vars.StmtCtx.TimeZone = tz
 	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
