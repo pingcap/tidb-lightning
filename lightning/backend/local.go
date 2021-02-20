@@ -564,6 +564,7 @@ func (e *LocalFile) ingestSSTs(metas []*sstMeta) error {
 		zap.Int64("kvs", totalCount),
 		zap.Bool("flush", locked),
 		zap.Int64("sstFileSize", fileSize),
+		zap.String("file", metas[0].path),
 		log.ZapRedactBinary("firstKey", metas[0].minKey),
 		log.ZapRedactBinary("lastKey", metas[len(metas)-1].maxKey))
 	paths := make([]string, 0, len(metas))
@@ -2546,7 +2547,7 @@ func mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
 	err = writer.Close()
 	dur := time.Since(start)
 	log.L().Info("compact sst", zap.Int("fileCount", len(metas)), zap.Int64("size", newMeta.totalSize),
-		zap.Int64("count", newMeta.totalCount), zap.Duration("cost", dur))
+		zap.Int64("count", newMeta.totalCount), zap.Duration("cost", dur), zap.String("file", name))
 	newMeta.maxKey = lastKey
 	return newMeta, err
 }
