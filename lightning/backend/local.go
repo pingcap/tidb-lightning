@@ -343,23 +343,11 @@ func (e *LocalFile) ingestSSTLoop() {
 							return
 						}
 						metas := m
-						newMeta, err := mergeSSTs(metas.metas, e.sstDir)
+						newMeta, err := e.mergeSSTs(metas.metas, e.sstDir)
 						if err != nil {
 							e.setError(err)
 							return
 						}
-						// async clean raw ssts
-						go func() {
-							totalSize := int64(0)
-							for _, m := range metas.metas {
-								totalSize += m.fileSize
-								if err := os.Remove(m.path); err != nil {
-									log.L().Warn("async cleanup sst file failed", zap.Error(err))
-								}
-							}
-							// decrease the pending size after clean up
-							e.pendingFileSize.Sub(totalSize)
-						}()
 
 						if err := e.ingestSSTs([]*sstMeta{newMeta}); err != nil {
 							e.setError(err)
@@ -2462,7 +2450,7 @@ func (h *sstIterHeap) Next() ([]byte, []byte, error) {
 	}
 }
 
-func mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
+func (e *LocalFile) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
 	if len(metas) == 0 {
 		return nil, errors.New("sst metas is empty")
 	} else if len(metas) == 1 {
@@ -2549,5 +2537,19 @@ func mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
 	log.L().Info("compact sst", zap.Int("fileCount", len(metas)), zap.Int64("size", newMeta.totalSize),
 		zap.Int64("count", newMeta.totalCount), zap.Duration("cost", dur), zap.String("file", name))
 	newMeta.maxKey = lastKey
+	if err == nil {
+		// async clean raw SSTs.
+		go func() {
+			totalSize := int64(0)
+			for _, m := range metas {
+				totalSize += m.fileSize
+				if err := os.Remove(m.path); err != nil {
+					log.L().Warn("async cleanup sst file failed", zap.Error(err))
+				}
+			}
+			// decrease the pending size after clean up
+			e.pendingFileSize.Sub(totalSize)
+		}()
+	}
 	return newMeta, err
 }
