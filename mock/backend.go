@@ -442,7 +442,7 @@ func (mr *MockEngineWriterMockRecorder) AppendRows(arg0, arg1, arg2, arg3, arg4 
 }
 
 // Close mocks base method
-func (m *MockEngineWriter) Close() error {
+func (m *MockEngineWriter) Close(ctx context.Context) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Close")
 	ret0, _ := ret[0].(error)

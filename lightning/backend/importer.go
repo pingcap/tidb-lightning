@@ -380,7 +380,7 @@ type ImporterWriter struct {
 	engineUUID uuid.UUID
 }
 
-func (w *ImporterWriter) Close() error {
+func (w *ImporterWriter) Close(ctx context.Context) error {
 	return nil
 }
 

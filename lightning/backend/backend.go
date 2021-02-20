@@ -352,10 +352,10 @@ func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string,
 		return err
 	}
 	if err = writer.AppendRows(ctx, engine.tableName, columnNames, engine.ts, rows); err != nil {
-		writer.Close()
+		writer.Close(ctx)
 		return err
 	}
-	return writer.Close()
+	return writer.Close(ctx)
 }
 
 func (engine *OpenedEngine) LocalWriter(ctx context.Context, maxCacheSize int64) (*LocalEngineWriter, error) {
@@ -371,8 +371,8 @@ func (w *LocalEngineWriter) WriteRows(ctx context.Context, columnNames []string,
 	return w.writer.AppendRows(ctx, w.tableName, columnNames, w.ts, rows)
 }
 
-func (w *LocalEngineWriter) Close() error {
-	return w.writer.Close()
+func (w *LocalEngineWriter) Close(ctx context.Context) error {
+	return w.writer.Close(ctx)
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.
@@ -486,5 +486,5 @@ type EngineWriter interface {
 		commitTS uint64,
 		rows Rows,
 	) error
-	Close() error
+	Close(ctx context.Context) error
 }

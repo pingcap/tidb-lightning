@@ -24,7 +24,6 @@ import (
 	"sort"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/google/btree"
 	"github.com/pingcap/br/pkg/restore"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -308,12 +307,24 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	}
 	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
 	c.Assert(err, IsNil)
-	tmpPath := filepath.Join(dir, "tmp")
+	defer db.Close()
+	tmpPath := filepath.Join(dir, "test.sst")
 	err = os.Mkdir(tmpPath, 0755)
 	c.Assert(err, IsNil)
 	_, engineUUID := MakeUUID("ww", 0)
-	f := LocalFile{db: db, Uuid: engineUUID, sstMetas: btree.New(4)}
-	w, err := openLocalWriter(context.Background(), &f, tmpPath, 1024*1024)
+	engineCtx, cancel := context.WithCancel(context.Background())
+	f := LocalFile{
+		db:           db,
+		Uuid:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel,
+		sstMetasChan: make(chan *sstMeta, 64),
+		flushChan:    make(chan chan struct{}, 1),
+	}
+	f.wg.Add(1)
+	go f.ingestSSTLoop()
+	w, err := openLocalWriter(context.Background(), &f, 1024*1024)
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
@@ -362,7 +373,7 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	c.Assert(err, IsNil)
 	err = w.AppendRows(ctx, "", []string{}, 1, rows3)
 	c.Assert(err, IsNil)
-	err = w.Close()
+	err = w.Close(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(f.flushEngineWithoutLock(ctx), IsNil)
 	o := &pebble.IterOptions{}
@@ -379,6 +390,8 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 		c.Assert(it.Key(), DeepEquals, k)
 		it.Next()
 	}
+	close(f.sstMetasChan)
+	f.wg.Wait()
 }
 
 func (s *localSuite) TestLocalWriterWithSort(c *C) {

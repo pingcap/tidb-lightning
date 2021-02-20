@@ -1265,7 +1265,12 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
 
-		indexEngine, err := rc.backend.OpenEngine(ctx, t.tableName, indexEngineID)
+		engineCtx := context.WithValue(ctx, kv.LocalEngineConfigKey, kv.LocalEngineConfig{
+			Compact:            true,
+			CompactConcurrency: 4,
+			CompactThreshold:   4 << 30, // 4GB
+		})
+		indexEngine, err := rc.backend.OpenEngine(engineCtx, t.tableName, indexEngineID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1485,10 +1490,10 @@ func (t *TableRestore) restoreEngine(
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
 			err := cr.restore(ctx, t, engineID, dataWriter, indexWriter, rc)
 			if err == nil {
-				err = dataWriter.Close()
+				err = dataWriter.Close(ctx)
 			}
 			if err == nil {
-				err = indexWriter.Close()
+				err = indexWriter.Close(ctx)
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
 				metric.BytesCounter.WithLabelValues(metric.TableStateWritten).Add(float64(cr.chunk.Checksum.SumSize()))
@@ -1657,19 +1662,19 @@ func (t *TableRestore) postProcess(
 
 	finished := true
 	if cp.Status < CheckpointStatusChecksummed {
+		// 4. do table checksum
+		var localChecksum verify.KVChecksum
+		for _, engine := range cp.Engines {
+			for _, chunk := range engine.Chunks {
+				localChecksum.Add(&chunk.Checksum)
+			}
+		}
+		t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 			t.logger.Info("skip checksum")
 			rc.saveStatusCheckpoint(t.tableName, WholeTableEngineID, nil, CheckpointStatusChecksumSkipped)
 		} else {
 			if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
-				// 4. do table checksum
-				var localChecksum verify.KVChecksum
-				for _, engine := range cp.Engines {
-					for _, chunk := range engine.Chunks {
-						localChecksum.Add(&chunk.Checksum)
-					}
-				}
-				t.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 				err := t.compareChecksum(ctx, localChecksum)
 				// with post restore level 'optional', we will skip checksum error
 				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
@@ -2236,7 +2241,7 @@ func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) er
 ////////////////////////////////////////////////////////////////
 
 var (
-	maxKVQueueSize         = 32    // Cache at most this number of rows before blocking the encode loop
+	maxKVQueueSize         = 16    // Cache at most this number of rows before blocking the encode loop
 	minDeliverBytes uint64 = 65536 // 64 KB. batch at least this amount of bytes to reduce number of messages
 )
 

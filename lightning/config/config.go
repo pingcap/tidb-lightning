@@ -73,7 +73,7 @@ const (
 )
 
 const (
-	LocalMemoryTableSize = 512 * units.MiB
+	LocalMemoryTableSize = 128 * units.MiB
 
 	// autoDiskQuotaLocalReservedSize is the estimated size a local-backend
 	// engine may gain after calling Flush(). This is currently defined by its

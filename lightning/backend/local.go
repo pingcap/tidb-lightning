@@ -15,9 +15,11 @@ package backend
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -134,8 +136,29 @@ type LocalFile struct {
 	isImportingAtomic atomic.Uint32
 	mutex             sync.Mutex
 
-	metaLock sync.Mutex
-	sstMetas *btree.BTree
+	ctx          context.Context
+	cancel       context.CancelFunc
+	sstDir       string
+	sstMetasChan chan *sstMeta
+	flushChan    chan chan struct{}
+	ingestErr    common.OnceError
+	wg           sync.WaitGroup
+
+	config LocalEngineConfig
+
+	// total size of SST files waiting to be ingested
+	pendingFileSize atomic.Int64
+
+	// statistics for pebble kv iter.
+	importedKVSize  atomic.Int64
+	importedKVCount atomic.Int64
+}
+
+func (e *LocalFile) setError(err error) {
+	if err != nil {
+		e.ingestErr.Set(err)
+		e.cancel()
+	}
 }
 
 func (e *LocalFile) Close() error {
@@ -150,8 +173,7 @@ func (e *LocalFile) Close() error {
 
 // Cleanup remove meta and db files
 func (e *LocalFile) Cleanup(dataDir string) error {
-	sstDir := engineSSTDir(dataDir, e.Uuid)
-	if err := os.RemoveAll(sstDir); err != nil {
+	if err := os.RemoveAll(e.sstDir); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -203,25 +225,23 @@ func (e *LocalFile) getEngineFileSize() EngineFileSize {
 	metrics := e.db.Metrics()
 	total := metrics.Total()
 	var memSize int64
-	e.metaLock.Lock()
-	if e.sstMetas != nil {
-		e.sstMetas.Ascend(func(i btree.Item) bool {
-			meta := i.(*sstMeta)
-			memSize += meta.totalSize
-			return true
-		})
-	}
-	e.metaLock.Unlock()
-
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*LocalWriter)
-		memSize += w.batchSize
+		if w.writer != nil {
+			memSize += int64(w.writer.writer.EstimatedSize())
+		} else {
+			// if kvs are still in memory, only calculate half of the total size
+			// in our tests, SST file size is about 50% of the raw kv size
+			memSize += w.batchSize / 2
+		}
+
 		return true
 	})
-
+	pendingSize := e.pendingFileSize.Load()
+	// TODO: should also add the in-processing compaction sst writer size into MemSize
 	return EngineFileSize{
 		UUID:        e.Uuid,
-		DiskSize:    total.Size,
+		DiskSize:    total.Size + pendingSize,
 		MemSize:     memSize,
 		IsImporting: e.isLocked(),
 	}
@@ -252,34 +272,257 @@ func (e *LocalFile) unlock() {
 	e.mutex.Unlock()
 }
 
-func (e *LocalFile) addSST(m *sstMeta) error {
-	e.metaLock.Lock()
-	if e.sstMetas == nil {
-		e.sstMetas = btree.New(4)
-	}
-	old := e.sstMetas.ReplaceOrInsert(m)
-	e.metaLock.Unlock()
-	if old != nil {
-		// find duplicated, ingest it directly.
-		meta := old.(*sstMeta)
-		if err := e.db.Ingest([]string{meta.path}); err != nil {
-			return errors.Trace(err)
-		}
-		e.Length.Add(meta.totalCount)
-		e.TotalSize.Add(meta.totalSize)
-	}
-	return nil
+type intHeap struct {
+	arr []int32
 }
 
-func (e *LocalFile) ingestAllSSTs() error {
-	e.metaLock.Lock()
-	if e.sstMetas == nil || e.sstMetas.Len() == 0 {
-		e.metaLock.Unlock()
+func (h *intHeap) Len() int {
+	return len(h.arr)
+}
+
+func (h *intHeap) Less(i, j int) bool {
+	return h.arr[i] < h.arr[j]
+}
+
+func (h *intHeap) Swap(i, j int) {
+	h.arr[i], h.arr[j] = h.arr[j], h.arr[i]
+}
+
+func (h *intHeap) Push(x interface{}) {
+	h.arr = append(h.arr, x.(int32))
+}
+func (h *intHeap) Pop() interface{} {
+	item := h.arr[len(h.arr)-1]
+	h.arr = h.arr[:len(h.arr)-1]
+	return item
+}
+
+func (e *LocalFile) ingestSSTLoop() {
+	defer e.wg.Done()
+
+	type flushSeq struct {
+		seq int32
+		ch  chan struct{}
+	}
+
+	seq := atomic.NewInt32(0)
+	finishedSeq := atomic.NewInt32(0)
+	var seqLock sync.Mutex
+	// a flush is finished iff all the compaction&ingset tasks with a lower seq number are finished.
+	flushQueue := make([]flushSeq, 0)
+	// compact seq heap finished with a higher number than running compaction task
+	inSyncSeqs := &intHeap{arr: make([]int32, 0)}
+
+	type metaAndSeq struct {
+		metas []*sstMeta
+		seq   int32
+	}
+
+	metaChan := make(chan metaAndSeq, e.config.CompactConcurrency)
+	if e.config.Compact {
+		for i := 0; i < e.config.CompactConcurrency; i++ {
+			e.wg.Add(1)
+			go func() {
+				defer e.wg.Done()
+				defer func() {
+					if e.ingestErr.Get() != nil {
+						seqLock.Lock()
+						for _, f := range flushQueue {
+							f.ch <- struct{}{}
+						}
+						flushQueue = flushQueue[:0]
+						seqLock.Unlock()
+					}
+				}()
+				for {
+					select {
+					case <-e.ctx.Done():
+						return
+					case m, ok := <-metaChan:
+						if !ok {
+							return
+						}
+						metas := m
+						newMeta, err := mergeSSTs(metas.metas, e.sstDir)
+						if err != nil {
+							e.setError(err)
+							return
+						}
+						// async clean raw ssts
+						go func() {
+							totalSize := int64(0)
+							for _, m := range metas.metas {
+								totalSize += m.fileSize
+								if err := os.Remove(m.path); err != nil {
+									log.L().Warn("async cleanup sst file failed", zap.Error(err))
+								}
+							}
+							// decrease the pending size after clean up
+							e.pendingFileSize.Sub(totalSize)
+						}()
+
+						if err := e.ingestSSTs([]*sstMeta{newMeta}); err != nil {
+							e.setError(err)
+							return
+						}
+						seqLock.Lock()
+						finSeq := finishedSeq.Load()
+						if metas.seq == finSeq+1 {
+							finSeq = metas.seq
+							if len(inSyncSeqs.arr) > 0 {
+								for inSyncSeqs.arr[0] == finSeq+1 {
+									finSeq++
+									heap.Remove(inSyncSeqs, 0)
+									if len(inSyncSeqs.arr) == 0 {
+										break
+									}
+								}
+							}
+							var flushChans []chan struct{}
+							for i, seq := range flushQueue {
+								if seq.seq <= finSeq {
+									flushChans = append(flushChans, seq.ch)
+								} else {
+									flushQueue = flushQueue[i:]
+									break
+								}
+							}
+							if len(flushChans) > 0 {
+								// all flush finished
+								if len(flushChans) == len(flushQueue) {
+									flushQueue = flushQueue[:0]
+								}
+							}
+							finishedSeq.Store(finSeq)
+							seqLock.Unlock()
+							if len(flushChans) > 0 {
+								for _, c := range flushChans {
+									c <- struct{}{}
+								}
+							}
+						} else {
+							heap.Push(inSyncSeqs, metas.seq)
+							seqLock.Unlock()
+						}
+					}
+
+				}
+			}()
+		}
+	}
+
+	metas := make([]*sstMeta, 0, 16)
+	totalSize := int64(0)
+	compactAndIngestSSTs := func() {
+		if len(metas) > 0 {
+			seqLock.Lock()
+			metaSeq := seq.Add(1)
+			seqLock.Unlock()
+			metaChan <- metaAndSeq{metas: metas, seq: metaSeq}
+			metas = make([]*sstMeta, 0, len(metas))
+			totalSize = 0
+		}
+	}
+
+	addMeta := func(m *sstMeta) {
+		if m == nil || m.totalSize == 0 {
+			return
+		}
+		if !e.config.Compact {
+			if err := e.ingestSSTs([]*sstMeta{m}); err != nil {
+				e.setError(err)
+			}
+			return
+		}
+		metas = append(metas, m)
+		totalSize += m.totalSize
+		if totalSize >= e.config.CompactThreshold {
+			compactAndIngestSSTs()
+		}
+	}
+	for {
+		closed := false
+		select {
+		case ch := <-e.flushChan:
+			if !e.config.Compact {
+				ch <- struct{}{}
+			} else if len(metas) > 0 {
+				seqLock.Lock()
+				metaSeq := seq.Add(1)
+				flushQueue = append(flushQueue, flushSeq{ch: ch, seq: metaSeq})
+				seqLock.Unlock()
+				metaChan <- metaAndSeq{metas: metas, seq: metaSeq}
+				metas = make([]*sstMeta, 0, len(metas))
+				totalSize = 0
+			} else {
+				// none remaining metas needed to be ingested
+				seqLock.Lock()
+				curSeq := seq.Load()
+				finSeq := finishedSeq.Load()
+				// if all pending SST files are written, directly do a db.Flush
+				if curSeq == finSeq {
+					seqLock.Unlock()
+					ch <- struct{}{}
+				} else {
+					// waiting for pending compaction tasks
+					flushQueue = append(flushQueue, flushSeq{ch: ch, seq: curSeq})
+					seqLock.Unlock()
+				}
+			}
+		case <-e.ctx.Done():
+			return
+		case m, ok := <-e.sstMetasChan:
+			if ok {
+				addMeta(m)
+				// drain all the sst meta from the chan to make sure all the SSTs are processed before handle a flush msg.
+			inner:
+				for {
+					select {
+					case m, ok := <-e.sstMetasChan:
+						if ok {
+							addMeta(m)
+						} else {
+							closed = true
+							break inner
+						}
+					default:
+						break inner
+					}
+				}
+			} else {
+				closed = true
+			}
+		}
+		if closed {
+			compactAndIngestSSTs()
+			close(metaChan)
+			return
+		}
+	}
+}
+
+func (e *LocalFile) addSST(ctx context.Context, m *sstMeta) error {
+	// set pending size after SST file is generated
+	e.pendingFileSize.Add(m.fileSize)
+	select {
+	case e.sstMetasChan <- m:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.ctx.Done():
+	}
+	return e.ingestErr.Get()
+}
+
+func (e *LocalFile) batchIngestSSTs(metas []*sstMeta) error {
+	if len(metas) == 0 {
 		return nil
 	}
+	sort.Slice(metas, func(i, j int) bool {
+		return bytes.Compare(metas[i].minKey, metas[j].minKey) < 0
+	})
+
 	metaLevels := make([][]*sstMeta, 0)
-	e.sstMetas.Ascend(func(i btree.Item) bool {
-		meta := i.(*sstMeta)
+	for _, meta := range metas {
 		inserted := false
 		for i, l := range metaLevels {
 			if bytes.Compare(l[len(l)-1].maxKey, meta.minKey) >= 0 {
@@ -292,36 +535,59 @@ func (e *LocalFile) ingestAllSSTs() error {
 		if !inserted {
 			metaLevels = append(metaLevels, []*sstMeta{meta})
 		}
-		return true
-	})
-	e.sstMetas = nil
-	e.metaLock.Unlock()
+	}
 
-	paths := make([]string, 0, len(metaLevels[0]))
 	for _, l := range metaLevels {
-		count := int64(0)
-		size := int64(0)
-		for _, m := range l {
-			paths = append(paths, m.path)
-			count += m.totalCount
-			size += m.totalSize
+		if err := e.ingestSSTs(l); err != nil {
+			return err
 		}
-		if err := e.db.Ingest(paths); err != nil {
-			return errors.Trace(err)
-		}
-		e.Length.Add(count)
-		e.TotalSize.Add(size)
-		paths = paths[:0]
 	}
 	return nil
 }
 
+func (e *LocalFile) ingestSSTs(metas []*sstMeta) error {
+	// No need to acquire lock around ingestion when flushing.
+	locked := e.lockUnless(importMutexStateLocalIngest, importMutexStateFlush)
+	if locked {
+		defer e.unlock()
+	}
+	totalSize := int64(0)
+	totalCount := int64(0)
+	fileSize := int64(0)
+	for _, m := range metas {
+		totalSize += m.totalSize
+		totalCount += m.totalCount
+		fileSize += m.fileSize
+	}
+	log.L().Info("write data to local DB",
+		zap.Int64("size", totalSize),
+		zap.Int64("kvs", totalCount),
+		zap.Bool("flush", locked),
+		zap.Int64("sstFileSize", fileSize),
+		log.ZapRedactBinary("firstKey", metas[0].minKey),
+		log.ZapRedactBinary("lastKey", metas[len(metas)-1].maxKey))
+	paths := make([]string, 0, len(metas))
+	count := int64(0)
+	size := int64(0)
+	for _, m := range metas {
+		paths = append(paths, m.path)
+		count += m.totalCount
+		size += m.totalSize
+	}
+	if err := e.db.Ingest(paths); err != nil {
+		return errors.Trace(err)
+	}
+	e.Length.Add(count)
+	e.TotalSize.Add(size)
+	return nil
+}
+
 func (e *LocalFile) flushLocalWriters(parentCtx context.Context) error {
-	eg, _ := errgroup.WithContext(parentCtx)
+	eg, ctx := errgroup.WithContext(parentCtx)
 	e.localWriters.Range(func(k, v interface{}) bool {
 		eg.Go(func() error {
 			w := k.(*LocalWriter)
-			return w.flush()
+			return w.flush(ctx)
 
 		})
 		return true
@@ -333,7 +599,23 @@ func (e *LocalFile) flushEngineWithoutLock(ctx context.Context) error {
 	if err := e.flushLocalWriters(ctx); err != nil {
 		return err
 	}
-	if err := e.ingestAllSSTs(); err != nil {
+	flushChan := make(chan struct{}, 1)
+	select {
+	case e.flushChan <- flushChan:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.ctx.Done():
+		return e.ctx.Err()
+	}
+
+	select {
+	case <-flushChan:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.ctx.Done():
+		return e.ctx.Err()
+	}
+	if err := e.ingestErr.Get(); err != nil {
 		return errors.Trace(err)
 	}
 	if err := e.saveEngineMeta(); err != nil {
@@ -349,6 +631,8 @@ func (e *LocalFile) flushEngineWithoutLock(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-e.ctx.Done():
+		return e.ctx.Err()
 	}
 }
 
@@ -671,7 +955,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 	opt := &pebble.Options{
 		MemTableSize: LocalMemoryTableSize,
 		// the default threshold value may cause write stall.
-		MemTableStopWritesThreshold: 8,
+		MemTableStopWritesThreshold: 32,
 		MaxConcurrentCompactions:    16,
 		// set to half of the max open files so that if open files is more that estimation, trigger compaction
 		// to avoid failure due to open files exceeded limit
@@ -684,21 +968,55 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 			newRangePropertiesCollector,
 		},
 	}
+
 	dbPath := filepath.Join(local.localStoreDir, engineUUID.String())
 	db, err := pebble.Open(dbPath, opt)
 	return db, errors.Trace(err)
 }
 
+var LocalEngineConfigKey struct{}
+
+type LocalEngineConfig struct {
+	// compact small SSTs before ingest into pebble
+	Compact bool
+	// raw kvs size threshold to trigger compact
+	CompactThreshold int64
+	// compact routine concurrency
+	CompactConcurrency int
+}
+
 // This method must be called with holding mutex of LocalFile
 func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
+	cfg := LocalEngineConfig{}
+	if v, ok := ctx.Value(LocalEngineConfigKey).(LocalEngineConfig); ok {
+		cfg = v
+	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err != nil {
 		return err
 	}
-	e, _ := local.engines.LoadOrStore(engineUUID, &LocalFile{Uuid: engineUUID})
+
+	sstDir := engineSSTDir(local.localStoreDir, engineUUID)
+	if !common.IsDirExists(sstDir) {
+		if err := os.Mkdir(sstDir, 0755); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	engineCtx, cancel := context.WithCancel(ctx)
+	e, _ := local.engines.LoadOrStore(engineUUID, &LocalFile{
+		Uuid:         engineUUID,
+		sstDir:       sstDir,
+		sstMetasChan: make(chan *sstMeta, 64),
+		flushChan:    make(chan chan struct{}, 1),
+		ctx:          engineCtx,
+		cancel:       cancel,
+		config:       cfg,
+	})
 	engine := e.(*LocalFile)
 	engine.db = db
 	engine.loadEngineMeta()
+	engine.wg.Add(1)
+	go engine.ingestSSTLoop()
 	return nil
 }
 
@@ -720,8 +1038,9 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 			return err
 		}
 		engineFile := &LocalFile{
-			Uuid: engineUUID,
-			db:   db,
+			Uuid:         engineUUID,
+			db:           db,
+			sstMetasChan: make(chan *sstMeta),
 		}
 		engineFile.loadEngineMeta()
 		local.engines.Store(engineUUID, engineFile)
@@ -729,8 +1048,14 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 	}
 	engineFile := engine.(*LocalFile)
 	engineFile.lock(importMutexStateFlush)
-	defer engineFile.unlock()
-	return engineFile.flushEngineWithoutLock(ctx)
+	err := engineFile.flushEngineWithoutLock(ctx)
+	engineFile.unlock()
+	close(engineFile.sstMetasChan)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	engineFile.wg.Wait()
+	return engineFile.ingestErr.Get()
 }
 
 func (local *local) getImportClient(ctx context.Context, peer *metapb.Peer) (sst.ImportSSTClient, error) {
@@ -1307,6 +1632,8 @@ loopWrite:
 				log.ZapRedactStringer("region", region.Region), log.ZapRedactBinary("start", start),
 				log.ZapRedactBinary("end", end))
 		} else {
+			engineFile.importedKVSize.Add(rangeStats.totalBytes)
+			engineFile.importedKVCount.Add(rangeStats.count)
 			metric.BytesCounter.WithLabelValues(metric.TableStateImported).Add(float64(rangeStats.totalBytes))
 		}
 		return remainRange, errors.Trace(err)
@@ -1414,7 +1741,6 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 		// the table when table is created.
 		needSplit := len(ranges) > 1 || lfTotalSize > local.regionSplitSize || lfLength > regionMaxKeyCount
-
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionByRanges(ctx, ranges, needSplit)
@@ -1446,7 +1772,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 	}
 
 	log.L().Info("import engine success", zap.Stringer("uuid", engineUUID),
-		zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength))
+		zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength),
+		zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
 	return nil
 }
 
@@ -1468,9 +1795,8 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 	if err == nil {
 		localEngine.db = db
 		localEngine.localFileMeta = localFileMeta{}
-		sstDir := engineSSTDir(local.localStoreDir, engineUUID)
-		if !common.IsDirExists(sstDir) {
-			if err := os.Mkdir(sstDir, 0755); err != nil {
+		if !common.IsDirExists(localEngine.sstDir) {
+			if err := os.Mkdir(localEngine.sstDir, 0755); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1541,19 +1867,13 @@ func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID, maxCa
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engineFile := e.(*LocalFile)
-	return openLocalWriter(ctx, engineFile, engineSSTDir(local.localStoreDir, engineUUID), LocalMemoryTableSize)
+	return openLocalWriter(ctx, engineFile, LocalMemoryTableSize)
 }
 
-func openLocalWriter(ctx context.Context, f *LocalFile, sstDir string, memtableSizeLimit int64) (*LocalWriter, error) {
+func openLocalWriter(ctx context.Context, f *LocalFile, memtableSizeLimit int64) (*LocalWriter, error) {
 	sortedKey := ctx.Value(LocalWriterSortedKey)
-	if !common.IsDirExists(sstDir) {
-		if err := os.Mkdir(sstDir, 0755); err != nil {
-			return nil, err
-		}
-	}
 	isSorted := sortedKey != nil
 	w := &LocalWriter{
-		sstDir:             sstDir,
 		local:              f,
 		memtableSizeLimit:  memtableSizeLimit,
 		kvBuffer:           newBytesBuffer(),
@@ -1839,9 +2159,7 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 	})
 }
 
-type LocalWriterSorted struct{}
-
-var LocalWriterSortedKey = &LocalWriterSorted{}
+var LocalWriterSortedKey = struct{}{}
 
 type sstMeta struct {
 	path       string
@@ -1849,14 +2167,9 @@ type sstMeta struct {
 	maxKey     []byte
 	totalSize  int64
 	totalCount int64
+	// used for calculate disk-quota
+	fileSize int64
 }
-
-func (m *sstMeta) Less(than btree.Item) bool {
-	other := than.(*sstMeta)
-	return bytes.Compare(m.minKey, other.minKey) < 0
-}
-
-var _ btree.Item = &sstMeta{}
 
 type LocalWriter struct {
 	local              *LocalFile
@@ -1891,7 +2204,7 @@ func (w *LocalWriter) appendRowsSorted(kvs kvPairs) error {
 	return w.writer.writeKVs(kvs)
 }
 
-func (w *LocalWriter) appendRowsUnsorted(kvs kvPairs) error {
+func (w *LocalWriter) appendRowsUnsorted(ctx context.Context, kvs kvPairs) error {
 	l := len(w.writeBatch)
 	cnt := w.batchCount
 	for _, pair := range kvs {
@@ -1909,7 +2222,7 @@ func (w *LocalWriter) appendRowsUnsorted(kvs kvPairs) error {
 	w.batchCount = cnt
 
 	if w.batchSize > w.memtableSizeLimit {
-		if err := w.flushKVs(); err != nil {
+		if err := w.flushKVs(ctx); err != nil {
 			return err
 		}
 	}
@@ -1945,17 +2258,17 @@ func (w *LocalWriter) AppendRows(ctx context.Context, tableName string, columnNa
 	if w.isWriteBatchSorted {
 		return w.appendRowsSorted(kvs)
 	}
-	return w.appendRowsUnsorted(kvs)
+	return w.appendRowsUnsorted(ctx, kvs)
 }
 
-func (w *LocalWriter) flush() error {
+func (w *LocalWriter) flush(ctx context.Context) error {
 	if w.batchCount == 0 {
 		return nil
 	}
 
 	w.totalSize += w.batchSize
 	if len(w.writeBatch) > 0 {
-		if err := w.flushKVs(); err != nil {
+		if err := w.flushKVs(ctx); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1967,20 +2280,20 @@ func (w *LocalWriter) flush() error {
 		}
 		w.writer = nil
 		if meta != nil && meta.totalSize > 0 {
-			return w.local.addSST(meta)
+			return w.local.addSST(ctx, meta)
 		}
 	}
 
 	return nil
 }
 
-func (w *LocalWriter) Close() error {
+func (w *LocalWriter) Close(ctx context.Context) error {
 	defer w.kvBuffer.destroy()
 	defer w.local.localWriters.Delete(w)
-	return w.flush()
+	return w.flush(ctx)
 }
 
-func (w *LocalWriter) flushKVs() error {
+func (w *LocalWriter) flushKVs(ctx context.Context) error {
 	writer, err := w.createSSTWriter()
 	if err != nil {
 		return errors.Trace(err)
@@ -1997,7 +2310,7 @@ func (w *LocalWriter) flushKVs() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = w.local.addSST(meta)
+	err = w.local.addSST(ctx, meta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2010,8 +2323,13 @@ func (w *LocalWriter) flushKVs() error {
 }
 
 func (w *LocalWriter) createSSTWriter() (*sstWriter, error) {
-	path := filepath.Join(w.sstDir, uuid.New().String()+".sst")
-	return newSSTWriter(path)
+	path := filepath.Join(w.local.sstDir, uuid.New().String()+".sst")
+	writer, err := newSSTWriter(path)
+	if err != nil {
+		return nil, err
+	}
+	sw := &sstWriter{sstMeta: &sstMeta{path: path}, writer: writer}
+	return sw, nil
 }
 
 var errorUnorderedSSTInsertion = errors.New("inserting KVs into SST without order")
@@ -2028,12 +2346,18 @@ type sstWriter struct {
 	writer *sstable.Writer
 }
 
-func newSSTWriter(path string) (*sstWriter, error) {
-	sw := &sstWriter{sstMeta: &sstMeta{path: path}}
-	if err := sw.reopen(); err != nil {
-		return nil, err
+func newSSTWriter(path string) (*sstable.Writer, error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return sw, nil
+	writer := sstable.NewWriter(f, sstable.WriterOptions{
+		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+			newRangePropertiesCollector,
+		},
+		BlockSize: 16 * 1024,
+	})
+	return writer, nil
 }
 
 func (sw *sstWriter) writeKVs(kvs kvPairs) error {
@@ -2064,67 +2388,165 @@ func (sw *sstWriter) close() (*sstMeta, error) {
 	if err := sw.writer.Close(); err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	sw.fileSize = int64(sw.writer.EstimatedSize())
 	return sw.sstMeta, nil
 }
 
-// ingestInto finishes the SST file, and ingests itself into the target LocalFile database.
-// On success, the entire writer will be reset as empty.
-func (sw *sstWriter) ingestInto(e *LocalFile, desc localIngestDescription) error {
-	if sw.totalCount > 0 {
-		if err := sw.writer.Close(); err != nil {
-			return errors.Trace(err)
-		}
-		if desc&localIngestDescriptionFlushed == 0 {
-			// No need to acquire lock around ingestion when flushing.
-			// we already held the lock before flushing.
-			e.lock(importMutexStateLocalIngest)
-			defer e.unlock()
-		}
-		meta, _ := sw.writer.Metadata() // this method returns error only if it has not been closed yet.
-		log.L().Info("write data to local DB",
-			zap.Int64("size", sw.totalSize),
-			zap.Int64("kvs", sw.totalCount),
-			zap.Uint8("description", uint8(desc)),
-			zap.Uint64("sstFileSize", meta.Size),
-			log.ZapRedactBinary("firstKey", meta.SmallestPoint.UserKey),
-			log.ZapRedactBinary("lastKey", meta.LargestPoint.UserKey))
-
-		if err := e.db.Ingest([]string{sw.path}); err != nil {
-			return errors.Trace(err)
-		}
-		e.TotalSize.Add(sw.totalSize)
-		e.Length.Add(sw.totalCount)
-		sw.totalSize = 0
-		sw.totalCount = 0
-	}
-	sw.writer = nil
-	return nil
+type sstIter struct {
+	name   string
+	key    []byte
+	val    []byte
+	iter   sstable.Iterator
+	reader *sstable.Reader
+	valid  bool
 }
 
-// reopen creates a new SST file after ingestInto is successful.
-// Returns error if the SST file was not ingested.
-func (sw *sstWriter) reopen() error {
-	if sw.writer != nil {
-		return errors.New("cannot reopen an SST writer without ingesting it first")
-	}
-	f, err := os.Create(sw.path)
-	if err != nil {
+func (i *sstIter) Close() error {
+	if err := i.iter.Close(); err != nil {
 		return errors.Trace(err)
 	}
-	sw.writer = sstable.NewWriter(f, sstable.WriterOptions{
-		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
-			newRangePropertiesCollector,
-		},
-		BlockSize: 16 * 1024,
-	})
-	return nil
+	return i.reader.Close()
 }
 
-// cleanUp removes any un-ingested SST file.
-func (sw *sstWriter) cleanUp() {
-	if sw.writer != nil {
-		sw.writer.Close()
-		os.Remove(sw.path)
+type sstIterHeap struct {
+	iters []*sstIter
+}
+
+func (h *sstIterHeap) Len() int {
+	return len(h.iters)
+}
+
+func (h *sstIterHeap) Less(i, j int) bool {
+	return bytes.Compare(h.iters[i].key, h.iters[j].key) < 0
+}
+
+func (h *sstIterHeap) Swap(i, j int) {
+	h.iters[i], h.iters[j] = h.iters[j], h.iters[i]
+}
+
+func (h *sstIterHeap) Push(x interface{}) {
+	h.iters = append(h.iters, x.(*sstIter))
+}
+func (h *sstIterHeap) Pop() interface{} {
+	item := h.iters[len(h.iters)-1]
+	h.iters = h.iters[:len(h.iters)-1]
+	return item
+}
+
+func (h *sstIterHeap) Next() ([]byte, []byte, error) {
+	for {
+		if len(h.iters) == 0 {
+			return nil, nil, nil
+		}
+
+		iter := h.iters[0]
+		if iter.valid {
+			iter.valid = false
+			return iter.key, iter.val, iter.iter.Error()
+		}
+
+		var k *pebble.InternalKey
+		k, iter.val = iter.iter.Next()
+		if k != nil {
+			iter.key = k.UserKey
+			iter.valid = true
+			heap.Fix(h, 0)
+		} else {
+			err := iter.Close()
+			heap.Remove(h, 0)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+		}
 	}
+}
+
+func mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
+	if len(metas) == 0 {
+		return nil, errors.New("sst metas is empty")
+	} else if len(metas) == 1 {
+		return metas[0], nil
+	}
+
+	start := time.Now()
+	newMeta := &sstMeta{}
+	mergeIter := &sstIterHeap{
+		iters: make([]*sstIter, 0, len(metas)),
+	}
+	for _, p := range metas {
+		f, err := os.Open(p.path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		reader, err := sstable.NewReader(f, sstable.ReaderOptions{})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		iter, err := reader.NewIter([]byte{'t'}, []byte{'u'})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		key, val := iter.SeekGE([]byte{'t'})
+		if key == nil {
+			continue
+		}
+		if iter.Error() != nil {
+			return nil, errors.Trace(iter.Error())
+		}
+		mergeIter.iters = append(mergeIter.iters, &sstIter{
+			name:   p.path,
+			iter:   iter,
+			key:    key.UserKey,
+			val:    val,
+			reader: reader,
+			valid:  true,
+		})
+		newMeta.totalSize += p.totalSize
+		newMeta.totalCount += p.totalCount
+	}
+	heap.Init(mergeIter)
+
+	name := filepath.Join(dir, fmt.Sprintf("%s.sst", uuid.New()))
+	writer, err := newSSTWriter(name)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	newMeta.path = name
+
+	internalKey := sstable.InternalKey{
+		Trailer: uint64(sstable.InternalKeyKindSet),
+	}
+	key, val, err := mergeIter.Next()
+	if err != nil {
+		return nil, err
+	}
+	if key == nil {
+		return nil, errors.New("all ssts are empty!")
+	}
+	newMeta.minKey = append(newMeta.minKey[:0], key...)
+	lastKey := make([]byte, 0)
+	for {
+		internalKey.UserKey = key
+		err = writer.Add(internalKey, val)
+		if err != nil {
+			return nil, err
+		}
+		lastKey = append(lastKey[:0], key...)
+		key, val, err = mergeIter.Next()
+		if err != nil {
+			return nil, err
+		}
+		if key == nil {
+			break
+		}
+		if bytes.Equal(lastKey, key) {
+			log.L().Warn("duplicated key found, skipped", zap.Binary("key", lastKey))
+		}
+	}
+	err = writer.Close()
+	dur := time.Since(start)
+	log.L().Info("compact sst", zap.Int("fileCount", len(metas)), zap.Int64("size", newMeta.totalSize),
+		zap.Int64("count", newMeta.totalCount), zap.Duration("cost", dur))
+	newMeta.maxKey = lastKey
+	return newMeta, err
 }

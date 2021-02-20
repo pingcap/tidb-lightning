@@ -575,7 +575,7 @@ type TiDBWriter struct {
 	engineUUID uuid.UUID
 }
 
-func (w *TiDBWriter) Close() error {
+func (w *TiDBWriter) Close(ctx context.Context) error {
 	return nil
 }
 
