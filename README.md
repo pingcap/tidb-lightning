@@ -7,7 +7,7 @@
 **TiDB Lightning** is a tool for fast full import of large amounts of data into a [TiDB](https://docs.pingcap.com/tidb/stable/overview) cluster.
 Currently, we support reading SQL dump exported via mydumper.
 
-![TiDB Lightning architecture](https://pingcap.com/images/docs/tidb-lightning-architecture.png)
+![TiDB Lightning architecture](https://download.pingcap.com/images/docs/tidb-lightning-architecture.png)
 
 * [Detailed documentation](https://docs.pingcap.com/tidb/stable/tidb-lightning-overview)
 * [简体中文文档](https://docs.pingcap.com/zh/tidb/stable/tidb-lightning-overview)
