@@ -134,7 +134,8 @@ type LocalFile struct {
 	// isImportingAtomic is an atomic variable indicating whether the importMutex has been locked.
 	// This should not be used as a "spin lock" indicator.
 	isImportingAtomic atomic.Uint32
-	mutex             sync.Mutex
+	// flush and ingest sst hold the rlock, other operation hold the wlock.
+	mutex sync.RWMutex
 
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -247,6 +248,20 @@ func (e *LocalFile) getEngineFileSize() EngineFileSize {
 	}
 }
 
+// rLock locks the local file with shard read state. Only used for flush and ingest SST files.
+func (e *LocalFile) rLock(state importMutexState) {
+	e.mutex.RLock()
+	e.isImportingAtomic.Store(uint32(state))
+}
+
+func (e *LocalFile) rUnlock() {
+	if e == nil {
+		return
+	}
+	e.isImportingAtomic.Store(0)
+	e.mutex.RUnlock()
+}
+
 // lock locks the local file for importing.
 func (e *LocalFile) lock(state importMutexState) {
 	e.mutex.Lock()
@@ -261,6 +276,17 @@ func (e *LocalFile) lockUnless(newState, ignoreStateMask importMutexState) bool 
 		return false
 	}
 	e.lock(newState)
+	return true
+}
+
+// lockUnless tries to lock the local file unless it is already locked into the state given by
+// ignoreStateMask. Returns whether the lock is successful.
+func (e *LocalFile) tryRLock(newState importMutexState) bool {
+	curState := e.isImportingAtomic.Load()
+	if curState != 0 {
+		return false
+	}
+	e.rLock(newState)
 	return true
 }
 
@@ -458,6 +484,7 @@ func (e *LocalFile) ingestSSTLoop() {
 				}
 			}
 		case <-e.ctx.Done():
+			close(metaChan)
 			return
 		case m, ok := <-e.sstMetasChan:
 			if ok {
@@ -534,11 +561,9 @@ func (e *LocalFile) batchIngestSSTs(metas []*sstMeta) error {
 }
 
 func (e *LocalFile) ingestSSTs(metas []*sstMeta) error {
-	// No need to acquire lock around ingestion when flushing.
-	locked := e.lockUnless(importMutexStateLocalIngest, importMutexStateFlush)
-	if locked {
-		defer e.unlock()
-	}
+	// use raw RLock to avoid change the lock state during flushing.
+	e.mutex.RLock()
+	defer e.mutex.RUnlock()
 	totalSize := int64(0)
 	totalCount := int64(0)
 	fileSize := int64(0)
@@ -550,7 +575,6 @@ func (e *LocalFile) ingestSSTs(metas []*sstMeta) error {
 	log.L().Info("write data to local DB",
 		zap.Int64("size", totalSize),
 		zap.Int64("kvs", totalCount),
-		zap.Bool("flush", locked),
 		zap.Int64("sstFileSize", fileSize),
 		zap.String("file", metas[0].path),
 		log.ZapRedactBinary("firstKey", metas[0].minKey),
@@ -806,6 +830,16 @@ func NewLocalBackend(
 	return MakeBackend(local), nil
 }
 
+// rlock locks a local file and returns the LocalFile instance if it exists.
+func (local *local) rLockEngine(engineId uuid.UUID, state importMutexState) *LocalFile {
+	if e, ok := local.engines.Load(engineId); ok {
+		engine := e.(*LocalFile)
+		engine.rLock(state)
+		return engine
+	}
+	return nil
+}
+
 // lock locks a local file and returns the LocalFile instance if it exists.
 func (local *local) lockEngine(engineId uuid.UUID, state importMutexState) *LocalFile {
 	if e, ok := local.engines.Load(engineId); ok {
@@ -814,6 +848,20 @@ func (local *local) lockEngine(engineId uuid.UUID, state importMutexState) *Loca
 		return engine
 	}
 	return nil
+}
+
+// rLockAllEnginesIfNotLock tries to rlock all engines, unless those which are already locked in the
+// state given by ignoreStateMask. Returns the list of locked engines.
+func (local *local) rLockAllEnginesIfNotLock(newState importMutexState) []*LocalFile {
+	var allEngines []*LocalFile
+	local.engines.Range(func(k, v interface{}) bool {
+		engine := v.(*LocalFile)
+		if engine.tryRLock(newState) {
+			allEngines = append(allEngines, engine)
+		}
+		return true
+	})
+	return allEngines
 }
 
 // lockAllEnginesUnless tries to lock all engines, unless those which are already locked in the
@@ -898,22 +946,22 @@ func (local *local) Close() {
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
 func (local *local) FlushEngine(ctx context.Context, engineId uuid.UUID) error {
-	engineFile := local.lockEngine(engineId, importMutexStateFlush)
+	engineFile := local.rLockEngine(engineId, importMutexStateFlush)
 
 	// the engine cannot be deleted after while we've acquired the lock identified by UUID.
 
 	if engineFile == nil {
 		return errors.Errorf("engine '%s' not found", engineId)
 	}
-	defer engineFile.unlock()
+	defer engineFile.rUnlock()
 	return engineFile.flushEngineWithoutLock(ctx)
 }
 
 func (local *local) FlushAllEngines(parentCtx context.Context) (err error) {
-	allEngines := local.lockAllEnginesUnless(importMutexStateFlush, ^importMutexStateLocalIngest)
+	allEngines := local.rLockAllEnginesIfNotLock(importMutexStateFlush)
 	defer func() {
 		for _, engine := range allEngines {
-			engine.unlock()
+			engine.rUnlock()
 		}
 	}()
 
@@ -1036,9 +1084,9 @@ func (local *local) CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 		return nil
 	}
 	engineFile := engine.(*LocalFile)
-	engineFile.lock(importMutexStateFlush)
+	engineFile.rLock(importMutexStateFlush)
 	err := engineFile.flushEngineWithoutLock(ctx)
-	engineFile.unlock()
+	engineFile.rUnlock()
 	close(engineFile.sstMetasChan)
 	if err != nil {
 		return errors.Trace(err)
