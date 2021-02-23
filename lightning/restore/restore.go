@@ -1462,7 +1462,7 @@ func (t *TableRestore) restoreEngine(
 		return closedEngine, nil
 	}
 
-	// In Local backend, the local writer will produce an SST file for batch
+	// In local backend, the local writer will produce an SST file for batch
 	// ingest into the local DB every 1000 KV pairs or up to 512 MiB.
 	// There are (region-concurrency) data writers, and (index-concurrency) index writers.
 	// Thus, the disk size occupied by these writers are up to
@@ -1581,8 +1581,8 @@ func (t *TableRestore) restoreEngine(
 		zap.Uint64("written", totalKVSize),
 	)
 
-	flushAndSaveAllChunks := func() error {
-		if err = indexEngine.Flush(ctx); err != nil {
+	flushAndSaveAllChunks := func(flushCtx context.Context) error {
+		if err = indexEngine.Flush(flushCtx); err != nil {
 			return errors.Trace(err)
 		}
 		// Currently we write all the checkpoints after data&index engine are flushed.
@@ -1606,7 +1606,7 @@ func (t *TableRestore) restoreEngine(
 				log.L().Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 				return nil, errors.Trace(err)
 			}
-			if err2 := flushAndSaveAllChunks(); err2 != nil {
+			if err2 := flushAndSaveAllChunks(context.Background()); err2 != nil {
 				log.L().Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 			}
 		}
@@ -1617,7 +1617,7 @@ func (t *TableRestore) restoreEngine(
 	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
 	// this flush action impact up to 10% of the performance, so we only do it if necessary.
 	if err == nil && rc.cfg.Checkpoint.Enable && rc.isLocalBackend() {
-		if err = flushAndSaveAllChunks(); err != nil {
+		if err = flushAndSaveAllChunks(ctx); err != nil {
 			return nil, errors.Trace(err)
 		}
 

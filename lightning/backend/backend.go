@@ -153,7 +153,7 @@ type AbstractBackend interface {
 	// synchronized, such that kill-9'ing Lightning afterwards and resuming from
 	// checkpoint can recover the exact same content.
 	//
-	// This method is only relevant for Local backend, and is no-op for all
+	// This method is only relevant for local backend, and is no-op for all
 	// other backends.
 	FlushEngine(ctx context.Context, engineUUID uuid.UUID) error
 
@@ -170,7 +170,7 @@ type AbstractBackend interface {
 	// ResetEngine clears all written KV pairs in this opened engine.
 	ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 
-	// LocalWriter obtains a thread-Local EngineWriter for writing rows into the given engine.
+	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
 }
 
@@ -352,7 +352,7 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 	return closedEngine, err
 }
 
-// Flush current written data for Local backend
+// Flush current written data for local backend
 func (engine *OpenedEngine) Flush(ctx context.Context) error {
 	return engine.backend.FlushEngine(ctx, engine.uuid)
 }

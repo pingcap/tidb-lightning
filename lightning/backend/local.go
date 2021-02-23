@@ -163,7 +163,7 @@ func (e *LocalFile) setError(err error) {
 }
 
 func (e *LocalFile) Close() error {
-	log.L().Debug("closing Local engine", zap.Stringer("engine", e.Uuid), zap.Stack("stack"))
+	log.L().Debug("closing local engine", zap.Stringer("engine", e.Uuid), zap.Stack("stack"))
 	if e.db == nil {
 		return nil
 	}
@@ -572,7 +572,7 @@ func (e *LocalFile) ingestSSTs(metas []*sstMeta) error {
 		totalCount += m.totalCount
 		fileSize += m.fileSize
 	}
-	log.L().Info("write data to Local DB",
+	log.L().Info("write data to local DB",
 		zap.Int64("size", totalSize),
 		zap.Int64("kvs", totalCount),
 		zap.Int64("sstFileSize", fileSize),
@@ -665,14 +665,14 @@ func (e *LocalFile) saveEngineMeta() error {
 func (e *LocalFile) loadEngineMeta() {
 	jsonBytes, closer, err := e.db.Get(engineMetaKey)
 	if err != nil {
-		log.L().Debug("Local db missing engine meta", zap.Stringer("uuid", e.Uuid), log.ShortError(err))
+		log.L().Debug("local db missing engine meta", zap.Stringer("uuid", e.Uuid), log.ShortError(err))
 		return
 	}
 	defer closer.Close()
 
 	err = json.Unmarshal(jsonBytes, &e.localFileMeta)
 	if err != nil {
-		log.L().Warn("Local db failed to deserialize meta", zap.Stringer("uuid", e.Uuid), zap.ByteString("content", jsonBytes), zap.Error(err))
+		log.L().Warn("local db failed to deserialize meta", zap.Stringer("uuid", e.Uuid), zap.ByteString("content", jsonBytes), zap.Error(err))
 	}
 	log.L().Debug("load engine meta", zap.Stringer("uuid", e.Uuid), zap.Int64("count", e.Length.Load()),
 		zap.Int64("size", e.TotalSize.Load()))
@@ -805,7 +805,7 @@ func NewLocalBackend(
 	if shouldCreate {
 		err = os.Mkdir(localFile, 0700)
 		if err != nil {
-			return MakeBackend(nil), errors.Annotate(err, "invalid sorted-kv-dir for Local backend, please change the config or delete the path")
+			return MakeBackend(nil), errors.Annotate(err, "invalid sorted-kv-dir for local backend, please change the config or delete the path")
 		}
 	}
 
@@ -923,7 +923,7 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 	return local.conns.conns[storeID].get(ctx)
 }
 
-// Close the Local backend.
+// Close the local backend.
 func (local *local) Close() {
 	allEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
 	local.engines = sync.Map{}
@@ -939,7 +939,7 @@ func (local *local) Close() {
 	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
 		err := os.RemoveAll(local.localStoreDir)
 		if err != nil {
-			log.L().Warn("remove Local db file failed", zap.Error(err))
+			log.L().Warn("remove local db file failed", zap.Error(err))
 		}
 	}
 }
@@ -1165,36 +1165,36 @@ func (local *local) WriteToTiKV(
 	}
 
 	leaderID := region.Leader.GetId()
-	//clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
-	//requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
-	//for _, peer := range region.Region.GetPeers() {
-	//	cli, err := Local.getImportClient(ctx, peer)
-	//	if err != nil {
-	//		return nil, nil, stats, err
-	//	}
-	//
-	//	wstream, err := cli.Write(ctx)
-	//	if err != nil {
-	//		return nil, nil, stats, errors.Trace(err)
-	//	}
-	//
-	//	// Bind uuid for this write request
-	//	req := &sst.WriteRequest{
-	//		Chunk: &sst.WriteRequest_Meta{
-	//			Meta: meta,
-	//		},
-	//	}
-	//	if err = wstream.Send(req); err != nil {
-	//		return nil, nil, stats, errors.Trace(err)
-	//	}
-	//	req.Chunk = &sst.WriteRequest_Batch{
-	//		Batch: &sst.WriteBatch{
-	//			CommitTs: engineFile.Ts,
-	//		},
-	//	}
-	//	clients = append(clients, wstream)
-	//	requests = append(requests, req)
-	//}
+	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
+	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
+	for _, peer := range region.Region.GetPeers() {
+		cli, err := local.getImportClient(ctx, peer)
+		if err != nil {
+			return nil, nil, stats, err
+		}
+
+		wstream, err := cli.Write(ctx)
+		if err != nil {
+			return nil, nil, stats, errors.Trace(err)
+		}
+
+		// Bind uuid for this write request
+		req := &sst.WriteRequest{
+			Chunk: &sst.WriteRequest_Meta{
+				Meta: meta,
+			},
+		}
+		if err = wstream.Send(req); err != nil {
+			return nil, nil, stats, errors.Trace(err)
+		}
+		req.Chunk = &sst.WriteRequest_Batch{
+			Batch: &sst.WriteBatch{
+				CommitTs: engineFile.Ts,
+			},
+		}
+		clients = append(clients, wstream)
+		requests = append(requests, req)
+	}
 
 	bytesBuf := newBytesBuffer()
 	defer bytesBuf.destroy()
@@ -1222,12 +1222,12 @@ func (local *local) WriteToTiKV(
 		totalCount++
 
 		if count >= local.batchWriteKVPairs {
-			//for i := range clients {
-			//	requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-			//	if err := clients[i].Send(requests[i]); err != nil {
-			//		return nil, nil, stats, errors.Trace(err)
-			//	}
-			//}
+			for i := range clients {
+				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+				if err := clients[i].Send(requests[i]); err != nil {
+					return nil, nil, stats, errors.Trace(err)
+				}
+			}
 			count = 0
 			bytesBuf.reset()
 			firstLoop = false
@@ -1241,35 +1241,35 @@ func (local *local) WriteToTiKV(
 		return nil, nil, stats, errors.Trace(iter.Error())
 	}
 
-	//if count > 0 {
-	//	for i := range clients {
-	//		requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-	//		if err := clients[i].Send(requests[i]); err != nil {
-	//			return nil, nil, stats, errors.Trace(err)
-	//		}
-	//	}
-	//}
+	if count > 0 {
+		for i := range clients {
+			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+			if err := clients[i].Send(requests[i]); err != nil {
+				return nil, nil, stats, errors.Trace(err)
+			}
+		}
+	}
 
 	var leaderPeerMetas []*sst.SSTMeta
-	//for i, wStream := range clients {
-	//	if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
-	//		return nil, nil, stats, errors.Trace(closeErr)
-	//	} else {
-	//		if leaderID == region.Region.Peers[i].GetId() {
-	//			leaderPeerMetas = resp.Metas
-	//			log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
-	//		}
-	//	}
-	//}
+	for i, wStream := range clients {
+		if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
+			return nil, nil, stats, errors.Trace(closeErr)
+		} else {
+			if leaderID == region.Region.Peers[i].GetId() {
+				leaderPeerMetas = resp.Metas
+				log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
+			}
+		}
+	}
 
 	// if there is not leader currently, we should directly return an error
-	//if leaderPeerMetas == nil {
-	//	log.L().Warn("write to tikv no leader", log.ZapRedactReflect("region", region),
-	//		zap.Uint64("leader_id", leaderID), log.ZapRedactReflect("meta", meta),
-	//		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
-	//	return nil, nil, stats, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-	//		region.Region.Id, leaderID)
-	//}
+	if leaderPeerMetas == nil {
+		log.L().Warn("write to tikv no leader", log.ZapRedactReflect("region", region),
+			zap.Uint64("leader_id", leaderID), log.ZapRedactReflect("meta", meta),
+			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
+		return nil, nil, stats, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
+			region.Region.Id, leaderID)
+	}
 
 	log.L().Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
@@ -1785,7 +1785,6 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 		// the table when table is created.
 		needSplit := len(ranges) > 1 || lfTotalSize > local.regionSplitSize || lfLength > regionMaxKeyCount
-		needSplit = false
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionByRanges(ctx, ranges, needSplit)
