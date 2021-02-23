@@ -71,6 +71,11 @@ const (
 	compactStateDoing
 )
 
+const (
+	compactionLowerThreshold = 512 << 20 // 512M
+	compactionUpperThreshold = 32 << 30  // 32GB
+)
+
 // DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
 var DeliverPauser = common.NewPauser()
 
@@ -1247,6 +1252,54 @@ func (t *TableRestore) restoreTable(
 	return t.postProcess(ctx, rc, cp, false /* force-analyze */)
 }
 
+func NextPowOf2(i int64) int64 {
+	if i&(i-1) == 0 {
+		return 0
+	}
+	i = i * 2
+	for i&(i-1) != 0 {
+		i &= i - 1
+	}
+	return i
+}
+
+// estimate SST files compression threshold by total row file size
+// with a higher compression threshold, the compression time increases, but the iteration time decreases.
+// Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
+// we set the upper bound to 32GB to avoid too long compression time.
+// factor is the kv count per row.
+func estimateCompactionThreshold(cp *TableCheckpoint, factor int64) int64 {
+	totalRawFileSize := int64(0)
+	var lastFile string
+	for _, engineCp := range cp.Engines {
+		for _, chunk := range engineCp.Chunks {
+			if chunk.FileMeta.Path == lastFile {
+				continue
+			}
+			size := chunk.FileMeta.FileSize
+			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				// parquet file is compressed, thus estimates with a factor of 2
+				size *= 2
+			}
+			totalRawFileSize += size
+			lastFile = chunk.FileMeta.Path
+		}
+	}
+	totalRawFileSize *= factor
+
+	// try restrict the total file number within 512
+	threshold := totalRawFileSize / 512
+	threshold = NextPowOf2(threshold)
+	if threshold < compactionLowerThreshold {
+		// disable compaction if threshold is smaller than lower bound
+		threshold = 0
+	} else if threshold > compactionUpperThreshold {
+		threshold = compactionUpperThreshold
+	}
+
+	return threshold
+}
+
 func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController, cp *TableCheckpoint) error {
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
@@ -1265,12 +1318,20 @@ func (t *TableRestore) restoreEngines(ctx context.Context, rc *RestoreController
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
 
-		engineCtx := context.WithValue(ctx, kv.LocalEngineConfigKey, kv.LocalEngineConfig{
-			Compact:            true,
-			CompactConcurrency: 4,
-			CompactThreshold:   4 << 30, // 4GB
-		})
-		indexEngine, err := rc.backend.OpenEngine(engineCtx, t.tableName, indexEngineID)
+		engineCfg := &kv.EngineConfig{}
+		if rc.cfg.TikvImporter.Backend == config.BackendLocal {
+			idxCnt := len(t.tableInfo.Core.Indices)
+			if t.tableInfo.Core.PKIsHandle {
+				idxCnt--
+			}
+			threshold := estimateCompactionThreshold(cp, int64(idxCnt))
+			engineCfg.Local = &kv.LocalEngineConfig{
+				Compact:            threshold > 0,
+				CompactConcurrency: 4,
+				CompactThreshold:   threshold,
+			}
+		}
+		indexEngine, err := rc.backend.OpenEngine(ctx, engineCfg, t.tableName, indexEngineID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1401,19 +1462,6 @@ func (t *TableRestore) restoreEngine(
 		return closedEngine, nil
 	}
 
-	// if the key are ordered, LocalWrite can optimize the writing.
-	// table has auto_incremented _tidb_rowid must satisfy following restriction
-	// - clustered index disable and primary key is not number
-	// - no auto random bits (auto random or shard rowid)
-	// - no partition table
-	hasAutoIncrementAutoID := common.TableHasAutoRowID(t.tableInfo.Core) &&
-		t.tableInfo.Core.AutoRandomBits == 0 && t.tableInfo.Core.ShardRowIDBits == 0 &&
-		t.tableInfo.Core.Partition == nil
-	writerCtx := ctx
-	if hasAutoIncrementAutoID {
-		writerCtx = context.WithValue(ctx, kv.LocalWriterSortedKey, true)
-	}
-
 	// In Local backend, the local writer will produce an SST file for batch
 	// ingest into the local DB every 1000 KV pairs or up to 512 MiB.
 	// There are (region-concurrency) data writers, and (index-concurrency) index writers.
@@ -1426,9 +1474,22 @@ func (t *TableRestore) restoreEngine(
 		localWriterMaxCacheSize = config.LocalMemoryTableSize
 	}
 
+	// if the key are ordered, LocalWrite can optimize the writing.
+	// table has auto_incremented _tidb_rowid must satisfy following restriction
+	// - clustered index disable and primary key is not number
+	// - no auto random bits (auto random or shard rowid)
+	// - no partition table
+	hasAutoIncrementAutoID := common.TableHasAutoRowID(t.tableInfo.Core) &&
+		t.tableInfo.Core.AutoRandomBits == 0 && t.tableInfo.Core.ShardRowIDBits == 0 &&
+		t.tableInfo.Core.Partition == nil
+	dataWriterCfg := &kv.LocalWriterConfig{
+		IsKVSorted:   hasAutoIncrementAutoID,
+		MaxCacheSize: localWriterMaxCacheSize,
+	}
+
 	logTask := t.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
 
-	dataEngine, err := rc.backend.OpenEngine(ctx, t.tableName, engineID)
+	dataEngine, err := rc.backend.OpenEngine(ctx, &kv.EngineConfig{}, t.tableName, engineID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1470,12 +1531,12 @@ func (t *TableRestore) restoreEngine(
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
 
-		dataWriter, err := dataEngine.LocalWriter(writerCtx, localWriterMaxCacheSize)
+		dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		indexWriter, err := indexEngine.LocalWriter(ctx, localWriterMaxCacheSize)
+		indexWriter, err := indexEngine.LocalWriter(ctx, &kv.LocalWriterConfig{MaxCacheSize: localWriterMaxCacheSize})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

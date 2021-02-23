@@ -43,7 +43,7 @@ func (s *backendSuite) TestOpenCloseImportCleanUpEngine(c *C) {
 	engineUUID := uuid.MustParse("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
 
 	openCall := s.mockBackend.EXPECT().
-		OpenEngine(ctx, engineUUID).
+		OpenEngine(ctx, &kv.EngineConfig{}, engineUUID).
 		Return(nil)
 	closeCall := s.mockBackend.EXPECT().
 		CloseEngine(ctx, engineUUID).
@@ -58,7 +58,7 @@ func (s *backendSuite) TestOpenCloseImportCleanUpEngine(c *C) {
 		Return(nil).
 		After(importCall)
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, &kv.EngineConfig{}, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
 	closedEngine, err := engine.Close(ctx)
 	c.Assert(err, IsNil)
@@ -121,20 +121,20 @@ func (s *backendSuite) TestWriteEngine(c *C) {
 	rows2 := mock.NewMockRows(s.controller)
 
 	s.mockBackend.EXPECT().
-		OpenEngine(ctx, engineUUID).
+		OpenEngine(ctx, &kv.EngineConfig{}, engineUUID).
 		Return(nil)
 
 	mockWriter := mock.NewMockEngineWriter(s.controller)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(mockWriter, nil).AnyTimes()
+	s.mockBackend.EXPECT().LocalWriter(ctx, &kv.LocalWriterConfig{MaxCacheSize: int64(kv.LocalMemoryTableSize)}, gomock.Any()).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
 		AppendRows(ctx, "`db`.`table`", []string{"c1", "c2"}, gomock.Any(), rows1).
 		Return(nil)
-	mockWriter.EXPECT().Close().Return(nil).AnyTimes()
+	mockWriter.EXPECT().Close(ctx).Return(nil).AnyTimes()
 	mockWriter.EXPECT().
 		AppendRows(ctx, "`db`.`table`", []string{"c1", "c2"}, gomock.Any(), rows2).
 		Return(nil)
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, &kv.EngineConfig{}, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
 	err = engine.WriteRows(ctx, []string{"c1", "c2"}, rows1)
 	c.Assert(err, IsNil)
@@ -150,12 +150,12 @@ func (s *backendSuite) TestWriteToEngineWithNothing(c *C) {
 	emptyRows := mock.NewMockRows(s.controller)
 	writer := mock.NewMockEngineWriter(s.controller)
 
-	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
+	s.mockBackend.EXPECT().OpenEngine(ctx, &kv.EngineConfig{}, gomock.Any()).Return(nil)
 	writer.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), emptyRows).Return(nil)
-	writer.EXPECT().Close().Return(nil)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(writer, nil)
+	writer.EXPECT().Close(ctx).Return(nil)
+	s.mockBackend.EXPECT().LocalWriter(ctx, &kv.LocalWriterConfig{MaxCacheSize: int64(kv.LocalMemoryTableSize)}, gomock.Any()).Return(writer, nil)
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, &kv.EngineConfig{}, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
 	err = engine.WriteRows(ctx, nil, emptyRows)
 	c.Assert(err, IsNil)
@@ -167,10 +167,10 @@ func (s *backendSuite) TestOpenEngineFailed(c *C) {
 
 	ctx := context.Background()
 
-	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).
+	s.mockBackend.EXPECT().OpenEngine(ctx, &kv.EngineConfig{}, gomock.Any()).
 		Return(errors.New("fake unrecoverable open error"))
 
-	_, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	_, err := s.backend.OpenEngine(ctx, &kv.EngineConfig{}, "`db`.`table`", 1)
 	c.Assert(err, ErrorMatches, "fake unrecoverable open error")
 }
 
@@ -181,15 +181,15 @@ func (s *backendSuite) TestWriteEngineFailed(c *C) {
 	ctx := context.Background()
 	rows := mock.NewMockRows(s.controller)
 
-	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
+	s.mockBackend.EXPECT().OpenEngine(ctx, &kv.EngineConfig{}, gomock.Any()).Return(nil)
 	mockWriter := mock.NewMockEngineWriter(s.controller)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(mockWriter, nil).AnyTimes()
+	s.mockBackend.EXPECT().LocalWriter(ctx, &kv.LocalWriterConfig{MaxCacheSize: int64(kv.LocalMemoryTableSize)}, gomock.Any()).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().
 		AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable write error"))
-	mockWriter.EXPECT().Close().Return(nil)
+	mockWriter.EXPECT().Close(ctx).Return(nil)
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, &kv.EngineConfig{}, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
 	err = engine.WriteRows(ctx, nil, rows)
 	c.Assert(err, ErrorMatches, "fake unrecoverable write error.*")
@@ -202,15 +202,15 @@ func (s *backendSuite) TestWriteBatchSendFailedWithRetry(c *C) {
 	ctx := context.Background()
 	rows := mock.NewMockRows(s.controller)
 
-	s.mockBackend.EXPECT().OpenEngine(ctx, gomock.Any()).Return(nil)
+	s.mockBackend.EXPECT().OpenEngine(ctx, &kv.EngineConfig{}, gomock.Any()).Return(nil)
 	mockWriter := mock.NewMockEngineWriter(s.controller)
-	s.mockBackend.EXPECT().LocalWriter(ctx, gomock.Any(), int64(kv.LocalMemoryTableSize)).Return(mockWriter, nil).AnyTimes()
+	s.mockBackend.EXPECT().LocalWriter(ctx, &kv.LocalWriterConfig{MaxCacheSize: int64(kv.LocalMemoryTableSize)}, gomock.Any()).Return(mockWriter, nil).AnyTimes()
 	mockWriter.EXPECT().AppendRows(ctx, gomock.Any(), gomock.Any(), gomock.Any(), rows).
 		Return(errors.New("fake recoverable write batch error")).
 		MinTimes(1)
-	mockWriter.EXPECT().Close().Return(nil).MinTimes(1)
+	mockWriter.EXPECT().Close(ctx).Return(nil).MinTimes(1)
 
-	engine, err := s.backend.OpenEngine(ctx, "`db`.`table`", 1)
+	engine, err := s.backend.OpenEngine(ctx, &kv.EngineConfig{}, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
 	err = engine.WriteRows(ctx, nil, rows)
 	c.Assert(err, ErrorMatches, ".*fake recoverable write batch error")

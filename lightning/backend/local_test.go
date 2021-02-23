@@ -255,7 +255,7 @@ func (s *localSuite) TestRangePropertiesWithPebble(c *C) {
 	c.Assert(err, IsNil)
 	defer db.Close()
 
-	// local collector
+	// Local collector
 	collector := &RangePropertiesCollector{
 		props:               make([]rangeProperty, 0, 1024),
 		propSizeIdxDistance: sizeDistance,
@@ -324,7 +324,8 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	}
 	f.wg.Add(1)
 	go f.ingestSSTLoop()
-	w, err := openLocalWriter(context.Background(), &f, 1024*1024)
+	sorted := needSort && !partitialSort
+	w, err := openLocalWriter(context.Background(), &LocalWriterConfig{IsKVSorted: sorted, MaxCacheSize: 1 << 20}, &f)
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()

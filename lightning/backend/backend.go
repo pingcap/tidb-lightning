@@ -95,6 +95,14 @@ type EngineFileSize struct {
 	IsImporting bool
 }
 
+// LocalWriterConfig defines the configuration to open a LocalWriter
+type LocalWriterConfig struct {
+	// is the chunk KV written to this LocalWriter sent in order
+	IsKVSorted bool
+	// MaxCacheSize is the maximum KVs size stored in memory before flushing to disk
+	MaxCacheSize int64
+}
+
 // AbstractBackend is the abstract interface behind Backend.
 // Implementations of this interface must be goroutine safe: you can share an
 // instance and execute any method anywhere.
@@ -115,7 +123,7 @@ type AbstractBackend interface {
 	// NewEncoder creates an encoder of a TiDB table.
 	NewEncoder(tbl table.Table, options *SessionOptions) (Encoder, error)
 
-	OpenEngine(ctx context.Context, engineUUID uuid.UUID) error
+	OpenEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
 
 	CloseEngine(ctx context.Context, engineUUID uuid.UUID) error
 
@@ -145,7 +153,7 @@ type AbstractBackend interface {
 	// synchronized, such that kill-9'ing Lightning afterwards and resuming from
 	// checkpoint can recover the exact same content.
 	//
-	// This method is only relevant for local backend, and is no-op for all
+	// This method is only relevant for Local backend, and is no-op for all
 	// other backends.
 	FlushEngine(ctx context.Context, engineUUID uuid.UUID) error
 
@@ -162,8 +170,8 @@ type AbstractBackend interface {
 	// ResetEngine clears all written KV pairs in this opened engine.
 	ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 
-	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
-	LocalWriter(ctx context.Context, engineUUID uuid.UUID, maxCacheSize int64) (EngineWriter, error)
+	// LocalWriter obtains a thread-Local EngineWriter for writing rows into the given engine.
+	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
 }
 
 func fetchRemoteTableModelsFromTLS(ctx context.Context, tls *common.TLS, schema string) ([]*model.TableInfo, error) {
@@ -297,12 +305,16 @@ func (be Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID
 	return be.abstract.ResetEngine(ctx, engineUUID)
 }
 
+type EngineConfig struct {
+	Local *LocalEngineConfig
+}
+
 // OpenEngine opens an engine with the given table name and engine ID.
-func (be Backend) OpenEngine(ctx context.Context, tableName string, engineID int32) (*OpenedEngine, error) {
+func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableName string, engineID int32) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, engineID)
 	logger := makeLogger(tag, engineUUID)
 
-	if err := be.abstract.OpenEngine(ctx, engineUUID); err != nil {
+	if err := be.abstract.OpenEngine(ctx, config, engineUUID); err != nil {
 		return nil, err
 	}
 
@@ -340,14 +352,14 @@ func (engine *OpenedEngine) Close(ctx context.Context) (*ClosedEngine, error) {
 	return closedEngine, err
 }
 
-// Flush current written data for local backend
+// Flush current written data for Local backend
 func (engine *OpenedEngine) Flush(ctx context.Context) error {
 	return engine.backend.FlushEngine(ctx, engine.uuid)
 }
 
 // WriteRows writes a collection of encoded rows into the engine.
 func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string, rows Rows) error {
-	writer, err := engine.backend.LocalWriter(ctx, engine.uuid, LocalMemoryTableSize)
+	writer, err := engine.backend.LocalWriter(ctx, &LocalWriterConfig{MaxCacheSize: LocalMemoryTableSize}, engine.uuid)
 	if err != nil {
 		return err
 	}
@@ -358,8 +370,8 @@ func (engine *OpenedEngine) WriteRows(ctx context.Context, columnNames []string,
 	return writer.Close(ctx)
 }
 
-func (engine *OpenedEngine) LocalWriter(ctx context.Context, maxCacheSize int64) (*LocalEngineWriter, error) {
-	w, err := engine.backend.LocalWriter(ctx, engine.uuid, maxCacheSize)
+func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (*LocalEngineWriter, error) {
+	w, err := engine.backend.LocalWriter(ctx, cfg, engine.uuid)
 	if err != nil {
 		return nil, err
 	}

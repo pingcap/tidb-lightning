@@ -163,7 +163,7 @@ func (e *LocalFile) setError(err error) {
 }
 
 func (e *LocalFile) Close() error {
-	log.L().Debug("closing local engine", zap.Stringer("engine", e.Uuid), zap.Stack("stack"))
+	log.L().Debug("closing Local engine", zap.Stringer("engine", e.Uuid), zap.Stack("stack"))
 	if e.db == nil {
 		return nil
 	}
@@ -572,7 +572,7 @@ func (e *LocalFile) ingestSSTs(metas []*sstMeta) error {
 		totalCount += m.totalCount
 		fileSize += m.fileSize
 	}
-	log.L().Info("write data to local DB",
+	log.L().Info("write data to Local DB",
 		zap.Int64("size", totalSize),
 		zap.Int64("kvs", totalCount),
 		zap.Int64("sstFileSize", fileSize),
@@ -665,14 +665,14 @@ func (e *LocalFile) saveEngineMeta() error {
 func (e *LocalFile) loadEngineMeta() {
 	jsonBytes, closer, err := e.db.Get(engineMetaKey)
 	if err != nil {
-		log.L().Debug("local db missing engine meta", zap.Stringer("uuid", e.Uuid), log.ShortError(err))
+		log.L().Debug("Local db missing engine meta", zap.Stringer("uuid", e.Uuid), log.ShortError(err))
 		return
 	}
 	defer closer.Close()
 
 	err = json.Unmarshal(jsonBytes, &e.localFileMeta)
 	if err != nil {
-		log.L().Warn("local db failed to deserialize meta", zap.Stringer("uuid", e.Uuid), zap.ByteString("content", jsonBytes), zap.Error(err))
+		log.L().Warn("Local db failed to deserialize meta", zap.Stringer("uuid", e.Uuid), zap.ByteString("content", jsonBytes), zap.Error(err))
 	}
 	log.L().Debug("load engine meta", zap.Stringer("uuid", e.Uuid), zap.Int64("count", e.Length.Load()),
 		zap.Int64("size", e.TotalSize.Load()))
@@ -805,7 +805,7 @@ func NewLocalBackend(
 	if shouldCreate {
 		err = os.Mkdir(localFile, 0700)
 		if err != nil {
-			return MakeBackend(nil), errors.Annotate(err, "invalid sorted-kv-dir for local backend, please change the config or delete the path")
+			return MakeBackend(nil), errors.Annotate(err, "invalid sorted-kv-dir for Local backend, please change the config or delete the path")
 		}
 	}
 
@@ -923,7 +923,7 @@ func (local *local) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grp
 	return local.conns.conns[storeID].get(ctx)
 }
 
-// Close the local backend.
+// Close the Local backend.
 func (local *local) Close() {
 	allEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
 	local.engines = sync.Map{}
@@ -939,7 +939,7 @@ func (local *local) Close() {
 	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
 		err := os.RemoveAll(local.localStoreDir)
 		if err != nil {
-			log.L().Warn("remove local db file failed", zap.Error(err))
+			log.L().Warn("remove Local db file failed", zap.Error(err))
 		}
 	}
 }
@@ -998,11 +998,18 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 		// to avoid failure due to open files exceeded limit
 		L0CompactionThreshold: local.maxOpenFiles / 2,
 		L0StopWritesThreshold: local.maxOpenFiles / 2,
+		LBaseMaxBytes:         16 << 40,
 		MaxOpenFiles:          local.maxOpenFiles,
 		DisableWAL:            true,
 		ReadOnly:              readOnly,
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
+		},
+	}
+	opt.Levels = []pebble.LevelOptions{
+		{
+			// 16GB
+			TargetFileSize: 16 << 30,
 		},
 	}
 
@@ -1023,10 +1030,10 @@ type LocalEngineConfig struct {
 }
 
 // This method must be called with holding mutex of LocalFile
-func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	cfg := LocalEngineConfig{}
-	if v, ok := ctx.Value(LocalEngineConfigKey).(LocalEngineConfig); ok {
-		cfg = v
+func (local *local) OpenEngine(ctx context.Context, cfg *EngineConfig, engineUUID uuid.UUID) error {
+	engineCfg := LocalEngineConfig{}
+	if cfg.Local != nil {
+		engineCfg = *cfg.Local
 	}
 	db, err := local.openEngineDB(engineUUID, false)
 	if err != nil {
@@ -1047,7 +1054,7 @@ func (local *local) OpenEngine(ctx context.Context, engineUUID uuid.UUID) error 
 		flushChan:    make(chan chan struct{}, 1),
 		ctx:          engineCtx,
 		cancel:       cancel,
-		config:       cfg,
+		config:       engineCfg,
 	})
 	engine := e.(*LocalFile)
 	engine.db = db
@@ -1158,36 +1165,36 @@ func (local *local) WriteToTiKV(
 	}
 
 	leaderID := region.Leader.GetId()
-	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
-	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
-	for _, peer := range region.Region.GetPeers() {
-		cli, err := local.getImportClient(ctx, peer)
-		if err != nil {
-			return nil, nil, stats, err
-		}
-
-		wstream, err := cli.Write(ctx)
-		if err != nil {
-			return nil, nil, stats, errors.Trace(err)
-		}
-
-		// Bind uuid for this write request
-		req := &sst.WriteRequest{
-			Chunk: &sst.WriteRequest_Meta{
-				Meta: meta,
-			},
-		}
-		if err = wstream.Send(req); err != nil {
-			return nil, nil, stats, errors.Trace(err)
-		}
-		req.Chunk = &sst.WriteRequest_Batch{
-			Batch: &sst.WriteBatch{
-				CommitTs: engineFile.Ts,
-			},
-		}
-		clients = append(clients, wstream)
-		requests = append(requests, req)
-	}
+	//clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
+	//requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
+	//for _, peer := range region.Region.GetPeers() {
+	//	cli, err := Local.getImportClient(ctx, peer)
+	//	if err != nil {
+	//		return nil, nil, stats, err
+	//	}
+	//
+	//	wstream, err := cli.Write(ctx)
+	//	if err != nil {
+	//		return nil, nil, stats, errors.Trace(err)
+	//	}
+	//
+	//	// Bind uuid for this write request
+	//	req := &sst.WriteRequest{
+	//		Chunk: &sst.WriteRequest_Meta{
+	//			Meta: meta,
+	//		},
+	//	}
+	//	if err = wstream.Send(req); err != nil {
+	//		return nil, nil, stats, errors.Trace(err)
+	//	}
+	//	req.Chunk = &sst.WriteRequest_Batch{
+	//		Batch: &sst.WriteBatch{
+	//			CommitTs: engineFile.Ts,
+	//		},
+	//	}
+	//	clients = append(clients, wstream)
+	//	requests = append(requests, req)
+	//}
 
 	bytesBuf := newBytesBuffer()
 	defer bytesBuf.destroy()
@@ -1215,12 +1222,12 @@ func (local *local) WriteToTiKV(
 		totalCount++
 
 		if count >= local.batchWriteKVPairs {
-			for i := range clients {
-				requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-				if err := clients[i].Send(requests[i]); err != nil {
-					return nil, nil, stats, errors.Trace(err)
-				}
-			}
+			//for i := range clients {
+			//	requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+			//	if err := clients[i].Send(requests[i]); err != nil {
+			//		return nil, nil, stats, errors.Trace(err)
+			//	}
+			//}
 			count = 0
 			bytesBuf.reset()
 			firstLoop = false
@@ -1234,35 +1241,35 @@ func (local *local) WriteToTiKV(
 		return nil, nil, stats, errors.Trace(iter.Error())
 	}
 
-	if count > 0 {
-		for i := range clients {
-			requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
-			if err := clients[i].Send(requests[i]); err != nil {
-				return nil, nil, stats, errors.Trace(err)
-			}
-		}
-	}
+	//if count > 0 {
+	//	for i := range clients {
+	//		requests[i].Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
+	//		if err := clients[i].Send(requests[i]); err != nil {
+	//			return nil, nil, stats, errors.Trace(err)
+	//		}
+	//	}
+	//}
 
 	var leaderPeerMetas []*sst.SSTMeta
-	for i, wStream := range clients {
-		if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
-			return nil, nil, stats, errors.Trace(closeErr)
-		} else {
-			if leaderID == region.Region.Peers[i].GetId() {
-				leaderPeerMetas = resp.Metas
-				log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
-			}
-		}
-	}
+	//for i, wStream := range clients {
+	//	if resp, closeErr := wStream.CloseAndRecv(); closeErr != nil {
+	//		return nil, nil, stats, errors.Trace(closeErr)
+	//	} else {
+	//		if leaderID == region.Region.Peers[i].GetId() {
+	//			leaderPeerMetas = resp.Metas
+	//			log.L().Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
+	//		}
+	//	}
+	//}
 
 	// if there is not leader currently, we should directly return an error
-	if leaderPeerMetas == nil {
-		log.L().Warn("write to tikv no leader", log.ZapRedactReflect("region", region),
-			zap.Uint64("leader_id", leaderID), log.ZapRedactReflect("meta", meta),
-			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
-		return nil, nil, stats, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			region.Region.Id, leaderID)
-	}
+	//if leaderPeerMetas == nil {
+	//	log.L().Warn("write to tikv no leader", log.ZapRedactReflect("region", region),
+	//		zap.Uint64("leader_id", leaderID), log.ZapRedactReflect("meta", meta),
+	//		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
+	//	return nil, nil, stats, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
+	//		region.Region.Id, leaderID)
+	//}
 
 	log.L().Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
@@ -1778,6 +1785,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 		// the table when table is created.
 		needSplit := len(ranges) > 1 || lfTotalSize > local.regionSplitSize || lfLength > regionMaxKeyCount
+		needSplit = false
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionByRanges(ctx, ranges, needSplit)
@@ -1898,23 +1906,21 @@ func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
 	return filepath.Join(storeDir, engineUUID.String()+".sst")
 }
 
-func (local *local) LocalWriter(ctx context.Context, engineUUID uuid.UUID, maxCacheSize int64) (EngineWriter, error) {
+func (local *local) LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error) {
 	e, ok := local.engines.Load(engineUUID)
 	if !ok {
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engineFile := e.(*LocalFile)
-	return openLocalWriter(ctx, engineFile, LocalMemoryTableSize)
+	return openLocalWriter(ctx, cfg, engineFile)
 }
 
-func openLocalWriter(ctx context.Context, f *LocalFile, memtableSizeLimit int64) (*LocalWriter, error) {
-	sortedKey := ctx.Value(LocalWriterSortedKey)
-	isSorted := sortedKey != nil
+func openLocalWriter(ctx context.Context, cfg *LocalWriterConfig, f *LocalFile) (*LocalWriter, error) {
 	w := &LocalWriter{
 		local:              f,
-		memtableSizeLimit:  memtableSizeLimit,
+		memtableSizeLimit:  cfg.MaxCacheSize,
 		kvBuffer:           newBytesBuffer(),
-		isWriteBatchSorted: isSorted,
+		isWriteBatchSorted: cfg.IsKVSorted,
 	}
 	f.localWriters.Store(w, nil)
 	return w, nil
@@ -2195,8 +2201,6 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 		return f(prop)
 	})
 }
-
-var LocalWriterSortedKey = struct{}{}
 
 type sstMeta struct {
 	path       string
