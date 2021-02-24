@@ -305,7 +305,9 @@ func (be Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID
 	return be.abstract.ResetEngine(ctx, engineUUID)
 }
 
+// EngineConfig defines configuration used for open engine
 type EngineConfig struct {
+	// local backend specified configuration
 	Local *LocalEngineConfig
 }
 

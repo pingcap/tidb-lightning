@@ -1006,6 +1006,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 			newRangePropertiesCollector,
 		},
 	}
+	// set level target file size to avoid pebble auto triggering compaction that split ingest SST files into small SST.
 	opt.Levels = []pebble.LevelOptions{
 		{
 			// 16GB
@@ -1018,8 +1019,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 	return db, errors.Trace(err)
 }
 
-var LocalEngineConfigKey struct{}
-
+// LocalEngineConfig is the configuration used for local backend in OpenEngine.
 type LocalEngineConfig struct {
 	// compact small SSTs before ingest into pebble
 	Compact bool
