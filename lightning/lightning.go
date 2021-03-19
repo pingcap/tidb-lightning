@@ -274,7 +274,9 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	if err != nil {
 		return errors.Annotate(err, "parse backend failed")
 	}
-	s, err := storage.Create(ctx, u, true)
+	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{
+		SkipCheckPath: true,
+	})
 	if err != nil {
 		return errors.Annotate(err, "create storage failed")
 	}
