@@ -195,7 +195,7 @@ func (t PostOpLevel) MarshalText() ([]byte, error) {
 	return []byte(t.String()), nil
 }
 
-// parser command line parameter
+// FromStringValue parses command line parameters.
 func (t *PostOpLevel) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
 	case "off", "false":
@@ -310,7 +310,7 @@ type Security struct {
 	RedactInfoLog bool `toml:"redact-info-log" json:"redact-info-log"`
 }
 
-// RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
+// RegisterMySQL registers (or deregisters) the TLS config with name "cluster"
 // for use in `sql.Open()`. This method is goroutine-safe.
 func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
@@ -329,7 +329,7 @@ func (sec *Security) RegisterMySQL() error {
 	return nil
 }
 
-// A duration which can be deserialized from a TOML string.
+// Duration which can be deserialized from a TOML string.
 // Implemented as https://github.com/BurntSushi/toml#using-the-encodingtextunmarshaler-interface
 type Duration struct {
 	time.Duration
@@ -408,28 +408,28 @@ func NewConfig() *Config {
 }
 
 // LoadFromGlobal resets the current configuration to the global settings.
-func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
-	if err := cfg.LoadFromTOML(global.ConfigFileContent); err != nil {
+func (c *Config) LoadFromGlobal(global *GlobalConfig) error {
+	if err := c.LoadFromTOML(global.ConfigFileContent); err != nil {
 		return err
 	}
 
-	cfg.TiDB.Host = global.TiDB.Host
-	cfg.TiDB.Port = global.TiDB.Port
-	cfg.TiDB.User = global.TiDB.User
-	cfg.TiDB.Psw = global.TiDB.Psw
-	cfg.TiDB.StatusPort = global.TiDB.StatusPort
-	cfg.TiDB.PdAddr = global.TiDB.PdAddr
-	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
-	cfg.Mydumper.NoSchema = global.Mydumper.NoSchema
-	cfg.Mydumper.Filter = global.Mydumper.Filter
-	cfg.TikvImporter.Addr = global.TikvImporter.Addr
-	cfg.TikvImporter.Backend = global.TikvImporter.Backend
-	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
-	cfg.Checkpoint.Enable = global.Checkpoint.Enable
-	cfg.PostRestore.Checksum = global.PostRestore.Checksum
-	cfg.PostRestore.Analyze = global.PostRestore.Analyze
-	cfg.App.CheckRequirements = global.App.CheckRequirements
-	cfg.Security = global.Security
+	c.TiDB.Host = global.TiDB.Host
+	c.TiDB.Port = global.TiDB.Port
+	c.TiDB.User = global.TiDB.User
+	c.TiDB.Psw = global.TiDB.Psw
+	c.TiDB.StatusPort = global.TiDB.StatusPort
+	c.TiDB.PdAddr = global.TiDB.PdAddr
+	c.Mydumper.SourceDir = global.Mydumper.SourceDir
+	c.Mydumper.NoSchema = global.Mydumper.NoSchema
+	c.Mydumper.Filter = global.Mydumper.Filter
+	c.TikvImporter.Addr = global.TikvImporter.Addr
+	c.TikvImporter.Backend = global.TikvImporter.Backend
+	c.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
+	c.Checkpoint.Enable = global.Checkpoint.Enable
+	c.PostRestore.Checksum = global.PostRestore.Checksum
+	c.PostRestore.Analyze = global.PostRestore.Analyze
+	c.App.CheckRequirements = global.App.CheckRequirements
+	c.Security = global.Security
 
 	return nil
 }
@@ -437,7 +437,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 // LoadFromTOML overwrites the current configuration by the TOML data
 // If data contains toml items not in Config and GlobalConfig, return an error
 // If data contains toml items not in Config, thus won't take effect, warn user
-func (cfg *Config) LoadFromTOML(data []byte) error {
+func (c *Config) LoadFromTOML(data []byte) error {
 	// bothUnused saves toml items not belong to Config nor GlobalConfig
 	var bothUnused []string
 	// warnItems saves legal toml items but won't effect
@@ -446,7 +446,7 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 	dataStr := string(data)
 
 	// Here we load toml into cfg, and rest logic is check unused keys
-	metaData, err := toml.Decode(dataStr, cfg)
+	metaData, err := toml.Decode(dataStr, c)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -496,9 +496,9 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 }
 
 // Adjust fixes the invalid or unspecified settings to reasonable valid values.
-func (cfg *Config) Adjust(ctx context.Context) error {
+func (c *Config) Adjust(ctx context.Context) error {
 	// Reject problematic CSV configurations.
-	csv := &cfg.Mydumper.CSV
+	csv := &c.Mydumper.CSV
 	if len(csv.Separator) == 0 {
 		return errors.New("invalid config: `mydumper.csv.separator` must not be empty")
 	}
@@ -517,71 +517,71 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	}
 
 	// adjust file routing
-	for _, rule := range cfg.Mydumper.FileRouters {
+	for _, rule := range c.Mydumper.FileRouters {
 		if filepath.IsAbs(rule.Path) {
-			relPath, err := filepath.Rel(cfg.Mydumper.SourceDir, rule.Path)
+			relPath, err := filepath.Rel(c.Mydumper.SourceDir, rule.Path)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			// ".." means that this path is not in source dir, so we should return an error
 			if strings.HasPrefix(relPath, "..") {
-				return errors.Errorf("file route path '%s' is not in source dir '%s'", rule.Path, cfg.Mydumper.SourceDir)
+				return errors.Errorf("file route path '%s' is not in source dir '%s'", rule.Path, c.Mydumper.SourceDir)
 			}
 			rule.Path = relPath
 		}
 	}
 
 	// enable default file route rule if no rules are set
-	if len(cfg.Mydumper.FileRouters) == 0 {
-		cfg.Mydumper.DefaultFileRules = true
+	if len(c.Mydumper.FileRouters) == 0 {
+		c.Mydumper.DefaultFileRules = true
 	}
 
-	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
+	c.TikvImporter.Backend = strings.ToLower(c.TikvImporter.Backend)
 	mustHaveInternalConnections := true
-	switch cfg.TikvImporter.Backend {
+	switch c.TikvImporter.Backend {
 	case BackendTiDB:
-		if cfg.App.IndexConcurrency == 0 {
-			cfg.App.IndexConcurrency = cfg.App.RegionConcurrency
+		if c.App.IndexConcurrency == 0 {
+			c.App.IndexConcurrency = c.App.RegionConcurrency
 		}
-		if cfg.App.TableConcurrency == 0 {
-			cfg.App.TableConcurrency = cfg.App.RegionConcurrency
+		if c.App.TableConcurrency == 0 {
+			c.App.TableConcurrency = c.App.RegionConcurrency
 		}
 		mustHaveInternalConnections = false
 	case BackendImporter, BackendLocal:
-		if cfg.App.IndexConcurrency == 0 {
-			cfg.App.IndexConcurrency = 2
+		if c.App.IndexConcurrency == 0 {
+			c.App.IndexConcurrency = 2
 		}
-		if cfg.App.TableConcurrency == 0 {
-			cfg.App.TableConcurrency = 6
+		if c.App.TableConcurrency == 0 {
+			c.App.TableConcurrency = 6
 		}
-		if cfg.TikvImporter.RangeConcurrency == 0 {
-			cfg.TikvImporter.RangeConcurrency = 16
+		if c.TikvImporter.RangeConcurrency == 0 {
+			c.TikvImporter.RangeConcurrency = 16
 		}
-		if cfg.TikvImporter.RegionSplitSize == 0 {
-			cfg.TikvImporter.RegionSplitSize = SplitRegionSize
+		if c.TikvImporter.RegionSplitSize == 0 {
+			c.TikvImporter.RegionSplitSize = SplitRegionSize
 		}
-		if cfg.TiDB.DistSQLScanConcurrency == 0 {
-			cfg.TiDB.DistSQLScanConcurrency = defaultDistSQLScanConcurrency
+		if c.TiDB.DistSQLScanConcurrency == 0 {
+			c.TiDB.DistSQLScanConcurrency = defaultDistSQLScanConcurrency
 		}
-		if cfg.TiDB.BuildStatsConcurrency == 0 {
-			cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency
+		if c.TiDB.BuildStatsConcurrency == 0 {
+			c.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency
 		}
-		if cfg.TiDB.IndexSerialScanConcurrency == 0 {
-			cfg.TiDB.IndexSerialScanConcurrency = defaultIndexSerialScanConcurrency
+		if c.TiDB.IndexSerialScanConcurrency == 0 {
+			c.TiDB.IndexSerialScanConcurrency = defaultIndexSerialScanConcurrency
 		}
-		if cfg.TiDB.ChecksumTableConcurrency == 0 {
-			cfg.TiDB.ChecksumTableConcurrency = defaultChecksumTableConcurrency
+		if c.TiDB.ChecksumTableConcurrency == 0 {
+			c.TiDB.ChecksumTableConcurrency = defaultChecksumTableConcurrency
 		}
 	default:
-		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
+		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", c.TikvImporter.Backend)
 	}
 
-	if cfg.TikvImporter.Backend == BackendLocal {
-		if len(cfg.TikvImporter.SortedKVDir) == 0 {
+	if c.TikvImporter.Backend == BackendLocal {
+		if len(c.TikvImporter.SortedKVDir) == 0 {
 			return errors.Errorf("tikv-importer.sorted-kv-dir must not be empty!")
 		}
 
-		storageSizeDir := filepath.Clean(cfg.TikvImporter.SortedKVDir)
+		storageSizeDir := filepath.Clean(c.TikvImporter.SortedKVDir)
 		sortedKVDirInfo, err := os.Stat(storageSizeDir)
 		switch {
 		case os.IsNotExist(err):
@@ -596,9 +596,9 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 			return errors.Annotate(err, "invalid tikv-importer.sorted-kv-dir")
 		}
 
-		if cfg.TikvImporter.DiskQuota == 0 {
-			enginesCount := uint64(cfg.App.IndexConcurrency + cfg.App.TableConcurrency)
-			writeAmount := uint64(cfg.App.RegionConcurrency) * uint64(cfg.Cron.CheckDiskQuota.Milliseconds())
+		if c.TikvImporter.DiskQuota == 0 {
+			enginesCount := uint64(c.App.IndexConcurrency + c.App.TableConcurrency)
+			writeAmount := uint64(c.App.RegionConcurrency) * uint64(c.Cron.CheckDiskQuota.Milliseconds())
 			reservedSize := enginesCount*autoDiskQuotaLocalReservedSize + writeAmount*autoDiskQuotaLocalReservedSpeed
 
 			storageSize, err := common.GetStorageSize(storageSizeDir)
@@ -608,60 +608,60 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 			if storageSize.Available <= reservedSize {
 				return errors.Errorf(
 					"insufficient disk free space on `%s` (only %s, expecting >%s), please use a storage with enough free space, or specify `tikv-importer.disk-quota`",
-					cfg.TikvImporter.SortedKVDir,
+					c.TikvImporter.SortedKVDir,
 					units.BytesSize(float64(storageSize.Available)),
 					units.BytesSize(float64(reservedSize)))
 			}
-			cfg.TikvImporter.DiskQuota = ByteSize(storageSize.Available - reservedSize)
+			c.TikvImporter.DiskQuota = ByteSize(storageSize.Available - reservedSize)
 		}
 	}
 
-	if cfg.TikvImporter.Backend == BackendTiDB {
-		cfg.TikvImporter.OnDuplicate = strings.ToLower(cfg.TikvImporter.OnDuplicate)
-		switch cfg.TikvImporter.OnDuplicate {
+	if c.TikvImporter.Backend == BackendTiDB {
+		c.TikvImporter.OnDuplicate = strings.ToLower(c.TikvImporter.OnDuplicate)
+		switch c.TikvImporter.OnDuplicate {
 		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
 		default:
-			return errors.Errorf("invalid config: unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
+			return errors.Errorf("invalid config: unsupported `tikv-importer.on-duplicate` (%s)", c.TikvImporter.OnDuplicate)
 		}
 	}
 
 	var err error
-	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
+	c.TiDB.SQLMode, err = mysql.GetSQLMode(c.TiDB.StrSQLMode)
 	if err != nil {
 		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
 
-	if cfg.TiDB.Security == nil {
-		cfg.TiDB.Security = &cfg.Security
+	if c.TiDB.Security == nil {
+		c.TiDB.Security = &c.Security
 	}
 
-	switch cfg.TiDB.TLS {
+	switch c.TiDB.TLS {
 	case "":
-		if len(cfg.TiDB.Security.CAPath) > 0 {
-			cfg.TiDB.TLS = "cluster"
+		if len(c.TiDB.Security.CAPath) > 0 {
+			c.TiDB.TLS = "cluster"
 		} else {
-			cfg.TiDB.TLS = "false"
+			c.TiDB.TLS = "false"
 		}
 	case "cluster":
-		if len(cfg.Security.CAPath) == 0 {
+		if len(c.Security.CAPath) == 0 {
 			return errors.New("invalid config: cannot set `tidb.tls` to 'cluster' without a [security] section")
 		}
 	case "false", "skip-verify", "preferred":
 		break
 	default:
-		return errors.Errorf("invalid config: unsupported `tidb.tls` config %s", cfg.TiDB.TLS)
+		return errors.Errorf("invalid config: unsupported `tidb.tls` config %s", c.TiDB.TLS)
 	}
 
 	// mydumper.filter and black-white-list cannot co-exist.
-	if cfg.HasLegacyBlackWhiteList() {
+	if c.HasLegacyBlackWhiteList() {
 		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
-		if !common.StringSliceEqual(cfg.Mydumper.Filter, DefaultFilter) {
+		if !common.StringSliceEqual(c.Mydumper.Filter, DefaultFilter) {
 			return errors.New("invalid config: `mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 		}
 	}
 
-	for _, rule := range cfg.Routes {
-		if !cfg.Mydumper.CaseSensitive {
+	for _, rule := range c.Routes {
+		if !c.Mydumper.CaseSensitive {
 			rule.ToLower()
 		}
 		if err := rule.Valid(); err != nil {
@@ -670,8 +670,8 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	}
 
 	// automatically determine the TiDB port & PD address from TiDB settings
-	if mustHaveInternalConnections && (cfg.TiDB.Port <= 0 || len(cfg.TiDB.PdAddr) == 0) {
-		tls, err := cfg.ToTLS()
+	if mustHaveInternalConnections && (c.TiDB.Port <= 0 || len(c.TiDB.PdAddr) == 0) {
+		tls, err := c.ToTLS()
 		if err != nil {
 			return err
 		}
@@ -681,60 +681,60 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if err != nil {
 			return errors.Annotate(err, "cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
 		}
-		if cfg.TiDB.Port <= 0 {
-			cfg.TiDB.Port = int(settings.Port)
+		if c.TiDB.Port <= 0 {
+			c.TiDB.Port = int(settings.Port)
 		}
-		if len(cfg.TiDB.PdAddr) == 0 {
+		if len(c.TiDB.PdAddr) == 0 {
 			pdAddrs := strings.Split(settings.Path, ",")
-			cfg.TiDB.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
+			c.TiDB.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
 		}
 	}
 
-	if cfg.TiDB.Port <= 0 {
+	if c.TiDB.Port <= 0 {
 		return errors.New("invalid `tidb.port` setting")
 	}
-	if mustHaveInternalConnections && len(cfg.TiDB.PdAddr) == 0 {
+	if mustHaveInternalConnections && len(c.TiDB.PdAddr) == 0 {
 		return errors.New("invalid `tidb.pd-addr` setting")
 	}
 
 	// handle mydumper
-	if cfg.Mydumper.BatchSize <= 0 {
+	if c.Mydumper.BatchSize <= 0 {
 		// if rows in source files are not sorted by primary key(if primary is number or cluster index enabled),
 		// the key range in each data engine may have overlap, thus a bigger engine size can somewhat alleviate it.
-		cfg.Mydumper.BatchSize = defaultBatchSize
+		c.Mydumper.BatchSize = defaultBatchSize
 
 	}
-	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
-		cfg.Mydumper.BatchImportRatio = 0.75
+	if c.Mydumper.BatchImportRatio < 0.0 || c.Mydumper.BatchImportRatio >= 1.0 {
+		c.Mydumper.BatchImportRatio = 0.75
 	}
-	if cfg.Mydumper.ReadBlockSize <= 0 {
-		cfg.Mydumper.ReadBlockSize = ReadBlockSize
+	if c.Mydumper.ReadBlockSize <= 0 {
+		c.Mydumper.ReadBlockSize = ReadBlockSize
 	}
-	if len(cfg.Mydumper.CharacterSet) == 0 {
-		cfg.Mydumper.CharacterSet = "auto"
+	if len(c.Mydumper.CharacterSet) == 0 {
+		c.Mydumper.CharacterSet = "auto"
 	}
 
-	if len(cfg.Checkpoint.Schema) == 0 {
-		cfg.Checkpoint.Schema = "tidb_lightning_checkpoint"
+	if len(c.Checkpoint.Schema) == 0 {
+		c.Checkpoint.Schema = "tidb_lightning_checkpoint"
 	}
-	if len(cfg.Checkpoint.Driver) == 0 {
-		cfg.Checkpoint.Driver = CheckpointDriverFile
+	if len(c.Checkpoint.Driver) == 0 {
+		c.Checkpoint.Driver = CheckpointDriverFile
 	}
-	if len(cfg.Checkpoint.DSN) == 0 {
-		switch cfg.Checkpoint.Driver {
+	if len(c.Checkpoint.DSN) == 0 {
+		switch c.Checkpoint.Driver {
 		case CheckpointDriverMySQL:
 			param := common.MySQLConnectParam{
-				Host:             cfg.TiDB.Host,
-				Port:             cfg.TiDB.Port,
-				User:             cfg.TiDB.User,
-				Password:         cfg.TiDB.Psw,
+				Host:             c.TiDB.Host,
+				Port:             c.TiDB.Port,
+				User:             c.TiDB.User,
+				Password:         c.TiDB.Psw,
 				SQLMode:          mysql.DefaultSQLMode,
 				MaxAllowedPacket: defaultMaxAllowedPacket,
-				TLS:              cfg.TiDB.TLS,
+				TLS:              c.TiDB.TLS,
 			}
-			cfg.Checkpoint.DSN = param.ToDSN()
+			c.Checkpoint.DSN = param.ToDSN()
 		case CheckpointDriverFile:
-			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
+			c.Checkpoint.DSN = "/tmp/" + c.Checkpoint.Schema + ".pb"
 		}
 	}
 
@@ -748,8 +748,8 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	// out of the path. On Linux this method always return an empty string.
 	// On Windows, the drive letter can only be single letters from "A:" to "Z:",
 	// so this won't mistake "S3:" as a Windows path.
-	if len(filepath.VolumeName(cfg.Mydumper.SourceDir)) == 0 {
-		u, err = url.Parse(cfg.Mydumper.SourceDir)
+	if len(filepath.VolumeName(c.Mydumper.SourceDir)) == 0 {
+		u, err = url.Parse(c.Mydumper.SourceDir)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -759,14 +759,14 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 
 	// convert path and relative path to a valid file url
 	if u.Scheme == "" {
-		if !common.IsDirExists(cfg.Mydumper.SourceDir) {
-			return errors.Errorf("%s: mydumper dir does not exist", cfg.Mydumper.SourceDir)
+		if !common.IsDirExists(c.Mydumper.SourceDir) {
+			return errors.Errorf("%s: mydumper dir does not exist", c.Mydumper.SourceDir)
 		}
-		absPath, err := filepath.Abs(cfg.Mydumper.SourceDir)
+		absPath, err := filepath.Abs(c.Mydumper.SourceDir)
 		if err != nil {
-			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
+			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", c.Mydumper.SourceDir)
 		}
-		cfg.Mydumper.SourceDir = "file://" + filepath.ToSlash(absPath)
+		c.Mydumper.SourceDir = "file://" + filepath.ToSlash(absPath)
 		u.Path = absPath
 		u.Scheme = "file"
 	}
@@ -779,7 +779,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		}
 	}
 	if !found {
-		return errors.Errorf("Unsupported data-source-dir url '%s'", cfg.Mydumper.SourceDir)
+		return errors.Errorf("Unsupported data-source-dir url '%s'", c.Mydumper.SourceDir)
 	}
 
 	return nil
@@ -787,6 +787,6 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 
 // HasLegacyBlackWhiteList checks whether the deprecated [black-white-list] section
 // was defined.
-func (cfg *Config) HasLegacyBlackWhiteList() bool {
-	return len(cfg.BWList.DoTables) != 0 || len(cfg.BWList.DoDBs) != 0 || len(cfg.BWList.IgnoreTables) != 0 || len(cfg.BWList.IgnoreDBs) != 0
+func (c *Config) HasLegacyBlackWhiteList() bool {
+	return len(c.BWList.DoTables) != 0 || len(c.BWList.DoDBs) != 0 || len(c.BWList.IgnoreTables) != 0 || len(c.BWList.IgnoreDBs) != 0
 }
