@@ -18,12 +18,14 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/timeutil"
 
 	"github.com/pingcap/tidb-lightning/lightning/common"
 )
@@ -194,12 +196,31 @@ func newSession(options *SessionOptions) *session {
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
+	var tz *time.Location
 	if options.SysVars != nil {
+		var tidbTimeZone, tidbSystemTimeZone string
 		for k, v := range options.SysVars {
 			vars.SetSystemVar(k, v)
+			if k == "time_zone" {
+				tidbTimeZone = v
+			}
+			if k == "system_time_zone" {
+				tidbSystemTimeZone = v
+			}
+		}
+		// if we get system zone from TiDB server, we can set it for lightning session.
+		if tidbTimeZone == "SYSTEM" && tidbSystemTimeZone != "" {
+			loc, err := timeutil.LoadLocation(tidbSystemTimeZone)
+			if err != nil {
+				loc = time.Local
+			}
+			tz = loc
 		}
 	}
-	vars.StmtCtx.TimeZone = vars.Location()
+	if tz == nil {
+		tz = vars.Location()
+	}
+	vars.StmtCtx.TimeZone = tz
 	vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10))
 	vars.TxnCtx = nil
 
